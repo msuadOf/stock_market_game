@@ -664,8 +664,6 @@ struct DeferredBatch {
     stock: StockIdx,
     /// 成交事实原序（计划推进 F5/F6 重放+经历转移输入）。
     fills: Vec<FillFact>,
-    /// 逐笔真实成交，按批内顺序延迟写入个人态。
-    retail_fills: Vec<(FillFact, u32, u32, Option<Money>)>,
     /// fill 循环后、批尾前的延迟动作（原批内序：receipts 拒收释放与
     /// entities 内的 Closed 释放/RefundedShares 复位按原序交错）。
     actions: Vec<DeferredAction>,
@@ -897,6 +895,9 @@ pub struct GroupState {
     plans: Vec<Box<dyn PlanChain>>,
     /// 本 tick 已见成交事实（计划续行的结果输入；Start 落账后清空）。
     plan_fills: Vec<FillFact>,
+    /// 本拍真实成交按订单汇总；Seal 或日结时一次投影经历。
+    retail_orders: std::collections::BTreeMap<(LocalIdx, StockIdx, u8, OrderRef), (u32, i64)>,
+    retail_before: std::collections::BTreeMap<(LocalIdx, StockIdx), (u32, Option<Money>)>,
     /// 消息观察日志。
     pub observed: Vec<Observed>,
     /// 外部注入计划缓冲（玩家意图路由；run_round 消费一次即清）。
@@ -1239,6 +1240,8 @@ impl GroupState {
             snapshot: None,
             plans,
             plan_fills: Vec::new(),
+            retail_orders: Default::default(),
+            retail_before: Default::default(),
             observed: Vec::new(),
             external_pending: Vec::new(),
             round_rejections: Vec::new(),
@@ -1576,6 +1579,8 @@ impl GroupState {
             }
         }
         self.staging_deferred.clear();
+        self.retail_orders.clear();
+        self.retail_before.clear();
         self.account_dirty_set.clear();
         self.plan_fills.clear();
         self.plan_undo_saved = false;
@@ -1669,7 +1674,6 @@ impl GroupState {
         let mut deferred = DeferredBatch {
             stock,
             fills: batch.fills.clone(),
-            retail_fills: Vec::new(),
             actions: Vec::new(),
             touched: Vec::new(),
         };
@@ -1703,16 +1707,6 @@ impl GroupState {
                     .ok_or_else(|| RuntimeError::ProtocolInvariant {
                         detail: format!("组 {} 成交前持仓溢出：local={local}", self.group),
                     })?;
-                let after = match fill.side {
-                    Side::Buy => before.checked_add(fill.qty),
-                    Side::Sell => before.checked_sub(fill.qty),
-                }
-                .ok_or_else(|| RuntimeError::ProtocolInvariant {
-                    detail: format!(
-                        "组 {} 成交数量无效：local={local}, before={before}, qty={}",
-                        self.group, fill.qty
-                    ),
-                })?;
                 let cost = crate::account::Position::from_restored_parts(
                     before,
                     0,
@@ -1721,7 +1715,34 @@ impl GroupState {
                 )
                 .cost_price()
                 .filter(|price| *price > Money::ZERO);
-                deferred.retail_fills.push((*fill, before, after, cost));
+                self.retail_before
+                    .entry((local, stock))
+                    .or_insert((before, cost));
+                let rank = match fill.side {
+                    Side::Buy => 0,
+                    Side::Sell => 1,
+                };
+                let order = self
+                    .retail_orders
+                    .entry((local, stock, rank, fill.order))
+                    .or_insert((0, 0));
+                order.0 = order.0.checked_add(fill.qty).ok_or_else(|| {
+                    RuntimeError::ProtocolInvariant {
+                        detail: format!("组 {} 订单成交数量溢出", self.group),
+                    }
+                })?;
+                let gross = fill.price.checked_mul(i64::from(fill.qty)).ok_or_else(|| {
+                    RuntimeError::ProtocolInvariant {
+                        detail: format!("组 {} 订单成交额溢出", self.group),
+                    }
+                })?;
+                order.1 =
+                    order
+                        .1
+                        .checked_add(gross)
+                        .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                            detail: format!("组 {} 订单成交额汇总溢出", self.group),
+                        })?;
             }
             if fill.side == Side::Buy {
                 let qty = bought.entry(local).or_default();
@@ -1859,9 +1880,6 @@ impl GroupState {
                 });
             }
         }
-        for (fill, before, after, cost) in deferred.retail_fills {
-            self.apply_retail_fill_experience(stock, fill, before, after, cost)?;
-        }
         // Sol D3b 件 1：fill 触达账户的个人记忆裁剪（F5——对齐 session
         // candidate_commit 的逐账户 prune_plan_personal_memory——
         // completed_sell 2069 残余收口；清仓后售出股脱离保护集）。
@@ -1871,65 +1889,96 @@ impl GroupState {
         Ok(())
     }
 
-    /// 消费真实成交，并以 Personal undo 恢复失败拍的完整经历。
-    fn apply_retail_fill_experience(
-        &mut self,
-        stock: StockIdx,
-        fill: FillFact,
-        before: u32,
-        after: u32,
-        cost: Option<Money>,
-    ) -> Result<(), RuntimeError> {
-        let local = fill.owner.1;
-        let group = self.group;
-        let minute = market_minute_at(
-            self.cur_tick,
-            self.ticks_per_day,
-            self.auction_ticks,
-            self.closing_auction_ticks,
-        );
-        let slot = self.belief_states.get_mut(local as usize).ok_or_else(|| {
-            RuntimeError::ProtocolInvariant {
-                detail: format!("组 {} 经历账户越界：local={local}", group),
-            }
-        })?;
-        let snapshot = slot
-            .as_mut()
+    /// 成交经历使用结算后的权威共享时钟。
+    fn retail_tick_moment(&self) -> Result<crate::experience::ExperienceMoment, RuntimeError> {
+        let snapshot = self
+            .snapshot
+            .as_ref()
             .ok_or_else(|| RuntimeError::ProtocolInvariant {
-                detail: format!("组 {} 成交缺个人态：local={local}", group),
+                detail: format!("组 {} 成交缺 Calendar snapshot", self.group),
             })?;
-        let prev = snapshot.clone();
-        let experience =
-            snapshot
-                .retail_experience
-                .as_mut()
+        let clock = snapshot.calendar.after_projection();
+        Ok(crate::experience::ExperienceMoment {
+            civil_date: snapshot.civil_date,
+            market_minute: clock.completed_shared_minute_count(),
+            trading_day: snapshot
+                .calendar
+                .before_projection()
+                .completed_shared_session_count(),
+        })
+    }
+
+    /// 与 retail_projection 一样按账户、股票、方向和订单汇总，以整分均价写入。
+    fn flush_retail_fills(
+        &mut self,
+        moment: crate::experience::ExperienceMoment,
+    ) -> Result<(), RuntimeError> {
+        let orders = std::mem::take(&mut self.retail_orders);
+        let mut before = std::mem::take(&mut self.retail_before);
+        for ((local, stock, rank, order), (qty, gross)) in orders {
+            let (running, cost) =
+                before
+                    .get_mut(&(local, stock))
+                    .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                        detail: format!(
+                            "组 {} 订单缺成交前持仓：local={local}, stock={stock}",
+                            self.group
+                        ),
+                    })?;
+            let side = if rank == 0 { Side::Buy } else { Side::Sell };
+            let after = match side {
+                Side::Buy => running.checked_add(qty),
+                Side::Sell => running.checked_sub(qty),
+            }
+            .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                detail: format!(
+                    "组 {} 订单持仓变化无效：local={local}, stock={stock}",
+                    self.group
+                ),
+            })?;
+            let price = gross.checked_div(i64::from(qty)).ok_or_else(|| {
+                RuntimeError::ProtocolInvariant {
+                    detail: format!("组 {} 订单成交数量为零", self.group),
+                }
+            })?;
+            let group = self.group;
+            let snapshot = self
+                .belief_states
+                .get_mut(local as usize)
+                .and_then(Option::as_mut)
                 .ok_or_else(|| RuntimeError::ProtocolInvariant {
-                    detail: format!("组 {} 成交缺散户经历：local={local}", group),
+                    detail: format!("组 {group} 成交缺个人态：local={local}"),
                 })?;
-        // 纯逻辑可能在报错前写入，先在副本上执行，成功后才替换。
-        let mut next = experience.clone();
-        next.record_fill_with_order(
-            &crate::StockId(u32::from(stock)),
-            fill.side,
-            Money::from_cents(fill.price),
-            before,
-            after,
-            cost,
-            minute,
-            Some(order_id_of(&fill.order).0),
-        )
-        .map_err(|error| RuntimeError::ProtocolInvariant {
-            detail: format!(
-                "组 {} 成交经历转移失败：local={local}, stock={stock}：{error:?}",
-                group
-            ),
-        })?;
-        *experience = next;
-        self.push_undo(GroupUndo::Personal {
-            local,
-            prev: Box::new(prev),
-        });
-        self.belief_dirty[local as usize] = true;
+            let prev = snapshot.clone();
+            let experience = snapshot.retail_experience.as_mut().ok_or_else(|| {
+                RuntimeError::ProtocolInvariant {
+                    detail: format!("组 {group} 成交缺散户经历：local={local}"),
+                }
+            })?;
+            let mut next = experience.clone();
+            next.record_fill_dated(
+                &crate::StockId(u32::from(stock)),
+                side,
+                Money::from_cents(price),
+                *running,
+                after,
+                *cost,
+                Some(order_id_of(&order).0),
+                moment,
+            )
+            .map_err(|error| RuntimeError::ProtocolInvariant {
+                detail: format!(
+                    "组 {group} 成交经历转移失败：local={local}, stock={stock}：{error:?}"
+                ),
+            })?;
+            *experience = next;
+            self.push_undo(GroupUndo::Personal {
+                local,
+                prev: Box::new(prev),
+            });
+            self.belief_dirty[local as usize] = true;
+            *running = after;
+        }
         Ok(())
     }
 
@@ -2770,6 +2819,13 @@ impl GroupState {
         // ① Drain 回流落账（清空在途——即时相已在到达时应用，此处
         // 补延迟相 F4/F5/F6 重放；与原 apply_staging 全族落账等价）。
         self.apply_deferred()?;
+        if !self.retail_orders.is_empty() {
+            self.flush_retail_fills(crate::experience::ExperienceMoment {
+                civil_date: directive.civil_date,
+                market_minute: projection.completed_shared_minute_count(),
+                trading_day: u64::from(directive.day),
+            })?;
+        }
         // ② T+1 日界解冻（当日买入进入可卖）。
         for local in 0..self.accounts.len() as LocalIdx {
             let frozen = self.accounts[local as usize].frozen_today.clone();
@@ -5934,30 +5990,6 @@ fn build_root_read_context(
     }
 }
 
-/// 市场分钟（与 session `current_market_minute` 同式：交易日×240 +
-/// 连续段完成分钟——completed_market_minute_count 为共享纯函数；复审
-/// 时刻 ExperienceMoment 与 RootReadContext 共用此式，字段不得分叉）。
-fn market_minute_at(tick: u64, ticks_per_day: u64, auction_ticks: u64, closing_ticks: u64) -> u64 {
-    // Sol 终审四审 A2：day=(tick−1)/tpd；day_tick=(tick−1)%tpd（与 day
-    // 同受理窗——跨日 minute 单调；曾试对齐 session 的 tick%tpd 异基
-    // 式，institution 观察 clock（roots.rs 要求单调）跨日显红
-    // "attempted 0 after last 236"——组内观察 clock 以同窗单调为先，
-    // session 的异基式不适配组内，登记差异）。
-    let day = u32::try_from(tick.saturating_sub(1) / ticks_per_day).expect("交易日序号超 u32");
-    let day_tick = tick.saturating_sub(1) % ticks_per_day;
-    let continuous = ticks_per_day
-        .saturating_sub(auction_ticks)
-        .saturating_sub(closing_ticks);
-    u64::from(day) * u64::from(crate::observation::GAME_INTRADAY_MINUTES_PER_DAY)
-        + u64::from(
-            crate::observation::completed_market_minute_count(
-                day_tick.saturating_sub(auction_ticks).min(continuous),
-                continuous,
-            )
-            .expect("相位配置映射市场分钟（与 session 同式）"),
-        )
-}
-
 /// D3a-2c 件2：组线程组装 DecisionChainObservation（market=广播快照视图、
 /// paths/technical=组内链观察纯构建器（D3a-2 同源）、now=共享秒映射、
 /// exposed=空集起步——公司披露曝光面登记差异，随披露载荷补）。
@@ -7422,6 +7454,20 @@ pub(crate) fn group_main(
                     result = Err(e);
                     break;
                 }
+                if !state.retail_orders.is_empty() {
+                    let outcome = state
+                        .retail_tick_moment()
+                        .and_then(|moment| state.flush_retail_fills(moment));
+                    if let Err(error) = outcome {
+                        abort.store(true, Ordering::SeqCst);
+                        let _ = up_tx.send(UpMsg::Failed {
+                            who,
+                            error: error.clone(),
+                        });
+                        result = Err(error);
+                        break;
+                    }
+                }
                 state.seal_deferred_ns += deferred_started.elapsed().as_nanos();
                 // Q2：final_hash 用 O(1) 指纹口径（设计稿 §3.2——与
                 // committed_hash 同族合成，**非** state_hash 全名册遍历：
@@ -7550,6 +7596,19 @@ pub(crate) fn group_main(
                     });
                     result = Err(e);
                     break;
+                }
+                if !state.retail_orders.is_empty() {
+                    if let Err(error) = state
+                        .retail_tick_moment()
+                        .and_then(|moment| state.flush_retail_fills(moment))
+                    {
+                        abort.store(true, Ordering::SeqCst);
+                        let _ = up_tx.send(UpMsg::Failed {
+                            who,
+                            error: error.clone(),
+                        });
+                        result = Err(error);
+                    }
                 }
                 break;
             }
@@ -8681,6 +8740,14 @@ mod eager_domain_tests {
         }
     }
 
+    fn test_moment() -> crate::experience::ExperienceMoment {
+        crate::experience::ExperienceMoment {
+            civil_date: crate::CivilDate::from_iso("2026-01-05").unwrap(),
+            market_minute: 0,
+            trading_day: 0,
+        }
+    }
+
     #[test]
     fn exit_basis_tracks_each_preceding_fill() {
         let mut state = domain_harness();
@@ -8701,13 +8768,10 @@ mod eager_domain_tests {
         };
         state.apply_batch_immediate(batch, 1, 0).expect("成交落账");
         assert_eq!(
-            (
-                state.staging_deferred[0].retail_fills[1].1,
-                state.staging_deferred[0].retail_fills[1].2,
-                state.staging_deferred[0].retail_fills[1].3
-            ),
-            (600, 500, Some(Money::from_cents(1000)))
+            state.retail_before[&(0, 0)],
+            (700, Some(Money::from_cents(1000)))
         );
+        assert_eq!(state.retail_orders[&(0, 0, 1, (0, 7))], (200, 200_000));
         state.rollback();
         assert_eq!(state.state_hash(), before, "Abort 恢复成本基和持仓");
     }
@@ -8719,11 +8783,11 @@ mod eager_domain_tests {
         let mut personal = crate::runtime::information_fixture::personal(crate::AccountId(1));
         let mut experience = crate::RetailExperienceState::without_equity_reference();
         experience
-            .initialize_holding(
+            .initialize_holding_dated(
                 &crate::StockId(0),
                 Some(Money::from_cents(1000)),
                 Money::from_cents(1000),
-                0,
+                test_moment(),
             )
             .unwrap();
         personal.retail_experience = Some(experience);
@@ -8735,7 +8799,7 @@ mod eager_domain_tests {
         buy.order = (0, 8);
         buy.price = 2000;
         let mut sell = sell_fill(100);
-        sell.price = 1100;
+        sell.price = 900;
         state
             .apply_batch_immediate(
                 DeskBatch {
@@ -8752,6 +8816,7 @@ mod eager_domain_tests {
             )
             .unwrap();
         state.apply_deferred().unwrap();
+        state.flush_retail_fills(test_moment()).unwrap();
         let experience = state.belief_states[0]
             .as_ref()
             .unwrap()
@@ -8764,8 +8829,9 @@ mod eager_domain_tests {
         );
         assert_eq!(
             experience.consecutive_failed_buys, 1,
-            "部分卖出价格低于加仓后的成本"
+            "部分卖出价格低于批前成本"
         );
+        assert_eq!(experience.feedback.failure_events.len(), 1);
         state.rollback();
         assert_eq!(state.belief_states[0], Some(personal));
         assert_eq!(state.accounts[0].invested_cents[0], 700_000);
@@ -8784,15 +8850,15 @@ mod eager_domain_tests {
         let mut personal = crate::runtime::information_fixture::personal(crate::AccountId(1));
         let mut experience = crate::RetailExperienceState::without_equity_reference();
         experience
-            .record_fill_with_order(
+            .record_fill_dated(
                 &crate::StockId(0),
                 Side::Buy,
                 Money::from_cents(1000),
                 0,
                 200,
                 None,
-                0,
                 Some(3),
+                test_moment(),
             )
             .unwrap();
         experience.consecutive_failed_buys = 2;
@@ -8817,6 +8883,7 @@ mod eager_domain_tests {
             )
             .unwrap();
         state.apply_deferred().unwrap();
+        state.flush_retail_fills(test_moment()).unwrap();
         let experience = state.belief_states[0]
             .as_ref()
             .unwrap()
@@ -8827,6 +8894,138 @@ mod eager_domain_tests {
         assert!(experience.stocks[&crate::StockId(0)]
             .cooldown_until_market_minute
             .is_some());
+        state.rollback();
+        assert_eq!(state.belief_states[0], Some(personal));
+    }
+
+    #[test]
+    fn retail_same_order_multiround_uses_average_and_dated_feedback() {
+        let mut state = domain_harness();
+        let account = Arc::make_mut(&mut state.accounts[0]);
+        account.shares[0] = 0;
+        account.pending_sell_qty[0] = 200;
+        account.invested_cents[0] = 200_000;
+        let date = crate::CivilDate::from_iso("2026-01-05").unwrap();
+        state.cur_tick = 1;
+        state.snapshot = Some(Arc::new(TickSnapshot {
+            calendar: crate::runtime::calendar_test_support::open_tick(1, 240, 0, 0, 3, date),
+            tick: 1,
+            market_minute: 0,
+            civil_date: date,
+            stocks: Arc::new(Vec::new()),
+        }));
+        let moment = crate::experience::ExperienceMoment {
+            civil_date: date,
+            market_minute: 0,
+            trading_day: 0,
+        };
+        let mut personal = crate::runtime::information_fixture::personal(crate::AccountId(1));
+        let mut experience = crate::RetailExperienceState::without_equity_reference();
+        experience
+            .record_fill_dated(
+                &crate::StockId(0),
+                Side::Buy,
+                Money::from_cents(1000),
+                0,
+                200,
+                None,
+                Some(3),
+                moment,
+            )
+            .unwrap();
+        experience.consecutive_failed_buys = 1;
+        personal.retail_experience = Some(experience);
+        state.belief_states = vec![Some(personal.clone()), None];
+        state.belief_dirty = vec![false; 2];
+        for (round, price) in [(0, 1100), (1, 900)] {
+            let mut fill = sell_fill(100);
+            fill.price = price;
+            state
+                .apply_batch_immediate(
+                    DeskBatch {
+                        repurchase: Vec::new(),
+                        stock: 0,
+                        tick: 1,
+                        round,
+                        entities: Vec::new(),
+                        fills: vec![fill],
+                        receipts: Vec::new(),
+                    },
+                    1,
+                    round,
+                )
+                .unwrap();
+            state.apply_deferred().unwrap();
+        }
+        let moment = state.retail_tick_moment().unwrap();
+        let mut expected = personal.retail_experience.clone().unwrap();
+        expected
+            .record_fill_dated(
+                &crate::StockId(0),
+                Side::Sell,
+                Money::from_cents(1000),
+                200,
+                0,
+                Some(Money::from_cents(1000)),
+                Some(order_id_of(&(0, 7)).0),
+                moment,
+            )
+            .unwrap();
+        state.flush_retail_fills(moment).unwrap();
+        let experience = state.belief_states[0]
+            .as_ref()
+            .unwrap()
+            .retail_experience
+            .as_ref()
+            .unwrap();
+        assert_eq!(experience.consecutive_failed_buys, 1);
+        assert_eq!(experience, &expected);
+        assert!(!experience.feedback.stocks.contains_key(&crate::StockId(0)));
+        assert_eq!(experience.feedback.exit_records.len(), 1);
+        state.rollback();
+        assert_eq!(state.belief_states[0], Some(personal));
+    }
+
+    #[test]
+    fn retail_first_buy_creates_dated_epoch_and_abort_removes_it() {
+        let mut state = domain_harness();
+        let account = Arc::make_mut(&mut state.accounts[0]);
+        account.shares[0] = 0;
+        account.pending_sell_qty[0] = 0;
+        let mut personal = crate::runtime::information_fixture::personal(crate::AccountId(1));
+        personal.retail_experience = Some(crate::RetailExperienceState::without_equity_reference());
+        state.belief_states = vec![Some(personal.clone()), None];
+        state.belief_dirty = vec![false; 2];
+        let mut fill = sell_fill(100);
+        fill.side = Side::Buy;
+        state
+            .apply_batch_immediate(
+                DeskBatch {
+                    repurchase: Vec::new(),
+                    stock: 0,
+                    tick: 1,
+                    round: 0,
+                    entities: vec![Entity::BoughtShares { local: 0, qty: 100 }],
+                    fills: vec![fill],
+                    receipts: Vec::new(),
+                },
+                1,
+                0,
+            )
+            .unwrap();
+        state.apply_deferred().unwrap();
+        state.flush_retail_fills(test_moment()).unwrap();
+        let experience = state.belief_states[0]
+            .as_ref()
+            .unwrap()
+            .retail_experience
+            .as_ref()
+            .unwrap();
+        assert!(experience.feedback.stocks.contains_key(&crate::StockId(0)));
+        assert_eq!(
+            experience.stocks[&crate::StockId(0)].last_buy_order_id,
+            Some(order_id_of(&fill.order).0)
+        );
         state.rollback();
         assert_eq!(state.belief_states[0], Some(personal));
     }

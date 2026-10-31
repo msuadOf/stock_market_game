@@ -552,12 +552,6 @@ impl GameSession {
                 continue;
             }
             let price = Money::from_cents(entry.max(1));
-            // 同拍首买后的再次成交已由组写入，初始化生命周期时保留成交经历。
-            let traded_stock = ledger
-                .stocks
-                .get(&code)
-                .filter(|stock| stock.last_buy_order_id.is_some())
-                .cloned();
             Arc::make_mut(ledger)
                 .initialize_holding_dated(
                     &code,
@@ -577,9 +571,6 @@ impl GameSession {
                 .map_err(|error| {
                     format!("首买经历初始化失败（私有 candidate）：{id:?} {error:?}")
                 })?;
-            if let Some(stock) = traded_stock {
-                Arc::make_mut(ledger).stocks.insert(code, stock);
-            }
         }
         for (global, id) in input.touched {
             if let std::collections::btree_map::Entry::Vacant(entry) = personals.entry(id) {
