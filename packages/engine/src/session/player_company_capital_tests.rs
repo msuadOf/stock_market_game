@@ -7,6 +7,7 @@ use crate::company::share_registry::{MovementScope, ShareDayRequest};
 use crate::company::share_split::{ShareSplitBook, ShareSplitDeclaration, ShareSplitEventPlan};
 use crate::session::capital_approval_context::CapitalApprovalError;
 use crate::session::capital_command_candidates::CapitalCommandError;
+use crate::session::SessionError;
 
 fn date(value: &str) -> CivilDate {
     CivilDate::from_iso(value).unwrap()
