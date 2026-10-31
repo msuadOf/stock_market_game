@@ -1032,6 +1032,7 @@ fn repurchase_prepare_exposes_ordered_real_source_without_consuming_it() {
     let (mut state, mut desk, request, purse) = state(1000, 200);
     desk.company_buy(request, 1000, 200, purse);
     consume(&mut state, desk.flush_company());
+    state.seal_acked_len = Some(state.undo.len());
     let before = state.repurchase_pending_tails.clone();
     let projection = state.repurchase_projections[&request.plan_id].clone();
     let candidate = state
@@ -1071,6 +1072,7 @@ fn repurchase_prepare_rejects_cursor_ack_before_book_transaction_exists() {
     let (mut state, mut desk, request, purse) = state(1000, 200);
     desk.company_buy(request, 1000, 200, purse);
     consume(&mut state, desk.flush_company());
+    state.seal_acked_len = Some(state.undo.len());
     let before = state.repurchase_pending_tails.clone();
     let mut projection = state.repurchase_projections[&request.plan_id].clone();
     projection.book_through_cursor = 1;
@@ -1086,6 +1088,10 @@ fn repurchase_prepare_rejects_cursor_ack_before_book_transaction_exists() {
             projection,
         }]),
     );
-    assert!(result.is_err());
+    assert!(matches!(
+        result,
+        Err(RuntimeError::ProtocolInvariant { detail })
+            if detail == "回购来源尚未接通公司簿事务确认，禁止推进 cursor"
+    ));
     assert_eq!(state.repurchase_pending_tails, before);
 }
