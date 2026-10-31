@@ -1808,7 +1808,10 @@ fn validate_redenomination_holders(
     let expected = frozen
         .holders
         .iter()
-        .filter(|holder| opening || holder.original_shares != holder.new_shares)
+        .filter(|holder| {
+            (opening && !holder.original_lots.is_empty())
+                || holder.original_shares != holder.new_shares
+        })
         .map(|holder| (&holder.holder, holder))
         .collect::<BTreeMap<_, _>>();
     if expected.len() != receipt.request.changes.len() {

@@ -52,6 +52,13 @@ impl DistributionsDayEndCandidate {
             let mut changes = Vec::new();
             let mut source_lots = Vec::new();
             for holder in &receipt.holders {
+                // REG 保留真实卖尽后的空 holder；其无旧股、无新股，也无来源 lot 可绑定。
+                if holder.original_shares == 0
+                    && holder.new_shares == 0
+                    && holder.original_lots.is_empty()
+                {
+                    continue;
+                }
                 let HolderId::Account(account) = holder.holder else {
                     return Err(fail("拆缩股只支持真实账户"));
                 };

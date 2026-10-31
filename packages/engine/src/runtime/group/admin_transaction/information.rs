@@ -250,7 +250,26 @@ impl GroupState {
                     == crate::runtime::protocol::InformationMemoryRetention::CivilDayEnd
                     && (over_limit(&mut snapshot.watchlist.stocks.keys())
                         || over_limit(&mut snapshot.price_memory.stocks.keys()));
-                if result.is_none() && !needs_prune {
+                let ended_holdings: Vec<_> = accounts
+                    .get(&(local as LocalIdx))
+                    .map(|account| {
+                        account
+                            .shares
+                            .iter()
+                            .zip(&account.pending_sell_qty)
+                            .enumerate()
+                            .filter_map(|(stock, (&shares, &pending))| {
+                                let original = &self.accounts[local];
+                                (shares == 0
+                                    && pending == 0
+                                    && (original.shares[stock] > 0
+                                        || original.pending_sell_qty[stock] > 0))
+                                    .then_some(StockId(stock as u32))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if result.is_none() && !needs_prune && ended_holdings.is_empty() {
                     continue;
                 }
                 let observed = result.is_some();
@@ -266,6 +285,11 @@ impl GroupState {
                     },
                     None => snapshot.clone(),
                 };
+                if let Some(retail) = &mut next.retail_experience {
+                    for stock in &ended_holdings {
+                        retail.end_holding_after_share_reduction(stock);
+                    }
+                }
                 if needs_prune {
                     // 先用原订阅获知；不 due 或同签名也必须执行日终裁剪，不改历史读取账。
                     next.watchlist.prune(&protected);

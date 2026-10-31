@@ -154,7 +154,8 @@ fn native_consolidation_zero_holders_and_projection_abort_are_atomic() {
     session.step().unwrap();
     session.end_civil_day().unwrap();
     session.end_civil_day().unwrap();
-    let before = serde_json::to_value(session.save().unwrap()).unwrap();
+    let before_saved = session.save().unwrap();
+    let before = serde_json::to_value(&before_saved).unwrap();
     let (accounts, desks) = {
         let mut driver = session.runtime_driver.as_ref().unwrap().lock().unwrap();
         (
@@ -189,6 +190,31 @@ fn native_consolidation_zero_holders_and_projection_abort_are_atomic() {
     );
     let saved = session.save().unwrap();
     restore_with_three_groups(&saved);
+    for (owner, experience) in &saved.retail_experience {
+        let original = &before_saved.retail_experience[owner];
+        assert_eq!(
+            experience.feedback.failure_events,
+            original.feedback.failure_events
+        );
+        assert_eq!(
+            experience.feedback.exit_records,
+            original.feedback.exit_records
+        );
+        if saved.snapshot.accounts[owner]
+            .positions
+            .get(&StockId(0))
+            .is_none_or(|position| position.qty == 0)
+        {
+            assert!(!experience.feedback.stocks.contains_key(&StockId(0)));
+            if let Some(stock) = experience.stocks.get(&StockId(0)) {
+                assert!(stock.entry_reference_price.is_none());
+                assert!(stock.peak_price_since_entry.is_none());
+                assert!(stock.last_buy_order_id.is_none());
+                assert!(stock.last_sell_order_id.is_none());
+                assert!(stock.cooldown_until_market_minute.is_none());
+            }
+        }
+    }
     assert_eq!(
         saved
             .snapshot

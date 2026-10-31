@@ -1,6 +1,6 @@
 //! 独立散户账户的最小、可恢复经历状态。
 //!
-//! 只有真实成交和真实观察可以修改这里的状态；委托意图本身不构成经历。
+//! 真实成交、真实观察与已批准的行政股份核减可以修改对应状态；委托意图本身不构成经历。
 //! 个人价格记忆（本人所见锚点与公开历史读取事件）在 [`price_memory`]
 //! 子模块；经历反馈（受挫日期/生命周期/冷静期历史与衰减读取）在
 //! [`feedback`] 子模块；个人关注列表（发现、保留与淡出）在
@@ -131,6 +131,21 @@ impl RetailExperienceState {
             stocks,
             feedback: group.feedback.clone(),
         }
+    }
+
+    /// 行政核减使真实持仓归零时结束当前观察态；不捏造成交、盈亏或退出冷静期。
+    /// 历史受挫与退出记录保留，只有当前持仓生命周期结束。
+    pub(crate) fn end_holding_after_share_reduction(&mut self, code: &StockId) {
+        if let Some(stock) = self.stocks.get_mut(code) {
+            stock.entry_reference_price = None;
+            stock.peak_price_since_entry = None;
+            stock.last_buy_price = None;
+            stock.last_buy_order_id = None;
+            stock.last_sell_order_id = None;
+            stock.adverse_move_recorded = false;
+            stock.cooldown_until_market_minute = None;
+        }
+        self.feedback.stocks.remove(code);
     }
 
     pub fn new(reference_equity: Money) -> Result<Self, ExperienceError> {
