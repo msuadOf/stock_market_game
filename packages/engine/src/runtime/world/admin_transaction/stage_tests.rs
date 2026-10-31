@@ -249,7 +249,7 @@ fn desk_ex_rights_and_group_debit_share_prepare_abort_and_commit() {
         reference_price: old / 2,
     };
     let reject = world.with_prepared_staged_administrative_and_desks(
-        stages(10),
+        stages(5),
         None,
         vec![request],
         |candidate, _, _| {
@@ -265,7 +265,7 @@ fn desk_ex_rights_and_group_debit_share_prepare_abort_and_commit() {
     assert_eq!(world.snapshot_accounts().unwrap(), before);
     world
         .with_prepared_staged_administrative_and_desks(
-            stages(10),
+            stages(5),
             None,
             vec![request],
             |candidate, _, _| {
@@ -277,7 +277,9 @@ fn desk_ex_rights_and_group_debit_share_prepare_abort_and_commit() {
             },
         )
         .unwrap();
-    assert_ne!(world.snapshot_accounts().unwrap(), before);
+    let mut expected = before.clone();
+    expected[1].1[1].cash += 5;
+    assert_eq!(world.snapshot_accounts().unwrap(), expected);
     assert_eq!(world.public_views()[0].last_price, old);
     assert_eq!(world.public_views()[0].last_close, request.reference_price);
     assert!(world.public_views()[0].daily_upper_limit < world_upper);
