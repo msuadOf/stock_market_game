@@ -191,8 +191,22 @@ impl GameSession {
                 return Err(invalid("日终不允许尚未完成 Drain 的回购 binding"));
             }
             let at = crate::CivilInstant::new(self.civil_date(), 0).map_err(checked)?;
-            let (issuance, restriction, announced) =
-                self.repurchase_projection_eligibility(plan, binding.closing_state, at)?;
+            let (issuance, restriction, announced) = if book.status()
+                == &IssuerRepurchaseStatus::Approved
+                && binding.applied_fact_cursor == 0
+                && book.last_order_day().is_none()
+                && book.fills().is_empty()
+            {
+                let published = self
+                    .state
+                    .library
+                    .announcements_for_company(&plan.issuer, at);
+                let announced = published.iter().any(|entry| matches!(&entry.content,
+                    crate::information::AnnouncementContent::IssuerRepurchase(value) if value.plan == *plan));
+                (None, RepurchaseMaterialRestriction::NotModelled, announced)
+            } else {
+                self.repurchase_projection_eligibility(plan, binding.closing_state, at)?
+            };
             let gross = book
                 .fills()
                 .iter()

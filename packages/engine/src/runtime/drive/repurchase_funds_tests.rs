@@ -1,7 +1,7 @@
 //! 从实际 Session 构造 driver 的 P2 数值通路，直接 company entry 不冒充批准。
 use super::*;
 use crate::runtime::protocol::AdminOperation;
-use crate::{AccountId, AccountKind, GameSession, Money, StockId};
+use crate::{AccountId, AccountKind, GameSession, Money};
 include!("../../../test-support/simple_company.rs");
 fn setup() -> crate::session::SessionSetup {
     let mut setup = crate::runtime::bridge_tests::setup_fixture();

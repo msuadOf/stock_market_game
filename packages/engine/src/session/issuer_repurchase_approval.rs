@@ -271,10 +271,6 @@ impl GameSession {
         plan.validate_calendar(self.state.civil_clock.calendar())
             .map_err(|error| invalid_plan(error.to_string()))?;
         let day = self.civil_date();
-        let _eligibility = self.repurchase_eligibility(
-            &plan,
-            crate::CivilInstant::new(day, 0).map_err(|error| invalid_plan(error.to_string()))?,
-        )?;
         if plan.approved_on != day {
             return Err(invalid_plan("方案批准日必须为当前自然日").into());
         }

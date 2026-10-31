@@ -589,4 +589,36 @@ fn approval_c_session_12_registered_split_receipt_does_not_advance_current_unit_
         session.account(treasury(&session)).unwrap().cash(),
         request.total_budget
     );
+    let projections = session.repurchase_restore_projections().unwrap();
+    let projection = projections.values().next().unwrap();
+    assert_eq!(projection.issuance_in_progress, None);
+    assert_eq!(
+        projection.material_restriction,
+        crate::runtime::world::RepurchaseMaterialRestriction::NotModelled
+    );
+    assert!(!projection.announced);
+    let before_tick = session.tick();
+    let before_actions = session.corporate_actions().unwrap().clone();
+    let before_cash = session.account(treasury(&session)).unwrap().cash();
+    let before_position = session
+        .account(treasury(&session))
+        .unwrap()
+        .position(&StockId(0))
+        .map(|position| position.qty());
+    let error = session.step().unwrap_err();
+    assert!(error.to_string().contains("拆缩股"), "{error}");
+    assert_eq!(session.tick(), before_tick);
+    assert_eq!(session.corporate_actions().unwrap(), &before_actions);
+    assert_eq!(
+        session.account(treasury(&session)).unwrap().cash(),
+        before_cash
+    );
+    assert_eq!(
+        session
+            .account(treasury(&session))
+            .unwrap()
+            .position(&StockId(0))
+            .map(|position| position.qty()),
+        before_position
+    );
 }
