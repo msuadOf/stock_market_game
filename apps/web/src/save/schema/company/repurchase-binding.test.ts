@@ -14,7 +14,10 @@ const binding = {
   funding_committed: true, funding_amount: "9007199254740993",
   applied_fact_cursor: "18446744073709551615", closing_state: "Active",
 };
-const actions = (bindings: unknown = [binding]) => ({ ...oldActions, repurchase_execution_bindings: bindings });
+// synthetic：新字段只投影到测试输入，保留历史 JSON 原件与缺字段拒绝断言。
+const actions = (bindings: unknown = [binding]) => ({ ...oldActions,
+  registries: (oldActions.registries as Record<string, unknown>[]).map(registry => ({ ...registry, pending_opening: null })),
+  repurchase_execution_bindings: bindings });
 
 test("回购 binding 新容器字段必填，旧完整 actions 不静默补空数组（synthetic）", () => {
   assert.throws(() => parseSessionCorporateActions(oldActions, "actions"), /repurchase_execution_bindings/);

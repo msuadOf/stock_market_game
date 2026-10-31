@@ -73,9 +73,12 @@ impl TaxDayBoundaryFacts {
         day: &ShareSettlementDay,
         sources: &ShareMarketSourceContext<'_>,
     ) -> Result<Self, TaxBoundaryError> {
-        if !day.opening.is_empty() || day.actual_market_close.unit != ShareUnitIdentity::Initial {
+        let expected_opening: Vec<_> = registry.pending_opening().cloned().into_iter().collect();
+        if day.opening != expected_opening
+            || day.actual_market_close.unit != registry.current_unit()
+        {
             return Err(TaxBoundaryError::MissingSource(
-                "Exempt 不支持单位变更或盘前 movement".into(),
+                "Exempt 盘前 movement 或市场单位与已验证 REG 不一致".into(),
             ));
         }
         for action in &day.post_market_actions {

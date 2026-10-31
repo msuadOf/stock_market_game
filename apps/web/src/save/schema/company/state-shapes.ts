@@ -266,9 +266,18 @@ export const STATE_SHAPES: Readonly<Record<string, StateRule>> = {
           "ref",
           "RegistrationSnapshot"
         ]
-      ]
+      ],
+      "pending_opening": ["nullable", ["ref", "PendingOpening"]]
     }
   ],
+  "PendingOpening": ["object", {
+    "predecessor": ["ref", "ShareDayFrontier"],
+    "opening": ["ref", "FrozenOpeningMovement"]
+  }],
+  "FrozenOpeningMovement": ["object", {
+    "reference": ["ref", "OpeningMovementRef"],
+    "request": ["ref", "ShareDayRequest"]
+  }],
   "CashDividendBook": [
     "object",
     {
@@ -2148,7 +2157,7 @@ export type SessionCorporateActionsWire = { "registries": (ShareRegistryWire)[];
 export type CompanyImplementationWire = { "mode": "Simple"; "state": SimpleFundamentalsWire };
 export type SimpleCompanyStateWire = { "generation": PeriodGenerationStateWire; "finance": SimpleFinanceStateWire; "pending_restart": ([string, string] | null); "preference_ledger": SimplePreferenceLedgerWire };
 export type SimpleDisclosureCandidateWire = { "company": number; "period_start": string; "period_end": string; "amounts": PeriodAmountsWire; "explanation": PeriodChangeExplanationWire };
-export type ShareRegistryWire = { "stock": string; "issuer": number; "issued_shares": string; "issuer_repurchase_account": (IssuerRepurchaseAccountFactsWire | null); "settled_on": string; "holdings": (ShareHoldingWire)[]; "receipts": (ShareDayReceiptWire)[]; "registrations": (RegistrationSnapshotWire)[] };
+export type ShareRegistryWire = { "stock": string; "issuer": number; "issued_shares": string; "issuer_repurchase_account": (IssuerRepurchaseAccountFactsWire | null); "settled_on": string; "holdings": (ShareHoldingWire)[]; "receipts": (ShareDayReceiptWire)[]; "registrations": (RegistrationSnapshotWire)[]; "pending_opening": (PendingOpeningWire | null) };
 export type CashDividendBookWire = { "plan": CashDividendPlanWire; "status": CashDividendStatusWire; "registration": (RegistrationSnapshotWire | null); "entitlements": (CashDividendEntitlementWire)[]; "paid": ([HolderIdWire, string])[]; "failures": ([HolderIdWire, string])[]; "payments": (CashDividendPaymentReceiptWire)[] };
 export type CashDividendTaxBookWire = { "operation_seq": number; "account": string; "stock": string; "profile": DividendTaxProfileWire; "opened_on": string; "opening_lots": (DividendTaxLotWire)[]; "settled_on": string; "lots": (DividendTaxLotWire)[]; "days": (TaxDayReceiptWire)[]; "dividends": (RegisteredTaxDividendWire)[]; "collections": (TaxCollectionReceiptWire)[]; "redenominations": (TaxRedenominationReceiptWire)[]; "stock_bonus_bases": (StockBonusTaxBasisWire)[] };
 export type FlatWithholdingReceiptWire = { "payment_id": string; "plan_id": string; "account": string; "paid_on": string; "gross": string; "rate_bp": number; "withheld": string };
@@ -2253,3 +2262,6 @@ export type ShareConfirmationRefWire = { "account": string; "receipt_id": string
 export type RepurchaseExecutionBindingWire = { "event_id": string; "issuer": number; "stock": string; "account": string; "plan_id": PlanIdWire; "funding_committed": boolean; "funding_amount": string; "applied_fact_cursor": string; "closing_state": RepurchaseBindingClosingStateWire };
 export type PlanIdWire = { "owner": string; "sequence": string };
 export type RepurchaseBindingClosingStateWire = "Active" | "Draining" | "Closed";
+
+export type PendingOpeningWire = { "predecessor": ShareDayFrontierWire; "opening": FrozenOpeningMovementWire };
+export type FrozenOpeningMovementWire = { "reference": OpeningMovementRefWire; "request": ShareDayRequestWire };

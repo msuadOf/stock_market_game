@@ -1150,3 +1150,6 @@ fn rights_ex_day_close_after_trade_restores() {
         trade_price
     );
 }
+
+#[path = "stock_opening_runtime_tests.rs"]
+mod stock_opening_runtime_tests;

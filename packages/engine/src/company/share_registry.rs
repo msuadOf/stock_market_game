@@ -247,6 +247,7 @@ pub struct ShareRegistry {
     holdings: Vec<ShareHolding>,
     receipts: Vec<ShareDayReceipt>,
     registrations: Vec<RegistrationSnapshot>,
+    pending_opening: Option<settlement_day::PendingOpening>,
 }
 
 #[derive(Deserialize)]
@@ -262,6 +263,17 @@ struct RegistryState {
     holdings: Vec<ShareHolding>,
     receipts: Vec<ShareDayReceipt>,
     registrations: Vec<RegistrationSnapshot>,
+    #[serde(deserialize_with = "required_nullable_pending_opening")]
+    pending_opening: Option<settlement_day::PendingOpening>,
+}
+
+fn required_nullable_pending_opening<'de, D>(
+    deserializer: D,
+) -> Result<Option<settlement_day::PendingOpening>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<settlement_day::PendingOpening>::deserialize(deserializer)
 }
 
 impl TryFrom<RegistryState> for ShareRegistry {
@@ -277,6 +289,7 @@ impl TryFrom<RegistryState> for ShareRegistry {
             holdings: state.holdings,
             receipts: state.receipts,
             registrations: state.registrations,
+            pending_opening: state.pending_opening,
         };
         registry.validate()?;
         Ok(registry)
@@ -314,6 +327,7 @@ impl ShareRegistry {
             holdings,
             receipts: vec![],
             registrations: vec![],
+            pending_opening: None,
         };
         registry.validate()?;
         Ok(registry)
@@ -706,7 +720,11 @@ impl ShareRegistry {
         if self.stock.0.trim().is_empty() {
             return Err(error("stock and issuer identities are required"));
         }
-        validate_holdings(&self.holdings, self.issued_shares, self.settled_on)?;
+        let physical_day = match &self.pending_opening {
+            Some(pending) => pending.opening.request.day,
+            None => self.settled_on,
+        };
+        validate_holdings(&self.holdings, self.issued_shares, physical_day)?;
         validate_issuer_repurchase_account(
             self.issuer_repurchase_account.as_ref(),
             self.settled_on,
@@ -716,15 +734,20 @@ impl ShareRegistry {
         let mut acquired_ids = BTreeSet::new();
         for receipt in &self.receipts {
             validate_request(&receipt.request)?;
-            if !identities.insert(&receipt.request.event_id)
-                || receipt.request.day > self.settled_on
-            {
+            if !identities.insert(&receipt.request.event_id) || receipt.request.day > physical_day {
                 return Err(error("invalid settlement receipt identity or date"));
             }
             if let Some(previous) = previous_day {
                 let consecutive = match receipt.request.scope {
                     MovementScope::PublicMarket => receipt.request.day.days_since(previous) == 1,
-                    MovementScope::NonTradingTransfer { .. } => receipt.request.day == previous,
+                    MovementScope::NonTradingTransfer { .. } => {
+                        receipt.request.day == previous
+                            || (receipt.request.day.days_since(previous) == 1
+                                && (self.pending_opening.as_ref().is_some_and(|pending| pending.opening.request.event_id == receipt.request.event_id) || self.receipts.iter().any(|market| {
+                                    matches!(&market.request.scope, MovementScope::SettlementDayMarket { binding }
+                                        if binding.opening.iter().any(|opening| opening.movement_event_id == receipt.request.event_id))
+                                })))
+                    }
                     MovementScope::ShareReDenomination { .. }
                     | MovementScope::SettlementDayMarket { .. } => {
                         receipt.request.day == previous
@@ -838,8 +861,8 @@ impl ShareRegistry {
                 }
             }
         }
-        if previous_day.is_some_and(|day| day != self.settled_on) {
-            return Err(error("latest receipt does not match settled date"));
+        if previous_day.is_some_and(|day| day != physical_day) {
+            return Err(error("latest receipt does not match physical date"));
         }
         let mut registration_ids = BTreeSet::new();
         for snapshot in &self.registrations {
@@ -913,6 +936,7 @@ impl ShareRegistry {
             }
         }
         self.validate_settlement_bindings()?;
+        self.validate_pending_opening()?;
         Ok(())
     }
 
@@ -949,6 +973,7 @@ impl ShareRegistry {
             holdings: snapshot.holdings.clone(),
             receipts: self.receipts[..frontier].to_vec(),
             registrations: vec![],
+            pending_opening: None,
         };
         for stored in &self.receipts[frontier..end] {
             let actual = replay.apply_movement(stored.request.clone())?;

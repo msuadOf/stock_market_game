@@ -3789,7 +3789,7 @@ impl GameSession {
         for book in &actions.stock_distributions {
             if book.status()
                 != &crate::company::stock_distribution::StockDistributionStatus::Credited
-                && (!runtime || next >= book.plan().ex_rights_on)
+                && (!runtime || next > book.plan().ex_rights_on)
             {
                 return Err(SessionError::UnsupportedCapitalBoundary(format!(
                     "送转事件 {} 的账户入账和除权未接通",
@@ -3865,13 +3865,38 @@ impl GameSession {
             }
         }
         for book in &actions.stock_distributions {
-            if book.status()
-                != &crate::company::stock_distribution::StockDistributionStatus::Credited
-                && self.civil_date() >= book.plan().ex_rights_on
-            {
+            if self.civil_date() < book.plan().ex_rights_on {
+                continue;
+            }
+            let plan = book.plan();
+            let movement = format!("stock-distribution:{}", plan.event_id);
+            let anchored = actions
+                .applied_ex_reference_groups
+                .iter()
+                .filter(|group| {
+                    group.stock == plan.stock
+                        && group.date == plan.ex_rights_on
+                        && group.stock_event_ids == [plan.event_id.clone()]
+                        && group.cash_plan_ids.is_empty()
+                        && group.rights_event_ids.is_empty()
+                        && group.split_event_ids.is_empty()
+                })
+                .count()
+                == 1;
+            let bound = actions.registries.iter().any(|registry| registry.stock() == &plan.stock
+                && (registry.pending_opening().is_some_and(|opening| opening.request.day == self.civil_date()
+                    && opening.request.event_id == movement && opening.reference.registration_event_id == plan.event_id)
+                    || registry.receipts().iter().any(|receipt| matches!(&receipt.request.scope,
+                        crate::company::share_registry::MovementScope::SettlementDayMarket { binding }
+                        if receipt.request.day == plan.ex_rights_on && binding.opening.iter().any(|opening|
+                            opening.movement_event_id == movement && opening.registration_event_id == plan.event_id)))));
+            if book.credited_on() != Some(plan.ex_rights_on) || !anchored || !bound {
                 return Err(StepFatal::InvariantViolation {
                     location: "GameSession::validate_capital_market_boundary".into(),
-                    description: format!("送转事件 {} 的股份和除权未接通", book.plan().event_id),
+                    description: format!(
+                        "送转事件 {} 的股份、除权锚或 REG opening 不完整",
+                        plan.event_id
+                    ),
                 });
             }
         }
