@@ -143,6 +143,8 @@ impl GameSession {
             }
             // 经营、更正及 report 校验已成功；首次接管仍使用原 live，后续共用唯一 Admin。
             if self.runtime_driver.is_none() {
+                // 税账业务拒绝必须先于静点接管，避免失败时发布盘口镜像和序号。
+                shadow.validate_ordinary_tax_book_coverage(report.settled_date)?;
                 self.construct_runtime_driver_lazy()?;
                 // 静态接管也会更新 desk/ledger 镜像；callback 必须使用接管后的同版非 civil 基线。
                 // 已准备的六域只 move 到新 shadow，不重复经营或更正 Prepare；live 仍只由固定尾安装。

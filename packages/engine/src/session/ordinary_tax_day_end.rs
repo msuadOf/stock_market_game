@@ -40,12 +40,10 @@ fn invalid(detail: impl Into<String>) -> SessionCorporateActionsError {
 }
 
 impl GameSession {
-    /// 仅在 civil shadow 上调用；交易日证明来自原 live World 的真实末拍探测。
-    /// 同次 INFO/Admin 的固定成功尾负责安装 Companies，不在此提交第二次事务。
-    pub(super) fn prepare_ordinary_tax_day_end(
-        &mut self,
+    /// 静点接管前检查既有税账归属和个人持有人覆盖，不创建或推进税账。
+    pub(super) fn validate_ordinary_tax_book_coverage(
+        &self,
         day: crate::CivilDate,
-        committed_market_close: bool,
     ) -> Result<(), SessionError> {
         let Some(actions) = self.state.companies.corporate_actions() else {
             return Ok(());
@@ -59,6 +57,47 @@ impl GameSession {
                 ));
             }
         }
+        if self.state.setup.dividend_tax_mode == Some(CashDividendTaxMode::AShareIndividual) {
+            let tax_keys: BTreeSet<_> = actions
+                .dividend_tax_books
+                .iter()
+                .map(|book| (book.stock(), book.account()))
+                .collect();
+            for registry in &actions.registries {
+                for holding in registry.holdings() {
+                    let HolderId::Account(account) = holding.holder else {
+                        continue;
+                    };
+                    if self.state.accounts.get(&account).is_some_and(|account| {
+                        corporate_actions::taxpayer_identity_of_kind(account.kind())
+                            == TaxpayerIdentity::Personal
+                    }) && !tax_keys.contains(&(registry.stock(), account))
+                    {
+                        return Err(failure(
+                            day,
+                            Some(registry.stock()),
+                            invalid(format!(
+                                "已有个人持有人 {account:?} 缺少个人股息税账，禁止补建历史"
+                            )),
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// 仅在 civil shadow 上调用；交易日证明来自原 live World 的真实末拍探测。
+    /// 同次 INFO/Admin 的固定成功尾负责安装 Companies，不在此提交第二次事务。
+    pub(super) fn prepare_ordinary_tax_day_end(
+        &mut self,
+        day: crate::CivilDate,
+        committed_market_close: bool,
+    ) -> Result<(), SessionError> {
+        let Some(actions) = self.state.companies.corporate_actions() else {
+            return Ok(());
+        };
+        self.validate_ordinary_tax_book_coverage(day)?;
         if actions.registries.is_empty()
             && actions.dividends.is_empty()
             && actions.stock_distributions.is_empty()
@@ -300,27 +339,6 @@ impl GameSession {
                 .filter(|book| book.stock() == &stock)
                 .cloned()
                 .collect();
-            if self.state.setup.dividend_tax_mode == Some(CashDividendTaxMode::AShareIndividual) {
-                let tax_accounts: BTreeSet<_> = books.iter().map(|book| book.account()).collect();
-                for holding in registry.holdings() {
-                    let HolderId::Account(account) = holding.holder else {
-                        continue;
-                    };
-                    if self.state.accounts.get(&account).is_some_and(|account| {
-                        corporate_actions::taxpayer_identity_of_kind(account.kind())
-                            == TaxpayerIdentity::Personal
-                    }) && !tax_accounts.contains(&account)
-                    {
-                        return Err(failure(
-                            day,
-                            Some(&stock),
-                            invalid(format!(
-                                "已有个人持有人 {account:?} 缺少个人股息税账，禁止补建历史"
-                            )),
-                        ));
-                    }
-                }
-            }
             let mut changes = Vec::with_capacity(net.len());
             for (holder, (change, mut receipt_ids)) in net {
                 // 日净增按确认身份排序冻结来源，不依赖账户日志容器的迭代位置。
