@@ -991,6 +991,7 @@ impl GameSession {
     /// frame 投影路径（step_frame_and_commit）与 step_inner 都从这里进入同一 dispatcher。
     pub(super) fn check_step_start(&mut self) -> Result<(), StepFatal> {
         self.require_healthy()?;
+        self.validate_capital_market_boundary()?;
         #[cfg(test)]
         self.run_pre_mutation_hook()?;
         if self.state.accounts.has_missing_npc_strategy() {

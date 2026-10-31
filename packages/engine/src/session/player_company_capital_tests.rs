@@ -765,3 +765,23 @@ fn split_registration_captures_final_market_registry_in_civil_candidate() {
         &crate::company::share_split::ShareSplitStatus::Registered
     );
 }
+
+#[test]
+fn pending_split_blocks_crossing_ex_day_before_market_open() {
+    let mut game = game(false);
+    install_pending_split(&mut game, date("2030-06-03"), date("2030-06-04"));
+    let error = game
+        .validate_capital_civil_boundary(date("2030-06-03"), date("2030-06-04"), true)
+        .unwrap_err();
+    assert!(error.to_string().contains("fixture-future-split"));
+}
+
+#[test]
+fn serial_civil_rejects_unexecuted_capital_before_announcement() {
+    let mut game = game(false);
+    install_pending_split(&mut game, date("2030-06-13"), date("2030-06-14"));
+    let error = game
+        .validate_capital_civil_boundary(date("2030-06-03"), date("2030-06-04"), false)
+        .unwrap_err();
+    assert!(error.to_string().contains("fixture-future-split"));
+}
