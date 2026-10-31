@@ -2,6 +2,7 @@ import { mirrorOrigin, market, dailyCandle } from "./protocol-test-fixtures.ts";
 import { catalogWireFixture } from "./catalog-test-fixture.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import type { SessionSetup } from "../types/engine.ts";
 import type { HostFailure } from "./host-update.ts";
 import { createRemoteHost, remoteSpeedValue } from "./remote-host.ts";
@@ -166,7 +167,7 @@ test("Given an authenticated remote host, when player orders are queried, then i
   assert.deepEqual(await host.calculateIntradayAverageCurve({ seriesKey: "a", samples: [{ turnoverCents: "1000", tradeCount: 1, volumeShares: 10 }] }), [{ turnoverCents: "1000", volumeShares: 10 }]);
   assert.deepEqual(await host.queryPersonalTradeConfirmations(), []);
   const { createServer } = await import("vite");
-  const vite = await createServer({ root: "apps/web", configFile: false, appType: "custom", server: { middlewareMode: true, ws: false }, optimizeDeps: { noDiscovery: true } });
+  const vite = await createServer({ root: fileURLToPath(new URL("../..", import.meta.url)), configFile: false, appType: "custom", server: { middlewareMode: true, ws: false }, optimizeDeps: { noDiscovery: true } });
   try {
     const { actionsFor } = await vite.ssrLoadModule("/src/app/market-runtime-gate.test-support.tsx") as typeof import("../app/market-runtime-gate.test-support.tsx");
     const actions = actionsFor(host);
