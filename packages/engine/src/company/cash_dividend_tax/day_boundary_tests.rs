@@ -1106,3 +1106,89 @@ fn exempt_typed_issuance_remains_valid_on_following_market_day() {
     assert_eq!(continued.registry().issued_shares(), 110);
     assert_eq!(continued.registry().settled_on(), next.day);
 }
+
+#[test]
+fn treasury_cancellation_is_accepted_and_preserved_in_tax_history() {
+    let (base, book, mut day, calendar) = fixture();
+    let mut holdings = base.holdings().to_vec();
+    holdings.push(ShareHolding {
+        holder: HolderId::IssuerTreasury,
+        lots: vec![ShareLot {
+            id: "treasury-lot".into(),
+            qty: 20,
+            acquired_on: date("2024-01-02"),
+            source: AcquisitionSource::InitialAllocation {
+                evidence: "真实来源".into(),
+            },
+            restriction: ShareRestriction::Unrestricted,
+        }],
+    });
+    let registry = ShareRegistry::new(
+        base.stock().clone(),
+        crate::company::CompanyId(0),
+        120,
+        base.settled_on(),
+        holdings,
+    )
+    .unwrap();
+    day.predecessor = registry.settlement_frontier().unwrap();
+    day.post_market_actions = vec![SharePostAction::Movement(ShareDayRequest {
+        event_id: "issuer-repurchase-cancellation:plan".into(),
+        day: day.day,
+        scope: MovementScope::IssuerRepurchaseCancellation {
+            basis: "批准".into(),
+        },
+        changes: vec![DayNetChange {
+            holder: HolderId::IssuerTreasury,
+            change: -20,
+            acquisition: None,
+            consume: Some(vec![LotConsumption {
+                lot_id: "treasury-lot".into(),
+                qty: 20,
+            }]),
+        }],
+    })];
+    let invalid = {
+        let mut value = day.clone();
+        let SharePostAction::Movement(request) = &mut value.post_market_actions[0] else {
+            unreachable!()
+        };
+        request.changes[0].holder = HolderId::Account(AccountId(1));
+        value
+    };
+    assert!(TaxDayBoundaryFacts::prepare(
+        &registry,
+        std::slice::from_ref(&book),
+        &invalid,
+        &context(&calendar, &[], Some(day.day))
+    )
+    .is_err());
+    let result = TaxDayBoundaryFacts::prepare(
+        &registry,
+        std::slice::from_ref(&book),
+        &day,
+        &context(&calendar, &[], Some(day.day)),
+    )
+    .unwrap();
+    assert_eq!(result.registry().issued_shares(), 100);
+    assert_eq!(result.books()[0].lots(), book.lots());
+    assert!(TaxDayBoundaryFacts::prepare_exempt(
+        &registry,
+        &day,
+        &context(&calendar, &[], Some(day.day))
+    )
+    .is_ok());
+    let mut next = day.clone();
+    next.day = date("2026-01-07");
+    next.predecessor = result.registry().settlement_frontier().unwrap();
+    next.actual_market_close.request.day = next.day;
+    next.actual_market_close.request.event_id = "market:2026-01-07".into();
+    next.post_market_actions.clear();
+    assert!(TaxDayBoundaryFacts::prepare(
+        result.registry(),
+        result.books(),
+        &next,
+        &context(&calendar, &[], Some(next.day))
+    )
+    .is_ok());
+}
