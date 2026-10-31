@@ -638,9 +638,37 @@ pub enum SessionCommand {
     },
 }
 
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConfirmationQuery {
+    #[serde(deserialize_with = "required_cursor")]
+    before_receipt: Option<String>,
+}
+
+fn required_cursor<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    <Option<String> as serde::Deserialize>::deserialize(deserializer)
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(tag = "kind", content = "data", deny_unknown_fields)]
+pub enum HostQuery {
+    MarketHistory(engine::session::MarketHistoryRequest),
+    CurrentMinuteHistory(engine::session::CurrentMinuteHistoryRequest),
+    PersonalTradeHistory(engine::session::PersonalTradeHistoryRequest),
+    PersonalTradeConfirmations(ConfirmationQuery),
+    IntradayAverage(engine::IntradayAverageInput),
+    IntradayAverageCurve(Vec<engine::IntradayAverageInput>),
+}
+
 /// 共享市场成员请求；本人公司查询由当前成员关系导出账户。
 #[derive(Debug)]
 pub enum MemberRequest {
+    HostQuery {
+        generation: u64,
+        query: HostQuery,
+    },
     ProposePlayerCompanyAction {
         generation: u64,
         proposal: engine::session::PlayerCompanyProposal,
@@ -668,7 +696,9 @@ pub enum MemberRequest {
     /// 市场上下文（成员关系/控制权/世代/setup/seed）。
     Context,
     /// 停止共享市场（控制权 + 关闭 ingress 与命令通道）。
-    Shutdown { generation: u64 },
+    Shutdown {
+        generation: u64,
+    },
     /// 新局创建者绑定（仅 fresh 初始态一次）。
     BindCreator,
     /// 加入市场（确认重加入后按当前配置发一次入场资金）。
@@ -683,7 +713,9 @@ pub enum MemberRequest {
     /// 本人快照。
     Snapshot,
     /// 本人在途委托。
-    WorkingOrders { generation: u64 },
+    WorkingOrders {
+        generation: u64,
+    },
     /// 本人股票历史。
     History {
         generation: u64,
@@ -695,9 +727,15 @@ pub enum MemberRequest {
         cash: engine::Money,
     },
     /// 改速（控制权 Subject 化——取代裸 SetSpeed 的远程形态）。
-    SetSpeed { generation: u64, speed: f64 },
+    SetSpeed {
+        generation: u64,
+        speed: f64,
+    },
     /// 启停（控制权 Subject 化）。
-    SetRunning { generation: u64, running: bool },
+    SetRunning {
+        generation: u64,
+        running: bool,
+    },
     /// 暂停偏好（控制权 Subject 化）。
     SetPausePreferences {
         generation: u64,
@@ -707,6 +745,7 @@ pub enum MemberRequest {
 
 #[derive(Debug)]
 pub enum MemberResponse {
+    HostQuery(u64, serde_json::Value),
     CompanyWriteFatal(HostFailure),
     CompanyProposal(
         u64,
@@ -1303,6 +1342,21 @@ impl SessionHandles {
         {
             MemberResponse::History(generation, data) => Ok((generation, data)),
             _ => Err(SendCommandError::Rejected("成员历史响应类型错误".into())),
+        }
+    }
+
+    pub async fn host_query(
+        &self,
+        generation: u64,
+        subject: OpaqueSubjectId,
+        query: HostQuery,
+    ) -> Result<(u64, serde_json::Value), SendCommandError> {
+        match self
+            .member_request(subject, MemberRequest::HostQuery { generation, query })
+            .await?
+        {
+            MemberResponse::HostQuery(generation, value) => Ok((generation, value)),
+            _ => Err(SendCommandError::Rejected("查询响应类型错误".into())),
         }
     }
 
@@ -2629,6 +2683,100 @@ impl SessionActor {
                 Err(SendCommandError::Rejected(
                     "WORKING_ORDERS_REMOTE_PENDING_MULTI_MEMBER_READ_FACE".into(),
                 ))
+            }
+            MemberRequest::HostQuery { generation, query } => {
+                if generation != self.timeline_generation {
+                    return Err(SendCommandError::Rejected(
+                        "STALE_SESSION_GENERATION".into(),
+                    ));
+                }
+                let value = match query {
+                    HostQuery::MarketHistory(query) => {
+                        let account = match self.game.market_membership(&subject) {
+                            Ok(member) => Some(member.account_id),
+                            Err(engine::session::MembershipError::RejoinConfirmationRequired) => {
+                                None
+                            }
+                            Err(error) => return Err(reject(error)),
+                        };
+                        let page = match account {
+                            Some(account) => self.game.query_market_history_for(account, &query),
+                            None => self.game.market_history_page(&query),
+                        }
+                        .map_err(|e| SendCommandError::Rejected(e.to_string()))?;
+                        serde_json::to_value(page)
+                    }
+                    HostQuery::CurrentMinuteHistory(query) => {
+                        let account = match self.game.market_membership(&subject) {
+                            Ok(member) => Some(member.account_id),
+                            Err(engine::session::MembershipError::RejoinConfirmationRequired) => {
+                                None
+                            }
+                            Err(error) => return Err(reject(error)),
+                        };
+                        let response = match account {
+                            Some(account) => {
+                                self.game.query_current_minute_history_for(account, &query)
+                            }
+                            None => self.game.current_minute_history(&query),
+                        }
+                        .map_err(|e| SendCommandError::Rejected(e.to_string()))?;
+                        serde_json::to_value(response)
+                    }
+                    HostQuery::PersonalTradeHistory(query) => {
+                        let account = self
+                            .game
+                            .resolve_trading_account(&subject)
+                            .map_err(reject)?;
+                        serde_json::to_value(
+                            self.game
+                                .query_personal_trade_history(account, query)
+                                .map_err(|e| SendCommandError::Rejected(e.to_string()))?,
+                        )
+                    }
+                    HostQuery::PersonalTradeConfirmations(query) => {
+                        let cursor = query.before_receipt;
+                        let cursor = cursor
+                            .map(|s| {
+                                if s.is_empty()
+                                    || (s.len() > 1 && s.starts_with('0'))
+                                    || !s.bytes().all(|b| b.is_ascii_digit())
+                                {
+                                    return Err(SendCommandError::Rejected(
+                                        "交割单游标无效".into(),
+                                    ));
+                                }
+                                s.parse::<u64>()
+                                    .map_err(|e| SendCommandError::Rejected(e.to_string()))
+                            })
+                            .transpose()?;
+                        serde_json::to_value(
+                            self.game.personal_trade_confirmations_page(
+                                self.game
+                                    .resolve_trading_account(&subject)
+                                    .map_err(reject)?,
+                                cursor,
+                            ),
+                        )
+                    }
+                    HostQuery::IntradayAverage(input) => serde_json::to_value(
+                        engine::calculate_intraday_average_from_input(&input)
+                            .map_err(|e| SendCommandError::Rejected(e.to_string()))?,
+                    ),
+                    HostQuery::IntradayAverageCurve(samples) => {
+                        if samples.len() > 600 {
+                            return Err(SendCommandError::Rejected(
+                                "均价曲线样本数超过 600".into(),
+                            ));
+                        }
+                        serde_json::to_value(
+                            engine::calculate_intraday_average_curve(&samples)
+                                .map_err(|e| SendCommandError::Rejected(e.to_string()))?,
+                        )
+                    }
+                }
+                .map_err(|e| SendCommandError::Rejected(e.to_string()))?;
+                Ok(MemberResponse::HostQuery(generation, value))
             }
             MemberRequest::History { generation, code } => {
                 let account = self

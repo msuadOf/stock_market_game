@@ -124,6 +124,22 @@ test("Given an authenticated remote host, when player orders are queried, then i
         id: 7, code: 0, side: "Buy", price: "1234", remainingQty: 200, venue: "Continuous", frozen: "Cash",
       }] }), { status: 200 });
     }
+    if (url.endsWith("/api/host-query")) {
+      const body = JSON.parse(String(init?.body));
+      assert.equal(new Headers(init?.headers).get("authorization"), "Bearer token-1");
+      assert.equal(body.generation, "2");
+      const values: Record<string, unknown> = {
+        IntradayAverage: { turnover_cents: "1000", volume_shares: 10 },
+        IntradayAverageCurve: [{ turnover_cents: "1000", volume_shares: 10 }],
+        PersonalTradeConfirmations: [],
+        CurrentMinuteHistory: { stock: 0, date: "2030-01-02", live: true, trading: false, phase: "Closed", bars: [] },
+      };
+      if (body.query.kind === "MarketHistory") {
+        assert.equal(body.query.data.stock, 0);
+        return new Response(JSON.stringify({ generation: "1", value: {} }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ generation: "2", value: values[body.query.kind] }), { status: 200 });
+    }
     if (url.endsWith("/api/indicators")) return new Response(JSON.stringify({
       macd: { dif: [0], dea: [0], histogram: [0] },
       priceKdj: { k: [50], d: [50], j: [50] },
@@ -146,6 +162,11 @@ test("Given an authenticated remote host, when player orders are queried, then i
     id: 7, code: "000812", side: "Buy", price: "1234", remainingQty: 200, venue: "Continuous", frozen: "Cash",
   }]);
   assert.equal((await host.calculateIndicators({ prices: [10], candles: [{ high: 11, low: 9, close: 10 }] })).macd.dif[0], 0);
+  assert.deepEqual(await host.calculateIntradayAverage({ turnoverCents: "1000", tradeCount: 1, volumeShares: 10 }), { turnoverCents: "1000", volumeShares: 10 });
+  assert.deepEqual(await host.calculateIntradayAverageCurve({ seriesKey: "a", samples: [{ turnoverCents: "1000", tradeCount: 1, volumeShares: 10 }] }), [{ turnoverCents: "1000", volumeShares: 10 }]);
+  assert.deepEqual(await host.queryPersonalTradeConfirmations(), []);
+  assert.equal((await host.queryCurrentMinuteHistory({ code: "000812" })).code, "000812");
+  await assert.rejects(host.queryMarketHistory({ code: "000812", date_from: "2030-01-01", date_to: "2030-01-02", after: null, page_size: 2 }), /过期/);
   const request = requests.find(({ url }) => url.includes("/api/player-working-orders?"));
   assert.ok(request);
   assert.equal(new URL(request.url).searchParams.get("session_id"), "session-1");

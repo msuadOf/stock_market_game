@@ -102,6 +102,7 @@ fn app_router_with_state(state: AppState) -> Router {
         )
         .route("/api/host-capabilities", get(routes::api_host_capabilities))
         .route("/api/indicators", post(routes::api_calculate_indicators))
+        .route("/api/host-query", post(routes::api_host_query))
         .route(
             "/api/companies/:company_id/reports",
             get(routes::api_public_report_page),

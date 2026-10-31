@@ -1216,6 +1216,62 @@ pub async fn api_host_capabilities(
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+pub(crate) struct HostQueryBody {
+    session_id: String,
+    generation: String,
+    query: crate::actor::HostQuery,
+}
+
+pub(crate) async fn api_host_query(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Result<Json<HostQueryBody>, JsonRejection>,
+) -> Response {
+    let Json(body) = match body {
+        Ok(body) => body,
+        Err(error) => return invalid_json_response(error),
+    };
+    let private = matches!(
+        &body.query,
+        crate::actor::HostQuery::PersonalTradeHistory(_)
+            | crate::actor::HostQuery::PersonalTradeConfirmations(_)
+    );
+    let authorization = if private {
+        authorized_session(&state, &body.session_id, authorization_token(&headers)).await
+    } else {
+        authorized_market(&state, &body.session_id, authorization_token(&headers)).await
+    };
+    let (handles, subject) = match authorization {
+        Ok(context) => context,
+        Err(response) => return *response,
+    };
+    let generation = match parse_host_parity_generation(&body.generation) {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    match handles.host_query(generation, subject, body.query).await {
+        Ok((generation, value)) => (
+            StatusCode::OK,
+            Json(serde_json::json!({"generation": generation.to_string(), "value": value})),
+        )
+            .into_response(),
+        Err(SendCommandError::Rejected(reason)) if reason.contains("STALE_SESSION_GENERATION") => {
+            api_error(StatusCode::CONFLICT, "STALE_SESSION_GENERATION", reason)
+        }
+        Err(SendCommandError::Rejected(reason)) => {
+            api_error(StatusCode::BAD_REQUEST, "HOST_QUERY_REJECTED", reason)
+        }
+        Err(SendCommandError::ActorGone) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "ACTOR_GONE",
+            "session actor gone",
+        ),
+        Err(SendCommandError::InvalidSpeed(_)) => unreachable!("查询不修改速度"),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct CalculateIndicatorsBody {
     session_id: String,
     prices: Vec<f64>,

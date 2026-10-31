@@ -1,3 +1,7 @@
+import { normalizeMarketHistoryRequest, normalizeMarketHistoryPage, wireMarketHistoryRequest } from "./market-history.ts";
+import { normalizeCurrentMinuteHistoryRequest, normalizeCurrentMinuteHistoryResponse, wireCurrentMinuteHistoryRequest } from "./current-minute-history.ts";
+import { normalizePersonalTradeHistoryRequest, normalizePersonalTradeHistoryPage, wirePersonalTradeHistoryRequest } from "./personal-trade-history.ts";
+import { normalizeConfirmationCursor, normalizePersonalTradeConfirmations, normalizeIntradayAverageInput, normalizeIntradayAverageCurveInput, normalizeIntradayAverageCurveResult } from "./intraday-average.ts";
 import type { HistoricalStockData, PublicReportPage, PublicReportQuery, PublicReportSummary, SessionSetup, StockCode } from "../types/engine.ts";
 import type { CodedIntent, CodedSnapshot } from "./protocol/stock-identity.ts";
 import { wireIntentOf } from "./protocol/stock-identity.ts";
@@ -80,6 +84,15 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
     if (disposed) return Promise.reject(new Error("远程会话已经销毁，请求未发送"));
     return requests.request(fetchFn, url, init, decoder);
   };
+  const hostQuery = async (kind: string, data: unknown): Promise<unknown> => {
+    const cursor = publisher.captureQueryCursor("远程基线尚未就绪，不能查询");
+    const response = record(await requestJson(`${baseUrl}/api/host-query`, remotePost({ session_id: created.id, generation: cursor.generation, query: { kind, data } }, token)), "远程查询响应");
+    exact(response, ["generation", "value"], "远程查询响应");
+    if (disposed) throw new Error("远程查询响应属于已销毁会话");
+    publisher.assertQueryCursor(cursor, response.generation, "远程查询响应属于已过期 baseline/generation");
+    return response.value;
+  };
+  const wireAverage = (sample: { turnoverCents: string; tradeCount: number; volumeShares: number }) => ({ turnover_cents: sample.turnoverCents, trade_count: sample.tradeCount, volume_shares: sample.volumeShares });
   const clearTransportTimers = () => {
     if (pullTimer !== null) clearInterval(pullTimer);
     if (pullResponseTimer !== null) clearTimeout(pullResponseTimer);
@@ -495,14 +508,30 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
       const result = await requestJson(`${baseUrl}/api/indicators`, remotePost({ session_id: created.id, ...normalized }, token));
       return normalizeIndicatorResults(result, normalized);
     },
-    // W3 查询面：远程服务端查询路由尚未接线（server 批次），显式失败不静默
-    // 回退（铁律二）——面板将错误原文展示给用户。
-    async queryMarketHistory(): Promise<never> { throw new Error("远程宿主尚未接入保留历史查询路由"); },
-    async queryCurrentMinuteHistory(): Promise<never> { throw new Error("远程宿主尚未接入当日分钟K查询路由"); },
-    async queryPersonalTradeHistory(): Promise<never> { throw new Error("远程宿主尚未接入本人交割历史查询路由"); },
-    async queryPersonalTradeConfirmations(): Promise<never> { throw new Error("远程宿主尚未接入本人交割单查询路由"); },
-    async calculateIntradayAverage(): Promise<never> { throw new Error("远程宿主尚未接入分时均价计算路由"); },
-    async calculateIntradayAverageCurve(): Promise<never> { throw new Error("远程宿主尚未接入分时均价曲线计算路由"); },
+    async queryMarketHistory(request) {
+      const normalized = normalizeMarketHistoryRequest(request), identity = requireCatalogResolver();
+      return normalizeMarketHistoryPage(await hostQuery("MarketHistory", wireMarketHistoryRequest(normalized, identity)), normalized, identity);
+    },
+    async queryCurrentMinuteHistory(request) {
+      const normalized = normalizeCurrentMinuteHistoryRequest(request), identity = requireCatalogResolver();
+      return normalizeCurrentMinuteHistoryResponse(await hostQuery("CurrentMinuteHistory", wireCurrentMinuteHistoryRequest(normalized, identity)), normalized, identity);
+    },
+    async queryPersonalTradeHistory(request) {
+      const normalized = normalizePersonalTradeHistoryRequest(request), identity = requireCatalogResolver();
+      return normalizePersonalTradeHistoryPage(await hostQuery("PersonalTradeHistory", wirePersonalTradeHistoryRequest(normalized, identity)), normalized, identity);
+    },
+    async queryPersonalTradeConfirmations(beforeReceipt = null) {
+      const identity = requireCatalogResolver();
+      return normalizePersonalTradeConfirmations(await hostQuery("PersonalTradeConfirmations", { before_receipt: normalizeConfirmationCursor(beforeReceipt) }), identity);
+    },
+    async calculateIntradayAverage(input) {
+      const sample = normalizeIntradayAverageInput(input);
+      return normalizeIntradayAverageCurveResult([await hostQuery("IntradayAverage", wireAverage(sample))], 1, [sample])[0];
+    },
+    async calculateIntradayAverageCurve(input) {
+      const normalized = normalizeIntradayAverageCurveInput(input);
+      return normalizeIntradayAverageCurveResult(await hostQuery("IntradayAverageCurve", normalized.samples.map(wireAverage)), normalized.samples.length, normalized.samples);
+    },
     async load(slot: unknown, onRestored?: () => void) {
       if (disposed) throw new Error("远程会话已经销毁，不能读档");
       if (pendingRestore !== null) throw new Error("上一项远程读档尚未确认，请先刷新权威基线");

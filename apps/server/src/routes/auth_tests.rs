@@ -515,3 +515,114 @@ async fn session_private_http_routes_require_the_matching_bearer_token() {
         StatusCode::NO_CONTENT
     );
 }
+
+#[tokio::test]
+async fn host_queries_require_member_and_current_generation() {
+    let app = crate::app_router();
+    let (status, created) = request(
+        app.clone(),
+        "POST",
+        "/api/new",
+        Some(json!({"setup":setup(),"seed":"71"})),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let token = created["test_credential"].as_str().unwrap();
+    let mut body = json!({"session_id":created["session_id"], "generation":created["generation"], "query":{"kind":"PersonalTradeConfirmations","data":{"before_receipt":null}}});
+    assert_eq!(
+        request(
+            app.clone(),
+            "POST",
+            "/api/host-query",
+            Some(body.clone()),
+            None
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    let (status, result) = request(
+        app.clone(),
+        "POST",
+        "/api/host-query",
+        Some(body.clone()),
+        Some(token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert_eq!(result["value"], json!([]));
+    let guest = guest_token(app.clone()).await;
+    assert_eq!(
+        request(
+            app.clone(),
+            "POST",
+            "/api/host-query",
+            Some(body.clone()),
+            Some(&guest)
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    let mut public = body.clone();
+    public["query"] = json!({"kind":"CurrentMinuteHistory", "data":{"stock":0}});
+    assert_eq!(
+        request(
+            app.clone(),
+            "POST",
+            "/api/host-query",
+            Some(public),
+            Some(&guest)
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let mut missing = body.clone();
+    missing["query"] = json!({"kind":"PersonalTradeConfirmations", "data":{}});
+    assert_eq!(
+        request(
+            app.clone(),
+            "POST",
+            "/api/host-query",
+            Some(missing),
+            Some(token)
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    body["generation"] = json!("999");
+    assert_eq!(
+        request(
+            app.clone(),
+            "POST",
+            "/api/host-query",
+            Some(body.clone()),
+            Some(token)
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    body["generation"] = created["generation"].clone();
+    body["query"] = json!({"kind":"IntradayAverage", "data":{"turnover_cents":"18446744073709551616","trade_count":1,"volume_shares":10}});
+    let (status, result) = request(
+        app.clone(),
+        "POST",
+        "/api/host-query",
+        Some(body.clone()),
+        Some(token),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert_eq!(result["value"]["turnover_cents"], "18446744073709551616");
+    body["query"]["data"]["turnover_cents"] = json!("01");
+    assert_eq!(
+        request(app, "POST", "/api/host-query", Some(body), Some(token))
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
+}
