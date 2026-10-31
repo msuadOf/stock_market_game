@@ -767,13 +767,28 @@ fn split_registration_captures_final_market_registry_in_civil_candidate() {
 }
 
 #[test]
-fn pending_split_blocks_crossing_ex_day_before_market_open() {
+fn pending_flat_split_blocks_crossing_ex_day_before_market_open() {
     let mut game = game(false);
+    assert_eq!(
+        game.state.setup.dividend_tax_mode,
+        Some(CashDividendTaxMode::FlatWithholding)
+    );
     install_pending_split(&mut game, date("2030-06-03"), date("2030-06-04"));
+    let before = serde_json::to_value(game.save().unwrap()).unwrap();
+    let revision = game.external_revision();
     let error = game
         .validate_capital_civil_boundary(date("2030-06-03"), date("2030-06-04"), true)
         .unwrap_err();
+    assert!(matches!(
+        &error,
+        SessionError::UnsupportedCapitalBoundary(_)
+    ));
     assert!(error.to_string().contains("fixture-future-split"));
+    assert!(error.to_string().contains("FlatWithholding"));
+    assert!(error.to_string().contains("Exempt"));
+    assert_eq!(serde_json::to_value(game.save().unwrap()).unwrap(), before);
+    assert_eq!(game.external_revision(), revision);
+    assert!(game.require_healthy().is_ok());
 }
 
 #[test]

@@ -3769,7 +3769,7 @@ impl GameSession {
         Ok(report)
     }
 
-    /// 串行宿主尚无资本行为日终，native 不得越过未接通的股份换算边界。
+    /// 串行资本行为仍拒绝；native 在 E 仅放行已接线税制，登记与资源交给后续候选校验。
     pub(super) fn validate_capital_civil_boundary(
         &self,
         _day: crate::CivilDate,
@@ -3801,6 +3801,18 @@ impl GameSession {
             }
         }
         for book in &actions.share_splits {
+            if book.status() != &crate::company::share_split::ShareSplitStatus::Settled
+                && runtime
+                && next == book.plan().ex_rights_on
+                && self.state.setup.dividend_tax_mode
+                    != Some(crate::company::cash_dividend_tax::CashDividendTaxMode::Exempt)
+            {
+                return Err(SessionError::UnsupportedCapitalBoundary(format!(
+                    "拆缩股事件 {} 的盘前股份和除权仅支持 Exempt，当前税务模式 {:?}",
+                    book.plan().event_id,
+                    self.state.setup.dividend_tax_mode
+                )));
+            }
             if book.status() != &crate::company::share_split::ShareSplitStatus::Settled
                 && (!runtime || next > book.plan().ex_rights_on)
             {

@@ -75,6 +75,17 @@ fn split_session_on(
 fn native_split_and_consolidation_restore_first_sale_and_real_close() {
     for direction in [ShareSplitDirection::Split, ShareSplitDirection::Consolidate] {
         let mut session = split_session(direction.clone(), 2);
+        session
+            .validate_capital_civil_boundary(date(START), date(PAYMENT_DAY), true)
+            .expect("Exempt 必须可进入随后真实登记与盘前候选");
+        let missed = session
+            .validate_capital_civil_boundary(date(START), date(PAYMENT_DAY).next().unwrap(), true)
+            .unwrap_err();
+        assert!(matches!(
+            &missed,
+            SessionError::UnsupportedCapitalBoundary(_)
+        ));
+        assert!(missed.to_string().contains("opening-split"));
         super::stock_opening_runtime_tests::trade(
             &mut session,
             AccountId(1),
