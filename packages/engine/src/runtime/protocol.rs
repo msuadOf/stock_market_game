@@ -728,6 +728,8 @@ pub enum InformationMemoryRetention {
 /// observation=None 不要求 market/day，不声称发生过本人观察。
 #[derive(Clone, Debug)]
 pub struct InformationPreparePayload {
+    /// 仅本次 Admin 的股份单位转换；必须绑定同次真实 Desk 除权请求。
+    pub price_unit_changes: Vec<DeskExRightsRequest>,
     pub library: std::sync::Arc<crate::information::PublicLibrary>,
     pub current_facts: std::sync::Arc<crate::company::CompanyReadFacts>,
     pub observation: Option<InformationObservation>,

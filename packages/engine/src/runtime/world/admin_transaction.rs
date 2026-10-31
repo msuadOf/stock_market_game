@@ -177,6 +177,21 @@ impl World {
             .checked_add(1)
             .ok_or_else(|| invalid("行政事务 id 已耗尽"))?;
         let id = AdminTransactionId(self.admin_next_id);
+        if let Some(payload) = &information {
+            let mut stocks = BTreeSet::new();
+            if (!payload.price_unit_changes.is_empty() && payload.observation.is_none())
+                || payload.price_unit_changes.iter().any(|change| {
+                    change.expected_last_close <= 0
+                        || change.reference_price <= 0
+                        || !stocks.insert(change.stock)
+                        || !desks.contains(change)
+                })
+            {
+                return Err(invalid(
+                    "个人价格单位转换缺少同次真实 Desk 除权请求或观察作用域",
+                ));
+            }
+        }
         let mut seen_stocks = BTreeSet::new();
         if desks.iter().any(|request| {
             usize::from(request.stock) >= self.n_stocks || !seen_stocks.insert(request.stock)

@@ -1246,3 +1246,101 @@ fn civil_retention_prunes_same_signature_even_when_personal_check_is_due() {
         .next_information_check = at(9, 0);
     assert_civil_retention_candidate(&mut s, p, 2);
 }
+
+#[test]
+fn info_capital_price_unit_change_preserves_epochs_history_and_abort() {
+    assert_eq!(
+        crate::experience::reanchor_price(crate::Money::from_cents(5), 1, 2)
+            .unwrap()
+            .cents(),
+        2
+    );
+    assert!(crate::experience::reanchor_price(crate::Money::from_cents(1), 1, 3).is_err());
+    assert!(crate::experience::reanchor_price(crate::Money::from_cents(i64::MAX), 2, 1).is_err());
+    let owner = AccountId(71);
+    let code = StockId(0);
+    for reference in [500, 2000] {
+        let mut s = state(&[owner]);
+        let mut original = personal(owner);
+        let price = crate::Money::from_cents(1000);
+        let mut experience = crate::RetailExperienceState::without_equity_reference();
+        let moment = crate::experience::ExperienceMoment {
+            civil_date: at(19, 0).date(),
+            trading_day: 0,
+            market_minute: 0,
+        };
+        experience
+            .initialize_holding_dated(&code, Some(price), price, moment)
+            .unwrap();
+        let stock = experience.stocks.get_mut(&code).unwrap();
+        stock.last_buy_price = Some(price);
+        stock.last_buy_order_id = Some(1);
+        original.retail_experience = Some(experience.clone());
+        original.belief.experience_mut().clone_from(&experience);
+        original
+            .price_memory
+            .observe_price(&code, price, 0)
+            .unwrap();
+        s.belief_states[0] = Some(original.clone());
+        let mut p = payload(true);
+        p.price_unit_changes
+            .push(crate::runtime::protocol::DeskExRightsRequest {
+                stock: 0,
+                expected_last_close: 1000,
+                reference_price: reference,
+            });
+        let candidate = s
+            .prepare_admin_with_information(AdminTransactionId(1), Vec::new(), Some(p))
+            .unwrap();
+        let mut next = candidate.information.unwrap().personals.remove(0).2;
+        let changed = crate::Money::from_cents(reference);
+        let retail = next.retail_experience.as_mut().unwrap();
+        assert_eq!(retail.stocks[&code].entry_reference_price, Some(changed));
+        assert_eq!(retail.stocks[&code].last_buy_price, Some(changed));
+        assert_eq!(retail.stocks[&code].peak_price_since_entry, Some(changed));
+        assert_eq!(retail.stocks[&code].last_buy_order_id, Some(1));
+        assert_eq!(retail.feedback.stocks[&code].entry_moment, moment);
+        assert_eq!(
+            retail.feedback.stocks[&code]
+                .last_own_observation
+                .unwrap()
+                .moment,
+            moment
+        );
+        assert_eq!(
+            retail.feedback.stocks[&code]
+                .last_own_observation
+                .unwrap()
+                .price,
+            changed
+        );
+        assert_eq!(
+            retail.feedback.failure_events,
+            experience.feedback.failure_events
+        );
+        assert_eq!(
+            retail.feedback.exit_records,
+            experience.feedback.exit_records
+        );
+        retail.observe_position(&code, changed, 1).unwrap();
+        assert_eq!(retail.consecutive_failed_buys, 0, "机械除权不能算逆境");
+        let memory = &next.price_memory.stocks[&code];
+        assert_eq!(memory.first_observed_price, changed);
+        assert_eq!(memory.last_observed_price, changed);
+        assert_eq!(memory.observed_high, changed);
+        assert_eq!(memory.observed_low, changed);
+        assert_eq!(memory.last_touched_minute, 0);
+        assert_eq!(
+            next.belief.experience().stocks[&code].last_buy_price,
+            Some(changed)
+        );
+        assert_eq!(
+            s.belief_states[0].as_ref().unwrap(),
+            &original,
+            "prepare 不能安装个人态"
+        );
+        s.complete_admin(AdminTransactionId(1), AdminPhase::Abort)
+            .unwrap();
+        assert_eq!(s.belief_states[0].as_ref().unwrap(), &original);
+    }
+}

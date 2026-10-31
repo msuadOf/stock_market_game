@@ -118,6 +118,18 @@ fn native_split_and_consolidation_restore_first_sale_and_real_close() {
             session.state.markets[&StockId(0)].last_close().cents(),
             reference
         );
+        let experience = session.state.retail_experience.get(&AccountId(2)).unwrap();
+        assert_eq!(
+            experience.stocks[&StockId(0)].entry_reference_price,
+            Some(Money::from_cents(reference))
+        );
+        assert_eq!(
+            experience.feedback.stocks[&StockId(0)]
+                .last_own_observation
+                .unwrap()
+                .price,
+            Money::from_cents(reference)
+        );
         let saved = session.save().unwrap();
         let json: crate::SaveSlot =
             serde_json::from_value(serde_json::to_value(&saved).unwrap()).unwrap();

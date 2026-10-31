@@ -556,6 +556,7 @@ fn player_command_info_inspect_rejection_leaves_the_session_usable() {
     let mut game = game(true);
     game.construct_runtime_driver_lazy().unwrap();
     let payload = crate::runtime::world::InformationPreparePayload {
+        price_unit_changes: Vec::new(),
         library: std::sync::Arc::clone(&game.state.library),
         current_facts: std::sync::Arc::new(game.state.company_read_facts().unwrap()),
         observation: None,

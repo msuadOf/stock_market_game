@@ -43,6 +43,12 @@ pub enum ExperienceError {
         before_qty: u32,
         after_qty: u32,
     },
+    #[error("price unit change rejects {price_cents} cents × {numerator}/{denominator}")]
+    InvalidPriceUnitChange {
+        price_cents: i64,
+        numerator: u64,
+        denominator: u64,
+    },
     #[error("retail experience counter overflow")]
     CounterOverflow,
     #[error("institutional fee history overflow")]
@@ -146,6 +152,41 @@ impl RetailExperienceState {
             stock.cooldown_until_market_minute = None;
         }
         self.feedback.stocks.remove(code);
+    }
+
+    /// 资本行为只转换当前价格单位；订单身份、时钟、epoch 及历史记录原样保留。
+    pub(crate) fn reanchor_holding_prices(
+        &mut self,
+        code: &StockId,
+        numerator: u64,
+        denominator: u64,
+    ) -> Result<(), ExperienceError> {
+        let mut stock = self.stocks.get(code).cloned();
+        if let Some(stock) = &mut stock {
+            for price in [
+                &mut stock.entry_reference_price,
+                &mut stock.peak_price_since_entry,
+                &mut stock.last_buy_price,
+            ] {
+                if let Some(value) = price {
+                    *value = reanchor_price(*value, numerator, denominator)?;
+                }
+            }
+        }
+        let mut epoch = self.feedback.stocks.get(code).cloned();
+        if let Some(observation) = epoch
+            .as_mut()
+            .and_then(|epoch| epoch.last_own_observation.as_mut())
+        {
+            observation.price = reanchor_price(observation.price, numerator, denominator)?;
+        }
+        if let Some(stock) = stock {
+            self.stocks.insert(*code, stock);
+        }
+        if let Some(epoch) = epoch {
+            self.feedback.stocks.insert(*code, epoch);
+        }
+        Ok(())
     }
 
     pub fn new(reference_equity: Money) -> Result<Self, ExperienceError> {
@@ -314,6 +355,35 @@ impl RetailExperienceState {
             self.stocks.remove(&code);
         }
     }
+}
+
+/// 统一按整数半偶舍入落分；零价或溢出拒绝整笔候选，不静默补为一分。
+pub(crate) fn reanchor_price(
+    price: Money,
+    numerator: u64,
+    denominator: u64,
+) -> Result<Money, ExperienceError> {
+    let invalid = || ExperienceError::InvalidPriceUnitChange {
+        price_cents: price.cents(),
+        numerator,
+        denominator,
+    };
+    if price <= Money::ZERO || numerator == 0 || denominator == 0 {
+        return Err(invalid());
+    }
+    let scaled = i128::from(price.cents())
+        .checked_mul(i128::from(numerator))
+        .ok_or_else(invalid)?;
+    let divisor = i128::from(denominator);
+    let quotient = scaled / divisor;
+    let remainder = scaled % divisor;
+    let rounded = quotient
+        + i128::from(remainder * 2 > divisor || (remainder * 2 == divisor && quotient % 2 == 1));
+    let cents = i64::try_from(rounded)
+        .ok()
+        .filter(|value| *value > 0)
+        .ok_or_else(invalid)?;
+    Ok(Money::from_cents(cents))
 }
 
 fn require_positive(field: &'static str, value: Money) -> Result<(), ExperienceError> {

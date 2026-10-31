@@ -162,6 +162,18 @@ fn native_stock_opening_real_registration_restore_first_sale_and_close() {
         500
     );
     assert_eq!(session.state.markets[&StockId(0)].last_close().cents(), 500);
+    let experience = session.state.retail_experience.get(&AccountId(2)).unwrap();
+    assert_eq!(
+        experience.stocks[&StockId(0)].entry_reference_price,
+        Some(Money::from_cents(500))
+    );
+    assert_eq!(
+        experience.feedback.stocks[&StockId(0)]
+            .last_own_observation
+            .unwrap()
+            .price,
+        Money::from_cents(500)
+    );
     let saved = session.save().unwrap();
     let json: crate::SaveSlot =
         serde_json::from_value(serde_json::to_value(&saved).unwrap()).unwrap();

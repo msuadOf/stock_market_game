@@ -786,3 +786,13 @@ E 首拍使用换算后的可卖股数与参考价，E 收盘只用真实成交�
 
 本轮新增双方向首拍／恢复／真实收盘旅程与缩股至零、投影 Abort 代表测试；
 编译、执行及独立复核由主任务统一安排，尚未据此宣称验收通过。
+
+
+送转与拆缩股的同一 Admin INFO 候选现使用同次真实 Desk 的
+`reference_price / expected_last_close` 作为统一价格单位换算比率，不按每户碎股取整结果
+生成不同价格。当前持仓的 `entry_reference_price`、`peak_price_since_entry`、
+`last_buy_price`、active `HoldingEpoch.last_own_observation.price` 以及所有本人价格记忆
+（包括未持仓关注者的首次／最近／最高／最低锚）同步换算；各观察时钟、epoch 入场日期、
+订单身份、受挫和退出历史保留。个人价格落分使用整数半偶舍入，若某个已有正价格锚换算后
+不足一分或超出 `i64`，显式拒绝整笔候选，不补造价格。该记账单位转换不是一次新观察，
+不新增成交、失败经历或冷静期；Abort 保留完整原个人态。

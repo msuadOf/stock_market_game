@@ -1,11 +1,13 @@
 //! 个人价格记忆只保存本人真实见过的价格锚点，不虚构观察经历。
 //!
-//! 每个自然人的记忆独立，不共享账户状态。单股条目只由两类真实事件修改：
+//! 每个自然人的记忆独立，不共享账户状态。单股条目由两类真实事件写入观察事实：
 //! - [`PersonalPriceMemory::observe_price`]：本人当时看见的市场价。已观察高低
 //!   只累计本人所见样本，首次观察之前的历史价格永远不会被追认为亲历。
 //! - [`PersonalPriceMemory::record_public_history_read`]：已观察股票的实际技术分析
 //!   读取，更新独立 [`PersonalHistoryReadLedger`] 并刷新该条目的最近接触时间。
 //!   玩家可读取尚未观察的公开历史，仍只写入独立读取簿，不创建价格锚点。
+//!
+//! 已批准的资本行为另可统一转换既有价格单位，不新增观察或修改观察时钟。
 //!
 //! 记忆上限复用持仓 + 8 个未持仓股票（[`MAX_UNHELD_WATCHLIST_STOCKS`]）。
 //! 驱逐按最后实际接触时间（本人观察与本人历史读取取较晚者）排序，同分钟按
@@ -122,6 +124,28 @@ pub struct PersonalPriceMemory {
 }
 
 impl PersonalPriceMemory {
+    /// 按资本行为的统一价格单位转换已有锚点；不新增观察，也不推进任何记忆时钟。
+    pub(crate) fn reanchor_prices(
+        &mut self,
+        code: &StockId,
+        numerator: u64,
+        denominator: u64,
+    ) -> Result<(), super::ExperienceError> {
+        if let Some(original) = self.stocks.get(code) {
+            let mut memory = original.clone();
+            for price in [
+                &mut memory.first_observed_price,
+                &mut memory.last_observed_price,
+                &mut memory.observed_high,
+                &mut memory.observed_low,
+            ] {
+                *price = super::reanchor_price(*price, numerator, denominator)?;
+            }
+            self.stocks.insert(*code, memory);
+        }
+        Ok(())
+    }
+
     /// 查询单股记忆，供候选评分聚合个人判断输入。
     pub fn stock(&self, code: &StockId) -> Option<&StockPriceMemory> {
         self.stocks.get(code)
