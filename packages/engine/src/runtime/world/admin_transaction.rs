@@ -429,7 +429,7 @@ impl World {
         let mut prepared_desks = Vec::new();
         for request in &desks {
             match self.prepare_desk_ex_rights(id, *request) {
-                Ok(()) => prepared_desks.push(*request),
+                Ok(candidate) => prepared_desks.push(candidate),
                 Err(error) if !error.terminal => {
                     self.abort_admin_preserving_error(id, expected, &error.error)?;
                     self.control_desk_ex_rights(id, AdminPhase::Abort, &prepared_desks)?;
@@ -523,6 +523,15 @@ impl World {
                 })
             }
         };
+        let next_public_views = if prepared_desks.is_empty() {
+            None
+        } else {
+            let mut views = self.public_views.clone();
+            for desk in &prepared_desks {
+                views[usize::from(desk.request.stock)] = desk.view.clone();
+            }
+            Some(views)
+        };
         if !expected.is_empty() {
             // 首个 commit 发送前关窗；任何部分提交失败均不可复用 world。
             self.day_end_prior_public_views = None;
@@ -540,6 +549,10 @@ impl World {
                     failure
                 })?;
         }
+        // 公开快照在首 Commit 前构造，成功尾只移动。
+        if let Some(views) = next_public_views {
+            self.public_views = views;
+        }
         self.non_tick_revision = next_revision;
         self.pending_mirror_domains = captured;
         Ok((value, ack))
@@ -549,7 +562,7 @@ impl World {
         &mut self,
         id: AdminTransactionId,
         request: crate::runtime::protocol::DeskExRightsRequest,
-    ) -> Result<(), AdminFailure> {
+    ) -> Result<crate::runtime::protocol::DeskExRightsCandidate, AdminFailure> {
         self.desk_txs[usize::from(request.stock)]
             .send(DeskMsg::ExRightsPrepare { id, request })
             .map_err(|_| invalid("除权 Prepare 发送失败"))?;
@@ -560,13 +573,15 @@ impl World {
         &mut self,
         id: AdminTransactionId,
         phase: AdminPhase,
-        requests: &[crate::runtime::protocol::DeskExRightsRequest],
+        requests: &[crate::runtime::protocol::DeskExRightsCandidate],
     ) -> Result<(), AdminFailure> {
         for request in requests {
-            self.desk_txs[usize::from(request.stock)]
+            self.desk_txs[usize::from(request.request.stock)]
                 .send(DeskMsg::ExRightsComplete { id, phase })
                 .map_err(|_| invalid("除权完成消息发送失败"))?;
-            self.receive_desk_ex_rights(id, phase, *request)?;
+            if self.receive_desk_ex_rights(id, phase, request.request)? != *request {
+                return Err(invalid("除权完成回执与 Prepare 候选不一致").into());
+            }
         }
         Ok(())
     }
@@ -576,7 +591,7 @@ impl World {
         id: AdminTransactionId,
         phase: AdminPhase,
         request: crate::runtime::protocol::DeskExRightsRequest,
-    ) -> Result<(), AdminFailure> {
+    ) -> Result<crate::runtime::protocol::DeskExRightsCandidate, AdminFailure> {
         match recv_deadline(&self.up_rx, Phase::Seal, &self.watchdog)? {
             UpMsg::DeskAdminReceipt {
                 id: actual,
@@ -584,7 +599,7 @@ impl World {
                 phase: actual_phase,
                 result,
             } if actual == id && stock == request.stock && actual_phase == phase => match result {
-                Ok(actual) if actual == request => Ok(()),
+                Ok(actual) if actual.request == request => Ok(actual),
                 Ok(_) => Err(invalid("除权回执与原请求不一致").into()),
                 Err(error) if phase == AdminPhase::Prepare => Err(AdminFailure {
                     error,

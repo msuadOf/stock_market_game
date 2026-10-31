@@ -242,17 +242,20 @@ fn desk_ex_rights_and_group_debit_share_prepare_abort_and_commit() {
     let mut world = world();
     let before = world.snapshot_accounts().unwrap();
     let old = world.public_views()[0].last_price;
+    let world_upper = world.public_views()[0].daily_upper_limit;
     let request = crate::runtime::protocol::DeskExRightsRequest {
         stock: 0,
         expected_last_close: old,
-        reference_price: old - 1,
+        reference_price: old / 2,
     };
     let reject = world.with_prepared_staged_administrative_and_desks(
         stages(10),
         None,
         vec![request],
         |candidate, _, _| {
-            assert_eq!(candidate.desks, vec![request]);
+            assert_eq!(candidate.desks[0].request, request);
+            assert_eq!(candidate.desks[0].view.last_price, old);
+            assert!(candidate.desks[0].view.daily_upper_limit < world_upper);
             Err::<(), _>(RuntimeError::ProtocolInvariant {
                 detail: "测试拒绝".into(),
             })
@@ -266,12 +269,16 @@ fn desk_ex_rights_and_group_debit_share_prepare_abort_and_commit() {
             None,
             vec![request],
             |candidate, _, _| {
-                assert_eq!(candidate.desks, vec![request]);
+                assert_eq!(candidate.desks[0].request, request);
+                assert_eq!(candidate.desks[0].view.last_price, old);
+                assert!(candidate.desks[0].view.daily_upper_limit < world_upper);
                 Ok(())
             },
         )
         .unwrap();
     assert_ne!(world.snapshot_accounts().unwrap(), before);
+    assert_eq!(world.public_views()[0].last_price, old);
+    assert!(world.public_views()[0].daily_upper_limit < world_upper);
     let again = world.with_prepared_staged_administrative_and_desks(
         Vec::new(),
         None,

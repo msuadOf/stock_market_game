@@ -818,12 +818,19 @@ pub struct DeskExRightsRequest {
     pub reference_price: i64,
 }
 
+/// 交易部从真实行情准备的除权公开视图。
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct DeskExRightsCandidate {
+    pub request: DeskExRightsRequest,
+    pub view: StockPublic,
+}
+
 /// 只在同步行政作用域内交付，不代表已经向宿主发布。
 #[derive(Clone, Debug)]
 pub struct AdminCandidate {
     pub id: AdminTransactionId,
     pub groups: Vec<AdminGroupCandidate>,
-    pub(crate) desks: Vec<DeskExRightsRequest>,
+    pub(crate) desks: Vec<DeskExRightsCandidate>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1389,7 +1396,7 @@ pub(crate) enum UpMsg {
         id: AdminTransactionId,
         stock: StockIdx,
         phase: AdminPhase,
-        result: Result<DeskExRightsRequest, RuntimeError>,
+        result: Result<DeskExRightsCandidate, RuntimeError>,
     },
     /// 仅 pending 门在分派 Start 前产生；该组尚未发送本轮任何 Ops 或 final。
     PendingStartRejected(PendingStartRejection),

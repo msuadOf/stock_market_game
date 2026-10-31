@@ -423,7 +423,7 @@ pub struct DeskState {
     setup: DeskSetup,
     pending_ex_rights: Option<(
         super::protocol::AdminTransactionId,
-        super::protocol::DeskExRightsRequest,
+        super::protocol::DeskExRightsCandidate,
     )>,
     config: Arc<GameConfig>,
     bids: BTreeMap<i64, VecDeque<DeskOrder>>,
@@ -2788,7 +2788,7 @@ impl DeskState {
         &mut self,
         id: super::protocol::AdminTransactionId,
         request: super::protocol::DeskExRightsRequest,
-    ) -> Result<super::protocol::DeskExRightsRequest, RuntimeError> {
+    ) -> Result<super::protocol::DeskExRightsCandidate, RuntimeError> {
         if self.pending_ex_rights.is_some()
             || request.stock != self.setup.stock
             || request.expected_last_close != self.market.last_close
@@ -2800,27 +2800,37 @@ impl DeskState {
                 "除权 Prepare 的交易部、收盘价、待处理状态或订单簿不一致",
             ));
         }
-        self.pending_ex_rights = Some((id, request));
-        Ok(request)
+        // 私有线程内临时投影，任何结果都先恢复原行情，再保存 immutable 候选。
+        let previous = self.market.last_close;
+        self.market.last_close = request.reference_price;
+        let view = self.build_public(self.cur_tick.saturating_add(1));
+        self.market.last_close = previous;
+        let candidate = super::protocol::DeskExRightsCandidate {
+            request,
+            view: view?,
+        };
+        self.pending_ex_rights = Some((id, candidate.clone()));
+        Ok(candidate)
     }
 
     fn finish_ex_rights(
         &mut self,
         id: super::protocol::AdminTransactionId,
         commit: bool,
-    ) -> Result<super::protocol::DeskExRightsRequest, RuntimeError> {
-        let Some((pending_id, request)) = self.pending_ex_rights else {
+    ) -> Result<super::protocol::DeskExRightsCandidate, RuntimeError> {
+        let Some((pending_id, candidate)) = self.pending_ex_rights.as_ref() else {
             return Err(over("除权完成缺少 Prepare"));
         };
-        if pending_id != id {
+        if *pending_id != id {
             return Err(over("除权事务身份不一致"));
         }
+        let candidate = candidate.clone();
         self.pending_ex_rights = None;
         if commit {
-            self.market.last_close = request.reference_price;
+            self.market.last_close = candidate.request.reference_price;
             self.bump_market_ver();
         }
-        Ok(request)
+        Ok(candidate)
     }
 
     /// 收盘清算与终 K 归档完成后，按真实收盘建立下一日行情基准。
