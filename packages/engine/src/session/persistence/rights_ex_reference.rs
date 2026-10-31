@@ -163,8 +163,10 @@ pub(in crate::session) fn validate(
     }
     if save.setup.dividend_tax_mode == Some(CashDividendTaxMode::Exempt) {
         for book in &actions.rights_offerings {
-            if book.status() == &RightsOfferingStatus::Closed
-                && book.plan().ex_rights_on <= save.civil_clock.current_date
+            if matches!(
+                book.status(),
+                RightsOfferingStatus::Closed | RightsOfferingStatus::Settled
+            ) && book.plan().ex_rights_on <= save.civil_clock.current_date
                 && !book
                     .determine_failure()
                     .map_err(|error| invalid(error.to_string()))?

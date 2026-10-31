@@ -997,6 +997,24 @@ fn exempt_rights_ex_anchor_is_committed_to_desk_and_restored() {
         );
     }
     let saved = restored.save().unwrap();
+    let mut missing_group = saved.clone();
+    missing_group
+        .company_state
+        .actions_for_test_mut()
+        .applied_ex_reference_groups
+        .retain(|group| !group.rights_event_ids.contains(&plan.event_id));
+    assert!(GameSession::restore(&missing_group).is_err());
+    let mut missing_binding = saved.clone();
+    let group = missing_binding
+        .company_state
+        .actions_for_test_mut()
+        .applied_ex_reference_groups
+        .iter_mut()
+        .find(|group| group.rights_event_ids.contains(&plan.event_id))
+        .unwrap();
+    group.rights_event_ids.clear();
+    group.pre_ex_close = Money::from_cents(-1);
+    assert!(GameSession::restore(&missing_binding).is_err());
     let mut continued = restore_with_three_groups(&saved);
     advance_to_next_trading_day(&mut continued, plan.settlement_on);
     continued.step().unwrap();
