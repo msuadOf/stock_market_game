@@ -1230,7 +1230,9 @@ impl DeskState {
                         purse,
                         Some(request),
                         #[cfg(feature = "simulation-diagnostics")]
-                        super::diagnostics::OperationSource::NonPlayerUnresolved,
+                        super::diagnostics::OperationSource::IssuerRepurchase {
+                            plan: request.plan_id,
+                        },
                     )?;
                 }
                 DeskIn::Place {

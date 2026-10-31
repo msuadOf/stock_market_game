@@ -81,6 +81,9 @@ mod corporate_actions;
 mod ordinary_tax_day_end;
 pub use ordinary_tax_day_end::OrdinaryTaxDayEndError;
 mod issuer_repurchase_approval;
+mod issuer_repurchase_execution;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod issuer_repurchase_execution_tests;
 pub use issuer_repurchase_approval::{RepurchaseApprovalError, RepurchaseApprovalReceipt};
 mod decision_chain;
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -5275,6 +5278,58 @@ impl GameSession {
 
         #[cfg(feature = "simulation-diagnostics")]
         sess.causal_record(crate::diagnostics::causal::CausalFactKind::ObservationRestart)?;
+        let projections = sess.repurchase_restore_projections()?;
+        if !projections.is_empty() {
+            let mut cash = Money::ZERO;
+            let mut shares = BTreeMap::<StockId, u64>::new();
+            let owner = projections.values().next().expect("非空回购集合").account;
+            for projection in projections.values() {
+                cash = cash
+                    .add(projection.funding_amount)
+                    .and_then(|sum| sum.sub(projection.book_gross))
+                    .and_then(|sum| sum.sub(projection.book_fees))
+                    .and_then(|sum| sum.sub(projection.recycled))
+                    .map_err(|error| SessionError::UnsupportedCapitalBoundary(error.to_string()))?;
+                let slot = shares
+                    .entry(StockId(u32::from(projection.stock)))
+                    .or_default();
+                *slot = slot
+                    .checked_add(projection.inventory_shares)
+                    .ok_or_else(|| {
+                        SessionError::UnsupportedCapitalBoundary("回购恢复股数溢出".into())
+                    })?;
+            }
+            if save
+                .resting_orders
+                .values()
+                .flatten()
+                .any(|order| order.owner == owner)
+                || save
+                    .runtime_state
+                    .live_envelopes
+                    .iter()
+                    .any(|envelope| envelope.key.account == owner)
+            {
+                return Err(SessionError::UnsupportedCapitalBoundary(
+                    "回购日终恢复仍有专户活动订单或 envelope".into(),
+                ));
+            }
+            let account = sess.account(owner).ok_or_else(|| {
+                SessionError::UnsupportedCapitalBoundary("回购恢复缺少专户".into())
+            })?;
+            if account.cash() != cash
+                || (0..sess.state.setup.stocks.len())
+                    .map(|index| StockId(index as u32))
+                    .any(|stock| {
+                        u64::from(account.position(&stock).map_or(0, |p| p.qty()))
+                            != shares.get(&stock).copied().unwrap_or(0)
+                    })
+            {
+                return Err(SessionError::UnsupportedCapitalBoundary(
+                    "回购恢复专户与唯一公司 book 预算／库存不一致".into(),
+                ));
+            }
+        }
         Ok(sess)
     }
 }

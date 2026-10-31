@@ -46,6 +46,13 @@ pub(crate) struct AdministrativeBaseline {
         Option<crate::runtime::world::BeliefParticipantSnapshot>,
     )>,
     pub plans: crate::plans::PlanBook,
+    pub repurchase: std::collections::BTreeMap<
+        crate::plans::PlanId,
+        (
+            crate::runtime::protocol::RepurchaseExecutionProjection,
+            crate::runtime::protocol::RepurchasePreparedSource,
+        ),
+    >,
     /// 独立 profile 的真实调度读面；不以 raw personal/cache 的旧字段替代。
     pub attention: std::collections::BTreeMap<crate::AccountId, (u64, u64)>,
 }
@@ -148,7 +155,12 @@ impl super::RuntimeDriver {
         if self.mirror_source() != source {
             return Err(invalid("行政完整基线读取期间 World 来源改变".into()));
         }
+        let repurchase = self.world.collect_repurchase()?;
+        if self.mirror_source() != source {
+            return Err(invalid("回购来源读取期间 World 来源改变".into()));
+        }
         Ok(AdministrativeBaseline {
+            repurchase,
             source,
             roster: self.id_map.clone(),
             per_group: self.accounts_per_group,
@@ -200,6 +212,7 @@ impl super::RuntimeDriver {
         stages: Vec<crate::runtime::world::AdminOperationStage>,
         information: Option<crate::runtime::world::InformationPreparePayload>,
         desks: Vec<crate::runtime::protocol::DeskExRightsRequest>,
+        repurchase: Option<crate::runtime::RepurchasePreparePayload>,
         inspect: impl FnOnce(
             &crate::runtime::world::AdminCandidate,
             &crate::runtime::world::PreparedAdministrativeSource,
@@ -210,6 +223,7 @@ impl super::RuntimeDriver {
             stages,
             information,
             desks,
+            repurchase,
             inspect,
         )
     }

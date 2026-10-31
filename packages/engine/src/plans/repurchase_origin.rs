@@ -150,6 +150,11 @@ impl RepurchaseExecutionPlan {
         }
     }
 
+    pub(super) fn close_settled(&mut self) {
+        self.status = RepurchaseExecutionStatus::Closed;
+        self.execution = None;
+    }
+
     /// 校验本值类型可自行证明的结构约束，不代替上层资金与真实成交勾稽。
     pub fn validate(&self) -> Result<(), RepurchaseExecutionPlanError> {
         if self.execution.is_some_and(|leg| {

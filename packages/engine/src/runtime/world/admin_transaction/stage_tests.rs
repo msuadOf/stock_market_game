@@ -252,6 +252,7 @@ fn desk_ex_rights_and_group_debit_share_prepare_abort_and_commit() {
         stages(5),
         None,
         vec![request],
+        None,
         |candidate, _, _| {
             assert_eq!(candidate.desks[0].request, request);
             assert_eq!(candidate.desks[0].view.last_price, old);
@@ -268,6 +269,7 @@ fn desk_ex_rights_and_group_debit_share_prepare_abort_and_commit() {
             stages(5),
             None,
             vec![request],
+            None,
             |candidate, _, _| {
                 assert_eq!(candidate.desks[0].request, request);
                 assert_eq!(candidate.desks[0].view.last_price, old);
@@ -287,6 +289,7 @@ fn desk_ex_rights_and_group_debit_share_prepare_abort_and_commit() {
         Vec::new(),
         None,
         vec![request],
+        None,
         |_, _, _| Ok(()),
     );
     assert!(again.is_err(), "已提交的旧参考价不得再次 Prepare");

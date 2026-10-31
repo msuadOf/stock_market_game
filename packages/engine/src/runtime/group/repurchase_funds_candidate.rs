@@ -11,7 +11,7 @@ use crate::plans::{PlanBook, PlanId};
 use crate::runtime::group::GroupAccount;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum RepurchaseFundsFailure {
+pub(crate) enum RepurchaseFundsFailure {
     WrongAccountKind {
         actual: AccountKind,
     },
@@ -52,8 +52,15 @@ pub(super) enum RepurchaseFundsFailure {
     InvalidBook,
 }
 
+impl std::fmt::Display for RepurchaseFundsFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "回购资金候选失败：{self:?}")
+    }
+}
+impl std::error::Error for RepurchaseFundsFailure {}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct RepurchaseFundsIntent {
+pub(crate) struct RepurchaseFundsIntent {
     pub event_id: String,
     pub issuer: CompanyId,
     pub account: AccountId,
@@ -177,7 +184,8 @@ fn intent(
 
 /// canonical company origin 与 owner/issuer/stock 只证明身份，不证明实际批准和注资。
 /// 将来批准/执行adapter必须另经已审RP-ORIGIN与公司event绑定门，才能使用此候选实际发资金操作。
-pub(super) fn credit_candidate(
+#[cfg(test)]
+pub(crate) fn credit_candidate(
     book: &IssuerRepurchaseBook,
     registry: &ShareRegistry,
     account: &Account,
@@ -213,13 +221,13 @@ pub(super) fn credit_candidate(
 }
 
 /// 同一 canonical 计划簿与待核对的计划身份；仍在 candidate 内按原顺序验证。
-pub(super) struct RepurchasePlanRead<'a> {
-    pub(super) plans: &'a PlanBook,
-    pub(super) execution_plan: PlanId,
+pub(crate) struct RepurchasePlanRead<'a> {
+    pub(crate) plans: &'a PlanBook,
+    pub(crate) execution_plan: PlanId,
 }
 
-/// 本片仅支持执行窗口已结束且共享专户所有真实在途资源已清的数值回收；不决定是否批准/自动完成。
-pub(super) fn closed_window_recycle_candidate(
+/// 窗口结束、额度精确耗尽或数量不足一整手，且专户真实在途资源全清时才允许回收。
+pub(crate) fn closed_window_recycle_candidate(
     book: &IssuerRepurchaseBook,
     registry: &ShareRegistry,
     account: &Account,
@@ -253,7 +261,22 @@ pub(super) fn closed_window_recycle_candidate(
             actual: registry.settled_on(),
         });
     }
-    if day < book.plan().window_deadline_on {
+    let inventory = book
+        .current_inventory_shares(&[])
+        .map_err(|_| RepurchaseFundsFailure::InvalidBook)?;
+    let share_remainder = book
+        .plan()
+        .max_shares
+        .checked_sub(inventory)
+        .ok_or(RepurchaseFundsFailure::InvalidBook)?;
+    if day < book.plan().window_start_on
+        || (day < book.plan().window_deadline_on
+            && share_remainder >= 100
+            && book
+                .remaining_budget()
+                .map_err(|_| RepurchaseFundsFailure::InvalidBook)?
+                != Money::ZERO)
+    {
         return Err(RepurchaseFundsFailure::WindowNotClosed {
             day,
             deadline: book.plan().window_deadline_on,

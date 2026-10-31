@@ -364,11 +364,15 @@ impl GameSession {
                     Some(NetAcquisition {
                         lot_id: format!("market:{}:{suffix}:{day}", stock.0),
                         source: AcquisitionSource::SecondaryMarket {
-                            settlement: receipt_ids
-                                .iter()
-                                .map(u64::to_string)
-                                .collect::<Vec<_>>()
-                                .join(","),
+                            settlement: if holder == HolderId::IssuerTreasury {
+                                format!("session-market:{}:{day}", stock.0)
+                            } else {
+                                receipt_ids
+                                    .iter()
+                                    .map(u64::to_string)
+                                    .collect::<Vec<_>>()
+                                    .join(",")
+                            },
                         },
                         restriction: ShareRestriction::Unrestricted,
                     })

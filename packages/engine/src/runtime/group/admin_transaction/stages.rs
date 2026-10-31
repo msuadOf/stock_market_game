@@ -47,8 +47,11 @@ pub(super) fn prepare_working(
                 ))
             })?;
             let candidate = working.entry(local).or_insert_with(|| (**account).clone());
-            if matches!(operation, AdminOperation::OpenIssuerRepurchase { .. })
-                && has_repurchase_scope
+            if matches!(
+                operation,
+                AdminOperation::OpenIssuerRepurchase { .. }
+                    | AdminOperation::CloseIssuerRepurchase { .. }
+            ) && has_repurchase_scope
             {
                 continue;
             }

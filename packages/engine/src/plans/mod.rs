@@ -271,6 +271,39 @@ impl PlanBook {
         }
     }
 
+    /// 只有同次 Admin 已验证资金回收与无残票后才允许关闭公司计划。
+    pub(crate) fn close_issuer_repurchase(&mut self, id: PlanId) -> Result<(), PlanError> {
+        let entry = self
+            .plans
+            .get_mut(&id)
+            .ok_or(PlanError::UnknownPlan { plan_id: id })?;
+        let PlanEntry::IssuerRepurchase(plan) = entry else {
+            return Err(PlanError::WrongOrigin {
+                plan_id: id,
+                expected: PlanOrigin::IssuerRepurchase,
+                actual: PlanOrigin::Investor,
+            });
+        };
+        let stock = plan.stock();
+        if plan.status() == RepurchaseExecutionStatus::Closed
+            || self
+                .by_account_stock
+                .get(&id.owner)
+                .and_then(|rows| rows.get(&stock))
+                != Some(&id)
+        {
+            return Err(PlanError::SaveInconsistent {
+                detail: "关闭公司计划重复或活动索引不属于本计划".into(),
+            });
+        }
+        plan.close_settled();
+        self.by_account_stock
+            .get_mut(&id.owner)
+            .expect("已校验活动索引")
+            .remove(&stock);
+        Ok(())
+    }
+
     fn require_connected_child_origin(&self, id: PlanId) -> Result<(), PlanError> {
         match self.entry(id)? {
             PlanEntry::Investor(_) => Ok(()),

@@ -68,6 +68,7 @@ pub fn world_spec_from_setup(
         .collect::<Result<_, _>>()?;
     Ok(WorldSpec {
         initial_plan_books: Vec::new(),
+        initial_repurchase_projections: Default::default(),
         admin_treasury_bindings: Vec::new(),
         initial_desk_orders: Vec::new(),
         initial_desk_next_serial: Vec::new(),

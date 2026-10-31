@@ -217,6 +217,11 @@ pub struct RootProjection {
 
 /// 世界构造参数。
 pub struct WorldSpec {
+    /// 从已校验的唯一公司 book／binding 重建；不携活动 child 或未确认来源。
+    pub initial_repurchase_projections: std::collections::BTreeMap<
+        crate::plans::PlanId,
+        super::protocol::RepurchaseExecutionProjection,
+    >,
     /// 按组移交的完整计划簿；空 Vec 仅表示无历史的新世界。
     pub initial_plan_books: Vec<crate::plans::PlanBook>,
     /// 实际 AccountBook 派生的不可变专户名册；空集合不授予资金角色。
@@ -468,6 +473,8 @@ pub struct World {
     calendar_bindings: Vec<(crate::StockId, crate::calendar::CalendarExchange)>,
     tick_layout: crate::session::exchange_calendar_model::SessionTickLayout,
     pending_calendar_tick: Option<Arc<super::MarketTickContext>>,
+    pub(crate) repurchase_eligibility:
+        std::collections::BTreeMap<crate::plans::PlanId, super::protocol::RepurchaseEligibility>,
     last_committed_calendar: Option<CommittedCalendarTick>,
     inherited_calendar: Option<InheritedCalendarCommit>,
     admin_next_id: u64,
@@ -896,6 +903,7 @@ impl World {
             .collect();
         let WorldSpec {
             initial_plan_books,
+            initial_repurchase_projections,
             admin_treasury_bindings,
             n_groups,
             accounts_per_group,
@@ -967,6 +975,28 @@ impl World {
             accounts_per_group.max(1),
             policy,
         )?;
+        for (id, projection) in &initial_repurchase_projections {
+            let entry = books
+                .iter()
+                .find_map(|book| book.entry(*id).ok())
+                .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                    detail: "初始回购投影缺少 canonical 身份".into(),
+                })?;
+            let crate::plans::PlanEntry::IssuerRepurchase(plan) = entry else {
+                return Err(RuntimeError::ProtocolInvariant {
+                    detail: "初始回购投影不得指向 Investor".into(),
+                });
+            };
+            if projection.account != id.owner
+                || projection.issuer != plan.issuer()
+                || crate::StockId(u32::from(projection.stock)) != plan.stock()
+                || projection.funding_amount <= crate::Money::ZERO
+            {
+                return Err(RuntimeError::ProtocolInvariant {
+                    detail: "初始回购投影与 canonical 来源不一致".into(),
+                });
+            }
+        }
         let prepared_plans = super::group::prepare_plan_seeds(
             books,
             roster,
@@ -1159,6 +1189,7 @@ impl World {
                 .copied()
                 .collect();
             state.install_plan_seed(prepared_plans.next().expect("全部组已预检"));
+            state.install_repurchase_seeds(&initial_repurchase_projections);
             let rx = group_rxs.remove(0);
             #[cfg(all(test, not(target_family = "wasm")))]
             if let Some(worker_error) = native_construction.inject_failure() {
@@ -1393,6 +1424,7 @@ impl World {
             calendar_bindings,
             tick_layout,
             pending_calendar_tick: None,
+            repurchase_eligibility: Default::default(),
             last_committed_calendar: None,
             inherited_calendar: None,
             admin_next_id: 0,
@@ -2039,6 +2071,68 @@ impl World {
         &mut self,
     ) -> Result<Vec<(GroupIdx, crate::plans::PlanBook)>, RuntimeError> {
         self.collect_plans_with(|| GroupIn::EchoPlansFull, "EchoPlansFull")
+    }
+
+    /// 只读静点来源；调用方必须在同次 Admin inspect 对比并确认前缀。
+    pub(crate) fn collect_repurchase(
+        &mut self,
+    ) -> Result<
+        std::collections::BTreeMap<
+            crate::plans::PlanId,
+            (
+                super::protocol::RepurchaseExecutionProjection,
+                super::protocol::RepurchasePreparedSource,
+            ),
+        >,
+        RuntimeError,
+    > {
+        match self.collect_repurchase_inner() {
+            Ok(rows) => Ok(rows),
+            Err(error) => Err(self.stop_failed_administrative_read(error)),
+        }
+    }
+
+    fn collect_repurchase_inner(
+        &mut self,
+    ) -> Result<
+        std::collections::BTreeMap<
+            crate::plans::PlanId,
+            (
+                super::protocol::RepurchaseExecutionProjection,
+                super::protocol::RepurchasePreparedSource,
+            ),
+        >,
+        RuntimeError,
+    > {
+        for tx in &self.group_txs {
+            tx.send(GroupIn::EchoRepurchase)
+                .map_err(|_| RuntimeError::SendFailed {
+                    detail: "回购来源读取广播失败".into(),
+                })?;
+        }
+        let mut result = std::collections::BTreeMap::new();
+        let mut seen = std::collections::BTreeSet::new();
+        while seen.len() < self.n_groups {
+            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+                UpMsg::GroupRepurchase { group, rows }
+                    if usize::from(group) < self.n_groups && seen.insert(group) =>
+                {
+                    for (id, row) in rows {
+                        if result.insert(id, row).is_some() {
+                            return Err(RuntimeError::ProtocolInvariant {
+                                detail: "回购来源计划重复".into(),
+                            });
+                        }
+                    }
+                }
+                other => {
+                    return Err(RuntimeError::ProtocolInvariant {
+                        detail: format!("回购来源读取收到意外回执：{other:?}"),
+                    })
+                }
+            }
+        }
+        Ok(result)
     }
 
     /// 保留 dirty 诊断读面，未变时回空；不用于完整镜像汇合。
@@ -2890,6 +2984,7 @@ impl World {
                 tick,
                 Arc::clone(&calendar),
                 &self.public_views,
+                std::mem::take(&mut self.repurchase_eligibility),
             ) {
                 return Err(self.stop_after_start_failure(tick, error));
             }
@@ -4768,8 +4863,8 @@ pub use super::protocol::{
     AdminCandidate, AdminOperation, AdminPlanReference, AdminTransactionId, AdminTreasuryBinding,
     CreatedRepurchasePlan, InformationMemoryRetention, InformationObservation,
     InformationPrepareError, InformationPreparePayload, PreparedInformationResult,
-    PreparedRepurchaseResult, RepurchaseExecutionProjection, RepurchaseMaterialRestriction,
-    RepurchasePreparedFact, RepurchasePreparedSource,
+    PreparedRepurchaseResult, RepurchaseEligibility, RepurchaseExecutionProjection,
+    RepurchaseMaterialRestriction, RepurchasePreparedFact, RepurchasePreparedSource,
 };
 
 mod admin_treasury_binding;

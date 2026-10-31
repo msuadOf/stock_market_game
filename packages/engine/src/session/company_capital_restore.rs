@@ -1446,14 +1446,14 @@ fn prepare_repurchase_cancellations(
                 });
             }
         }
-        if input
-            .actions
-            .issuer_repurchases
-            .iter()
-            .filter(|other| other.plan().issuer == plan.issuer)
-            .count()
-            != 1
-            || plan.approval_unit_event_id.is_some()
+        if input.actions.issuer_repurchases.iter().any(|other| {
+            other.plan().event_id != plan.event_id
+                && other.plan().stock == plan.stock
+                && other
+                    .fills()
+                    .iter()
+                    .any(|other_fill| book.fills().iter().any(|fill| fill.day == other_fill.day))
+        }) || plan.approval_unit_event_id.is_some()
             || !book.share_unit_adjustments().is_empty()
             || input
                 .actions

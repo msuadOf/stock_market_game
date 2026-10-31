@@ -45,6 +45,7 @@ fn probe_spec(n_groups: usize, per_group: usize) -> WorldSpec {
     let start_date = CivilDate::from_ymd(2026, 1, 5).expect("探针日期合法");
     WorldSpec {
         initial_plan_books: Vec::new(),
+        initial_repurchase_projections: Default::default(),
         admin_treasury_bindings: Vec::new(),
         n_groups,
         accounts_per_group: per_group,

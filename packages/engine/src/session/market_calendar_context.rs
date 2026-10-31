@@ -261,6 +261,22 @@ impl MarketTickContext {
         }
     }
 
+    pub(crate) fn observation_instant_before(&self) -> crate::CivilInstant {
+        let SharedDayProgress::Trading { completed_ticks } = self.before.progress else {
+            unreachable!("市场拍必须由 Trading 开始")
+        };
+        crate::CivilInstant::new(
+            self.day.day_model().current_date(),
+            super::exchange_calendar_model::intraday_observation_second(
+                completed_ticks,
+                self.layout.ticks_per_day,
+                self.layout.auction_ticks,
+                self.layout.closing_auction_ticks,
+            ),
+        )
+        .expect("已验证市场日历时点")
+    }
+
     /// observe 在真实完成本拍后的日内时点运行；civil date 保持当日，末拍为 15:00。
     pub(crate) fn observation_instant_after(&self) -> crate::calendar::CivilInstant {
         let completed_ticks = match self.after.progress {

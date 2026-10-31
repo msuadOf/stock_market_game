@@ -1342,6 +1342,20 @@ impl GroupState {
         self.plan_book_dirty = true;
     }
 
+    pub(crate) fn install_repurchase_seeds(
+        &mut self,
+        rows: &std::collections::BTreeMap<
+            crate::plans::PlanId,
+            super::protocol::RepurchaseExecutionProjection,
+        >,
+    ) {
+        self.repurchase_projections = rows
+            .iter()
+            .filter(|(id, _)| self.plan_book.entry(**id).is_ok())
+            .map(|(id, row)| (*id, row.clone()))
+            .collect();
+    }
+
     pub fn state_hash(&self) -> u64 {
         let mut h: u64 = 0xcbf29ce484222325;
         h = fnv(h, self.group as u64);
@@ -5050,7 +5064,11 @@ impl GroupState {
         }
         let mut external_cancel_buffer: Vec<(LocalIdx, super::StockIdx, u64)> = external_cancels;
         let mut buffered = 0usize;
-        let mut ops_sent = 0u64;
+        let mut ops_sent = if round == 0 {
+            self.send_issuer_repurchase(desk_txs)?
+        } else {
+            0
+        };
         // D4 相位计时：账户校验段（purse/持仓扣除+在途登记）。
         crate::verification_evidence::enter_phase(
             crate::session::pipeline::TickPhase::AccountValidation,
@@ -7074,6 +7092,30 @@ pub(crate) fn group_main(
                     break;
                 }
             }
+            GroupIn::EchoRepurchase => {
+                let rows = state
+                    .repurchase_projections
+                    .iter()
+                    .map(|(id, projection)| {
+                        (
+                            *id,
+                            (projection.clone(), state.repurchase_source_snapshot(*id)),
+                        )
+                    })
+                    .collect();
+                if up_tx
+                    .send(UpMsg::GroupRepurchase {
+                        group: state.group,
+                        rows,
+                    })
+                    .is_err()
+                {
+                    result = Err(RuntimeError::SendFailed {
+                        detail: "回购来源读面发送失败".into(),
+                    });
+                    break;
+                }
+            }
             GroupIn::EchoPlansFull => {
                 // ⑤b：计划簿读面（幂等全量）——不受生产通道 dirty 门控
                 // 影响；测试/诊断直读组簿现值（同 collect_group_attention
@@ -7879,6 +7921,7 @@ mod sol_recheck3_tests {
         state.cur_round = 0;
         let civil_date = crate::CivilDate::from_iso("2026-01-05").unwrap();
         state.snapshot = Some(Arc::new(TickSnapshot {
+            repurchase_eligibility: Default::default(),
             calendar: crate::runtime::calendar_test_support::open_tick(
                 state.cur_tick,
                 state.ticks_per_day,
@@ -8001,6 +8044,7 @@ mod sol_recheck3_tests {
 
         let mut state = chain_harness(Side::Buy);
         state.snapshot = Some(Arc::new(TickSnapshot {
+            repurchase_eligibility: Default::default(),
             tick: 241,
             market_minute: 240,
             civil_date: current,
@@ -8076,6 +8120,7 @@ mod sol_recheck3_tests {
         let mut state = chain_harness_target(Side::Buy, 100);
         let date = crate::CivilDate::from_iso("2026-01-05").unwrap();
         state.snapshot = Some(Arc::new(TickSnapshot {
+            repurchase_eligibility: Default::default(),
             tick: 1,
             market_minute: 0,
             civil_date: date,
@@ -8587,6 +8632,7 @@ mod sol_recheck1_tests {
             depth_asks: Vec::new(),
         };
         std::sync::Arc::new(TickSnapshot {
+            repurchase_eligibility: Default::default(),
             calendar: super::super::calendar_test_support::open_tick(
                 1,
                 240,
@@ -8905,6 +8951,7 @@ mod eager_domain_tests {
         let date = crate::CivilDate::from_iso("2026-01-05").unwrap();
         state.cur_tick = 1;
         state.snapshot = Some(Arc::new(TickSnapshot {
+            repurchase_eligibility: Default::default(),
             calendar: crate::runtime::calendar_test_support::open_tick(1, 240, 0, 0, 3, date),
             tick: 1,
             market_minute: 0,
@@ -9604,6 +9651,7 @@ mod roster_offset_tests {
         // 本组账户的计划 + 执行腿 + 已受理在途票（身份=serial 5）。
         let date = crate::CivilDate::from_iso("2026-01-05").unwrap();
         state.snapshot = Some(Arc::new(TickSnapshot {
+            repurchase_eligibility: Default::default(),
             tick: 1,
             market_minute: 0,
             civil_date: date,
@@ -9817,6 +9865,7 @@ mod roster_offset_tests {
         );
         let date = crate::CivilDate::from_iso("2026-01-05").unwrap();
         let snapshot = TickSnapshot {
+            repurchase_eligibility: Default::default(),
             calendar: crate::runtime::calendar_test_support::open_tick(1, 240, 0, 3, 1, date),
             tick: 1,
             market_minute: 0,
@@ -9885,16 +9934,17 @@ mod roster_offset_tests {
     }
 }
 
-mod admin_transaction;
+pub(crate) mod admin_transaction;
 
 mod admin_funds_cost;
 
 #[cfg(test)]
 mod origin_consumer_tests;
 
-#[cfg(test)]
-mod repurchase_funds_candidate;
+pub(crate) mod repurchase_funds_candidate;
 
 mod admin_repurchase_funds;
 
 mod repurchase_consumer;
+
+mod repurchase_sender;

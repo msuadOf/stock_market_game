@@ -228,6 +228,7 @@ fn state(price: i64, qty: u32) -> (GroupState, SourceDesk, RepurchaseRequestKey,
     );
     state.cur_tick = 1;
     state.snapshot = Some(Arc::new(TickSnapshot {
+        repurchase_eligibility: Default::default(),
         calendar,
         tick: 1,
         market_minute: 0,
@@ -925,6 +926,7 @@ fn repurchase_x_group_15_real_start_commits_tail_and_next_tick_abort_keeps_compl
         .unwrap();
     let stocks = Arc::clone(&state.snapshot.as_ref().unwrap().stocks);
     state.snapshot = Some(Arc::new(TickSnapshot {
+        repurchase_eligibility: Default::default(),
         calendar: Arc::clone(&calendar),
         tick: 2,
         market_minute: 1,
@@ -1068,7 +1070,7 @@ fn repurchase_prepare_exposes_ordered_real_source_without_consuming_it() {
 }
 
 #[test]
-fn repurchase_prepare_rejects_cursor_ack_before_book_transaction_exists() {
+fn repurchase_prepare_rejects_prefix_ack_while_real_child_is_active() {
     let (mut state, mut desk, request, purse) = state(1000, 200);
     desk.company_buy(request, 1000, 200, purse);
     consume(&mut state, desk.flush_company());
@@ -1091,7 +1093,7 @@ fn repurchase_prepare_rejects_cursor_ack_before_book_transaction_exists() {
     assert!(matches!(
         result,
         Err(RuntimeError::ProtocolInvariant { detail })
-            if detail == "回购来源尚未接通公司簿事务确认，禁止推进 cursor"
+            if detail == "回购来源确认必须为 Drain 后无 child 的完整尾流"
     ));
     assert_eq!(state.repurchase_pending_tails, before);
 }

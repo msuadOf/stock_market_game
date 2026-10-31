@@ -583,6 +583,7 @@ fn closing_rise_next_day_highest_buy_reserves_the_new_daily_limit() {
         .1[0]
         .cash;
     let snapshot = TickSnapshot {
+        repurchase_eligibility: Default::default(),
         calendar: super::calendar_test_support::open_tick(
             DAY_END_TICK + 1,
             240,
@@ -786,6 +787,7 @@ fn manual_drain_before_roll_prices_the_next_real_start_not_the_current_day() {
     world.run_ticks(1).expect("tick239 收盘申报");
     world.run_day_end_public().expect("未 roll 前的手动日结");
     let snapshot = TickSnapshot {
+        repurchase_eligibility: Default::default(),
         calendar: super::calendar_test_support::open_tick(DAY_END_TICK, 240, 9, 3, 1, civil_date),
         tick: DAY_END_TICK,
         market_minute: 0,
@@ -833,6 +835,7 @@ fn explicit_day_end_broadcast_reaches_real_npcs_in_every_group() {
     )
     .expect("行情模板");
     let snapshot = TickSnapshot {
+        repurchase_eligibility: Default::default(),
         calendar: super::calendar_test_support::open_tick(
             DAY_END_TICK + 1,
             240,
@@ -1585,6 +1588,7 @@ fn final_tick_uses_old_close_then_next_tick_uses_the_drained_close() {
             }
         );
         let snapshot = TickSnapshot {
+            repurchase_eligibility: Default::default(),
             calendar,
             tick,
             market_minute: 0,
