@@ -53,6 +53,7 @@ fn history_samples_before_continuous_phase_and_excludes_both_auction_windows() {
     for tick in 1..=8 {
         begin(&mut state, tick);
         state.market.last_price = 1000 + tick as i64;
+        state.market.trade_count = 1; // 本 fixture 直接给定已成交的价格事实。
         state.finish_round(tick).unwrap();
         if (4..=6).contains(&tick) {
             expected.push(1000 + tick as i64);
@@ -69,6 +70,7 @@ fn finish_three_rounds(state: &mut DeskState) {
     for (round, price) in [1001, 1002, 1003].into_iter().enumerate() {
         state.cur_round = round as u32;
         state.market.last_price = price;
+        state.market.trade_count = 1; // Continue 的给定价格代表当日已有成交。
         state.finish_round(1).unwrap();
     }
 }
@@ -103,6 +105,7 @@ fn full_window_continue_abort_restores_every_original_price() {
     );
     begin(&mut state, 1);
     state.market.last_price = 1004;
+    state.market.trade_count = 1;
     state.finish_round(1).unwrap();
     assert_eq!(history(&state), vec![925, 950, 1004]);
 }
@@ -225,4 +228,83 @@ fn ex_prepare_rejects_overflow_before_install_and_commit_retires_old_undo() {
     assert_eq!(desk.sealed_drain_tick, Some(desk.cur_tick));
     desk.rollback();
     assert_eq!(desk.market.last_close, 800);
+}
+
+#[test]
+fn ex_empty_tick_marks_new_reference_then_real_trade_preserves_old_history() {
+    let mut desk = state(8, 10, 0, 0);
+    desk.market.recent_prices = VecDeque::from([990, 1000]);
+    let id = super::super::protocol::AdminTransactionId(5);
+    desk.prepare_ex_rights(
+        id,
+        super::super::protocol::DeskExRightsRequest {
+            stock: 0,
+            expected_last_close: 1000,
+            reference_price: 800,
+        },
+    )
+    .unwrap();
+    desk.finish_ex_rights(id, true).unwrap();
+    begin(&mut desk, 1);
+    desk.finish_round(1).unwrap();
+    assert_eq!(desk.market.last_price, 1000, "空拍不能伪造原始成交");
+    assert_eq!(desk.market.trade_count, 0);
+    assert_eq!(
+        desk.market.candle.unwrap(),
+        DeskCandle {
+            open: 800,
+            high: 800,
+            low: 800,
+            close: 800,
+            volume: 0
+        }
+    );
+    assert_eq!(
+        history(&desk),
+        vec![990, 1000, 800],
+        "只追加当前新单位观察点"
+    );
+    let empty_minutes = desk.market.minute_closes.clone();
+    assert!(!empty_minutes.is_empty());
+    assert!(empty_minutes.iter().all(|(_, price)| *price == 800));
+    begin(&mut desk, 2);
+    let purse = buy_purse_limit(&desk.config, Money::from_cents(810), 100, Money::ZERO)
+        .unwrap()
+        .cents();
+    for (owner, side, purse) in [((0, 0), Side::Sell, 0), ((0, 1), Side::Buy, purse)] {
+        desk.place(
+            2,
+            owner,
+            side,
+            RoutedPrice::Fixed(810),
+            100,
+            purse,
+            None,
+            #[cfg(feature = "simulation-diagnostics")]
+            super::super::diagnostics::OperationSource::NonPlayerUnresolved,
+        )
+        .unwrap();
+    }
+    desk.finish_round(2).unwrap();
+    assert_eq!(desk.market.last_price, 810);
+    assert_eq!(desk.market.trade_count, 1, "只有真实成交计数");
+    assert_eq!(
+        desk.market.candle.unwrap(),
+        DeskCandle {
+            open: 810,
+            high: 810,
+            low: 810,
+            close: 810,
+            volume: 100
+        }
+    );
+    assert_eq!(history(&desk), vec![990, 1000, 800, 810]);
+    assert_eq!(
+        &desk.market.minute_closes[..empty_minutes.len()],
+        empty_minutes.as_slice(),
+        "已有分钟观察不可追溯改写"
+    );
+    assert_eq!(desk.market.minute_closes.last().unwrap().1, 810);
+    assert_eq!(desk.market.minute_bars.len(), 1);
+    assert_eq!(desk.market.minute_bars[0].trade_count, 1);
 }
