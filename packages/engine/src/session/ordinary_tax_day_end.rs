@@ -475,19 +475,22 @@ impl GameSession {
                     )
                     .collect(),
             };
-            let prepared = TaxDayBoundaryFacts::prepare(
-                registry,
-                &books,
-                &request,
-                &ShareMarketSourceContext {
-                    calendar,
-                    exchange,
-                    confirmations: &confirmations,
-                    treasury_account: treasury,
-                    // 非交易日由同一冻结日历证明；交易日已核原 World 的真实末拍。
-                    completed_through: Some(day),
-                },
-            )
+            let sources = ShareMarketSourceContext {
+                calendar,
+                exchange,
+                confirmations: &confirmations,
+                treasury_account: treasury,
+                // 非交易日由同一冻结日历证明；交易日已核原 World 的真实末拍。
+                completed_through: Some(day),
+            };
+            let prepared = if self.state.setup.dividend_tax_mode
+                == Some(CashDividendTaxMode::Exempt)
+                && books.is_empty()
+            {
+                TaxDayBoundaryFacts::prepare_exempt(registry, &request, &sources)
+            } else {
+                TaxDayBoundaryFacts::prepare(registry, &books, &request, &sources)
+            }
             .map_err(|source| failure(day, Some(&stock), source))?;
             corporate_actions::registry_day_end::reconcile_registry(
                 prepared.registry(),

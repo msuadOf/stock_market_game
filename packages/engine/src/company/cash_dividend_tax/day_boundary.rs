@@ -66,6 +66,54 @@ pub(crate) struct TaxDayBoundaryFacts {
     registrations: Vec<TaxRegistrationAttribution>,
 }
 impl TaxDayBoundaryFacts {
+    /// Exempt 不产生个人税账；仍由唯一 typed REG 校验真实市场来源与前驱。
+    /// 仅允许明确配股发行的正向 movement，不能借此放宽其他公司行为。
+    pub fn prepare_exempt(
+        registry: &ShareRegistry,
+        day: &ShareSettlementDay,
+        sources: &ShareMarketSourceContext<'_>,
+    ) -> Result<Self, TaxBoundaryError> {
+        if !day.opening.is_empty() || day.actual_market_close.unit != ShareUnitIdentity::Initial {
+            return Err(TaxBoundaryError::MissingSource(
+                "Exempt 不支持单位变更或盘前 movement".into(),
+            ));
+        }
+        for action in &day.post_market_actions {
+            match action {
+                SharePostAction::CaptureRegistration { .. } => {}
+                SharePostAction::Movement(request) => {
+                    let Some(event) = request.event_id.strip_prefix("rights-offering:") else {
+                        return Err(TaxBoundaryError::MissingSource(
+                            "Exempt 仅支持配股发行 movement".into(),
+                        ));
+                    };
+                    if event.trim().is_empty()
+                        || !matches!(&request.scope, MovementScope::NonTradingTransfer { .. })
+                        || request.changes.is_empty()
+                        || request.changes.iter().any(|change| {
+                            change.change <= 0 || change.consume.is_some()
+                                || !matches!(&change.acquisition, Some(acquisition)
+                                    if matches!(&acquisition.source, AcquisitionSource::CorporateAction { event: source } if source == event))
+                        })
+                    {
+                        return Err(TaxBoundaryError::MissingSource("配股发行 movement 的身份或取得来源无效".into()));
+                    }
+                }
+                SharePostAction::UnitMovement { .. } => {
+                    return Err(TaxBoundaryError::MissingSource(
+                        "Exempt 不支持单位换算".into(),
+                    ))
+                }
+            }
+        }
+        let registry = registry.prepare_settlement_day(day, sources)?;
+        Ok(Self {
+            registry,
+            books: Vec::new(),
+            registrations: Vec::new(),
+        })
+    }
+
     /// 每证券只准备一份 REG；账户身份由 book 自身提供，不依赖输入位置。
     pub fn prepare(
         registry: &ShareRegistry,

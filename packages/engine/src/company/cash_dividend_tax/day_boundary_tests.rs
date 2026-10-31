@@ -1048,3 +1048,60 @@ fn opening_requires_actual_frontier_and_batch_uses_account_identity() {
         Err(TaxBoundaryError::MissingAttribution { .. })
     ));
 }
+
+#[test]
+fn exempt_typed_issuance_remains_valid_on_following_market_day() {
+    let (registry, _, mut day, calendar) = fixture();
+    day.post_market_actions = vec![SharePostAction::Movement(ShareDayRequest {
+        event_id: "rights-offering:发行测试".into(),
+        day: day.day,
+        scope: MovementScope::NonTradingTransfer {
+            basis: "批准发行".into(),
+        },
+        changes: vec![DayNetChange {
+            holder: HolderId::Account(AccountId(1)),
+            change: 10,
+            acquisition: Some(NetAcquisition {
+                lot_id: "rights-offering:发行测试:account-1".into(),
+                source: AcquisitionSource::CorporateAction {
+                    event: "发行测试".into(),
+                },
+                restriction: ShareRestriction::Unrestricted,
+            }),
+            consume: None,
+        }],
+    })];
+    let mut invalid = day.clone();
+    let SharePostAction::Movement(movement) = &mut invalid.post_market_actions[0] else {
+        panic!("测试须有发行 movement")
+    };
+    movement.event_id = "未关联的非交易过户".into();
+    assert!(TaxDayBoundaryFacts::prepare_exempt(
+        &registry,
+        &invalid,
+        &context(&calendar, &[], Some(day.day))
+    )
+    .is_err());
+    let issued = TaxDayBoundaryFacts::prepare_exempt(
+        &registry,
+        &day,
+        &context(&calendar, &[], Some(day.day)),
+    )
+    .unwrap();
+    assert_eq!(issued.registry().issued_shares(), 110);
+    assert_eq!(registry.issued_shares(), 100);
+    let mut next = day.clone();
+    next.day = date("2026-01-07");
+    next.predecessor = issued.registry().settlement_frontier().unwrap();
+    next.actual_market_close.request.day = next.day;
+    next.actual_market_close.request.event_id = "market:2026-01-07".into();
+    next.post_market_actions.clear();
+    let continued = TaxDayBoundaryFacts::prepare_exempt(
+        issued.registry(),
+        &next,
+        &context(&calendar, &[], Some(next.day)),
+    )
+    .unwrap();
+    assert_eq!(continued.registry().issued_shares(), 110);
+    assert_eq!(continued.registry().settled_on(), next.day);
+}
