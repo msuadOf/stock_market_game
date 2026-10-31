@@ -9,7 +9,7 @@ use crate::error::ValidationFault;
 mod registry_settlement;
 #[cfg(test)]
 mod registry_settlement_restore_tests;
-mod rights_ex_reference;
+pub(super) mod rights_ex_reference;
 mod saved_runtime;
 #[cfg(test)]
 mod saved_runtime_tests;

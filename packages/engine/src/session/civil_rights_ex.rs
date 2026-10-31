@@ -5,7 +5,7 @@ use crate::company::ex_reference_price::{
     rights_offering_ex_rights_reference_price, RightsOfferingExRightsFormula,
 };
 use crate::company::rights_offering::{RightsOfferingMode, RightsOfferingStatus};
-use crate::company::share_registry::{HolderId, ShareRestriction};
+use crate::company::share_registry::{HolderId, RegistrationSnapshot, ShareRestriction};
 use crate::runtime::DeskExRightsRequest;
 use crate::session::corporate_actions::AppliedExReferenceGroup;
 
@@ -18,6 +18,25 @@ pub(in crate::session) fn exact_ratio_micros(issued: u64, base: u64) -> Result<u
         return Err("实际配股比例不能精确表示为百万分之一");
     }
     u64::try_from(scaled / u128::from(base)).map_err(|_| "配股除权比例溢出")
+}
+
+pub(in crate::session) fn all_shares_circulating(snapshot: &RegistrationSnapshot) -> bool {
+    let mut total = 0u64;
+    for holding in snapshot.holdings() {
+        if holding.holder == HolderId::IssuerTreasury {
+            return false;
+        }
+        for lot in &holding.lots {
+            if lot.restriction != ShareRestriction::Unrestricted {
+                return false;
+            }
+            let Some(next) = total.checked_add(lot.qty) else {
+                return false;
+            };
+            total = next;
+        }
+    }
+    total == snapshot.issued_shares() && total > 0
 }
 
 impl GameSession {
@@ -85,23 +104,7 @@ impl GameSession {
             let snapshot = book
                 .registration()
                 .ok_or_else(|| fail("缺少登记快照".into()))?;
-            if snapshot.holdings().iter().any(|holding| {
-                holding.holder == HolderId::IssuerTreasury
-                    || holding
-                        .lots
-                        .iter()
-                        .any(|lot| lot.restriction != ShareRestriction::Unrestricted)
-            }) {
-                return Err(fail("当前除权不支持库存股或限售股份".into()));
-            }
-            let spec = self
-                .state
-                .setup
-                .stocks
-                .iter()
-                .find(|spec| spec.code == plan.stock)
-                .ok_or_else(|| fail("证券缺少开局规格".into()))?;
-            if u64::from(spec.float_shares) != snapshot.issued_shares() {
+            if !all_shares_circulating(snapshot) {
                 return Err(fail("当前除权要求全部股份流通".into()));
             }
             let paid = book

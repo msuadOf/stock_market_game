@@ -895,6 +895,39 @@ fn exempt_rights_ex_anchor_is_committed_to_desk_and_restored() {
         restored.runtime_market_seeds()[&StockId(0)].last_close,
         group.reference.reference_price.cents()
     );
+    let mut traded = after.clone();
+    traded
+        .snapshot
+        .markets
+        .get_mut(&StockId(0))
+        .unwrap()
+        .last_price = Money::from_cents(group.reference.reference_price.cents() + 2);
+    assert!(super::super::persistence::rights_ex_reference::validate(
+        &traded,
+        &session.state.stocks
+    )
+    .is_ok());
+    let mut changed_opening_float = after.clone();
+    changed_opening_float.setup.stocks[0].float_shares += 1;
+    assert!(super::super::persistence::rights_ex_reference::validate(
+        &changed_opening_float,
+        &session.state.stocks
+    )
+    .is_ok());
+    let mut changed_anchor = traded.clone();
+    changed_anchor
+        .company_state
+        .actions_for_test_mut()
+        .applied_ex_reference_groups
+        .last_mut()
+        .unwrap()
+        .reference
+        .reference_price = Money::from_cents(group.reference.reference_price.cents() + 1);
+    assert!(super::super::persistence::rights_ex_reference::validate(
+        &changed_anchor,
+        &session.state.stocks
+    )
+    .is_err());
     let mut tampered = after.clone();
     tampered
         .snapshot

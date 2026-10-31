@@ -1732,26 +1732,37 @@ impl World {
                     false,
                 )
                 .unwrap_or(Money::from_cents(1));
-                // 空簿时笼子参考价为最新价；买卖向公开边界均须与 desk 受理同口径。
+                // 空簿时仅当日已有成交才使用最新价，与 desk 受理同口径。
+                let cage_reference = s.initial_market.as_ref().map_or(reference, |market| {
+                    if market.trade_count == 0 {
+                        reference
+                    } else {
+                        last
+                    }
+                });
                 let min_sell = if cage_on && cage_applies_first_tick {
-                    let pct = super::desk::bound_price(Money::from_cents(reference), 9_800, false)
-                        .map_err(|error| RuntimeError::ProtocolInvariant {
-                            detail: format!("初始卖向笼子下界计算失败：{error}"),
-                        })?
-                        .cents();
-                    down.cents().max(pct.min(reference - 10).max(1))
+                    let pct =
+                        super::desk::bound_price(Money::from_cents(cage_reference), 9_800, false)
+                            .map_err(|error| RuntimeError::ProtocolInvariant {
+                                detail: format!("初始卖向笼子下界计算失败：{error}"),
+                            })?
+                            .cents();
+                    down.cents().max(pct.min(cage_reference - 10).max(1))
                 } else {
                     down.cents()
                 };
                 let max_buy = if cage_on && cage_applies_first_tick {
-                    let pct = super::desk::bound_price(Money::from_cents(reference), 10_200, true)
-                        .map_err(|error| RuntimeError::ProtocolInvariant {
-                            detail: format!("初始买向笼子上界计算失败：{error}"),
-                        })?
-                        .cents();
-                    let ten_ticks = reference.checked_add(10).ok_or_else(|| {
+                    let pct =
+                        super::desk::bound_price(Money::from_cents(cage_reference), 10_200, true)
+                            .map_err(|error| RuntimeError::ProtocolInvariant {
+                                detail: format!("初始买向笼子上界计算失败：{error}"),
+                            })?
+                            .cents();
+                    let ten_ticks = cage_reference.checked_add(10).ok_or_else(|| {
                         RuntimeError::ProtocolInvariant {
-                            detail: format!("初始买向十个最小价位上界溢出：reference={last}"),
+                            detail: format!(
+                                "初始买向十个最小价位上界溢出：reference={cage_reference}"
+                            ),
                         }
                     })?;
                     up.cents().min(pct.max(ten_ticks))

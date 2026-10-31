@@ -11,7 +11,10 @@ use crate::stock::StockCatalog;
 use crate::Money;
 use std::collections::BTreeSet;
 
-pub(super) fn validate(save: &SaveSlot, catalog: &StockCatalog) -> Result<(), ShareRegistryError> {
+pub(in crate::session) fn validate(
+    save: &SaveSlot,
+    catalog: &StockCatalog,
+) -> Result<(), ShareRegistryError> {
     let Some(actions) = save.company_state.actions() else {
         return Ok(());
     };
@@ -67,13 +70,7 @@ pub(super) fn validate(save: &SaveSlot, catalog: &StockCatalog) -> Result<(), Sh
         let snapshot = book
             .registration()
             .ok_or_else(|| invalid(format!("除权事件 {event} 缺登记")))?;
-        let spec = save
-            .setup
-            .stocks
-            .iter()
-            .find(|spec| spec.code == group.stock)
-            .ok_or_else(|| invalid("除权证券缺规格".into()))?;
-        if u64::from(spec.float_shares) != snapshot.issued_shares() {
+        if !crate::session::civil_rights_ex::all_shares_circulating(snapshot) {
             return Err(invalid("配股除权要求全部股份流通".into()));
         }
         let paid = book
@@ -110,7 +107,12 @@ pub(super) fn validate(save: &SaveSlot, catalog: &StockCatalog) -> Result<(), Sh
                 plan.exchange,
                 formula,
                 plan.payment_deadline_on,
-                market.last_price,
+                save.snapshot
+                    .daily_candles
+                    .get(&id)
+                    .and_then(|candles| candles.last())
+                    .ok_or_else(|| invalid("除权存档缺除权前收盘".into()))?
+                    .close,
                 Money::ZERO,
                 plan.price_per_share,
             )
