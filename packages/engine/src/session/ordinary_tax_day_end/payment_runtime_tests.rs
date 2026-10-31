@@ -795,8 +795,10 @@ fn failed_rights_refunds_real_debits_and_restores_without_repayment() {
     }
 }
 
-#[test]
-fn exempt_rights_ex_anchor_is_committed_to_desk_and_restored() {
+fn rights_session_at_ex_date() -> (
+    GameSession,
+    crate::company::rights_offering::RightsOfferingEventPlan,
+) {
     use crate::company::rights_offering::{
         RightsOfferingBook, RightsOfferingDeclaration, RightsOfferingEventPlan, RightsOfferingMode,
         RightsSubscriptionStrategy,
@@ -878,6 +880,14 @@ fn exempt_rights_ex_anchor_is_committed_to_desk_and_restored() {
     }
     advance_to_date(&mut session, plan.ex_rights_on);
     assert_eq!(session.civil_date(), plan.ex_rights_on);
+    (session, plan)
+}
+
+#[test]
+fn exempt_rights_ex_anchor_is_committed_to_desk_and_restored() {
+    use crate::company::rights_offering::{RightsOfferingBook, RightsOfferingDeclaration};
+    let (session, plan) = rights_session_at_ex_date();
+    let company = CompanyId(0);
     let group = session
         .corporate_actions()
         .unwrap()
@@ -928,6 +938,15 @@ fn exempt_rights_ex_anchor_is_committed_to_desk_and_restored() {
         &session.state.stocks
     )
     .is_err());
+    let mut changed_pre_close = after.clone();
+    changed_pre_close
+        .company_state
+        .actions_for_test_mut()
+        .applied_ex_reference_groups
+        .last_mut()
+        .unwrap()
+        .pre_ex_close = Money::from_cents(1);
+    assert!(GameSession::restore(&changed_pre_close).is_err());
     let mut tampered = after.clone();
     tampered
         .snapshot
@@ -995,4 +1014,121 @@ fn exempt_rights_ex_anchor_is_committed_to_desk_and_restored() {
             before.position(&StockId(0)).unwrap().invested_cents()
         );
     }
+    let next_registration = continued
+        .civil_clock()
+        .calendar()
+        .next_trading_day(
+            crate::calendar::CalendarExchange::Sse,
+            continued.civil_date(),
+        )
+        .unwrap();
+    advance_to_date(&mut continued, next_registration);
+    let mut second = plan.clone();
+    second.event_id = "第二次真实配股".into();
+    second.approved_on = continued.civil_date();
+    second.announced_on = second.approved_on;
+    second.registered_on = second.approved_on;
+    second
+        .derive_schedule(continued.civil_clock().calendar(), second.exchange, 1)
+        .unwrap();
+    let capital = continued
+        .company_system()
+        .unwrap()
+        .dividend_legal_facts(&company)
+        .unwrap()
+        .unwrap()
+        .registered_capital;
+    let mut second_save = continued.save().unwrap();
+    second_save
+        .company_state
+        .system_for_test_mut()
+        .declare_rights_offering(
+            &company,
+            RightsOfferingDeclaration {
+                event_id: second.event_id.clone(),
+                approval_reference: second.approval_reference.clone(),
+                approved_on: second.approved_on,
+                price_per_share: second.price_per_share,
+                par_value_per_share: Money::from_cents(100),
+                registered_capital_at_approval: capital,
+            },
+        )
+        .unwrap();
+    second_save
+        .company_state
+        .actions_for_test_mut()
+        .rights_offerings
+        .push(RightsOfferingBook::new(second.clone()).unwrap());
+    let mut second_session = restore_with_three_groups(&second_save);
+    advance_to_date(&mut second_session, second.ex_rights_on);
+    let second_group = second_session
+        .corporate_actions()
+        .unwrap()
+        .applied_ex_reference_groups
+        .last()
+        .unwrap();
+    assert_eq!(second_group.pre_ex_close, Money::from_cents(918));
+    assert_eq!(
+        second_group.reference.reference_price,
+        Money::from_cents(844)
+    );
+    assert_eq!(
+        second_session.state.markets[&StockId(0)].last_price(),
+        Money::from_cents(1000)
+    );
+    let second_save = second_session.save().unwrap();
+    let second_restored = restore_with_three_groups(&second_save);
+    assert_eq!(
+        second_restored.state.markets[&StockId(0)].last_close(),
+        Money::from_cents(844)
+    );
+}
+
+#[test]
+fn rights_ex_day_close_after_trade_restores() {
+    let (session, _) = rights_session_at_ex_date();
+    let group = session
+        .corporate_actions()
+        .unwrap()
+        .applied_ex_reference_groups
+        .last()
+        .unwrap();
+    let after = session.save().unwrap();
+    let mut closed = restore_with_three_groups(&after);
+    let trade_price = Money::from_cents(group.reference.reference_price.cents() + 2);
+    closed.seed_order_for_test(
+        AccountId(1),
+        Intent::PlaceLimit {
+            code: StockId(0),
+            side: Side::Sell,
+            price: LimitPrice::Fixed(trade_price),
+            qty: 100,
+        },
+        &mut Vec::new(),
+    );
+    closed
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code: StockId(0),
+                side: Side::Buy,
+                price: LimitPrice::Fixed(trade_price),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    let events = closed.step().unwrap();
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, Event::Trade { price, .. } if *price == trade_price)));
+    let closed_save = closed.save().unwrap();
+    assert_eq!(
+        closed_save.snapshot.markets[&StockId(0)].last_close,
+        trade_price
+    );
+    let closed_restored = restore_with_three_groups(&closed_save);
+    assert_eq!(
+        closed_restored.state.markets[&StockId(0)].last_close(),
+        trade_price
+    );
 }

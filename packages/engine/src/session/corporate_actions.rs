@@ -92,6 +92,7 @@ pub struct AppliedExReferenceGroup {
     pub rights_event_ids: Vec<String>,
     /// 参与合计的拆股／缩股事件。
     pub split_event_ids: Vec<String>,
+    pub pre_ex_close: Money,
     pub reference: crate::company::ex_reference_price::ExReferencePrice,
 }
 

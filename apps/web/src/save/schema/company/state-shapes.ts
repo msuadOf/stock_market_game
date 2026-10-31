@@ -631,6 +631,7 @@ export const STATE_SHAPES: Readonly<Record<string, StateRule>> = {
         "array",
         "string"
       ],
+      "pre_ex_close": "money",
       "reference": [
         "ref",
         "ExReferencePrice"
@@ -2159,7 +2160,7 @@ export type RejectedRightsSubscriptionWire = { "event_id": string; "account": st
 export type IssuerRepurchaseBookWire = { "plan": IssuerRepurchasePlanWire; "status": IssuerRepurchaseStatusWire; "fills": (RepurchaseFillRecordWire)[]; "share_unit_adjustments": (ShareUnitAdjustmentWire)[]; "completed_on": (string | null); "withdrawn_remainder": (string | null); "cancelled_on": (string | null); "cancelled_shares": string; "last_order_day": (string | null) };
 export type AccountDividendGrossReceiptWire = { "payment_id": string; "plan_id": string; "account": string; "paid_on": string; "gross": string; "tax_status": DividendTaxStatusWire };
 export type ExternalDividendReceiptWire = { "payment_id": string; "plan_id": string; "holder": HolderIdWire; "paid_on": string; "gross": string; "tax_status": DividendTaxStatusWire };
-export type AppliedExReferenceGroupWire = { "date": string; "stock": string; "cash_plan_ids": (string)[]; "stock_event_ids": (string)[]; "rights_event_ids": (string)[]; "split_event_ids": (string)[]; "reference": ExReferencePriceWire };
+export type AppliedExReferenceGroupWire = { "date": string; "stock": string; "cash_plan_ids": (string)[]; "stock_event_ids": (string)[]; "rights_event_ids": (string)[]; "split_event_ids": (string)[]; "pre_ex_close": string; "reference": ExReferencePriceWire };
 export type PeriodGenerationStateWire = { "amounts": PeriodAmountsWire; "rng": { state: string }; "revenue_trend": AnnualTrendStateWire; "fixed_expense_trend": AnnualTrendStateWire; "variable_expense_trend": (AnnualTrendStateWire | null) };
 export type SimpleFinanceStateWire = { "company": number; "kind": CompanyKind; "config": SimpleFinanceConfig; "books": ReturnType<typeof parseBooks>; "closing": ReturnType<typeof parseClosingRegistry>; "opening_date": string; "as_of": string; "last_month": string; "next_event_id": string; "income_tax_position": ReturnType<typeof parseIncomeTaxPosition>; "recognized_periods": ([string, string])[]; "dividends": Record<string, DividendPlanStateWire>; "stock_distributions": Record<string, StockDistributionFinanceFactWire>; "share_splits": Record<string, ShareSplitFinanceFactWire>; "rights_offerings": Record<string, RightsOfferingFinanceFactWire>; "issuer_repurchases": Record<string, IssuerRepurchaseFinanceFactWire>; "legal_facts": (DividendLegalFactsWire | null); "cash_book": string; "investment_book": string };
 export type SimplePreferenceLedgerWire = { "rejections": (SimplePreferenceRejectionWire)[] };

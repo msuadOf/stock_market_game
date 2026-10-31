@@ -159,6 +159,7 @@ impl GameSession {
                 stock_event_ids: Vec::new(),
                 rights_event_ids: vec![plan.event_id.clone()],
                 split_event_ids: Vec::new(),
+                pre_ex_close: market.last_close(),
                 reference,
             });
         }

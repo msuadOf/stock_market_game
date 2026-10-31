@@ -81,6 +81,29 @@ pub(in crate::session) fn validate(
         let ratio =
             crate::session::civil_rights_ex::exact_ratio_micros(paid, snapshot.issued_shares())
                 .map_err(|e| invalid(e.into()))?;
+        let formula = match plan.exchange {
+            CalendarExchange::Sse => {
+                RightsOfferingExRightsFormula::ShanghaiCirculatingRightsChange {
+                    ratio_micros: ratio,
+                }
+            }
+            CalendarExchange::Szse => RightsOfferingExRightsFormula::ShenzhenRightsShareChange {
+                ratio_micros: ratio,
+            },
+        };
+        let reference = rights_offering_ex_rights_reference_price(
+            &calendar,
+            plan.exchange,
+            formula,
+            plan.payment_deadline_on,
+            group.pre_ex_close,
+            Money::ZERO,
+            plan.price_per_share,
+        )
+        .map_err(|e| invalid(e.to_string()))?;
+        if reference != group.reference {
+            return Err(invalid("冻结收盘与配股除权锚不一致".into()));
+        }
         if group.date == save.civil_clock.current_date {
             let id = catalog
                 .id(&group.stock.0)
@@ -90,34 +113,50 @@ pub(in crate::session) fn validate(
                 .markets
                 .get(&id)
                 .ok_or_else(|| invalid("除权存档缺市场".into()))?;
-            let formula = match plan.exchange {
-                CalendarExchange::Sse => {
-                    RightsOfferingExRightsFormula::ShanghaiCirculatingRightsChange {
-                        ratio_micros: ratio,
-                    }
-                }
-                CalendarExchange::Szse => {
-                    RightsOfferingExRightsFormula::ShenzhenRightsShareChange {
-                        ratio_micros: ratio,
-                    }
-                }
-            };
-            let reference = rights_offering_ex_rights_reference_price(
-                &calendar,
-                plan.exchange,
-                formula,
-                plan.payment_deadline_on,
-                save.snapshot
-                    .daily_candles
-                    .get(&id)
-                    .and_then(|candles| candles.last())
-                    .ok_or_else(|| invalid("除权存档缺除权前收盘".into()))?
-                    .close,
-                Money::ZERO,
-                plan.price_per_share,
+            let clock = super::super::CivilClock::from_parts_for_exchanges(
+                save.setup.start_date,
+                &save.civil_clock,
+                save.setup.stocks.iter().map(|stock| {
+                    super::super::civil_clock::session_calendar_exchange(stock.exchange)
+                }),
             )
             .map_err(|e| invalid(e.to_string()))?;
-            if reference != group.reference || market.last_close != reference.reference_price {
+            let source =
+                super::super::GameSession::calendar_source_for(&save.setup, catalog, &clock)
+                    .map_err(|e| invalid(e.to_string()))?;
+            let day = source.day(group.date).map_err(|e| invalid(e.to_string()))?;
+            let layout = super::super::exchange_calendar_model::SessionTickLayout {
+                ticks_per_day: save.setup.ticks_per_day,
+                auction_ticks: save.setup.auction_ticks,
+                closing_auction_ticks: save.setup.closing_auction_ticks,
+            };
+            let progress = super::super::market_calendar_live::calendar_clock_input(
+                &day,
+                layout,
+                save.snapshot.tick,
+                save.snapshot.tick / save.setup.ticks_per_day,
+            )
+            .map_err(|e| invalid(e.to_string()))?
+            .progress;
+            let expected = if matches!(
+                progress,
+                super::super::exchange_calendar_model::SharedDayProgress::TradingCompleted
+            ) {
+                let candle = save
+                    .snapshot
+                    .daily_candles
+                    .get(&id)
+                    .and_then(|rows| rows.last())
+                    .ok_or_else(|| invalid("除权日收盘缺日 K".into()))?;
+                if candle.volume > 0 {
+                    market.last_price
+                } else {
+                    reference.reference_price
+                }
+            } else {
+                reference.reference_price
+            };
+            if market.last_close != expected {
                 return Err(invalid("存档市场与配股除权锚不一致".into()));
             }
         }
