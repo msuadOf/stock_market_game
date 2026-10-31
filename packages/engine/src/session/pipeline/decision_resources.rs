@@ -108,6 +108,7 @@ impl DecisionResourceSnapshot {
                     .get(&id)
                     .ok_or_else(|| invariant("configured stock has no market"))?
                     .last_price();
+                let price = view.observation_price(&id, price);
                 Ok((id, price))
             })
             .collect::<Result<BTreeMap<_, _>, StepFatal>>()?;

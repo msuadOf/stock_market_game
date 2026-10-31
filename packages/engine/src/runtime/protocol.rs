@@ -477,6 +477,17 @@ pub struct StockPublic {
     pub depth_asks: Vec<(i64, u64)>,
 }
 
+impl StockPublic {
+    /// 当日尚无真实成交时，以昨收／除权参考价观察和估值，保留 last_price 原始成交事实。
+    pub fn observation_price(&self) -> i64 {
+        if self.daily_active_trade_count == 0 {
+            self.last_close
+        } else {
+            self.last_price
+        }
+    }
+}
+
 /// tick 广播快照（批 4：附带全股上一收束点公共态，组端只读；批 8b 起
 /// stocks 经 Arc 共享——广播免逐组 clone）。
 #[derive(Clone, Debug, PartialEq)]

@@ -4395,7 +4395,7 @@ impl GroupState {
             let decision = crate::session::decide_plan_quote(crate::session::PlanQuoteInputs {
                 account,
                 plan,
-                price: crate::money::Money::from_cents(view.last_price),
+                price: crate::money::Money::from_cents(view.observation_price()),
                 best_bid: view.best_bid.map(crate::money::Money::from_cents),
                 best_ask: view.best_ask.map(crate::money::Money::from_cents),
                 auction_book_fallback: !phase_is_continuous(

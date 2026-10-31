@@ -43,6 +43,7 @@ pub(in crate::session) struct SessionReadView<'a> {
     pub(in crate::session) stocks: &'a StockCatalog,
     pub(in crate::session) seed: u64,
     pub(in crate::session) markets: &'a BTreeMap<StockId, crate::Market>,
+    pub(in crate::session) corporate_actions: Option<&'a crate::session::SessionCorporateActions>,
     pub(in crate::session) envelope_ledger: &'a EnvelopeLedger,
     /// npc_split 的 queue 侧会移除 lifecycle；该构造必须保留 owned Vec。
     pub(in crate::session) npc_order_lifecycles: Cow<'a, [NpcOrderLifecycle]>,
@@ -85,6 +86,7 @@ impl GameSession {
             stocks: &self.state.stocks,
             seed: self.state.seed,
             markets: &self.state.markets,
+            corporate_actions: self.state.companies.corporate_actions(),
             envelope_ledger: &self.state.envelope_ledger,
             npc_order_lifecycles: Cow::Borrowed(&self.state.npc_order_lifecycles),
             price_history: &self.state.price_history,
@@ -157,6 +159,7 @@ pub(in crate::session) fn npc_split(
         stocks: &state.stocks,
         seed: state.seed,
         markets: &state.markets,
+        corporate_actions: state.companies.corporate_actions(),
         envelope_ledger: &state.envelope_ledger,
         npc_order_lifecycles: Cow::Owned(state.npc_order_lifecycles.clone()),
         price_history: &state.price_history,

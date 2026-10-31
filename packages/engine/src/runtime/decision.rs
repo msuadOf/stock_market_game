@@ -196,7 +196,7 @@ pub fn build_market_view(snapshot: &TickSnapshot) -> MarketView {
             StockView {
                 best_bid: s.best_bid.map(Money::from_cents),
                 best_ask: s.best_ask.map(Money::from_cents),
-                last_price: Money::from_cents(s.last_price),
+                last_price: Money::from_cents(s.observation_price()),
                 max_buy_price: Money::from_cents(s.max_buy_price),
                 daily_upper_limit: Money::from_cents(s.daily_upper_limit),
                 min_sell_price: Money::from_cents(s.min_sell_price),

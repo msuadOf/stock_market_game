@@ -6,6 +6,7 @@ use super::*;
 /// 市场快照子结构（单股）。
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct MarketSnap {
+    /// 当前市值／观察价；除权后当日无成交时为参考价，原始成交价由 SaveMarketSnap 保留。
     pub last_price: Money,
     pub last_close: Money,
     pub best_bid: Option<Money>,
@@ -122,7 +123,7 @@ impl LiveOrderReservations {
 impl GameSession {
     /// 完整状态快照（首次连/重连/存档）。
     ///
-    /// 遍历 markets/accounts 取只读值快照：market 的 last_price/last_close/
+    /// 遍历 markets/accounts 取只读值快照：市场观察价/last_close/
     /// best_bid/best_ask；account 的 cash + positions（qty/t1_locked/
     /// invested_cents/recovered_cents）。snapshot 自身只读、不影响 session 状态。
     pub fn snapshot(&self) -> Snapshot {
@@ -195,7 +196,7 @@ impl GameSession {
                     (
                         *code,
                         MarketSnap {
-                            last_price: mirror.last_price,
+                            last_price: self.observation_price(code, mirror.last_price),
                             last_close,
                             best_bid: public.best_bid,
                             best_ask: public.best_ask,
@@ -214,7 +215,7 @@ impl GameSession {
                     (
                         *code,
                         MarketSnap {
-                            last_price: m.last_price(),
+                            last_price: self.observation_price(code, m.last_price()),
                             last_close: m.last_close(),
                             best_bid: public.best_bid,
                             best_ask: public.best_ask,

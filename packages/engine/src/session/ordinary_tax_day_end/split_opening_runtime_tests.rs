@@ -140,12 +140,67 @@ fn native_split_and_consolidation_restore_first_sale_and_real_close() {
             .applied_ex_reference_groups
             .clear();
         assert!(GameSession::restore(&bad).is_err());
+        assert_eq!(
+            restored.state.markets[&StockId(0)].last_price().cents(),
+            1000,
+            "保留原始成交事实"
+        );
+        assert_eq!(
+            restored.build_market_view().stocks[&StockId(0)]
+                .last_price
+                .cents(),
+            reference
+        );
+        assert_eq!(
+            restored.snapshot().markets[&StockId(0)].last_price.cents(),
+            reference
+        );
+        let failures_before = restored
+            .state
+            .retail_experience
+            .get(&AccountId(2))
+            .unwrap()
+            .consecutive_failed_buys;
+        restored.construct_runtime_driver_lazy_for_test().unwrap();
+        let next_tick = restored.tick() + 1;
+        restored
+            .runtime_driver
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .force_due_for_test_at(&[AccountId(2)], next_tick);
         super::stock_opening_runtime_tests::trade(
             &mut restored,
             AccountId(0),
             AccountId(1),
             reference,
             shares,
+        );
+        let observed = restored
+            .state
+            .retail_experience
+            .get(&AccountId(2))
+            .unwrap()
+            .feedback
+            .stocks[&StockId(0)]
+            .last_own_observation
+            .unwrap();
+        assert_eq!(observed.price, Money::from_cents(reference));
+        assert_eq!(
+            restored
+                .state
+                .retail_experience
+                .get(&AccountId(2))
+                .unwrap()
+                .consecutive_failed_buys,
+            failures_before,
+            "机械除权不能产生失败经历"
+        );
+        assert_eq!(
+            observed.moment.civil_date,
+            date(PAYMENT_DAY),
+            "必须是 E 首拍真实观察"
         );
         restored.end_civil_day().unwrap();
         assert!(restored.corporate_actions().unwrap().registries[0]

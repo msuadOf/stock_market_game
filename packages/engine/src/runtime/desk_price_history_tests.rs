@@ -167,6 +167,13 @@ fn ex_rights_commit_changes_only_reference_and_rejects_stale_requests() {
     desk.finish_ex_rights(id, true).unwrap();
     assert_eq!(desk.market.last_close, 800);
     assert_eq!(desk.market.last_price, 1000);
+    let public = desk.build_public(1).unwrap();
+    assert_eq!(public.last_price, 1000, "保留原始最后成交事实");
+    assert_eq!(
+        public.observation_price(),
+        800,
+        "无成交按除权参考价观察和估值"
+    );
     desk.reset_market_for_new_day();
     assert_eq!(
         desk.market.last_close, 800,
@@ -191,6 +198,11 @@ fn ex_reference_drives_empty_book_cage_until_first_trade() {
     desk.market.trade_count = 1;
     desk.market.last_price = 820;
     assert_eq!(desk.continuous_reference(Side::Sell), 820);
+    assert_eq!(
+        desk.build_public(1).unwrap().observation_price(),
+        820,
+        "真实成交后恢复以成交价观察"
+    );
 }
 
 #[test]

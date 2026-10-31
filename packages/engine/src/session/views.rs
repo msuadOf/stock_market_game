@@ -5,6 +5,47 @@ use crate::compute::parallel::*;
 
 use super::pipeline::npc_split::SessionReadView;
 
+/// 生效除权后尚无当日成交时，以参考价观察；不改写原始 last_price 或历史序列。
+pub(super) fn capital_observation_price(
+    actions: Option<&SessionCorporateActions>,
+    date: crate::calendar::CivilDate,
+    code: &str,
+    active: Option<&DailyCandle>,
+    last_close: Money,
+    last_trade: Money,
+) -> Money {
+    let capital_applied = actions.is_some_and(|actions| {
+        actions
+            .applied_ex_reference_groups
+            .iter()
+            .any(|group| group.stock.0 == code && group.date <= date)
+    });
+    let traded_today = active.is_some_and(|candle| {
+        candle.time == super::candles::candle_date_time(date) && candle.volume > 0
+    });
+    if capital_applied && !traded_today {
+        last_close
+    } else {
+        last_trade
+    }
+}
+
+impl SessionReadView<'_> {
+    pub(in crate::session) fn observation_price(&self, code: &StockId, last_trade: Money) -> Money {
+        capital_observation_price(
+            self.corporate_actions,
+            self.civil_date(),
+            self.stocks.code(*code).expect("观察证券必须在目录"),
+            self.candle_book.active().get(code),
+            self.markets
+                .get(code)
+                .expect("观察证券必须有市场")
+                .last_close(),
+            last_trade,
+        )
+    }
+}
+
 /// build_market_view 的读视图版本：只消费 view 字段，行为与 GameSession 同名方法逐行同源。
 pub(in crate::session) fn build_market_view_on(view: &SessionReadView) -> MarketView {
     let public_policy = pipeline::phase::PhasePolicy::capture_on(view);
@@ -107,8 +148,10 @@ pub(in crate::session) fn build_market_view_on(view: &SessionReadView) -> Market
                 StockView {
                     best_bid: public.best_bid,
                     best_ask: public.best_ask,
-                    last_price: mirror_last
-                        .unwrap_or_else(|| m.expect("旧管线形态必持市场").last_price()),
+                    last_price: view.observation_price(
+                        code,
+                        mirror_last.unwrap_or_else(|| m.expect("旧管线形态必持市场").last_price()),
+                    ),
                     daily_upper_limit: m.map_or_else(
                         || bound_fallback(mirror_last),
                         |mm| {
@@ -197,6 +240,21 @@ impl GameSession {
     /// 与已完成的标准交易分钟收盘分别拷入视图。游资趋势只读取后者，因此宿主 tick
     /// 密度不会改变其观察时间跨度。产 owned [`MarketView`]（不持 `&self` 借用），便于
     /// 随后安全地 `self.state.accounts.get_mut`。
+    pub(super) fn observation_price(&self, code: &StockId, last_trade: Money) -> Money {
+        capital_observation_price(
+            self.corporate_actions(),
+            self.civil_date(),
+            self.state.stocks.code(*code).expect("观察证券必须在目录"),
+            self.state.candle_book.active().get(code),
+            self.state
+                .markets
+                .get(code)
+                .expect("观察证券必须有市场")
+                .last_close(),
+            last_trade,
+        )
+    }
+
     pub(super) fn build_market_view(&self) -> MarketView {
         build_market_view_on(&self.read_view())
     }

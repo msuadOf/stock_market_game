@@ -155,7 +155,7 @@ impl GameSession {
             if view.last_price <= 0 {
                 return Err(format!("逐拍事实价格非正：{code:?}"));
             }
-            let last = Money::from_cents(view.last_price);
+            let last = Money::from_cents(view.observation_price());
             let candle = match view.daily_active {
                 Some((open, high, low, close, volume)) => DailyCandle {
                     time: self.candle_date_time_for_runtime(),

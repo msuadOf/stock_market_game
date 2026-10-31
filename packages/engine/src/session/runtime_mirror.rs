@@ -995,7 +995,14 @@ impl GameSession {
                 (
                     *code,
                     MarketSnap {
-                        last_price: mirror.last_price,
+                        last_price: super::views::capital_observation_price(
+                            self.corporate_actions(),
+                            self.civil_date(),
+                            self.state.stocks.code(*code).expect("镜像证券必须在目录"),
+                            active.get(code),
+                            markets[code].last_close(),
+                            mirror.last_price,
+                        ),
                         last_close: markets[code].last_close(),
                         best_bid: public.best_bid,
                         best_ask: public.best_ask,
