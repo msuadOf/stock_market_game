@@ -743,6 +743,9 @@ impl RuntimeDriver {
         let plan_policy = *session.runtime_plans_snapshot().policy();
         let plan_owners = super::plan_ownership::OwnerGroups::new(&ids, n_groups, per_group)
             .map_err(|error| format!("计划构造移交失败：{error:?}"))?;
+        spec.initial_repurchase_projections = session
+            .repurchase_restore_projections()
+            .map_err(|error| error.to_string())?;
         spec.initial_plan_books = plan_owners
             .split(session.runtime_plans_snapshot().clone())
             .map_err(|error| format!("计划构造移交失败：{error:?}"))?;
@@ -891,6 +894,9 @@ impl RuntimeDriver {
                     .map_err(|error| error.to_string())?
             }
         };
+        self.world.repurchase_eligibility = session
+            .repurchase_live_eligibility(calendar.observation_instant_before())
+            .map_err(|error| error.to_string())?;
         // P0 画像：本函数各段用块作用域 + guard 计时（未启用=零成本）。
         use super::step_profile::{self, StepSegment};
         // D4 相位：密封分配快照段（tick 起点，组/部广播前）。

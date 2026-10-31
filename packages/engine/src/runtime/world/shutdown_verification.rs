@@ -88,6 +88,7 @@ fn short_spec() -> WorldSpec {
     let date = crate::calendar::CivilDate::from_ymd(2026, 1, 5).expect("验证交易日期合法");
     WorldSpec {
         initial_plan_books: Vec::new(),
+        initial_repurchase_projections: Default::default(),
         admin_treasury_bindings: Vec::new(),
         n_groups: 2,
         accounts_per_group: 1,

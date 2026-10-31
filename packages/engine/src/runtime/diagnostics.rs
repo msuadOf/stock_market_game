@@ -19,6 +19,9 @@ pub struct GroupDecisionTrace {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OperationSource {
     PlayerExternal,
+    IssuerRepurchase {
+        plan: crate::PlanId,
+    },
     InstitutionPlan {
         plan: crate::PlanId,
         observed_tick: u64,

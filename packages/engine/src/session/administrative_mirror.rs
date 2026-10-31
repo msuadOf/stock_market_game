@@ -249,6 +249,7 @@ impl GameSession {
         stages: Vec<AdminOperationStage>,
         information: InformationPreparePayload,
         desks: Vec<crate::runtime::DeskExRightsRequest>,
+        repurchase: Option<crate::runtime::RepurchasePreparePayload>,
         prepare: impl FnOnce(
             &AdminCandidate,
             &PreparedAdministrativeProjection<'_>,
@@ -257,12 +258,13 @@ impl GameSession {
     ) -> Result<P, SessionError> {
         let date = self.civil_date();
         let mut original_error = None;
+        let has_repurchase = repurchase.is_some();
         let result = self.apply_prepared_administrative_scope(
             Vec::new(),
             Some(information),
-            None,
+            repurchase,
             Some(baseline),
-            (!stages.is_empty() || !desks.is_empty()).then_some(stages),
+            (!stages.is_empty() || !desks.is_empty() || has_repurchase).then_some(stages),
             desks,
             |candidate, projection, stages| match prepare(candidate, projection, stages) {
                 Ok((fields, value)) => Ok((Some(fields), value)),
@@ -328,8 +330,8 @@ impl GameSession {
             Option<&PreparedAdministrativeStages<'_>>,
         ) -> Result<(Option<PreparedCivilFields>, P), RuntimeError>,
     ) -> Result<P, AdministrativeMirrorError> {
-        if stages.is_some() && (!grouped.is_empty() || repurchase.is_some()) {
-            return Err(invalid("有序现金阶段不得混入另一份 flat 或 repurchase 请求").into());
+        if stages.is_some() && !grouped.is_empty() {
+            return Err(invalid("有序现金阶段不得混入另一份 flat 请求").into());
         }
         self.require_healthy()?;
         if self.runtime_driver.is_none() {
@@ -415,11 +417,12 @@ impl GameSession {
                     Ok((value, prepared, civil))
                 };
             let result = match stages {
-                Some(stages) if !desks.is_empty() => driver
+                Some(stages) if !desks.is_empty() || repurchase.is_some() => driver
                     .with_prepared_staged_administrative_and_desks(
                         stages,
                         information,
                         desks,
+                        repurchase,
                         |candidate, source, stages| inspect(candidate, source, Some(stages)),
                     ),
                 Some(stages) => driver.with_prepared_staged_administrative_transaction(

@@ -22,6 +22,7 @@ use std::collections::BTreeMap;
 
 fn snapshot_one_stock(last: i64, upper: i64, lower: i64) -> TickSnapshot {
     TickSnapshot {
+        repurchase_eligibility: Default::default(),
         calendar: super::calendar_test_support::open_tick(
             1,
             240,

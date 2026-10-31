@@ -47,8 +47,17 @@ pub(super) fn prepare_working(
                 ))
             })?;
             let candidate = working.entry(local).or_insert_with(|| (**account).clone());
-            if matches!(operation, AdminOperation::OpenIssuerRepurchase { .. })
-                && has_repurchase_scope
+            if layout.is_some() {
+                operation_indices.push(PreparedAdminOperationPosition {
+                    stage_index,
+                    operation_index,
+                });
+            }
+            if matches!(
+                operation,
+                AdminOperation::OpenIssuerRepurchase { .. }
+                    | AdminOperation::CloseIssuerRepurchase { .. }
+            ) && has_repurchase_scope
             {
                 continue;
             }
@@ -63,12 +72,6 @@ pub(super) fn prepare_working(
                     state.group
                 ))
             })?;
-            if layout.is_some() {
-                operation_indices.push(PreparedAdminOperationPosition {
-                    stage_index,
-                    operation_index,
-                });
-            }
         }
         if is_tax_stage && start != end {
             let accounts = before

@@ -103,6 +103,7 @@ impl GameSession {
             // 此探测只读 committed record；错误仅可能来自已死亡 World 或已 poison 的锁。
             Err(error) => return Err(self.poison_civil_authority(error).into()),
         };
+        let mut repurchase_inspect_rejected = false;
         let mut correction_prepare_rejected = false;
         let mut new_due_horizon_rejected = false;
         let prepared: Result<_, SessionError> = (|| {
@@ -125,7 +126,7 @@ impl GameSession {
                             crate::company::CompanyErrorClass::InvalidInput
                             | crate::company::CompanyErrorClass::BusinessCondition));
                 })?;
-            shadow.prepare_ordinary_tax_day_end(report.settled_date, market_installed)?;
+
             let instant = report.disclosure_instant;
             let next_date = report.next_date;
             let seq_from = self.seq();
@@ -158,8 +159,15 @@ impl GameSession {
                 shadow = adopted;
             }
             let baseline = self.prepare_civil_administrative_baseline()?;
-            let (stages, cash) =
+            shadow.prepare_repurchase_sources(report.settled_date, &baseline)?;
+            shadow.prepare_ordinary_tax_day_end(report.settled_date, market_installed)?;
+            let (repurchase_stages, repurchase) =
+                shadow.prepare_repurchase_closing(report.settled_date, &baseline)?;
+            let repurchase_sources = baseline.repurchase.clone();
+            let (mut stages, mut cash) =
                 shadow.prepare_civil_cash_distributions(report.settled_date, &baseline)?;
+            cash.include_repurchase(&baseline, &stages, &repurchase_stages, repurchase.as_ref())?;
+            stages.extend(repurchase_stages);
             let mut desks = shadow.prepare_rights_ex_anchors(next_date)?;
             desks.extend(shadow.prepare_stock_ex_anchors(next_date)?);
             desks.extend(shadow.prepare_split_ex_anchors(next_date)?);
@@ -207,13 +215,20 @@ impl GameSession {
                     memory_retention: InformationMemoryRetention::CivilDayEnd,
                 }),
             };
+            let repurchase_rejected = &mut repurchase_inspect_rejected;
             self.apply_civil_information_administrative_operations(
                 baseline,
                 stages,
                 payload,
                 desks,
+                repurchase,
                 move |candidate, prepared, stages| {
                     cash.inspect(candidate, stages)?;
+                    super::issuer_repurchase_execution::inspect_repurchase_sources(
+                        candidate,
+                        &repurchase_sources,
+                    )
+                    .inspect_err(|_| *repurchase_rejected = true)?;
                     if candidate
                         .desks
                         .iter()
@@ -270,6 +285,10 @@ impl GameSession {
                             error,
                         ));
                     }
+                }
+                if repurchase_inspect_rejected {
+                    // 同次 Admin 已确认健康 Abort；保留真实收盘来源，可重试 civil 候选。
+                    return Err(error.into());
                 }
                 if market_installed {
                     return Err(self.poison_civil_authority(error).into());

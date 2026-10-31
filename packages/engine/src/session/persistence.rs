@@ -2155,11 +2155,13 @@ fn validate_plan_contract(context: &SaveValidationContext) -> Result<(), Session
         let plan = match entry {
             crate::plans::PlanEntry::Investor(plan) => plan,
             crate::plans::PlanEntry::IssuerRepurchase(_) => {
-                // Origin 值恢复不能代替批准事务产生的真实资金与公司绑定。
-                return Err(crate::company::CompanySystemError::SystemState(format!(
-                    "公司计划 {plan_id:?} 缺少已提交的资金与公司授权 binding；当前不支持恢复"
-                ))
-                .into());
+                if entry.execution().is_some() {
+                    return Err(SessionError::InvalidSave(ValidationFault::new(
+                        1042,
+                        plan_id.error_context(),
+                    )));
+                }
+                continue;
             }
         };
         // 以下计划错误的 ctx[0..4] 均为 owner 高/低 u32、sequence 高/低 u32。

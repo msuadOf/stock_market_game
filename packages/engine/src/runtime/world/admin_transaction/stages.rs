@@ -353,6 +353,7 @@ impl World {
         stages: Vec<AdminOperationStage>,
         information: Option<crate::runtime::protocol::InformationPreparePayload>,
         desks: Vec<crate::runtime::protocol::DeskExRightsRequest>,
+        repurchase: Option<crate::runtime::RepurchasePreparePayload>,
         inspect: impl FnOnce(
             &AdminCandidate,
             &crate::runtime::world::PreparedAdministrativeSource,
@@ -364,7 +365,7 @@ impl World {
         self.with_administrative_inspection(
             grouped,
             information,
-            None,
+            repurchase,
             Some(layouts),
             desks,
             |_candidate| Ok(()),

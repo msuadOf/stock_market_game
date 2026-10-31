@@ -201,6 +201,20 @@ impl GameSession {
                     let (order, account) = identity(order, owner)?;
                     let (plan, decision) = match source {
                         OperationSource::PlayerExternal => (None, None),
+                        OperationSource::IssuerRepurchase { plan } => {
+                            let entry = plans.entry(plan).map_err(|error| {
+                                fail(format!("回购 Submitted 缺少 canonical 计划：{error}"))
+                            })?;
+                            if !matches!(entry, crate::plans::PlanEntry::IssuerRepurchase(_))
+                                || plan.owner != account
+                                || *entry.code() != code
+                                || side != Side::Buy
+                            {
+                                return Err(fail("回购 Submitted 身份、证券或方向不一致".into()));
+                            }
+                            (Some(plan), None)
+                        }
+
                         OperationSource::ObservedNpc {
                             kind,
                             observed_tick,

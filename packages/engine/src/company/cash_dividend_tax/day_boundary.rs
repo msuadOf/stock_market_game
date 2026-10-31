@@ -65,6 +65,17 @@ pub(crate) struct TaxDayBoundaryFacts {
     books: Vec<CashDividendTaxBook>,
     registrations: Vec<TaxRegistrationAttribution>,
 }
+fn treasury_cancellation(request: &ShareDayRequest) -> bool {
+    request
+        .event_id
+        .strip_prefix("issuer-repurchase-cancellation:")
+        .is_some_and(|event| !event.trim().is_empty())
+        && matches!(&request.scope, MovementScope::IssuerRepurchaseCancellation { basis } if !basis.trim().is_empty())
+        && matches!(request.changes.as_slice(), [change]
+            if change.holder == HolderId::IssuerTreasury && change.change < 0
+                && change.acquisition.is_none() && change.consume.as_ref().is_some_and(|lots| !lots.is_empty()))
+}
+
 impl TaxDayBoundaryFacts {
     /// Exempt 不产生个人税账；仍由唯一 typed REG 校验真实市场来源与前驱。
     /// 仅允许明确配股发行的正向 movement，不能借此放宽其他公司行为。
@@ -84,6 +95,7 @@ impl TaxDayBoundaryFacts {
         for action in &day.post_market_actions {
             match action {
                 SharePostAction::CaptureRegistration { .. } => {}
+                SharePostAction::Movement(request) if treasury_cancellation(request) => {}
                 SharePostAction::Movement(request) => {
                     let Some(event) = request.event_id.strip_prefix("rights-offering:") else {
                         return Err(TaxBoundaryError::MissingSource(
@@ -124,30 +136,33 @@ impl TaxDayBoundaryFacts {
         day: &ShareSettlementDay,
         sources: &ShareMarketSourceContext<'_>,
     ) -> Result<Self, TaxBoundaryError> {
-        let ordinary_history =
-            registry
-                .receipts()
-                .iter()
-                .all(|receipt| match &receipt.request.scope {
-                    MovementScope::SettlementDayMarket { binding } => {
-                        binding.opening.is_empty()
-                            && binding.market_unit == ShareUnitIdentity::Initial
-                            && binding.post.iter().all(|action| {
-                                matches!(action, SharePostActionRef::CaptureRegistration { .. })
-                            })
-                    }
-                    _ => false,
-                });
+        let ordinary_history = registry.receipts().iter().all(|receipt| match &receipt.request.scope {
+            MovementScope::SettlementDayMarket { binding } => {
+                binding.opening.is_empty() && binding.market_unit == ShareUnitIdentity::Initial
+                    && binding.post.iter().all(|action| match action {
+                        SharePostActionRef::CaptureRegistration { .. } => true,
+                        SharePostActionRef::Movement { event_id } => registry.receipt_by_event(event_id)
+                            .is_some_and(|row| treasury_cancellation(&row.request)),
+                        _ => false,
+                    })
+            }
+            MovementScope::IssuerRepurchaseCancellation { .. } => treasury_cancellation(&receipt.request)
+                && registry.receipts().iter().any(|market| matches!(&market.request.scope,
+                    MovementScope::SettlementDayMarket { binding } if binding.post.iter().any(|action|
+                        matches!(action, SharePostActionRef::Movement { event_id } if event_id == &receipt.request.event_id)))),
+            _ => false,
+        });
         if !ordinary_history
             || !day.opening.is_empty()
             || day.actual_market_close.unit != ShareUnitIdentity::Initial
-            || day
-                .post_market_actions
-                .iter()
-                .any(|action| !matches!(action, SharePostAction::CaptureRegistration { .. }))
+            || day.post_market_actions.iter().any(|action| match action {
+                SharePostAction::CaptureRegistration { .. } => false,
+                SharePostAction::Movement(request) => !treasury_cancellation(request),
+                _ => true,
+            })
         {
             return Err(TaxBoundaryError::MissingSource(
-                "ordinary 税日不支持历史或当日公司/单位 movement，不能从物理日期推断税务日".into(),
+                "ordinary 税日不支持其他历史或当日公司/单位 movement".into(),
             ));
         }
         // 由已有 REG 唯一实现核日历、水位、最终确认全集、前驱和物理净额。
@@ -157,13 +172,19 @@ impl TaxDayBoundaryFacts {
         let history: Vec<_> = registry
             .receipts()
             .iter()
+            .filter(|receipt| {
+                matches!(
+                    &receipt.request.scope,
+                    MovementScope::SettlementDayMarket { .. }
+                )
+            })
             .map(|receipt| IndexedMarketDay::new(&receipt.request, &receipt.disposals))
             .collect();
         let market = IndexedMarketDay::new(&day.actual_market_close.request, &[]);
         let mut anchors = BTreeSet::from([registry.settled_on()]);
         for receipt in registry.receipts() {
             let MovementScope::SettlementDayMarket { binding } = &receipt.request.scope else {
-                unreachable!("ordinary 历史已校验");
+                continue;
             };
             anchors.insert(receipt.request.day);
             anchors.insert(binding.predecessor.settled_on);
@@ -171,7 +192,7 @@ impl TaxDayBoundaryFacts {
         let mut captures = Vec::new();
         for action in &day.post_market_actions {
             let SharePostAction::CaptureRegistration { event_id } = action else {
-                unreachable!("ordinary 相位已校验");
+                continue;
             };
             let snapshot = candidate_registry.registration(event_id).ok_or_else(|| {
                 TaxBoundaryError::MissingSource(format!("capture={event_id} 缺少真实 REG snapshot"))

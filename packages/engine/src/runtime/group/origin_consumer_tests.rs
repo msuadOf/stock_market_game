@@ -334,6 +334,7 @@ fn origin_mixed_stock_day_end_uses_real_group_and_rejects_closed_company_executi
         )
         .unwrap();
     group.snapshot = Some(Arc::new(super::super::protocol::TickSnapshot {
+        repurchase_eligibility: Default::default(),
         calendar: tick,
         tick: 9,
         civil_date: ended,

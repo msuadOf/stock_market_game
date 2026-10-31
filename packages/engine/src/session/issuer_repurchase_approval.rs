@@ -71,7 +71,7 @@ pub enum RepurchaseApprovalError {
     InjectedFailure { phase: &'static str },
 }
 impl GameSession {
-    fn validate_repurchase_bindings(&self) -> Result<(), RepurchaseApprovalError> {
+    pub(super) fn validate_repurchase_bindings(&self) -> Result<(), RepurchaseApprovalError> {
         let actions = self
             .corporate_actions()
             .ok_or_else(|| invalid_plan("缺少公司行为容器"))?;
@@ -271,6 +271,10 @@ impl GameSession {
         plan.validate_calendar(self.state.civil_clock.calendar())
             .map_err(|error| invalid_plan(error.to_string()))?;
         let day = self.civil_date();
+        let _eligibility = self.repurchase_eligibility(
+            &plan,
+            crate::CivilInstant::new(day, 0).map_err(|error| invalid_plan(error.to_string()))?,
+        )?;
         if plan.approved_on != day {
             return Err(invalid_plan("方案批准日必须为当前自然日").into());
         }
@@ -313,6 +317,22 @@ impl GameSession {
                 .is_none_or(|issuer| issuer.issued_shares != registry.issued_shares())
         {
             return Err(invalid_plan("名册重复、发行人、股本或结算日期无效").into());
+        }
+        for book in actions
+            .issuer_repurchases
+            .iter()
+            .filter(|book| book.plan().stock == plan.stock)
+        {
+            if book
+                .current_inventory_shares(&[])
+                .map_err(|error| invalid_plan(error.to_string()))?
+                > 0
+            {
+                return Err(invalid_plan(
+                    "该证券前一方案尚有未注销库存，当前不支持交叠回购库存归属",
+                )
+                .into());
+            }
         }
         // 复用完整资本来源校验，不能凭期末总数绕过既有多 event/split 来源门。
         let _capital =

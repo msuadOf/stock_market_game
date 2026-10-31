@@ -807,3 +807,30 @@ Desk 的 E 日空拍占位 K、当前新增连续 tick 样本及分钟收盘观�
 原来已经记录的价格／分钟历史保持原值。空簿开盘清算与收盘 Drain 的零成交占位沿用
 同一读面，不增加真实成交计数。首笔真实成交仍按既有逻辑重建当日 OHLC，之后的新
 观察点使用真实成交价。
+## native Simple 回购执行接线（2026-11-01，待独立审查与统一测试）
+
+本批代码接通 `ReduceCapital`／`CancelOnCompletion`、基准股份单位、同证券单活动方案。
+批准仍沿原 Admin 一次注资；现场资格由当前 Session 的完整 Simple 公司行为声明与 finance、
+真实公开库、待处理更正及本拍冻结 Calendar 生产，只读 cut 随 Start 传入 Group。
+`None` 与 `NotModelled` 不视为允许。存在未实施完的发行而缺少邀请书／注册启动事实时显式拒绝；
+没有待实施发行，或已真实完成入账的发行可证明不在实施区间。跨拆缩股、待入账送转及
+无法解释的 Shock 不支持。模型外内幕事项／其他监管禁限没有 producer，明确作为 Simple
+封闭事项模型的简化，不宣称能认证现实世界全部资格。
+
+沪市指引第17—20条、深市第16—19条已于本日从上文官方原件重新读取：一般12个月／
+维护价值3个月自最终方案批准日起按公历月数校验；重大事项未披露时限制下单；连续竞价
+每天最多一笔整手限价单，价格不超过方案价、真实笼子与涨停下一档。现有 setup 仅接受
+显式涨跌幅证券，不能把此路径外推到无涨跌幅日。当前实际执行只开放减资用途。
+证据与摘要见[本批核验](../agents/repurchase-production/规则核验.md)。
+
+真实 Desk 产生的 Accepted／Rejected／Fill／Return／Closed 经过原 Group consumer 校验，
+Drain 后由同次 civil Admin 消费完整 tail 前缀。唯一公司 book 按日汇总真实成交与费用；
+cursor 确认、尾流清理、精确回收、canonical 计划关闭与公司 binding 共用原 PendingAdmin。
+窗口截止、数量不足一整手或预算精确耗尽后回收 `budget−gross−fees`，零余款不发零额操作。
+正库存于完成后的首个日终按本方案实际 Treasury lot 注销，同步 ShareReduction、REG、
+总股本、面值资本，不自动除权；零成交保持 Completed。前案库存未注销前拒绝后继交叠。
+
+native 日终 restore 以公司 book／finance／binding／canonical Plan／cursor／专户现金和库存
+交叉校验并重建执行投影，拒绝残留公司 execution；不保存或补造活动 child。WASM 真实执行
+及 Web 全链验收不在本片验证范围。以上是代码接线范围，三个短真实场景已通过静态编译检查，仍交主任务统一执行，
+独立 Sol 审查亦未完成；不据此登记全链验收通过。

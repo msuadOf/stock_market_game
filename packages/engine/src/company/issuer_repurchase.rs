@@ -6,10 +6,9 @@
 //!   修改与新《公司法》衔接）与沪深交易所回购股份自律监管指引（沪 7 号 2025 年
 //!   3 月修订／深 9 号 2025 年重新发布）。
 //! - 集中竞价委托限制（63 号第 30 条，已核全文）：申报价格不得为当日涨幅限制的
-//!   价格；不得在开盘集合竞价、收盘集合竞价及无涨跌幅限制交易日委托。窗口禁止
-//!   （第 31 条）等细则在本游戏不建模，显式登记不支持。
+//!   价格；不得在开盘集合竞价、收盘集合竞价及无涨跌幅限制交易日委托。现场窗口限制由 native Simple 适配器按已建模事项证明，模型外事项显式拒绝。
 //! - 期限（63 号第 11 条）：一般用途最长 12 个月、维护公司价值最长 3 个月——
-//!   本模块参数化窗口日期，不硬编码期限。
+//!   本模块按批准日起的公历月数验证期限。
 //! - 专户失权（63 号第 13 条；沪 7 号 2025 修订第 22 条同文）：回购股份过户至
 //!   专用账户即丧失表决、利润分配、公积金转增、认购新股（含配股）等权利，不得
 //!   质押出借；计算指标时从总股本扣减——股东名册以 `HolderId::IssuerTreasury`
@@ -58,8 +57,7 @@ pub enum RepurchaseBindingClosingState {
     Closed,
 }
 
-/// 回购法定用途（63 号第 2 条四类）。用途决定法定期限与注销义务；本模块不硬编码
-/// 期限，由方案窗口参数承载。
+/// 回购法定用途（63 号第 2 条四类）。用途决定法定期限与注销义务；方案窗口仍须通过公历月数上限校验。
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export)]
@@ -89,8 +87,8 @@ pub enum RepurchaseCompletionPolicy {
     CancelOnCompletion,
 }
 
-/// 回购方案：额度、价格上限与执行窗口（期限参数化：一般 12 个月／维护价值
-/// 3 个月由调用方按用途显式给出，不硬编码）。
+/// 回购方案：额度、价格上限与执行窗口（窗口显式给定：一般 12 个月／维护价值
+/// 3 个月按批准日起公历月数校验）。
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct IssuerRepurchasePlan {
@@ -300,6 +298,21 @@ impl IssuerRepurchasePlan {
             return Err(invalid(
                 "dates must satisfy approved <= announced <= window start <= window deadline",
             ));
+        }
+        let (year, month, day) = self.approved_on.ymd();
+        let months = if self.purpose == RepurchasePurpose::ValueMaintenance {
+            3
+        } else {
+            12
+        };
+        let index = year * 12 + i32::from(month) - 1 + months;
+        let end_year = index / 12;
+        let end_month = (index % 12 + 1) as u8;
+        let end_day = day.min(crate::calendar::days_in_month(end_year, end_month));
+        let limit = CivilDate::from_ymd(end_year, end_month, end_day)
+            .map_err(|error| invalid(&format!("回购法定期限无法表示：{error}")))?;
+        if self.window_deadline_on > limit {
+            return Err(invalid("回购截止日超过自最终方案批准日起的法定月数期限"));
         }
         Ok(())
     }

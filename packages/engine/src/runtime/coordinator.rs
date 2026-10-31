@@ -376,8 +376,13 @@ pub(crate) fn broadcast_start(
     tick: u64,
     calendar: Arc<super::MarketTickContext>,
     stocks: &[super::protocol::StockPublic],
+    repurchase_eligibility: std::collections::BTreeMap<
+        crate::plans::PlanId,
+        super::protocol::RepurchaseEligibility,
+    >,
 ) -> Result<Arc<TickSnapshot>, RuntimeError> {
     let snapshot = Arc::new(TickSnapshot {
+        repurchase_eligibility,
         tick,
         market_minute: u32::try_from(calendar.before_projection().completed_shared_minute_count())
             .map_err(|_| RuntimeError::ProtocolInvariant {

@@ -492,6 +492,9 @@ impl StockPublic {
 /// stocks 经 Arc 共享——广播免逐组 clone）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct TickSnapshot {
+    /// 同次 Start 前由真实 Session 公司事实生产；只读 cut，不进入账本或存档。
+    pub repurchase_eligibility:
+        std::collections::BTreeMap<crate::plans::PlanId, RepurchaseEligibility>,
     /// 同拍唯一 owner 的 before/after 时钟，Continue 复用同一 Arc。
     pub calendar: std::sync::Arc<super::MarketTickContext>,
     /// 当前 tick。
@@ -565,6 +568,15 @@ pub enum RepurchaseMaterialRestriction {
     NotModelled,
 }
 
+/// 现场资格来自 Session 的完整 Simple 状态与本拍同源 CivilInstant。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RepurchaseEligibility {
+    pub as_of: crate::CivilInstant,
+    pub issuance_in_progress: Option<bool>,
+    pub material_restriction: RepurchaseMaterialRestriction,
+    pub announced: bool,
+}
+
 /// 不含公司 event 字符串的不可变执行读面；金额为 Money 分，数量为当前单位股数。
 /// 已消费基线只能由唯一公司 book 重放，组不得自增另一份 spent/remaining。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -621,9 +633,28 @@ pub struct CreatedRepurchasePlan {
     pub plan_id: crate::plans::PlanId,
 }
 
+/// 已由交易部真实回流并经组端校验的有序来源。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RepurchasePreparedFact {
+    pub cursor: u64,
+    pub tick: u64,
+    pub round: u32,
+    pub source: super::RepurchaseSourceFact,
+}
+
+/// Prepare 时的只读来源快照；读取本身不确认或删除尾流。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RepurchasePreparedSource {
+    pub consumed_cursor: u64,
+    pub tail_cursor: u64,
+    pub facts: Vec<RepurchasePreparedFact>,
+    pub child_active: bool,
+}
+
 /// 只在 Prepare 回执携带；完整 book 保留历史及唯一 OwnerSequence。
 #[derive(Clone, Debug)]
 pub struct PreparedRepurchaseResult {
+    pub sources: std::collections::BTreeMap<crate::plans::PlanId, RepurchasePreparedSource>,
     pub book: crate::plans::PlanBook,
     pub created: Vec<CreatedRepurchasePlan>,
     /// 本次输入行解析后的完整字段集合，keys 恰为本次 touched 计划；组权威仍保留全部投影。
@@ -634,6 +665,12 @@ pub struct PreparedRepurchaseResult {
 /// 已由上层确定合法到账时点的数值操作，金额为分、数量为股。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AdminOperation {
+    /// 来源已完整确认、资金精确回收且无残票后，关闭 canonical 公司计划。
+    CloseIssuerRepurchase {
+        local: LocalIdx,
+        stock: StockIdx,
+        execution_plan: crate::plans::PlanId,
+    },
     /// 必须在同一次 Prepare 中配对一次正额 Credit 和完整执行读投影。
     OpenIssuerRepurchase {
         local: LocalIdx,
@@ -698,7 +735,8 @@ pub enum AdminOperation {
 impl AdminOperation {
     pub(crate) fn coordinates(self) -> (LocalIdx, StockIdx) {
         match self {
-            Self::OpenIssuerRepurchase { local, stock, .. }
+            Self::CloseIssuerRepurchase { local, stock, .. }
+            | Self::OpenIssuerRepurchase { local, stock, .. }
             | Self::SyntheticBudgetCredit { local, stock, .. }
             | Self::SyntheticBudgetRecycle { local, stock, .. }
             | Self::PaymentDebit { local, stock, .. }
@@ -1075,6 +1113,8 @@ pub(crate) enum GroupIn {
     /// 影响（测试/诊断读面幂等合同保持；同 collect_group_attention
     /// 全量面 vs EchoAttentionSparse 生产面的分离先例）。
     EchoPlansFull,
+    /// 行政静点只读真实来源，不确认 cursor。
+    EchoRepurchase,
     /// 受理事实下行（Sol 整改注入通道配套：desk 的 Accepted lifecycle
     /// 经协调者转发组——受理即身份（OrderRef 合成），不等首笔 fill；
     /// 生产通道非测试面）。
@@ -1570,6 +1610,13 @@ pub(crate) enum UpMsg {
         )>,
     },
     /// 组注意力调度回执（P1-10：逐账户 next_due 上行）。
+    GroupRepurchase {
+        group: super::GroupIdx,
+        rows: std::collections::BTreeMap<
+            crate::plans::PlanId,
+            (RepurchaseExecutionProjection, RepurchasePreparedSource),
+        >,
+    },
     GroupAttention {
         /// 组索引。
         group: GroupIdx,
@@ -1741,6 +1788,7 @@ impl std::fmt::Debug for UpMsg {
             UpMsg::GroupDeliveryDone { group, updates } => {
                 write!(f, "GroupDeliveryDone(group={group}, n={})", updates.len())
             }
+            UpMsg::GroupRepurchase { group, .. } => write!(f, "GroupRepurchase(group={group})"),
             UpMsg::GroupAttention { group, .. } => write!(f, "GroupAttention(group={group})"),
             UpMsg::RetailTraces { group, .. } => write!(f, "RetailTraces(group={group})"),
             UpMsg::GroupEcho { group, .. } => write!(f, "GroupEcho(group={group})"),

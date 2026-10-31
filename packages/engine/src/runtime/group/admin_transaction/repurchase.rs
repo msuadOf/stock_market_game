@@ -7,7 +7,10 @@ use crate::runtime::protocol::{
 
 pub(super) struct PendingRepurchase {
     pub before_book: crate::plans::PlanBook,
+    pub sources: BTreeMap<crate::plans::PlanId, crate::runtime::protocol::RepurchasePreparedSource>,
     pub before_dirty: bool,
+    pub before_tails:
+        BTreeMap<crate::plans::PlanId, super::super::repurchase_consumer::RepurchasePendingTail>,
     pub before_projections: BTreeMap<crate::plans::PlanId, RepurchaseExecutionProjection>,
     pub created: Vec<CreatedRepurchasePlan>,
     pub projected_ids: Vec<crate::plans::PlanId>,
@@ -16,6 +19,8 @@ pub(super) struct PendingRepurchase {
 pub(super) struct RepurchaseWorking {
     pub book: crate::plans::PlanBook,
     pub projections: BTreeMap<crate::plans::PlanId, RepurchaseExecutionProjection>,
+    pub tails:
+        BTreeMap<crate::plans::PlanId, super::super::repurchase_consumer::RepurchasePendingTail>,
     pub created: Vec<CreatedRepurchasePlan>,
     pub operations: Vec<AdminOperation>,
     pub projected_ids: Vec<crate::plans::PlanId>,
@@ -148,6 +153,7 @@ impl GroupState {
     ) -> Result<RepurchaseWorking, RuntimeError> {
         let mut working = RepurchaseWorking {
             book: self.plan_book.clone(),
+            tails: self.repurchase_pending_tails.clone(),
             projections: self.repurchase_projections.clone(),
             created: Vec::new(),
             operations: Vec::with_capacity(operations.len()),
@@ -251,7 +257,6 @@ impl GroupState {
             if id.owner != account
                 || plan.issuer() != row.issuer
                 || plan.stock() != crate::StockId(u32::from(row.stock))
-                || entry.is_terminal()
                 || row.projection.account != account
                 || row.projection.issuer != row.issuer
                 || row.projection.stock != row.stock
@@ -315,6 +320,11 @@ impl GroupState {
             }
             if let Some(before) = self.repurchase_projections.get(&id) {
                 validate_projection_update(before, projection)?;
+                self.validate_repurchase_ack(id, before, projection, operations)?;
+                if let Some(tail) = working.tails.get_mut(&id) {
+                    tail.facts
+                        .retain(|fact| fact.cursor > projection.book_through_cursor);
+                }
             }
             working.projections.insert(id, projection.clone());
             working.projected_ids.push(id);
@@ -327,7 +337,154 @@ impl GroupState {
         {
             return Err(invalid("缺少执行投影"));
         }
+        for operation in operations {
+            if let AdminOperation::CloseIssuerRepurchase {
+                local,
+                stock,
+                execution_plan,
+            } = *operation
+            {
+                let projection = working
+                    .projections
+                    .get(&execution_plan)
+                    .ok_or_else(|| invalid("关闭回购缺少投影"))?;
+                let actual = self
+                    .accounts
+                    .get(local as usize)
+                    .ok_or_else(|| invalid("关闭回购缺少账户"))?;
+                if projection.book_through_cursor
+                    != self.repurchase_source_snapshot(execution_plan).tail_cursor
+                    || !seen.contains(&execution_plan)
+                    || projection.account
+                        != self.treasury_account(local, stock, projection.issuer)?
+                    || projection.stock != stock
+                    || self
+                        .child_in_flight
+                        .contains_key(&(execution_plan.owner, crate::StockId(u32::from(stock))))
+                    || actual.buy_purse_held_cents != 0
+                    || actual.foreign_active.iter().any(|n| *n != 0)
+                    || actual.pending_sell_qty.iter().any(|n| *n != 0)
+                    || projection
+                        .book_gross
+                        .cents()
+                        .checked_add(projection.book_fees.cents())
+                        .and_then(|n| n.checked_add(projection.recycled.cents()))
+                        != Some(projection.funding_amount.cents())
+                {
+                    return Err(invalid("关闭回购仍有在途或资金未精确收回"));
+                }
+                working
+                    .book
+                    .close_issuer_repurchase(execution_plan)
+                    .map_err(|error| invalid(error.to_string()))?;
+            }
+        }
         Ok(working)
+    }
+
+    fn validate_repurchase_ack(
+        &self,
+        id: crate::plans::PlanId,
+        before: &RepurchaseExecutionProjection,
+        after: &RepurchaseExecutionProjection,
+        operations: &[AdminOperation],
+    ) -> Result<(), RuntimeError> {
+        let source = self.repurchase_source_snapshot(id);
+        if after.book_through_cursor < before.book_through_cursor
+            || after.book_through_cursor > source.tail_cursor
+        {
+            return Err(invalid("回购来源 cursor 确认越过真实尾或倒退"));
+        }
+        if after.book_through_cursor != before.book_through_cursor
+            && (source.child_active || after.book_through_cursor != source.tail_cursor)
+        {
+            return Err(invalid("回购来源确认必须为 Drain 后无 child 的完整尾流"));
+        }
+        let last_order_day = if after.book_through_cursor > before.book_through_cursor {
+            Some(
+                self.snapshot
+                    .as_ref()
+                    .ok_or_else(|| invalid("来源确认缺少本日市场时钟"))?
+                    .calendar
+                    .day()
+                    .day_model()
+                    .current_date(),
+            )
+        } else {
+            before.last_order_day
+        };
+        if after.last_order_day != last_order_day {
+            return Err(invalid("回购下单日不等于真实已消费来源"));
+        }
+        let mut gross = before.book_gross.cents();
+        let mut fees = before.book_fees.cents();
+        let mut inventory = before.inventory_shares;
+        for fact in source
+            .facts
+            .iter()
+            .filter(|fact| fact.cursor <= after.book_through_cursor)
+        {
+            if let crate::runtime::RepurchaseSourceKind::Fill(fill) = fact.source.kind {
+                gross = gross
+                    .checked_add(
+                        fill.price
+                            .checked_mul(i64::from(fill.qty))
+                            .ok_or_else(|| invalid("来源 gross 溢出"))?,
+                    )
+                    .ok_or_else(|| invalid("来源 gross 溢出"))?;
+                fees = fees
+                    .checked_add(fill.commission)
+                    .and_then(|n| n.checked_add(fill.transfer_fee))
+                    .ok_or_else(|| invalid("来源费用溢出"))?;
+                inventory = inventory
+                    .checked_add(u64::from(fill.qty))
+                    .ok_or_else(|| invalid("来源股数溢出"))?;
+            }
+        }
+        let mut recycle = before.recycled.cents();
+        for operation in operations {
+            match *operation {
+                AdminOperation::SyntheticBudgetRecycle {
+                    execution_plan,
+                    amount,
+                    ..
+                } if execution_plan == id => {
+                    recycle = recycle
+                        .checked_add(amount)
+                        .ok_or_else(|| invalid("回收溢出"))?;
+                }
+                AdminOperation::ShareReduction { local, stock, qty }
+                    if inventory > 0
+                        && stock == after.stock
+                        && self
+                            .root_projection
+                            .as_ref()
+                            .and_then(|root| {
+                                root.account_ids.get(self.roster_offset + local as usize)
+                            })
+                            .copied()
+                            == Some(id.owner) =>
+                {
+                    inventory = inventory
+                        .checked_sub(u64::from(qty))
+                        .ok_or_else(|| invalid("注销超过来源库存"))?;
+                }
+                _ => {}
+            }
+        }
+        if (gross, fees, inventory, recycle)
+            != (
+                after.book_gross.cents(),
+                after.book_fees.cents(),
+                after.inventory_shares,
+                after.recycled.cents(),
+            )
+        {
+            return Err(invalid(
+                "公司 book 确认不等于真实来源与同次回收／注销 operand",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -347,9 +504,7 @@ fn validate_projection_update(
     {
         return Err(invalid("执行投影不可变方案发生变化"));
     }
-    if after.book_through_cursor < before.book_through_cursor {
-        return Err(invalid("执行投影 cursor 倒退"));
-    }
+
     if after.eligibility_revision < before.eligibility_revision
         || after.unit_revision < before.unit_revision
     {
@@ -374,12 +529,6 @@ fn validate_projection_update(
     if after.book_gross < before.book_gross
         || after.book_fees < before.book_fees
         || after.recycled < before.recycled
-        || (after.book_through_cursor == before.book_through_cursor
-            && (after.book_gross != before.book_gross
-                || after.book_fees != before.book_fees
-                || after.recycled != before.recycled
-                || after.inventory_shares != before.inventory_shares
-                || after.last_order_day != before.last_order_day))
     {
         return Err(invalid("执行投影 cursor 与已消费基线不一致"));
     }

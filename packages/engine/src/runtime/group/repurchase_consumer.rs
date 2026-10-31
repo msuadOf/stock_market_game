@@ -240,6 +240,11 @@ impl GroupState {
                         .get(&source.request_key.plan_id)
                         .map(|old| old.cursor)
                 })
+                .or_else(|| {
+                    self.repurchase_projections
+                        .get(&source.request_key.plan_id)
+                        .map(|p| p.book_through_cursor)
+                })
                 .unwrap_or(0)
                 .checked_add(1)
                 .ok_or_else(|| invalid("本计划来源 cursor 溢出"))?;

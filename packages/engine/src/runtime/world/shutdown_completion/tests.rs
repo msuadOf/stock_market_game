@@ -261,6 +261,7 @@ fn active_shutdown_keeps_original_task_died_payload_and_worker_identity() {
         1,
         calendar,
         &world.public_views,
+        Default::default(),
     )
     .expect("只向真实 group-0 广播 Start");
     wait_group0_exit(&world);

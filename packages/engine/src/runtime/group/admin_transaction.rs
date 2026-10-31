@@ -512,8 +512,15 @@ impl GroupState {
         }
         let repurchase = repurchase_working.map(|working| {
             let pending = PendingRepurchase {
+                sources: working
+                    .projected_ids
+                    .iter()
+                    .filter(|id| self.repurchase_projections.contains_key(id))
+                    .map(|id| (*id, self.repurchase_source_snapshot(*id)))
+                    .collect(),
                 before_book: std::mem::replace(&mut self.plan_book, working.book),
                 before_dirty: self.plan_book_dirty,
+                before_tails: std::mem::replace(&mut self.repurchase_pending_tails, working.tails),
                 before_projections: std::mem::replace(
                     &mut self.repurchase_projections,
                     working.projections,
@@ -564,6 +571,20 @@ impl GroupState {
                 .map(|info| info.prepared.clone()),
             repurchase: pending.repurchase.as_ref().map(|repurchase| {
                 crate::runtime::protocol::PreparedRepurchaseResult {
+                    sources: repurchase
+                        .projected_ids
+                        .iter()
+                        .map(|id| {
+                            (
+                                *id,
+                                repurchase
+                                    .sources
+                                    .get(id)
+                                    .cloned()
+                                    .unwrap_or_else(|| self.repurchase_source_snapshot(*id)),
+                            )
+                        })
+                        .collect(),
                     book: self.plan_book.clone(),
                     created: repurchase.created.clone(),
                     projections: repurchase
@@ -642,6 +663,7 @@ impl GroupState {
                 self.plan_book = repurchase.before_book;
                 self.plan_book_dirty = repurchase.before_dirty;
                 self.repurchase_projections = repurchase.before_projections;
+                self.repurchase_pending_tails = repurchase.before_tails;
             }
             if let Some(information) = pending.information {
                 self.abort_information(information);
@@ -768,6 +790,7 @@ impl GroupState {
                     if fault == Some(AdminFault::RepurchaseInControlReceipt) {
                         candidate.repurchase =
                             Some(crate::runtime::protocol::PreparedRepurchaseResult {
+                                sources: Default::default(),
                                 book: self.plan_book.clone(),
                                 created: Vec::new(),
                                 projections: self.repurchase_projections.clone(),
@@ -820,7 +843,7 @@ impl GroupState {
     }
 }
 
-fn apply_operation(
+pub(crate) fn apply_operation(
     account: &mut GroupAccount,
     stock: StockIdx,
     operation: AdminOperation,
@@ -843,7 +866,8 @@ fn apply_operation(
         }
     }
     match operation {
-        AdminOperation::OpenIssuerRepurchase { .. } => {
+        AdminOperation::CloseIssuerRepurchase { .. }
+        | AdminOperation::OpenIssuerRepurchase { .. } => {
             return Err(invalid("APPROVAL-C 同 PendingAdmin 创建计划尚未实现"));
         }
         AdminOperation::SyntheticBudgetCredit { amount, .. } => {

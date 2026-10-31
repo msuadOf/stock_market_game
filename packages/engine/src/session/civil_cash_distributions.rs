@@ -55,6 +55,7 @@ pub(super) struct PreparedCivilCash {
     day: crate::CivilDate,
     intents: Vec<DistributionIntent>,
     positions: Vec<IntentPosition>,
+    repurchase_operands: Vec<((crate::runtime::GroupIdx, u32, usize), AdminOperation)>,
     expected_accounts: BTreeMap<(GroupIdx, LocalIdx), GroupAccount>,
 }
 
@@ -178,6 +179,7 @@ impl GameSession {
                 day,
                 intents: Vec::new(),
                 positions: Vec::new(),
+                repurchase_operands: Vec::new(),
                 expected_accounts: BTreeMap::new(),
             };
             let Some(actions) = self.state.companies.corporate_actions() else {
@@ -841,13 +843,79 @@ impl GameSession {
 }
 
 impl PreparedCivilCash {
+    /// 回购阶段仍由原 checked apply 预演，完整账户与原 typed operand 一起核验。
+    pub(super) fn include_repurchase(
+        &mut self,
+        baseline: &AdministrativeBaseline,
+        cash: &[AdminOperationStage],
+        extra: &[AdminOperationStage],
+        payload: Option<&crate::runtime::RepurchasePreparePayload>,
+    ) -> Result<(), SessionError> {
+        let Some(payload) = payload else {
+            return Ok(());
+        };
+        let mut offsets = BTreeMap::<crate::runtime::GroupIdx, usize>::new();
+        for stage in cash {
+            for (group, ops) in &stage.operations {
+                *offsets.entry(*group).or_default() += ops.len();
+            }
+        }
+        for (group, rows) in &payload.groups {
+            for row in rows {
+                self.expected_accounts
+                    .entry((*group, row.local))
+                    .or_insert_with(|| {
+                        baseline.accounts[*group as usize].1[row.local as usize].clone()
+                    });
+            }
+        }
+        for (index, stage) in extra.iter().enumerate() {
+            for (group, ops) in &stage.operations {
+                for (within, operation) in ops.iter().enumerate() {
+                    let offset = *offsets.get(group).unwrap_or(&0);
+                    self.repurchase_operands.push((
+                        (*group, (cash.len() + index) as u32, offset + within),
+                        *operation,
+                    ));
+                    if !matches!(operation, AdminOperation::CloseIssuerRepurchase { .. }) {
+                        let (local, _) = operation.coordinates();
+                        let account = self
+                            .expected_accounts
+                            .get_mut(&(*group, local))
+                            .ok_or_else(|| {
+                                SessionError::CivilInformation(CivilInformationError::new(
+                                    self.day,
+                                    invalid("回购 operand 缺少完整账户"),
+                                ))
+                            })?;
+                        crate::runtime::group::admin_transaction::apply_operation(
+                            account,
+                            operation.coordinates().1,
+                            *operation,
+                        )
+                        .map_err(|source| {
+                            SessionError::CivilInformation(CivilInformationError::new(
+                                self.day, source,
+                            ))
+                        })?;
+                    }
+                }
+                *offsets.entry(*group).or_default() += ops.len();
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn inspect(
         &self,
         candidate: &AdminCandidate,
         stages: Option<&PreparedAdministrativeStages<'_>>,
     ) -> Result<(), SessionError> {
         let verify = (|| {
-            if self.positions.is_empty() {
+            if self.positions.is_empty()
+                && self.repurchase_operands.is_empty()
+                && self.expected_accounts.is_empty()
+            {
                 if stages.is_some_and(|source| {
                     !source.operands().is_empty() || !source.tax_projections().is_empty()
                 }) {
@@ -878,6 +946,7 @@ impl PreparedCivilCash {
                     tax.insert(key, (position.group_index, local, stock, amount));
                 }
             }
+            expected.extend(self.repurchase_operands.iter().copied());
             for operand in stages.operands() {
                 let key = (operand.group, operand.stage_index, operand.operation_index);
                 if expected.remove(&key).as_ref() != Some(operand.operation) {
