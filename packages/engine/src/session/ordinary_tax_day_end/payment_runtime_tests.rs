@@ -145,6 +145,31 @@ fn cash(session: &GameSession, account: AccountId) -> Money {
     session.account(account).expect("账户存在").cash()
 }
 
+fn advance_to_date(session: &mut GameSession, target: crate::CivilDate) {
+    while session.civil_date() < target {
+        let day = session.civil_date();
+        if session
+            .civil_clock()
+            .calendar()
+            .is_trading_day(crate::calendar::CalendarExchange::Sse, day)
+            .expect("冻结 Calendar 必须能判定自然日")
+        {
+            session.step().expect("交易日执行 market step");
+        }
+        session.end_civil_day().expect("逐自然日日结");
+    }
+    assert_eq!(session.civil_date(), target);
+}
+
+fn advance_to_next_trading_day(session: &mut GameSession, previous: crate::CivilDate) {
+    let next = session
+        .civil_clock()
+        .calendar()
+        .next_trading_day(crate::calendar::CalendarExchange::Sse, previous)
+        .expect("冻结 Calendar 必须提供下一交易日");
+    advance_to_date(session, next);
+}
+
 fn register_on_june_3(session: &mut GameSession) {
     assert_eq!(session.civil_date(), date(START));
     session.step().expect("6 月 3 日真实 market step 完成");
@@ -738,10 +763,7 @@ fn failed_rights_refunds_real_debits_and_restores_without_repayment() {
         })
         .collect();
     assert!(!paid.is_empty());
-    while session.civil_date() < plan.settlement_on {
-        session.step().unwrap();
-        session.end_civil_day().unwrap();
-    }
+    advance_to_date(&mut session, plan.settlement_on);
     session.step().unwrap();
     let before_refund: Vec<_> = paid
         .iter()
@@ -765,6 +787,7 @@ fn failed_rights_refunds_real_debits_and_restores_without_repayment() {
     for (account, _, _) in &before_refund {
         assert_eq!(cash(&restored, *account), cash(&session, *account));
     }
+    advance_to_next_trading_day(&mut restored, plan.settlement_on);
     restored.step().unwrap();
     restored.end_civil_day().unwrap();
     for (account, _, _) in &before_refund {
@@ -853,6 +876,7 @@ fn exempt_rights_ex_anchor_is_committed_to_desk_and_restored() {
             opening.cents() + 200 - record.paid_amount.cents()
         );
     }
+    advance_to_date(&mut session, plan.ex_rights_on);
     assert_eq!(session.civil_date(), plan.ex_rights_on);
     let group = session
         .corporate_actions()
@@ -886,8 +910,7 @@ fn exempt_rights_ex_anchor_is_committed_to_desk_and_restored() {
     for account in RETAIL_HOLDERS {
         assert_eq!(cash(&restored, account), cash(&session, account));
     }
-    restored.step().unwrap();
-    restored.end_civil_day().unwrap();
+    advance_to_date(&mut restored, plan.settlement_on);
     assert_eq!(restored.civil_date(), plan.settlement_on);
     restored.step().unwrap();
     let before: Vec<_> = RETAIL_HOLDERS
@@ -923,6 +946,7 @@ fn exempt_rights_ex_anchor_is_committed_to_desk_and_restored() {
     }
     let saved = restored.save().unwrap();
     let mut continued = restore_with_three_groups(&saved);
+    advance_to_next_trading_day(&mut continued, plan.settlement_on);
     continued.step().unwrap();
     continued.end_civil_day().unwrap();
     for account in RETAIL_HOLDERS {
