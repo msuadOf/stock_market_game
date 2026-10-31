@@ -664,9 +664,8 @@ struct DeferredBatch {
     stock: StockIdx,
     /// 成交事实原序（计划推进 F5/F6 重放+经历转移输入）。
     fills: Vec<FillFact>,
-    /// 卖腿 fill 前仓基快照（经历转移的 cost_before 输入——即时相
-    /// 每笔卖腿落账前更新，保留最后一笔卖腿的快照）。
-    pre_exit_basis: std::collections::BTreeMap<LocalIdx, (i64, i64, u32)>,
+    /// 逐笔真实成交，按批内顺序延迟写入个人态。
+    retail_fills: Vec<(FillFact, u32, u32, Option<Money>)>,
     /// fill 循环后、批尾前的延迟动作（原批内序：receipts 拒收释放与
     /// entities 内的 Closed 释放/RefundedShares 复位按原序交错）。
     actions: Vec<DeferredAction>,
@@ -1667,11 +1666,10 @@ impl GroupState {
         self.plan_fills.extend(batch.fills.iter().copied());
         // 买入股份在 fill 循环之后才由实体落账，先累计以还原逐笔持仓。
         let mut bought = std::collections::BTreeMap::<LocalIdx, u32>::new();
-        let pre_exit_basis = std::collections::BTreeMap::new();
         let mut deferred = DeferredBatch {
             stock,
             fills: batch.fills.clone(),
-            pre_exit_basis,
+            retail_fills: Vec::new(),
             actions: Vec::new(),
             touched: Vec::new(),
         };
@@ -1688,27 +1686,44 @@ impl GroupState {
                 });
             }
             let local = fill.owner.1;
-            if fill.side == Side::Sell {
+            let is_retail = self
+                .belief_states
+                .get(local as usize)
+                .and_then(Option::as_ref)
+                .is_some_and(|snapshot| snapshot.retail_experience.is_some());
+            if is_retail {
                 let acct = self.accounts.get(local as usize).ok_or_else(|| {
                     RuntimeError::ProtocolInvariant {
                         detail: format!("组 {} 成交账户越界：local={local}", self.group),
                     }
                 })?;
-                let face = acct.shares[stock_idx]
+                let before = acct.shares[stock_idx]
                     .checked_add(acct.pending_sell_qty[stock_idx])
                     .and_then(|qty| qty.checked_add(bought.get(&local).copied().unwrap_or(0)))
                     .ok_or_else(|| RuntimeError::ProtocolInvariant {
                         detail: format!("组 {} 成交前持仓溢出：local={local}", self.group),
                     })?;
-                deferred.pre_exit_basis.insert(
-                    local,
-                    (
-                        acct.invested_cents[stock_idx],
-                        acct.recovered_cents[stock_idx],
-                        face,
+                let after = match fill.side {
+                    Side::Buy => before.checked_add(fill.qty),
+                    Side::Sell => before.checked_sub(fill.qty),
+                }
+                .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                    detail: format!(
+                        "组 {} 成交数量无效：local={local}, before={before}, qty={}",
+                        self.group, fill.qty
                     ),
-                );
-            } else {
+                })?;
+                let cost = crate::account::Position::from_restored_parts(
+                    before,
+                    0,
+                    acct.invested_cents[stock_idx],
+                    acct.recovered_cents[stock_idx],
+                )
+                .cost_price()
+                .filter(|price| *price > Money::ZERO);
+                deferred.retail_fills.push((*fill, before, after, cost));
+            }
+            if fill.side == Side::Buy {
                 let qty = bought.entry(local).or_default();
                 *qty =
                     qty.checked_add(fill.qty)
@@ -1796,7 +1811,7 @@ impl GroupState {
 
     /// 单批延迟重放（原 apply_staging 批内序的 F4/F5/F6 部分）：
     /// fills 计划推进（F5/F6）→ actions 票释放/曾持有复位（F6/F4）→
-    /// 批尾三连：曾持有翻转（F4）→ 经历转移（F5）→ 记忆裁剪（F5）。
+    /// 批尾三连：曾持有翻转（F4）→ 逐笔经历转移（F5）→ 记忆裁剪（F5）。
     /// 延迟相不写账户资源域（F1/F2/F3 已在即时相定型）——判定读值
     /// =即时相末值，与原批尾时点等价（延迟域不触碰资源域字段）。
     fn replay_deferred_batch(&mut self, deferred: DeferredBatch) -> Result<(), RuntimeError> {
@@ -1844,9 +1859,9 @@ impl GroupState {
                 });
             }
         }
-        // Sol 终审四审经历族（fault2051）：清仓 retail 经历转移（F5——
-        // 期末 face=即时相末值，读值时点等价原批尾）。
-        self.apply_full_exit_experience(stock, &deferred.fills, &deferred.pre_exit_basis)?;
+        for (fill, before, after, cost) in deferred.retail_fills {
+            self.apply_retail_fill_experience(stock, fill, before, after, cost)?;
+        }
         // Sol D3b 件 1：fill 触达账户的个人记忆裁剪（F5——对齐 session
         // candidate_commit 的逐账户 prune_plan_personal_memory——
         // completed_sell 2069 残余收口；清仓后售出股脱离保护集）。
@@ -1856,117 +1871,65 @@ impl GroupState {
         Ok(())
     }
 
-    /// Sol 终审四审经历族（fault2051）：清仓边界的 retail 经历转移。
-    /// 对齐旧管线 record_fill 的 Sell 且 after_qty==0 分支：清
-    /// entry_reference_price/peak_price_since_entry/last_buy_price/
-    /// last_buy_order_id/adverse_move_recorded，设退出冷静期
-    /// （cooldown_until_market_minute）与 last_sell_order_id/
-    /// last_trade_market_minute。覆盖面=**清仓边界**（期末
-    /// face=组 shares+在途卖余量 归零的最后一条卖腿）；加仓/部分
-    /// 卖出的经历迁移仍按 D5 登记近似承载（首买 init 走回写段）。
-    /// failed_buys 逆境计数按 fill 前仓均成本（pre_exit_basis——与旧
-    /// 管线 cost_before 同式，银行家舍入同口径）判定。
-    fn apply_full_exit_experience(
+    /// 消费真实成交，并以 Personal undo 恢复失败拍的完整经历。
+    fn apply_retail_fill_experience(
         &mut self,
         stock: StockIdx,
-        fills: &[FillFact],
-        pre_exit_basis: &std::collections::BTreeMap<LocalIdx, (i64, i64, u32)>,
+        fill: FillFact,
+        before: u32,
+        after: u32,
+        cost: Option<Money>,
     ) -> Result<(), RuntimeError> {
+        let local = fill.owner.1;
         let group = self.group;
-        let idx = stock as usize;
         let minute = market_minute_at(
             self.cur_tick,
             self.ticks_per_day,
             self.auction_ticks,
             self.closing_auction_ticks,
         );
-        // 倒序取每账户**最后**一条卖腿；期末 face 归零=清仓边界。
-        let mut seen: std::collections::BTreeSet<LocalIdx> = Default::default();
-        for fill in fills.iter().rev() {
-            if fill.owner.0 != group || fill.side != Side::Sell || !seen.insert(fill.owner.1) {
-                continue;
+        let slot = self.belief_states.get_mut(local as usize).ok_or_else(|| {
+            RuntimeError::ProtocolInvariant {
+                detail: format!("组 {} 经历账户越界：local={local}", group),
             }
-            let local = fill.owner.1;
-            let face = {
-                let acct = self.accounts.get(local as usize).ok_or_else(|| {
-                    RuntimeError::ProtocolInvariant {
-                        detail: format!("组 {group} 经历转移账户越界：local={local}"),
-                    }
+        })?;
+        let snapshot = slot
+            .as_mut()
+            .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                detail: format!("组 {} 成交缺个人态：local={local}", group),
+            })?;
+        let prev = snapshot.clone();
+        let experience =
+            snapshot
+                .retail_experience
+                .as_mut()
+                .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                    detail: format!("组 {} 成交缺散户经历：local={local}", group),
                 })?;
-                acct.shares
-                    .get(idx)
-                    .copied()
-                    .unwrap_or(0)
-                    .saturating_add(acct.pending_sell_qty.get(idx).copied().unwrap_or(0))
-            };
-            if face != 0 {
-                continue;
-            }
-            // 槽位在席且持 retail 经历行（inst/hot/玩家位无行——原样跳过）。
-            let Some(mut snapshot) = self
-                .belief_states
-                .get_mut(local as usize)
-                .and_then(Option::take)
-            else {
-                continue;
-            };
-            // 拍前值（undo 用——变异前克隆）。
-            let prev = snapshot.clone();
-            let Some(experience) = snapshot.retail_experience.as_mut() else {
-                if let Some(slot) = self.belief_states.get_mut(local as usize) {
-                    *slot = Some(snapshot);
-                }
-                continue;
-            };
-            // cost_before=fill 前仓均成本（银行家舍入同 Position::cost_price；
-            // 非正=不可用 None——逆境计数不因本腿调整）。
-            let cost_before = pre_exit_basis
-                .get(&local)
-                .and_then(|&(invested, recovered, face_pre)| {
-                    (face_pre > 0).then(|| {
-                        crate::account::Position::from_restored_parts(
-                            face_pre, 0, invested, recovered,
-                        )
-                        .cost_price()
-                        .filter(|price| price.cents() > 0)
-                    })
-                })
-                .flatten();
-            let code = crate::StockId(u32::from(stock));
-            let result = experience.record_fill_with_order(
-                &code,
-                Side::Sell,
-                Money::from_cents(fill.price),
-                fill.qty,
-                0,
-                cost_before,
-                minute,
-                Some(order_id_of(&fill.order).0),
-            );
-            if let Err(error) = result {
-                // 还槽后显式失败（组不变量破坏不静默）。
-                if let Some(slot) = self.belief_states.get_mut(local as usize) {
-                    *slot = Some(snapshot);
-                }
-                return Err(RuntimeError::ProtocolInvariant {
-                    detail: format!(
-                        "组 {group} 清仓经历转移失败：local={local}, code={code:?}：{error:?}"
-                    ),
-                });
-            }
-            // 拍前值入可逆日志（Personal）+还槽+dirty（经验行随 Belief
-            // 上行通道同拍回写 session 镜像）。
-            self.push_undo(GroupUndo::Personal {
-                local,
-                prev: Box::new(prev),
-            });
-            if let Some(slot) = self.belief_states.get_mut(local as usize) {
-                *slot = Some(snapshot);
-            }
-            if let Some(flag) = self.belief_dirty.get_mut(local as usize) {
-                *flag = true;
-            }
-        }
+        // 纯逻辑可能在报错前写入，先在副本上执行，成功后才替换。
+        let mut next = experience.clone();
+        next.record_fill_with_order(
+            &crate::StockId(u32::from(stock)),
+            fill.side,
+            Money::from_cents(fill.price),
+            before,
+            after,
+            cost,
+            minute,
+            Some(order_id_of(&fill.order).0),
+        )
+        .map_err(|error| RuntimeError::ProtocolInvariant {
+            detail: format!(
+                "组 {} 成交经历转移失败：local={local}, stock={stock}：{error:?}",
+                group
+            ),
+        })?;
+        *experience = next;
+        self.push_undo(GroupUndo::Personal {
+            local,
+            prev: Box::new(prev),
+        });
+        self.belief_dirty[local as usize] = true;
         Ok(())
     }
 
@@ -8722,6 +8685,10 @@ mod eager_domain_tests {
     fn exit_basis_tracks_each_preceding_fill() {
         let mut state = domain_harness();
         Arc::make_mut(&mut state.accounts[0]).invested_cents[0] = 700_000;
+        let mut personal = crate::runtime::information_fixture::personal(crate::AccountId(1));
+        personal.retail_experience = Some(crate::RetailExperienceState::without_equity_reference());
+        state.belief_states = vec![Some(personal), None];
+        state.belief_dirty = vec![false; 2];
         let before = state.state_hash();
         let batch = DeskBatch {
             repurchase: Vec::new(),
@@ -8734,11 +8701,134 @@ mod eager_domain_tests {
         };
         state.apply_batch_immediate(batch, 1, 0).expect("成交落账");
         assert_eq!(
-            state.staging_deferred[0].pre_exit_basis[&0],
-            (700_000, 100_000, 600)
+            (
+                state.staging_deferred[0].retail_fills[1].1,
+                state.staging_deferred[0].retail_fills[1].2,
+                state.staging_deferred[0].retail_fills[1].3
+            ),
+            (600, 500, Some(Money::from_cents(1000)))
         );
         state.rollback();
         assert_eq!(state.state_hash(), before, "Abort 恢复成本基和持仓");
+    }
+
+    #[test]
+    fn retail_fills_update_experience_and_abort_restores_it() {
+        let mut state = domain_harness();
+        Arc::make_mut(&mut state.accounts[0]).invested_cents[0] = 700_000;
+        let mut personal = crate::runtime::information_fixture::personal(crate::AccountId(1));
+        let mut experience = crate::RetailExperienceState::without_equity_reference();
+        experience
+            .initialize_holding(
+                &crate::StockId(0),
+                Some(Money::from_cents(1000)),
+                Money::from_cents(1000),
+                0,
+            )
+            .unwrap();
+        personal.retail_experience = Some(experience);
+        state.belief_states = vec![Some(personal.clone()), None];
+        state.belief_dirty = vec![false; 2];
+        let before = state.state_hash();
+        let mut buy = sell_fill(100);
+        buy.side = Side::Buy;
+        buy.order = (0, 8);
+        buy.price = 2000;
+        let mut sell = sell_fill(100);
+        sell.price = 1100;
+        state
+            .apply_batch_immediate(
+                DeskBatch {
+                    repurchase: Vec::new(),
+                    stock: 0,
+                    tick: 1,
+                    round: 0,
+                    entities: vec![Entity::BoughtShares { local: 0, qty: 100 }],
+                    fills: vec![buy, sell],
+                    receipts: Vec::new(),
+                },
+                1,
+                0,
+            )
+            .unwrap();
+        state.apply_deferred().unwrap();
+        let experience = state.belief_states[0]
+            .as_ref()
+            .unwrap()
+            .retail_experience
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            experience.stocks[&crate::StockId(0)].last_buy_price,
+            Some(Money::from_cents(2000))
+        );
+        assert_eq!(
+            experience.consecutive_failed_buys, 1,
+            "部分卖出价格低于加仓后的成本"
+        );
+        state.rollback();
+        assert_eq!(state.belief_states[0], Some(personal));
+        assert_eq!(state.accounts[0].invested_cents[0], 700_000);
+        assert_eq!(state.accounts[0].recovered_cents[0], 0);
+        assert_eq!(state.accounts[0].pending_sell_qty[0], 200);
+        assert_eq!(state.state_hash(), before);
+    }
+
+    #[test]
+    fn retail_partial_fills_and_exit_count_one_sell_order() {
+        let mut state = domain_harness();
+        let account = Arc::make_mut(&mut state.accounts[0]);
+        account.shares[0] = 0;
+        account.pending_sell_qty[0] = 200;
+        account.invested_cents[0] = 200_000;
+        let mut personal = crate::runtime::information_fixture::personal(crate::AccountId(1));
+        let mut experience = crate::RetailExperienceState::without_equity_reference();
+        experience
+            .record_fill_with_order(
+                &crate::StockId(0),
+                Side::Buy,
+                Money::from_cents(1000),
+                0,
+                200,
+                None,
+                0,
+                Some(3),
+            )
+            .unwrap();
+        experience.consecutive_failed_buys = 2;
+        personal.retail_experience = Some(experience);
+        state.belief_states = vec![Some(personal.clone()), None];
+        state.belief_dirty = vec![false; 2];
+        let mut fill = sell_fill(100);
+        fill.price = 1200;
+        state
+            .apply_batch_immediate(
+                DeskBatch {
+                    repurchase: Vec::new(),
+                    stock: 0,
+                    tick: 1,
+                    round: 0,
+                    entities: Vec::new(),
+                    fills: vec![fill, fill],
+                    receipts: Vec::new(),
+                },
+                1,
+                0,
+            )
+            .unwrap();
+        state.apply_deferred().unwrap();
+        let experience = state.belief_states[0]
+            .as_ref()
+            .unwrap()
+            .retail_experience
+            .as_ref()
+            .unwrap();
+        assert_eq!(experience.consecutive_failed_buys, 1);
+        assert!(experience.stocks[&crate::StockId(0)]
+            .cooldown_until_market_minute
+            .is_some());
+        state.rollback();
+        assert_eq!(state.belief_states[0], Some(personal));
     }
 
     /// 合同 2：等待窗即时相部分应用后 Abort——delta 可交换性保证全冲回
