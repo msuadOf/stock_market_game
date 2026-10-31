@@ -168,6 +168,22 @@ fn delayed_first_buy_preserves_group_holding_entry_on_flush() {
             stock,
             crate::account::Position::from_restored_parts(1_000, 0, 1_000_000, 0),
         )]));
+    // 直接注入散户持仓时，同步登记该持仓的经历生命周期。
+    game.state
+        .retail_experience
+        .get_mut(&seller)
+        .expect("retail seller must have an experience row")
+        .initialize_holding_dated(
+            &stock,
+            Some(Money::from_cents(1_000)),
+            Money::from_cents(1_000),
+            crate::experience::ExperienceMoment {
+                civil_date: game.state.civil_clock.current_date(),
+                market_minute: 0,
+                trading_day: 0,
+            },
+        )
+        .expect("fixture experience entry must be valid");
     let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut game).unwrap();
     driver.defer_due_for_test_at(&[seller], u64::MAX);
     driver.force_due_for_test_at(&[buyer], 1);
