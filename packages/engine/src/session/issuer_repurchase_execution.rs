@@ -93,7 +93,7 @@ impl GameSession {
             .announcements_for_company(&plan.issuer, at);
         let announced = published.iter().any(|entry| matches!(&entry.content, crate::information::AnnouncementContent::IssuerRepurchase(value) if value.plan == *plan));
         // 所有当前 Simple 非回购资本决策必须已依法披露；更正处于决策过程时仍受限。
-        let restricted = self.pending_report_corrections().iter().any(|correction| correction.company == plan.issuer)
+        let restricted = has_issuer_correction(self.pending_report_corrections(), plan.issuer)
             || actions.dividends.iter().any(|book| book.plan().issuer == plan.issuer
                 && !published.iter().any(|entry| matches!(&entry.content, crate::information::AnnouncementContent::CashDividend(value) if value.plan == *book.plan())))
             || actions.rights_offerings.iter().any(|book| book.plan().issuer == plan.issuer
@@ -491,57 +491,22 @@ impl GameSession {
             {
                 let inventory = book.current_inventory_shares(&[]).map_err(checked)?;
                 if inventory > 0 {
-                    use crate::company::share_registry::{
-                        AcquisitionSource, DayNetChange, HolderId, LotConsumption, MovementScope,
-                        ShareDayRequest,
-                    };
                     let registry = candidate
                         .registries
-                        .iter_mut()
+                        .iter()
                         .find(|registry| registry.stock() == &plan.stock)
                         .ok_or_else(|| invalid("注销缺少 REG"))?;
-                    let mut consume = Vec::new();
-                    for fill in book.fills() {
-                        let lots: Vec<_> = registry
-                            .holdings()
-                            .iter()
-                            .filter(|holding| holding.holder == HolderId::IssuerTreasury)
-                            .flat_map(|holding| &holding.lots)
-                            .filter(|lot| {
-                                lot.acquired_on == fill.day
-                                    && matches!(
-                                        lot.source,
-                                        AcquisitionSource::SecondaryMarket { .. }
-                                    )
-                            })
-                            .collect();
-                        let [lot] = lots.as_slice() else {
-                            return Err(invalid("无法唯一归属本方案的 Treasury lot"));
-                        };
-                        if lot.qty != fill.shares {
-                            return Err(invalid("Treasury lot 与本方案真实买入股数不等"));
-                        }
-                        consume.push(LotConsumption {
-                            lot_id: lot.id.clone(),
-                            qty: lot.qty,
-                        });
+                    let event = format!("issuer-repurchase-cancellation:{}", plan.event_id);
+                    let receipt = registry
+                        .receipt_by_event(&event)
+                        .ok_or_else(|| invalid("typed day 缺少注销 movement"))?;
+                    if receipt.request.day != day {
+                        return Err(invalid("注销 movement 日期不一致"));
                     }
-                    let issued = registry.issued_shares();
-                    registry
-                        .close_day(ShareDayRequest {
-                            event_id: format!("issuer-repurchase-cancellation:{}", plan.event_id),
-                            day,
-                            scope: MovementScope::IssuerRepurchaseCancellation {
-                                basis: plan.approval_reference.clone(),
-                            },
-                            changes: vec![DayNetChange {
-                                holder: HolderId::IssuerTreasury,
-                                change: -i128::from(inventory),
-                                acquisition: None,
-                                consume: Some(consume),
-                            }],
-                        })
-                        .map_err(checked)?;
+                    let issued = registry
+                        .issued_shares()
+                        .checked_add(inventory)
+                        .ok_or_else(|| invalid("注销前股本溢出"))?;
                     book.record_cancellation(day, inventory, &[])
                         .map_err(checked)?;
                     system
@@ -659,4 +624,36 @@ std::thread_local! { static REJECT_REPURCHASE_INSPECT: std::cell::Cell<bool> = c
 #[cfg(test)]
 pub(super) fn reject_next_inspect() {
     REJECT_REPURCHASE_INSPECT.with(|slot| assert!(!slot.replace(true)));
+}
+
+fn has_issuer_correction(
+    corrections: &[CompanyReportCorrection],
+    issuer: crate::company::CompanyId,
+) -> bool {
+    corrections
+        .iter()
+        .any(|correction| correction.company == issuer)
+}
+
+#[cfg(test)]
+mod eligibility_tests {
+    use super::*;
+    #[test]
+    fn pending_corrections_restrict_only_their_issuer() {
+        let correction = CompanyReportCorrection {
+            operation_id: "更正".into(),
+            company: crate::company::CompanyId(1),
+            supersedes: crate::information::PublicationId::new(1),
+            entries: Vec::new(),
+            reason: "更正".into(),
+        };
+        assert!(!has_issuer_correction(
+            std::slice::from_ref(&correction),
+            crate::company::CompanyId(0)
+        ));
+        assert!(has_issuer_correction(
+            &[correction],
+            crate::company::CompanyId(1)
+        ));
+    }
 }

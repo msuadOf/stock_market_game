@@ -525,6 +525,74 @@ impl GameSession {
                     changes: issuance_changes,
                 }));
             }
+            let mut cancellations = Vec::new();
+            for book in candidate.issuer_repurchases.iter().filter(|book| {
+                book.plan().stock == stock
+                    && book.status()
+                        == &crate::company::issuer_repurchase::IssuerRepurchaseStatus::Completed
+                    && book.completed_on().is_some_and(|on| on < day)
+            }) {
+                use crate::company::share_registry::LotConsumption;
+                let inventory = book
+                    .current_inventory_shares(&[])
+                    .map_err(|source| failure(day, Some(&stock), source))?;
+                if inventory == 0 {
+                    continue;
+                }
+                let mut consume = Vec::new();
+                for fill in book.fills() {
+                    let lots: Vec<_> = registry
+                        .holdings()
+                        .iter()
+                        .filter(|holding| holding.holder == HolderId::IssuerTreasury)
+                        .flat_map(|holding| &holding.lots)
+                        .filter(|lot| {
+                            lot.acquired_on == fill.day
+                                && matches!(lot.source, AcquisitionSource::SecondaryMarket { .. })
+                        })
+                        .collect();
+                    let [lot] = lots.as_slice() else {
+                        return Err(failure(
+                            day,
+                            Some(&stock),
+                            invalid("无法唯一归属本方案的 Treasury lot"),
+                        ));
+                    };
+                    if lot.qty != fill.shares {
+                        return Err(failure(
+                            day,
+                            Some(&stock),
+                            invalid("Treasury lot 与本方案真实买入股数不等"),
+                        ));
+                    }
+                    consume.push(LotConsumption {
+                        lot_id: lot.id.clone(),
+                        qty: lot.qty,
+                    });
+                }
+                let owner = treasury
+                    .ok_or_else(|| failure(day, Some(&stock), invalid("注销缺少回购专户")))?;
+                let qty = final_accounts
+                    .get_mut(&owner)
+                    .and_then(|positions| positions.get_mut(&stock_id))
+                    .ok_or_else(|| failure(day, Some(&stock), invalid("注销缺少回购专户持仓")))?;
+                *qty = qty
+                    .checked_sub(inventory)
+                    .ok_or_else(|| failure(day, Some(&stock), invalid("注销股份超过专户持仓")))?;
+                cancellations.push(SharePostAction::Movement(ShareDayRequest {
+                    event_id: format!("issuer-repurchase-cancellation:{}", book.plan().event_id),
+                    day,
+                    scope: MovementScope::IssuerRepurchaseCancellation {
+                        basis: book.plan().approval_reference.clone(),
+                    },
+                    changes: vec![DayNetChange {
+                        holder: HolderId::IssuerTreasury,
+                        change: -i128::from(inventory),
+                        acquisition: None,
+                        consume: Some(consume),
+                    }],
+                }));
+            }
             let request = ShareSettlementDay {
                 stock: stock.clone(),
                 day,
@@ -560,6 +628,7 @@ impl GameSession {
                                     }),
                             ),
                     )
+                    .chain(cancellations)
                     .collect(),
             };
             let sources = ShareMarketSourceContext {

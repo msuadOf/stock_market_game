@@ -70,17 +70,7 @@ impl GroupState {
             if live.as_of != calendar.observation_instant_before() {
                 return Err(fail("回购资格不是本拍同源时点"));
             }
-            if !live.announced
-                || live.issuance_in_progress.is_none()
-                || live.material_restriction == RepurchaseMaterialRestriction::NotModelled
-            {
-                return Err(fail(
-                    "回购执行资格无法证明：发行实施或重大事项限制来源未知；请反馈方案与日期",
-                ));
-            }
-            if live.issuance_in_progress == Some(true)
-                || live.material_restriction == RepurchaseMaterialRestriction::Restricted
-            {
+            if !repurchase_eligible(live)? {
                 continue;
             }
             if p.eligibility_as_of.date() > day || p.unit_as_of > day {
@@ -274,5 +264,45 @@ impl GroupState {
             sent += 1;
         }
         Ok(sent)
+    }
+}
+
+fn repurchase_eligible(
+    live: &super::super::protocol::RepurchaseEligibility,
+) -> Result<bool, RuntimeError> {
+    if !live.announced
+        || live.issuance_in_progress.is_none()
+        || live.material_restriction == RepurchaseMaterialRestriction::NotModelled
+    {
+        return Err(RuntimeError::ProtocolInvariant {
+            detail: "回购执行资格无法证明：发行实施或重大事项限制来源未知；请反馈方案与日期".into(),
+        });
+    }
+    Ok(live.issuance_in_progress == Some(false)
+        && live.material_restriction == RepurchaseMaterialRestriction::Clear)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn restricted_pauses_and_clear_resumes_unknown_is_rejected() {
+        let mut live = super::super::super::protocol::RepurchaseEligibility {
+            as_of: crate::CivilInstant::from_hms(
+                crate::CivilDate::from_iso("2026-01-05").unwrap(),
+                10,
+                0,
+                0,
+            )
+            .unwrap(),
+            issuance_in_progress: Some(false),
+            material_restriction: RepurchaseMaterialRestriction::Restricted,
+            announced: true,
+        };
+        assert!(matches!(repurchase_eligible(&live), Ok(false)));
+        live.material_restriction = RepurchaseMaterialRestriction::Clear;
+        assert!(matches!(repurchase_eligible(&live), Ok(true)));
+        live.material_restriction = RepurchaseMaterialRestriction::NotModelled;
+        assert!(repurchase_eligible(&live).is_err());
     }
 }
