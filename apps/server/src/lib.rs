@@ -63,6 +63,10 @@ pub fn app_router_with_manager(manager: SessionManager) -> Router {
 fn app_router_with_state(state: AppState) -> Router {
     let router = Router::new()
         .route(
+            "/api/subscribe-rights-offering",
+            post(routes::api_subscribe_rights_offering),
+        )
+        .route(
             "/api/propose-player-company-action",
             post(routes::api_propose_player_company_action),
         )

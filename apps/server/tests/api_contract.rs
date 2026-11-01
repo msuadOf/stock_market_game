@@ -1755,3 +1755,27 @@ async fn cors_actual_response_carries_allow_origin() {
         "带 origin 的实际请求响应也应带 Access-Control-Allow-Origin"
     );
 }
+
+#[tokio::test]
+async fn rights_subscription_rejects_untrusted_owner_before_authentication() {
+    let response = app_router().oneshot(Request::builder().method("POST")
+        .uri("/api/subscribe-rights-offering")
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(json!({"session_id":"missing","generation":"1","event_id":"event","requested_shares":"1","owner":"0"}).to_string())).unwrap()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn rights_subscription_wire_requires_canonical_decimal_string() {
+    for (value, expected) in [
+        (json!(0), StatusCode::BAD_REQUEST),
+        (json!("00"), StatusCode::BAD_REQUEST),
+        (json!("+1"), StatusCode::BAD_REQUEST),
+        (json!("18446744073709551616"), StatusCode::BAD_REQUEST),
+        (json!("0"), StatusCode::UNAUTHORIZED),
+        (json!("18446744073709551615"), StatusCode::UNAUTHORIZED),
+    ] {
+        let response = app_router().oneshot(Request::builder().method("POST").uri("/api/subscribe-rights-offering").header("content-type", "application/json").body(axum::body::Body::from(json!({"session_id":"missing","generation":"1","event_id":"event","requested_shares":value}).to_string())).unwrap()).await.unwrap();
+        assert_eq!(response.status(), expected, "输入 {value}");
+    }
+}

@@ -419,27 +419,27 @@ fn correction_real_accounting_overflow_keeps_fatal_actor_and_closed_ingress() {
     );
 }
 
+async fn dispatch(
+    actor: &mut SessionActor,
+    sender: &mpsc::UnboundedSender<SessionCommand>,
+    subject: OpaqueSubjectId,
+    request: MemberRequest,
+) -> Result<MemberResponse, SendCommandError> {
+    let (reply, received) = oneshot::channel();
+    sender
+        .send(SessionCommand::Member {
+            subject,
+            request,
+            reply,
+        })
+        .unwrap();
+    let command = actor.cmd_rx.try_recv().unwrap();
+    actor.handle_command(command).await;
+    received.await.unwrap()
+}
+
 #[tokio::test]
 async fn company_writes_after_fatal_preserve_first_failure_and_stale_generation() {
-    async fn dispatch(
-        actor: &mut SessionActor,
-        sender: &mpsc::UnboundedSender<SessionCommand>,
-        subject: OpaqueSubjectId,
-        request: MemberRequest,
-    ) -> Result<MemberResponse, SendCommandError> {
-        let (reply, received) = oneshot::channel();
-        sender
-            .send(SessionCommand::Member {
-                subject,
-                request,
-                reply,
-            })
-            .unwrap();
-        let command = actor.cmd_rx.try_recv().unwrap();
-        actor.handle_command(command).await;
-        received.await.unwrap()
-    }
-
     let (mut game, mut request) = correction_game("2030-06-08");
     for line in &mut request.entries[0].lines {
         line.amount = AccountingAmount::MAX;
@@ -1010,4 +1010,289 @@ fn archive_write_failure_keeps_the_previous_candidate_and_the_committed_civil_up
         Some(civil.boundary.settled_date)
     );
     assert_eq!(exact.snapshot.seq, civil.seq_to);
+}
+
+#[tokio::test]
+async fn rights_subscription_requires_member_and_current_generation() {
+    let (game, _) = correction_game("2030-06-03");
+    let (mut actor, sender, _receiver) = correction_actor(game);
+    let request = || MemberRequest::SubscribeRightsOffering {
+        generation: 1,
+        event_id: "missing".into(),
+        requested_shares: 1,
+    };
+    let outsider = OpaqueSubjectId::new("rights-outsider".into()).unwrap();
+    assert!(matches!(
+        dispatch(&mut actor, &sender, outsider, request()).await,
+        Err(SendCommandError::Rejected(_))
+    ));
+    assert!(matches!(
+        dispatch(&mut actor, &sender, correction_controller(), request()).await,
+        Ok(MemberResponse::RightsSubscription(1, Err(_)))
+    ));
+    assert!(
+        matches!(dispatch(&mut actor, &sender, correction_controller(), MemberRequest::SubscribeRightsOffering {
+        generation: 0, event_id: "missing".into(), requested_shares: 1,
+    }).await, Err(SendCommandError::Rejected(reason)) if reason == "STALE_SESSION_GENERATION")
+    );
+}
+
+fn rights_member_game() -> (ProtocolSession, String) {
+    use engine::company::rights_offering::{
+        RightsOfferingBook, RightsOfferingDeclaration, RightsOfferingEventPlan, RightsOfferingMode,
+        RightsSubscriptionStrategy,
+    };
+    use engine::company::share_registry::{HolderId, ShareRegistry};
+    use engine::session::SavedSessionCompanies;
+    let mut setup =
+        correction_fixture::civil_setup(engine::CivilDate::from_iso("2030-06-03").unwrap());
+    setup.ticks_per_day = 1;
+    setup.npcs.retail_count = 1;
+    setup.npcs.inst_count = 0;
+    setup.npcs.hot_count = 0;
+    setup.strategy_params.retail.arrival_rate = 0.0;
+    setup.stocks[0].total_shares = 1_200;
+    setup.stocks[0].float_shares = 1_200;
+    setup.history_len = 1;
+    setup.company_system = Some(simple_company_fixture!(engine; ["600101"]));
+    setup.dividend_tax_mode = Some(engine::company::CashDividendTaxMode::FlatWithholding);
+    setup.flat_withholding_bp = Some(1_000);
+    setup.par_value_per_share = Some(engine::Money::from_cents(100));
+    setup.auto_corporate_foundation = true;
+    setup.rights_offering_enabled = true;
+    let mut initial = engine::GameSession::new(setup, 7181).unwrap();
+    initial
+        .bind_market_creator(correction_controller())
+        .unwrap();
+    let subject = OpaqueSubjectId::new("rights-second-member".into()).unwrap();
+    let member = initial.join_market(subject, false).unwrap();
+    assert_ne!(member.account_id, AccountId(0));
+    let mut saved = initial.save().unwrap();
+    let npc_position = saved
+        .snapshot
+        .accounts
+        .get_mut(&AccountId(1))
+        .unwrap()
+        .positions
+        .get_mut(&engine::StockId(0))
+        .unwrap();
+    let mut player_position = npc_position.clone();
+    player_position.qty = 100;
+    player_position.t1_locked = 0;
+    player_position.invested_cents = 0;
+    player_position.recovered_cents = 0;
+    npc_position.qty -= 200;
+    saved
+        .snapshot
+        .accounts
+        .get_mut(&AccountId(0))
+        .unwrap()
+        .positions
+        .insert(engine::StockId(0), player_position.clone());
+    saved
+        .snapshot
+        .accounts
+        .get_mut(&member.account_id)
+        .unwrap()
+        .positions
+        .insert(engine::StockId(0), player_position);
+    let SavedSessionCompanies::CompanySystem {
+        system,
+        corporate_actions,
+    } = &mut saved.company_state
+    else {
+        panic!("需要公司系统")
+    };
+    let old = &corporate_actions.registries[0];
+    let mut holdings = old.holdings().to_vec();
+    let npc = holdings
+        .iter_mut()
+        .find(|holding| holding.holder == HolderId::Account(AccountId(1)))
+        .unwrap();
+    let mut player = npc.clone();
+    npc.lots[0].qty -= 200;
+    player.holder = HolderId::Account(AccountId(0));
+    player.lots[0].qty = 100;
+    player.lots[0].id = "host-player-initial".into();
+    let mut second = player.clone();
+    second.holder = HolderId::Account(member.account_id);
+    second.lots[0].id = "host-second-player-initial".into();
+    holdings.push(player);
+    holdings.push(second);
+    corporate_actions.registries[0] = ShareRegistry::new(
+        old.stock().clone(),
+        *old.issuer(),
+        old.issued_shares(),
+        old.settled_on(),
+        holdings,
+    )
+    .unwrap();
+    let company = engine::company::CompanyId(0);
+    let capital = system
+        .dividend_legal_facts(&company)
+        .unwrap()
+        .unwrap()
+        .registered_capital;
+    let day = initial.civil_date();
+    let mut plan = RightsOfferingEventPlan {
+        event_id: "host-rights".into(),
+        approval_reference: "宿主测试批准".into(),
+        issuer: company,
+        stock: engine::StockCode("600101".into()),
+        exchange: engine::calendar::CalendarExchange::Sse,
+        approved_on: day,
+        announced_on: day,
+        registered_on: day,
+        payment_start_on: day,
+        payment_deadline_on: day,
+        ex_rights_on: day,
+        settlement_on: day,
+        listing_on: day,
+        price_per_share: engine::Money::from_cents(100),
+        mode: RightsOfferingMode::RightsToAllShareholders {
+            shares_per_existing_share_micros: 100_000,
+        },
+        npc_subscription_strategy: RightsSubscriptionStrategy::FullByDefault,
+    };
+    plan.derive_schedule(
+        &engine::calendar::TradingCalendar::current_default_calendar().unwrap(),
+        plan.exchange,
+        1,
+    )
+    .unwrap();
+    system
+        .declare_rights_offering(
+            &company,
+            RightsOfferingDeclaration {
+                event_id: plan.event_id.clone(),
+                approval_reference: plan.approval_reference.clone(),
+                approved_on: day,
+                price_per_share: plan.price_per_share,
+                par_value_per_share: engine::Money::from_cents(100),
+                registered_capital_at_approval: capital,
+            },
+        )
+        .unwrap();
+    corporate_actions
+        .rights_offerings
+        .push(RightsOfferingBook::new(plan.clone()).unwrap());
+    let mut game = engine::GameSession::restore(&saved).unwrap();
+    game.step().unwrap();
+    game.end_civil_day().unwrap();
+    let saved = game.save().unwrap();
+    (ProtocolSession::restore(&saved).unwrap(), plan.event_id)
+}
+
+#[tokio::test]
+async fn rights_member_success_is_queued_once_after_waiter_cancellation() {
+    let (game, event_id) = rights_member_game();
+    let (mut actor, sender, _) = correction_actor(game);
+    let request = || MemberRequest::SubscribeRightsOffering {
+        generation: 1,
+        event_id: event_id.clone(),
+        requested_shares: 1,
+    };
+    let (reply, received) = oneshot::channel();
+    drop(received);
+    sender
+        .send(SessionCommand::Member {
+            subject: correction_controller(),
+            request: request(),
+            reply,
+        })
+        .unwrap();
+    let command = actor.cmd_rx.try_recv().unwrap();
+    actor.handle_command(command).await;
+    let actions = actor.game.game().corporate_actions().unwrap();
+    assert_eq!(actions.rights_subscription_queue.len(), 1);
+    assert_eq!(actions.rights_subscription_queue[0].account, AccountId(0));
+    assert!(matches!(
+        dispatch(&mut actor, &sender, correction_controller(), request()).await,
+        Ok(MemberResponse::RightsSubscription(
+            1,
+            Err(
+                engine::session::protocol::CompanyWriteError::RightsSubscription {
+                    source: engine::session::RightsSubscriptionError::Duplicate { .. },
+                    ..
+                }
+            )
+        ))
+    ));
+    assert_eq!(
+        actor
+            .game
+            .game()
+            .corporate_actions()
+            .unwrap()
+            .rights_subscription_queue
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn rights_member_success_receipt_uses_trusted_identity_and_decimal_shares() {
+    let (game, event_id) = rights_member_game();
+    let (mut actor, sender, _) = correction_actor(game);
+    let response = dispatch(
+        &mut actor,
+        &sender,
+        correction_controller(),
+        MemberRequest::SubscribeRightsOffering {
+            generation: 1,
+            event_id: event_id.clone(),
+            requested_shares: 2,
+        },
+    )
+    .await
+    .unwrap();
+    let MemberResponse::RightsSubscription(generation, Ok(receipt)) = response else {
+        panic!("本人认购应成功")
+    };
+    assert_eq!(generation, 1);
+    let wire = serde_json::to_value(receipt).unwrap();
+    assert_eq!(wire["event_id"], event_id);
+    assert_eq!(wire["requested_shares"], "2");
+    assert_eq!(wire["submitted_on"], "2030-06-04");
+    let queue = &actor
+        .game
+        .game()
+        .corporate_actions()
+        .unwrap()
+        .rights_subscription_queue;
+    assert_eq!(queue.len(), 1);
+    assert_eq!(queue[0].account, AccountId(0));
+}
+
+#[tokio::test]
+async fn rights_second_member_success_is_attributed_to_member_account() {
+    let (game, event_id) = rights_member_game();
+    let subject = OpaqueSubjectId::new("rights-second-member".into()).unwrap();
+    let expected = game.market_membership(&subject).unwrap().account_id;
+    assert_ne!(expected, AccountId(0));
+    let (mut actor, sender, _) = correction_actor(game);
+    let result = dispatch(
+        &mut actor,
+        &sender,
+        subject,
+        MemberRequest::SubscribeRightsOffering {
+            generation: 1,
+            event_id,
+            requested_shares: 2,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        result,
+        MemberResponse::RightsSubscription(1, Ok(_))
+    ));
+    let queue = &actor
+        .game
+        .game()
+        .corporate_actions()
+        .unwrap()
+        .rights_subscription_queue;
+    assert_eq!(queue.len(), 1);
+    assert_eq!(queue[0].account, expected);
 }

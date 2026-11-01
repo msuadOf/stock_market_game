@@ -669,6 +669,11 @@ pub enum MemberRequest {
         generation: u64,
         query: HostQuery,
     },
+    SubscribeRightsOffering {
+        generation: u64,
+        event_id: String,
+        requested_shares: u64,
+    },
     ProposePlayerCompanyAction {
         generation: u64,
         proposal: engine::session::PlayerCompanyProposal,
@@ -747,6 +752,13 @@ pub enum MemberRequest {
 pub enum MemberResponse {
     HostQuery(u64, serde_json::Value),
     CompanyWriteFatal(HostFailure),
+    RightsSubscription(
+        u64,
+        Result<
+            engine::session::RightsSubscriptionReceipt,
+            engine::session::protocol::CompanyWriteError,
+        >,
+    ),
     CompanyProposal(
         u64,
         Result<
@@ -2368,7 +2380,8 @@ impl SessionActor {
         let reject =
             |error: engine::session::MembershipError| SendCommandError::Rejected(error.to_string());
         let request_generation = match &request {
-            MemberRequest::ProposePlayerCompanyAction { generation, .. }
+            MemberRequest::SubscribeRightsOffering { generation, .. }
+            | MemberRequest::ProposePlayerCompanyAction { generation, .. }
             | MemberRequest::EnqueueReportCorrection { generation, .. }
             | MemberRequest::CancelReportCorrection { generation, .. }
             | MemberRequest::AdmissionCash { generation, .. }
@@ -2384,6 +2397,34 @@ impl SessionActor {
             ));
         }
         match request {
+            MemberRequest::SubscribeRightsOffering {
+                event_id,
+                requested_shares,
+                ..
+            } => {
+                let owner = self
+                    .game
+                    .market_membership(&subject)
+                    .map_err(reject)?
+                    .account_id;
+                if let Some(failure) = &self.fatal_failure {
+                    return Ok(MemberResponse::CompanyWriteFatal(failure.clone()));
+                }
+                if let Some(fatal) = self.company_write_fatal(None) {
+                    return Ok(fatal);
+                }
+                let result = self
+                    .game
+                    .subscribe_rights_offering(owner, &event_id, requested_shares)
+                    .map_err(Into::into);
+                if let Some(fatal) = self.company_write_fatal(result.as_ref().err()) {
+                    return Ok(fatal);
+                }
+                Ok(MemberResponse::RightsSubscription(
+                    self.timeline_generation,
+                    result,
+                ))
+            }
             MemberRequest::ProposePlayerCompanyAction { proposal, .. } => {
                 let owner = self
                     .game
@@ -3228,6 +3269,7 @@ impl SessionActor {
                     &request,
                     MemberRequest::Control
                         | MemberRequest::Resolve
+                        | MemberRequest::SubscribeRightsOffering { .. }
                         | MemberRequest::ProposePlayerCompanyAction { .. }
                         | MemberRequest::EnqueueReportCorrection { .. }
                         | MemberRequest::CancelReportCorrection { .. }

@@ -293,6 +293,32 @@ async fn company_read_query(
 }
 
 #[tauri::command]
+async fn subscribe_rights_offering(
+    state: State<'_, DesktopState>,
+    session_id: String,
+    generation: String,
+    event_id: String,
+    requested_shares: String,
+) -> Result<actor::RightsSubscriptionResponse, actor::CompanyWriteHostFailure> {
+    let requested_shares = parse_subscription_shares(&requested_shares)
+        .map_err(|message| actor::CompanyWriteHostFailure::Session { message })?;
+    let handles = lookup_handles(&state, &session_id).await.map_err(|error| {
+        actor::CompanyWriteHostFailure::Session {
+            message: error.to_string(),
+        }
+    })?;
+    let generation = parse_generation(generation)
+        .map_err(|message| actor::CompanyWriteHostFailure::Session { message })?;
+    handles
+        .subscribe_rights_offering(generation, event_id, requested_shares)
+        .await
+        .map_err(|error| {
+            eprintln!("desktop.subscribe_rights_offering 领域拒绝：{error:?}");
+            error.public_failure()
+        })
+}
+
+#[tauri::command]
 async fn propose_player_company_action(
     state: State<'_, DesktopState>,
     session_id: String,
@@ -555,6 +581,18 @@ async fn lookup_handles(
         .ok_or(SendCommandError::ActorGone)
 }
 
+fn parse_subscription_shares(value: &str) -> Result<u64, String> {
+    if value.is_empty()
+        || !value.bytes().all(|byte| byte.is_ascii_digit())
+        || (value.len() > 1 && value.starts_with('0'))
+    {
+        return Err("认购股数必须是规范的 0..=u64::MAX 十进制字符串".into());
+    }
+    value
+        .parse()
+        .map_err(|_| "认购股数必须是规范的 0..=u64::MAX 十进制字符串".into())
+}
+
 fn parse_generation(generation: String) -> Result<u64, String> {
     if generation.is_empty()
         || !generation.bytes().all(|byte| byte.is_ascii_digit())
@@ -614,6 +652,7 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
             civil_date,
             public_reports,
             company_read_query,
+            subscribe_rights_offering,
             propose_player_company_action,
             enqueue_report_correction,
             cancel_report_correction,
@@ -653,6 +692,7 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
             civil_date,
             public_reports,
             company_read_query,
+            subscribe_rights_offering,
             propose_player_company_action,
             enqueue_report_correction,
             cancel_report_correction,

@@ -309,6 +309,12 @@ impl CompanyWriteHostError {
 }
 
 #[derive(Debug, Serialize)]
+pub struct RightsSubscriptionResponse {
+    pub generation: String,
+    pub receipt: engine::session::RightsSubscriptionReceipt,
+}
+
+#[derive(Debug, Serialize)]
 pub struct CompanyProposalResponse {
     pub generation: String,
     pub receipt: engine::session::PlayerCompanyCommandReceipt,
@@ -325,6 +331,12 @@ pub struct ReportCorrectionResponse {
 /// `reply` 用 `Result` 而非裸值：engine 失败（`SessionError`）显式上抛，绝不静默吞（铁律二）。
 #[derive(Debug)]
 pub enum SessionCommand {
+    SubscribeRightsOffering {
+        generation: u64,
+        event_id: String,
+        requested_shares: u64,
+        reply: oneshot::Sender<Result<RightsSubscriptionResponse, CompanyWriteHostError>>,
+    },
     ProposePlayerCompanyAction {
         generation: u64,
         proposal: engine::session::PlayerCompanyProposal,
@@ -459,6 +471,30 @@ pub struct SessionHandles {
 }
 
 impl SessionHandles {
+    pub async fn subscribe_rights_offering(
+        &self,
+        generation: u64,
+        event_id: String,
+        requested_shares: u64,
+    ) -> Result<RightsSubscriptionResponse, CompanyWriteHostError> {
+        let (reply, received) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::SubscribeRightsOffering {
+                generation,
+                event_id,
+                requested_shares,
+                reply,
+            })
+            .map_err(|error| CompanyWriteHostError::Session {
+                message: error.to_string(),
+            })?;
+        received
+            .await
+            .map_err(|error| CompanyWriteHostError::Session {
+                message: error.to_string(),
+            })?
+    }
+
     pub async fn propose_player_company_action(
         &self,
         generation: u64,
@@ -1315,6 +1351,34 @@ impl<R: Runtime> SessionActor<R> {
             return;
         }
         match cmd {
+            SessionCommand::SubscribeRightsOffering {
+                generation,
+                event_id,
+                requested_shares,
+                reply,
+            } => {
+                let result = self
+                    .generation_response(generation, Ok(()))
+                    .map_err(|error| CompanyWriteHostError::Session {
+                        message: error.to_string(),
+                    })
+                    .and_then(|_| {
+                        self.game
+                            .require_healthy()
+                            .map_err(CompanyWriteHostError::Fatal)
+                    })
+                    .and_then(|_| {
+                        self.game
+                            .subscribe_rights_offering(AccountId(0), &event_id, requested_shares)
+                            .map(|receipt| RightsSubscriptionResponse {
+                                generation: self.generation.to_string(),
+                                receipt,
+                            })
+                            .map_err(|error| CompanyWriteHostError::Command(error.into()))
+                    });
+                let result = self.finish_company_write(result);
+                let _ = reply.send(result);
+            }
             SessionCommand::ProposePlayerCompanyAction {
                 generation,
                 proposal,

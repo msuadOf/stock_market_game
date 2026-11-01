@@ -625,3 +625,33 @@ fn civil_prefix_is_published_before_the_next_real_month_end_failure() {
     );
     assert_eq!(harness.actor.game.tick(), 0);
 }
+
+#[tokio::test]
+async fn rights_subscription_after_fatal_preserves_business_state() {
+    let (mut game, mut request) = correction_game("2030-06-08");
+    for line in &mut request.entries[0].lines {
+        line.amount = AccountingAmount::MAX;
+    }
+    request.entries[0].lines[1].account =
+        LedgerAccountId(engine::accounting::reports::simple_summary::REVENUE.into());
+    let epoch = game.report_correction_epoch();
+    game.enqueue_report_correction(&epoch, request).unwrap();
+    assert!(game.end_civil_day_update().is_err());
+    let first = game.require_healthy().unwrap_err();
+    let before = game.business_state_hash().unwrap();
+    let mut harness = correction_harness(game);
+    let (reply, received) = oneshot::channel();
+    harness
+        .actor
+        .handle_command(SessionCommand::SubscribeRightsOffering {
+            generation: 1,
+            event_id: "missing".into(),
+            requested_shares: 1,
+            reply,
+        })
+        .await;
+    assert!(
+        matches!(received.await.unwrap(), Err(CompanyWriteHostError::Fatal(actual)) if actual == first)
+    );
+    assert_eq!(harness.actor.game.business_state_hash().unwrap(), before);
+}

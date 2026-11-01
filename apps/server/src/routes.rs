@@ -300,6 +300,87 @@ pub async fn api_company_read_query(
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct SubscribeRightsOfferingBody {
+    pub session_id: String,
+    pub generation: String,
+    pub event_id: String,
+    pub requested_shares: String,
+}
+
+pub async fn api_subscribe_rights_offering(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Result<Json<SubscribeRightsOfferingBody>, JsonRejection>,
+) -> Response {
+    let Json(body) = match body {
+        Ok(body) => body,
+        Err(error) => return invalid_json_response(error),
+    };
+    let requested_shares = match parse_subscription_shares(&body.requested_shares) {
+        Some(value) => value,
+        None => {
+            return api_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_REQUESTED_SHARES",
+                "requested_shares 必须是规范的 0..=u64::MAX 十进制字符串",
+            )
+        }
+    };
+    let (handles, subject) =
+        match authorized_session(&state, &body.session_id, authorization_token(&headers)).await {
+            Ok(context) => context,
+            Err(response) => return *response,
+        };
+    let generation = match parse_host_parity_generation(&body.generation) {
+        Ok(value) => value,
+        Err(response) => return *response,
+    };
+    match handles
+        .member_request(
+            subject,
+            crate::actor::MemberRequest::SubscribeRightsOffering {
+                generation,
+                event_id: body.event_id,
+                requested_shares,
+            },
+        )
+        .await
+    {
+        Ok(crate::actor::MemberResponse::RightsSubscription(generation, Ok(receipt))) => {
+            Json(serde_json::json!({"generation":generation.to_string(),"receipt":receipt}))
+                .into_response()
+        }
+        Ok(crate::actor::MemberResponse::RightsSubscription(_, Err(error))) => {
+            warn!(session = %body.session_id, error = ?error, "配股认购被领域拒绝");
+            (StatusCode::BAD_REQUEST, Json(serde_json::json!({"code":"RIGHTS_SUBSCRIPTION_REJECTED","failure":error.public_failure()}))).into_response()
+        }
+        Ok(crate::actor::MemberResponse::CompanyWriteFatal(failure)) => {
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(failure)).into_response()
+        }
+        Ok(_) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "COMPANY_WRITE_RESPONSE_INVALID",
+            "公司写命令响应类型错误，请反馈",
+        ),
+        Err(SendCommandError::ActorGone) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "ACTOR_GONE",
+            "会话 actor 已退出，请同步有效会话后重试",
+        ),
+        Err(SendCommandError::Rejected(reason)) if reason == "STALE_SESSION_GENERATION" => {
+            api_error(StatusCode::CONFLICT, "STALE_SESSION_GENERATION", reason)
+        }
+        Err(SendCommandError::Rejected(reason)) => api_error(
+            StatusCode::BAD_REQUEST,
+            "RIGHTS_SUBSCRIPTION_REJECTED",
+            reason,
+        ),
+        Err(SendCommandError::InvalidSpeed(_)) => unreachable!("公司写命令不校验倍速"),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProposePlayerCompanyActionBody {
     pub session_id: String,
     pub generation: String,
@@ -562,6 +643,16 @@ pub struct HostParityAdvanceCivilDayBody {
 pub struct HostParityStepBody {
     pub session_id: String,
     pub generation: String,
+}
+
+fn parse_subscription_shares(value: &str) -> Option<u64> {
+    if value.is_empty()
+        || !value.bytes().all(|byte| byte.is_ascii_digit())
+        || (value.len() > 1 && value.starts_with('0'))
+    {
+        return None;
+    }
+    value.parse().ok()
 }
 
 fn parse_host_parity_generation(value: &str) -> Result<u64, Box<Response>> {

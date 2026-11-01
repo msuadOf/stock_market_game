@@ -124,3 +124,52 @@ async fn correction_cancel_ipc_reaches_actual_not_pending_rejection() {
     assert_eq!(failure["data"]["data"]["operation_id"], "absent-correction");
     invoke_json(&webview, "stop_session", json!({"sessionId":session_id})).unwrap();
 }
+
+#[tokio::test]
+async fn rights_subscription_ipc_reaches_domain_and_checks_generation() {
+    let app = command_builder(mock_builder())
+        .build(mock_context(noop_assets()))
+        .unwrap();
+    let webview = WebviewWindowBuilder::new(&app, "main", Default::default())
+        .build()
+        .unwrap();
+    let session_id = invoke_json(
+        &webview,
+        "create_session",
+        json!({"setup":company_write_setup(diagnostic_setup()),"seed":"7181"}),
+    )
+    .unwrap();
+    assert!(invoke_json(
+        &webview,
+        "subscribe_rights_offering",
+        json!({"sessionId":session_id,"generation":"1","eventId":"missing","requestedShares":1})
+    )
+    .is_err());
+    let failure = invoke_json(
+        &webview,
+        "subscribe_rights_offering",
+        json!({"sessionId":session_id,"generation":"1","eventId":"missing","requestedShares":"1"}),
+    )
+    .expect_err("未知配股事件应被领域拒绝");
+    assert_eq!(failure["kind"], "RightsSubscription", "{failure}");
+    let stale = invoke_json(
+        &webview,
+        "subscribe_rights_offering",
+        json!({"sessionId":session_id,"generation":"999","eventId":"missing","requestedShares":"1"}),
+    )
+    .expect_err("旧 generation 应拒绝");
+    assert!(stale["message"].as_str().is_some(), "{stale}");
+    invoke_json(&webview, "stop_session", json!({"sessionId":session_id})).unwrap();
+}
+
+#[test]
+fn rights_subscription_share_wire_is_canonical_decimal_u64() {
+    for value in ["", "00", "+1", " 1", "18446744073709551616"] {
+        assert!(super::parse_subscription_shares(value).is_err(), "{value}");
+    }
+    assert_eq!(super::parse_subscription_shares("0").unwrap(), 0);
+    assert_eq!(
+        super::parse_subscription_shares("18446744073709551615").unwrap(),
+        u64::MAX
+    );
+}
