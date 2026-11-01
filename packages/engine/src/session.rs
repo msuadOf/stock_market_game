@@ -3993,9 +3993,8 @@ impl GameSession {
         self.validate_capital_civil_boundary(
             self.civil_date(),
             planned_day.next_date,
-            cfg!(not(target_arch = "wasm32")) && self.uses_runtime_civil_authority(),
+            self.uses_runtime_civil_authority(),
         )?;
-        #[cfg(not(target_arch = "wasm32"))]
         if self.uses_runtime_civil_authority() {
             return self.with_prepared_runtime_civil_day_classified(project);
         }

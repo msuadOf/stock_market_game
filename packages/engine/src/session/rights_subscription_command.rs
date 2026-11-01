@@ -77,9 +77,7 @@ impl GameSession {
         if !self.state.setup.rights_offering_enabled {
             return Err(RightsSubscriptionError::Disabled);
         }
-        if self.has_current_external_runtime_authority()
-            || (cfg!(target_arch = "wasm32") && self.uses_runtime_civil_authority())
-        {
+        if self.has_current_external_runtime_authority() {
             return Err(RightsSubscriptionError::UnsupportedRuntime);
         }
         if requested_shares == 0 {
