@@ -67,3 +67,5 @@
 第十三批将 `feat/company-b4e-repurchase-common-2026-10-28` `878ea155` 和 `feat/approval-c-common-93-2026-10-28` `cac6a9e4` 转为对应短 SHA 的 `archive/20261102-...` tag，保留原 worktree 同提交 detached HEAD。共同来源 `506d55bd` 是未完成 green 验证的候选；相关批准、行政镜像与自然日测试在基线有后续实现，但核心测试尚需逐断言审计。该操作只保全历史和未完成任务，不声称全功能吸收或验收通过；全部 stash 原样保留，操作前工作树干净并检查进程 cwd。本批未运行测试。
 
 第十四批保全四条 Clippy 来源：`codex/clippy-cfg-args-leaf-rework-20261030` `b5ce43c3`、`codex/clippy-cfg-npc-tests-20261030` `292b5eaf`、`codex/clippy-cfg-settlement-rework-20261030` `b21296d1`、`codex/clippy-idioms-sessionextra-20261030` `9985c6dd`，均转为对应 `archive/20261102-<短 SHA>` tag 并保留原 worktree 同提交 detached HEAD。四项含未逐项核销的生产重构；其中参数叶来源的 `trading_day` 说明在现行文件未见，须确认是否恢复；NPC 旧类型迁移和 30 文件 session 清理仍需核对。Settlement 同源读写上下文在基线存在。记录明确原候选未完成独审或 Cargo 证据的限制；本次不宣称全部吸收或 green。操作前工作树干净并检查进程 cwd，未运行产品测试。
+
+第十五批将 `feat/tax-admin-projection` `5e123180`、`fix/finish-120-groups2` `5ff2673c` 转为对应短 SHA 的 `archive/20261102-...` tag，保留原 worktree 同提交 detached HEAD。前者保留官方原件、合同及未执行草稿；现行规则已有受限 native 税务接线，旧草稿不能代表当前尚未接线或全面支持。后者保留原始红绿与验收记录，其历史窄门不能替代最终集成验收；四个 diagnostics 场景曾出现 Filled 缺链，须以现行专项证据判断是否关闭。独立复核确认保留上述限制；操作前工作树干净并检查进程 cwd，本次未运行产品测试。
