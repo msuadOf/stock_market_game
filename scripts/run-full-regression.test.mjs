@@ -186,7 +186,7 @@ it("actor 独立 case 失败时停止其他测试并保留剩余期限", async (
 });
 
 it("日历重 case 串行且其余 case 保持并发，全部仍有独立期限", async () => {
-  const heavy = ["session::calendar_nonzero_plan_parity_tests::a", "session::calendar_final_boundary_tests::b"];
+  const heavy = ["session::calendar_nonzero_plan_parity_tests::a", "session::calendar_final_boundary_tests::b", "session::pipeline::authoritative_tick_tests::extreme_phase_geometry_single_tick_day", "session::pipeline::authoritative_tick_tests::extreme_phase_geometry_no_closing_auction", "session::pipeline::authoritative_tick_tests::extreme_phase_geometry_closing_auction"];
   const ordinary = ["ordinary::a", "ordinary::b"];
   let heavyActive = 0;
   let peakHeavy = 0;

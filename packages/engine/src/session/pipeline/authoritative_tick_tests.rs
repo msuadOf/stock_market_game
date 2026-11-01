@@ -427,45 +427,55 @@ fn public_step_commits_phase_boundaries_once_and_leaves_a_saveable_quiet_point()
 /// 方案 B 守卫（协调者批复③）：极端相位几何下日 K 状态机不变式
 /// 保持——每拍即日界（tpd=1）与无收盘竞价（closing=0）两型，逐拍
 /// save/restore 往返一致（fault2064/2076 全程不触发）。
-#[test]
-fn public_step_day_boundary_candle_state_machine_holds_for_extreme_phase_geometry() {
-    for (auction_ticks, tpd, closing, ticks) in
-        [(0u64, 1u64, 0u64, 4u64), (0, 4, 0, 9), (1, 4, 1, 9)]
-    {
-        let mut session = boundary_session_with(auction_ticks, tpd, closing);
-        for _ in 0..ticks {
-            // 双时钟契约驱动（同 public_step_commits：休市日/已收盘日
-            // 先 end_civil_day 对齐交易日序）。
-            while session.civil_clock().phase() == crate::session::CivilPhase::ClosedDay
-                || session
-                    .civil_clock()
-                    .completed_trading_sessions_expected()
-                    .unwrap()
-                    != session.day() + 1
-            {
-                session.end_civil_day().unwrap();
-            }
-            session.step().unwrap();
-            let save = session.save().unwrap_or_else(|error| {
-                panic!(
-                    "tpd={tpd} closing={closing} tick {} 静点存档失败：{error}",
-                    session.tick()
-                )
-            });
-            let restored = GameSession::restore(&save).unwrap_or_else(|error| {
-                panic!(
-                    "tpd={tpd} closing={closing} tick {} 静点恢复失败：{error}",
-                    session.tick()
-                )
-            });
-            assert_eq!(
-                serde_json::to_value(restored.save().unwrap()).unwrap(),
-                serde_json::to_value(save).unwrap(),
-                "tpd={tpd} closing={closing} tick {} 往返一致",
-                session.tick()
-            );
+fn assert_extreme_phase_geometry(auction_ticks: u64, tpd: u64, closing: u64, ticks: u64) {
+    let mut session = boundary_session_with(auction_ticks, tpd, closing);
+    for _ in 0..ticks {
+        // 双时钟契约驱动（同 public_step_commits：休市日/已收盘日
+        // 先 end_civil_day 对齐交易日序）。
+        while session.civil_clock().phase() == crate::session::CivilPhase::ClosedDay
+            || session
+                .civil_clock()
+                .completed_trading_sessions_expected()
+                .unwrap()
+                != session.day() + 1
+        {
+            session.end_civil_day().unwrap();
         }
+        session.step().unwrap();
+        let save = session.save().unwrap_or_else(|error| {
+            panic!(
+                "tpd={tpd} closing={closing} tick {} 静点存档失败：{error}",
+                session.tick()
+            )
+        });
+        let restored = GameSession::restore(&save).unwrap_or_else(|error| {
+            panic!(
+                "tpd={tpd} closing={closing} tick {} 静点恢复失败：{error}",
+                session.tick()
+            )
+        });
+        assert_eq!(
+            serde_json::to_value(restored.save().unwrap()).unwrap(),
+            serde_json::to_value(save).unwrap(),
+            "tpd={tpd} closing={closing} tick {} 往返一致",
+            session.tick()
+        );
     }
+}
+
+#[test]
+fn extreme_phase_geometry_single_tick_day() {
+    assert_extreme_phase_geometry(0, 1, 0, 4);
+}
+
+#[test]
+fn extreme_phase_geometry_no_closing_auction() {
+    assert_extreme_phase_geometry(0, 4, 0, 9);
+}
+
+#[test]
+fn extreme_phase_geometry_closing_auction() {
+    assert_extreme_phase_geometry(1, 4, 1, 9);
 }
 
 #[test]

@@ -442,7 +442,8 @@ export async function executeRustTestBinaries({ artifacts, policy, run = runBoun
   const isIsolatedCase = (testCase) => isActorTradeCase(testCase) || isReportCase(testCase);
   const isolatedCases = cases.filter(isIsolatedCase);
   const remainingCases = cases.filter((testCase) => !isIsolatedCase(testCase));
-  const isCalendarCase = (testCase) => /^session::calendar_(?:nonzero_plan_parity|final_boundary)_tests::/.test(testCase.name);
+  const isCalendarCase = (testCase) => /^session::calendar_(?:nonzero_plan_parity|final_boundary)_tests::/.test(testCase.name)
+    || /^session::pipeline::authoritative_tick_tests::extreme_phase_geometry_(?:single_tick_day|no_closing_auction|closing_auction)$/.test(testCase.name);
   const calendarCases = remainingCases.filter(isCalendarCase);
   const ordinaryCases = remainingCases.filter((testCase) => !isCalendarCase(testCase));
   async function caseWorker(queue) {
