@@ -435,15 +435,15 @@ export async function executeRustTestBinaries({ artifacts, policy, run = runBoun
   if (failures.length > 0) throw new AggregateError(failures, `${failures.length} prebuilt Rust test binaries failed:\n${failures.map((failure) => failure.message).join("\n")}`);
   const cases = results.flat();
   const concurrency = Math.min(cases.length, Math.max(1, Math.min(16, Math.floor(policy.available_cpu_count / 2))));
-  const cpuBudget = concurrency === 0 ? 0 : Math.floor(policy.available_cpu_count / concurrency);
   const casePolicy = { case_count: cases.length, max_concurrent_cases: concurrency, test_threads: 1, ordinary_case_timeout_ms: ORDINARY_TEST_MAX_MS };
   log(JSON.stringify({ phase: "rust-ordinary-cases-start", ...casePolicy }));
-  nextIndex = 0;
-  async function caseWorker() {
+  const isCalendarCase = (testCase) => /^session::calendar_(?:nonzero_plan_parity|final_boundary)_tests::/.test(testCase.name);
+  const calendarCases = cases.filter(isCalendarCase);
+  const ordinaryCases = cases.filter((testCase) => !isCalendarCase(testCase));
+  async function caseWorker(queue) {
     while (!stop) {
-      const index = nextIndex++;
-      if (index >= cases.length) return;
-      const testCase = cases[index];
+      const testCase = queue.shift();
+      if (testCase === undefined) return;
       try {
         const timeoutMs = Math.min(ORDINARY_TEST_MAX_MS, remainingMs(`Rust test case ${testCase.label} ${testCase.name}`));
         await run({
@@ -461,7 +461,16 @@ export async function executeRustTestBinaries({ artifacts, policy, run = runBoun
       }
     }
   }
-  await Promise.all(Array.from({ length: concurrency }, () => caseWorker()));
+  if (concurrency <= 1) {
+    await caseWorker(cases);
+  } else {
+    const calendarWorkers = Number(calendarCases.length > 0);
+    const ordinaryWorkers = Math.min(ordinaryCases.length, concurrency - calendarWorkers);
+    await Promise.all([
+      ...Array.from({ length: calendarWorkers }, () => caseWorker(calendarCases)),
+      ...Array.from({ length: ordinaryWorkers }, () => caseWorker(ordinaryCases)),
+    ]);
+  }
   if (failures.length > 0) throw new AggregateError(failures, `ordinary Rust test cases failed:\n${failures.map((failure) => failure.message).join("\n")}`);
   return casePolicy;
 }

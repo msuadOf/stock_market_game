@@ -126,6 +126,60 @@ it("Rust ordinary cases in one binary run concurrently with independent deadline
   assert.ok(calls.every((call) => call.timeoutMs === 2500));
 });
 
+it("日历重 case 串行且其余 case 保持并发，全部仍有独立期限", async () => {
+  const heavy = ["session::calendar_nonzero_plan_parity_tests::a", "session::calendar_final_boundary_tests::b"];
+  const ordinary = ["ordinary::a", "ordinary::b"];
+  let heavyActive = 0;
+  let peakHeavy = 0;
+  let overlap = false;
+  const seen = [];
+  await executeRustTestBinaries({
+    artifacts: [{ executable: "fixture", label: "fixture" }],
+    policy: buildRustTestExecutionPolicy(8, 1), cwd: process.cwd(), env: {}, now: Date.now,
+    remainingMs: () => 10000,
+    run: async (options) => {
+      if (options.args.includes("--list")) return { stdout: options.args.includes("--ignored") ? "" : [...heavy, ...ordinary].map((name) => `${name}: test\n`).join("") };
+      const name = options.args[0];
+      seen.push(name);
+      assert.equal(options.timeoutMs, 10000);
+      if (heavy.includes(name)) { heavyActive += 1; peakHeavy = Math.max(peakHeavy, heavyActive); }
+      else if (heavyActive) overlap = true;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      if (heavy.includes(name)) heavyActive -= 1;
+    },
+  });
+  assert.deepEqual(seen.sort(), [...heavy, ...ordinary].sort());
+  assert.equal(peakHeavy, 1);
+  assert.equal(overlap, true);
+});
+
+it("日历队列单核覆盖全部 case，失败时取消普通队列", async () => {
+  const heavy = "session::calendar_nonzero_plan_parity_tests::a";
+  const ordinary = "ordinary::a";
+  const seen = [];
+  const list = (options) => options.args.includes("--ignored") ? "" : `${heavy}: test\n${ordinary}: test\n`;
+  await executeRustTestBinaries({
+    artifacts: [{ executable: "fixture", label: "fixture" }], policy: buildRustTestExecutionPolicy(1, 1),
+    cwd: process.cwd(), env: {}, now: Date.now, remainingMs: () => 10000,
+    run: async (options) => { if (options.args.includes("--list")) return { stdout: list(options) }; seen.push(options.args[0]); },
+  });
+  assert.deepEqual(seen.sort(), [heavy, ordinary].sort());
+  let ready;
+  const started = new Promise((resolve) => { ready = resolve; });
+  let cancelled = false;
+  await assert.rejects(executeRustTestBinaries({
+    artifacts: [{ executable: "fixture", label: "fixture" }], policy: buildRustTestExecutionPolicy(4, 1),
+    cwd: process.cwd(), env: {}, now: Date.now, remainingMs: () => 10000,
+    run: async (options) => {
+      if (options.args.includes("--list")) return { stdout: list(options) };
+      if (options.args[0] === heavy) { await started; throw new Error("日历失败"); }
+      ready();
+      await new Promise((resolve, reject) => options.signal.addEventListener("abort", () => { cancelled = true; reject(options.signal.reason); }, { once: true }));
+    },
+  }), /日历失败/);
+  assert.equal(cancelled, true);
+});
+
 it("Rust ordinary case watchdog terminates a hanging process and reports the exact case", { timeout: 10000 }, async () => {
   const startedAt = Date.now();
   await assert.rejects(executeRustTestBinaries({
