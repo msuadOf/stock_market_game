@@ -25,6 +25,10 @@ ts-rs = { version = "12.0.1", features = ["no-serde-warnings"] }
 # native-store 的原生存储后端：bundled 特性内嵌 SQLite，免去宿主环境依赖。
 rusqlite = { version = "0.37", features = ["bundled"] }
 
+[profile.test]
+# 保留测试断言和溢出检查，仅省略不影响运行的调试信息。
+debug = 0
+
 [profile.release]
 # Keep release builds parallelizable. Fat LTO with one codegen unit turns the
 # final engine compile into a minutes-long single-core job, which violates the

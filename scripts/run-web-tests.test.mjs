@@ -72,7 +72,7 @@ it("shares one ten-second deadline across every shard", async () => {
   assert.ok(calls.every((call) => call.timeoutMs <= 10_000));
   assert.ok(calls.every((call) => call.command === process.execPath));
   assert.ok(calls.every((call) => call.args.includes("--test-force-exit")));
-  assert.deepEqual(calls.flatMap((call) => call.args.slice(4)).sort(), [...files].sort());
+  assert.deepEqual(calls.flatMap((call) => call.args.filter((arg) => arg.endsWith(".test.ts"))).sort(), [...files].sort());
   assert.equal(result.file_count, 3);
   assert.equal(result.shard_count, 2);
 });
@@ -98,6 +98,22 @@ it("每个测试文件独立进程隔离，禁止同进程共享导致的 mock �
   }
   const aggregate = calls.length * Number(/--test-concurrency=(\d+)/.exec(calls[0].args.join(" "))?.[1]);
   assert.ok(aggregate <= 16, "分片×每文件并发不得超卖 CPU 预算");
+});
+
+it("单文件分片直接在独立进程运行，多文件分片保留逐文件隔离", async () => {
+  const calls = [];
+  const files = ["/web/src/app/workspace-grid.test.ts", "/web/src/a.test.ts", "/web/src/b.test.ts"];
+  await runWebTestBatch({
+    webRoot: "/web",
+    cpuCount: 2,
+    discover: async () => files,
+    run: async (options) => { calls.push(options); },
+  });
+  const single = calls.find((call) => call.args.includes(files[0]));
+  const multiple = calls.find((call) => call.args.includes(files[1]));
+  assert.ok(single.args.includes("--test-isolation=none"));
+  assert.ok(!multiple.args.includes("--test-isolation=none"));
+  assert.ok(calls.every((call) => call.args.includes("--test-timeout=10000")));
 });
 
 it("fails fast and aborts in-flight sibling shards", async () => {

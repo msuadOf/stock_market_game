@@ -115,7 +115,8 @@ POSIX 帮助脚本进行 `.nvmrc` 诊断。CI 或隔离环境可将 `NODE_BIN` �
   执行开始即记录清单查询、普通 case 和长用例的预算；任一查询或 case 失败即终止在途 siblings，停止启动排队 case。多核时 Rust 完整链（普通 case、长用例、doctest）与 Web 后接 scripts 的链并行，共享执行期限和失败取消，等待两侧清理后汇总；单核时串行。CPU 分配给 Web 链 `max(1, floor(CPU / 4))`，其余给 Rust；单核两链各用 1 核但不同时运行。Rust 的隔离前缀仅相对其他 Rust case 隔离。真实 Chromium 的 `mobile-color-contrast.test.ts` 独立为一个 Web 批次，避免与其他 Web 文件进程争用；所有 12 批仍共享执行阶段剩余期限。Web 批次及其 child 仍受 10000ms 门禁。执行结束再次验证源码未漂移。
   完整回归已有 Web 整批的进程外十秒监督，直接启动带显式标记的 Web internal worker，
   不再让 Web CLI 重复启动另一层监督进程；独立 Web CLI 仍保留自己的进程外十秒监督。
-  这只去掉重复 Node 启动开销，不放宽 deadline、不跳过测试或削减分片并行。
+  这只去掉重复 Node 启动开销，不放宽 deadline、不跳过测试或削减分片并行。单文件分片直接在其独立 Node 进程执行，
+  多文件分片仍按文件启动隔离进程，避免 mock 状态串扰。
 - 根回归的 Web 测试完成后在同一执行期限内递归发现并执行 `scripts/**/*.test.mjs`，包括 runner 自身的
   短测。正式入口是 `scripts/run-script-tests.mjs`；复用原任务验证工具的完整发现方式，
   不从 `agents/` 加载生产测试执行器，也不通过 `pnpm test` 再次启动根回归。
@@ -195,7 +196,8 @@ Clippy 与 E2E 均不减少。Windows 总编译预算确实增加一个独立阶
 预编译与密封构建串行使用同一 Cargo 目录，避免互相争用；每阶段内部仍为多核。
 预编译失败停止后续测试，仅保存已存在的编译进度，不冒充验收通过。
 
-Windows / Ubuntu CI 省略 native dev/test 调试符号（`CARGO_PROFILE_DEV_DEBUG=0`、
+workspace 的 test profile 默认省略调试符号，以减少本地完整回归的链接与哈希开销；
+测试断言、溢出检查和测试范围保持不变。Windows / Ubuntu CI 省略 native dev/test 调试符号（`CARGO_PROFILE_DEV_DEBUG=0`、
 `CARGO_PROFILE_TEST_DEBUG=0`），减少测试二进制链接与缓存开销；调试断言、溢出检查和测试范围保持不变。
 所有 Cargo 构建显式使用 runner 的可用 CPU 数，WASM、Clippy 和服务端 release 构建各受
 300000ms 进程外期限约束；长命令在此期限内预留 1000ms 终止和清理进程树。
