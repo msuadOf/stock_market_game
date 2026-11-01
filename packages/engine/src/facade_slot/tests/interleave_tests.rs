@@ -105,8 +105,13 @@ fn n1_跨代载荷负测() {
     );
 
     // —— (ii) 旧子 worker 退出（workerExit 收到）。
-    let (wid, wslot, wgen) = platform.wait_worker_exit();
-    assert_eq!((wid, wslot, wgen), (1, 0, 0));
+    let mut exits = platform.worker_exit_log.lock().unwrap().clone();
+    exits.sort_unstable();
+    assert_eq!(
+        exits,
+        vec![(1, 0, 0), (2, 0, 1)],
+        "两代 worker 各退出一次，顺序不受约束"
+    );
 
     // —— (iii) 无 tombstone。
     assert_eq!(arena.tombstone_word().load(Ordering::SeqCst), 0);
