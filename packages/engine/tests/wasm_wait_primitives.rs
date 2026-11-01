@@ -7,7 +7,7 @@ use std::cell::{Cell, RefCell};
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::channel;
 use std::time::Duration;
-use wasm_wait::{WaitConfig, WaitFailure, WaitRuntime, recv_coordinator, recv_worker};
+use wasm_wait::{recv_coordinator, recv_worker, WaitConfig, WaitFailure, WaitRuntime};
 
 fn us(value: u64) -> Duration {
     Duration::from_micros(value)
