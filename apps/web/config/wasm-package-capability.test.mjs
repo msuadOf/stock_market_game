@@ -6,7 +6,7 @@ import path from "node:path";
 import { test } from "node:test";
 
 const hash = (value) => createHash("sha256").update(value).digest("hex");
-const required = ["restore_json", "facade_slot_init_for_restore_json", "set_step_runtime_override", "init_wasm_wait", "wasm_wait_abort_layout", "shutdown_session"];
+const required = ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "set_step_runtime_override", "init_wasm_wait", "wasm_wait_abort_layout", "shutdown_session"];
 const provenanceBytes = Buffer.from(`${JSON.stringify({ kind: "wasm-build-provenance", sourceSha256: "a".repeat(64), wasmSha256: "b".repeat(64), glueSha256: "c".repeat(64), profile: "release", toolchain: "nightly-2026-09-05" }, null, 2)}\n`);
 const capabilityBytes = Buffer.from(`${JSON.stringify({ kind: "verified-package", wasmSha256: "b".repeat(64), glueSha256: "c".repeat(64), sourceSha256: "a".repeat(64), buildManifestSha256: hash(provenanceBytes), exports: [...required].sort() }, null, 2)}\n`);
 const { wasmPackageCapabilityPlugin } = await import("./wasm-package-capability.ts");

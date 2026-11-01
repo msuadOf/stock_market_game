@@ -23,7 +23,7 @@ for (const scenario of ["valid", "missing", "bad-provenance", "wrong-package", "
     const bytes = new TextEncoder().encode(provenanceText);
     const manifestHash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map((byte) => byte.toString(16).padStart(2, "0")).join("");
     const capability = { kind: "verified-package", wasmSha256: provenance.wasmSha256, glueSha256: provenance.glueSha256, sourceSha256: provenance.sourceSha256,
-      buildManifestSha256: scenario === "bad-provenance" ? "f".repeat(64) : manifestHash, exports: ["restore_json", "facade_slot_init_for_restore_json", ...(scenario === "false-with-setter" ? ["set_step_runtime_override"] : [])] };
+      buildManifestSha256: scenario === "bad-provenance" ? "f".repeat(64) : manifestHash, exports: ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", ...(scenario === "false-with-setter" ? ["set_step_runtime_override"] : [])] };
     const urls: string[] = [];
     const read = async (input: string | URL | Request): Promise<Response> => {
       const url = String(input); urls.push(url);

@@ -12,7 +12,7 @@ function deferred<Value>() {
   const promise = new Promise<Value>((done, fail) => { resolve = done; reject = fail; });
   return { promise, resolve, reject };
 }
-const verified = { kind: "verified-package" as const, wasmSha256: "a".repeat(64), glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: ["restore_json", "facade_slot_init_for_restore_json"] };
+const verified = { kind: "verified-package" as const, wasmSha256: "a".repeat(64), glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore"] };
 const intent = () => ({ kind: "new" as const, setup: structuredClone(DEFAULT_SETUP), seed: "42" });
 function setup(globalMax: number | null = 256 * MiB) {
   const f = fixture(); let opened = 0;

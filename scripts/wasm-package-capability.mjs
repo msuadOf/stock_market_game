@@ -10,6 +10,8 @@ export const WASM_PACKAGE_METADATA_FILENAMES = Object.freeze([
 export const WASM_RESTORE_REQUIRED_EXPORTS = Object.freeze([
   "restore_json",
   "facade_slot_init_for_restore_json",
+  "restore_prepared",
+  "clear_prepared_restore",
   "set_step_runtime_override",
   "init_wasm_wait",
   "wasm_wait_abort_layout",

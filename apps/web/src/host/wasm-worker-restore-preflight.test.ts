@@ -71,7 +71,7 @@ for (const scenario of ["wrong-hash", "missing-export", "false-missing-setter"] 
       const originalPost = workerPort.postMessage.bind(workerPort);
       workerPort.postMessage = (message: unknown) => { const value = message as Record<string, unknown>; posted.push(value); resolvePosted(value); originalPost(message); };
       transport.dispatch(ownerBusinessPort, { type: "init", ...(scenario === "false-missing-setter" ? { runtimeOverride: false } : {}), initialArchive: { marker: "唯一 X" }, restoreCapability: { kind: "verified-package", wasmSha256: scenario === "wrong-hash" ? "a".repeat(64) : wasmHash,
-        glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: ["restore_json", "facade_slot_init_for_restore_json"] } });
+        glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore"] } });
       if (scenario === "missing-export") {
         const progress = await awaitTestSignal(Promise.race([
           compileStarted.then(() => "compile" as const),

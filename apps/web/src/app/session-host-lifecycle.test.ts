@@ -644,7 +644,7 @@ function memoryOwnerFixture() {
   const memory = memoryFixture();
   const owner = new WasmDocumentMemoryOwner({ maximumBytes: memory.options.maximumBytes, reclaimBytes: memory.options.reclaimBytes,
     readCapacity: () => ({ kind: "enforced-capacity", initialPages: 1024, maximumPages: 4096, liveUpperBoundBytes: 256 * MiB }),
-    restoreCapabilities: { forArchive: () => ({ kind: "verified-package", wasmSha256: "a".repeat(64), glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: ["restore_json", "facade_slot_init_for_restore_json"] }) },
+    restoreCapabilities: { forArchive: () => ({ kind: "verified-package", wasmSha256: "a".repeat(64), glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore"] }) },
     createStorage: (liveUpperBoundBytes) => new WasmMemoryStorage({ ...memory.options, liveUpperBoundBytes }),
     randomNonce: () => "1234567890abcdef1234567890abcdef" });
   return { memory, owner };
@@ -683,7 +683,7 @@ test("pending完整X先获用户确认再传同一目标，只restore不读quick
   assert.equal(m.owner.admit({ kind: "load", archive }).kind, "reload");
   const nextOwner = new WasmDocumentMemoryOwner({ maximumBytes: m.memory.options.maximumBytes, reclaimBytes: m.memory.options.reclaimBytes,
     readCapacity: () => ({ kind: "enforced-capacity", initialPages: 1024, maximumPages: 4096, liveUpperBoundBytes: 256 * MiB }),
-    restoreCapabilities: { forArchive: () => ({ kind: "verified-package", wasmSha256: "a".repeat(64), glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: ["restore_json", "facade_slot_init_for_restore_json"] }) },
+    restoreCapabilities: { forArchive: () => ({ kind: "verified-package", wasmSha256: "a".repeat(64), glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore"] }) },
     createStorage: (liveUpperBoundBytes) => new WasmMemoryStorage({ ...m.memory.options, liveUpperBoundBytes }) });
   const confirmation = deferred<void>(); let confirms = 0, creates = 0;
   const f = fixture({ wasmMemoryOwner: nextOwner, hostTransitionRef: nextOwner.hostTransitionRef,
@@ -717,7 +717,7 @@ test("reload待确认X时用户明确改选Y，先确认Y再单次消费；不�
   m.owner.admit({ kind: "load", archive });
   const next = new WasmDocumentMemoryOwner({ maximumBytes: m.memory.options.maximumBytes, reclaimBytes: m.memory.options.reclaimBytes,
     readCapacity: () => ({ kind: "enforced-capacity", initialPages: 1024, maximumPages: 4096, liveUpperBoundBytes: 256 * MiB }),
-    restoreCapabilities: { forArchive: () => ({ kind: "verified-package", wasmSha256: "a".repeat(64), glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: ["restore_json", "facade_slot_init_for_restore_json"] }) },
+    restoreCapabilities: { forArchive: () => ({ kind: "verified-package", wasmSha256: "a".repeat(64), glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore"] }) },
     createStorage: (liveUpperBoundBytes) => new WasmMemoryStorage({ ...m.memory.options, liveUpperBoundBytes }) });
   const y = { ...archive, seed: "99" }; let confirmed = 0, created = 0;
   const f = fixture({ wasmMemoryOwner: next, hostTransitionRef: next.hostTransitionRef,
@@ -751,7 +751,7 @@ test("面板实际解析文件Y后才确认恢复，carrier仍绑定X且旧快�
   const originalCarrier = JSON.parse(m.memory.session.data.get(SNAPSHOT_KEY)!);
   const next = new WasmDocumentMemoryOwner({ maximumBytes: m.memory.options.maximumBytes, reclaimBytes: m.memory.options.reclaimBytes,
     readCapacity: () => ({ kind: "enforced-capacity", initialPages: 1024, maximumPages: 4096, liveUpperBoundBytes: 256 * MiB }),
-    restoreCapabilities: { forArchive: () => ({ kind: "verified-package", wasmSha256: "a".repeat(64), glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: ["restore_json", "facade_slot_init_for_restore_json"] }) },
+    restoreCapabilities: { forArchive: () => ({ kind: "verified-package", wasmSha256: "a".repeat(64), glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore"] }) },
     createStorage: (liveUpperBoundBytes) => new WasmMemoryStorage({ ...m.memory.options, liveUpperBoundBytes }) });
   const y = { ...archive, seed: "99" };
   let panel: MemoryHandoverPanelProps | null = null, fileReads = 0, quickslotReads = 0, creates = 0;

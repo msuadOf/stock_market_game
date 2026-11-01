@@ -362,7 +362,7 @@ function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
           if (Object.keys(message).join(",") !== "type") throw new Error("restoreInitial 只能消费 initializer 保存的完整 X，禁止第二份 payload");
           const configured = engineInitializer.requireConfigured();
           if (configured.initialArchive === null) throw new Error("restoreInitial 需要唯一完整初始档");
-          slot.restoreInitial(configured.initialArchive);
+          slot.restoreInitial();
           const [, wasm] = slot.requireHandle();
           const capabilities = readWasmCapabilities(wasm);
           postIngressBridge();

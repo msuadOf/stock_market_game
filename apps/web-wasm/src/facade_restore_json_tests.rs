@@ -156,3 +156,40 @@ fn restore_json_capacity_rejects_unsupported_policy_before_topology_validation()
         }
     }
 }
+
+#[test]
+fn prepared_restore_owns_one_archive_and_consumes_it_once() {
+    let json = serde_json::to_string(&save(1)).unwrap();
+    let mut prepared = super::PreparedRestore::default();
+    assert_eq!(prepared.prepare(&json, |_| Ok(())).unwrap(), 8);
+    assert!(prepared.prepare(&json, |_| Ok(())).is_err());
+    assert_eq!(prepared.take().unwrap().setup.stocks.len(), 1);
+    assert!(prepared.take().is_err());
+}
+
+#[test]
+fn prepared_restore_drops_archive_on_failure_and_explicit_cancel() {
+    let json = serde_json::to_string(&save(1)).unwrap();
+    let mut prepared = super::PreparedRestore::default();
+    assert!(prepared.prepare(&json, |_| Err("arena 故障")).is_err());
+    assert!(prepared.take().is_err());
+    prepared.prepare(&json, |_| Ok(())).unwrap();
+    prepared.clear();
+    assert!(prepared.take().is_err());
+}
+
+#[test]
+fn prepared_restore_still_rejects_poisoned_runtime_and_consumes_archive() {
+    let mut archive = save(1);
+    archive.runtime_state.poisoned = true;
+    let json = serde_json::to_string(&archive).unwrap();
+    let mut prepared = super::PreparedRestore::default();
+    prepared.prepare(&json, |_| Ok(())).unwrap();
+    let consumed = prepared.take().unwrap();
+    match GameSession::restore(&consumed) {
+        Err(SessionError::InvalidSave(fault)) => assert_eq!(fault.code, 2200),
+        Ok(_) => panic!("必须拒绝 poisoned runtime"),
+        Err(error) => panic!("必须保留真实 restore 校验：{error:?}"),
+    }
+    assert!(prepared.take().is_err());
+}

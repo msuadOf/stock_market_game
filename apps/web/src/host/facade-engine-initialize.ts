@@ -11,6 +11,7 @@ import { parseWasmWaitAbortLayout, type WasmWaitAbortLayout } from "./wasm-wait-
 export interface FacadeEngineGlue extends FacadeSyncInitializer {
   readonly facade_slot_init_for_setup: (setup: unknown) => void;
   readonly facade_slot_init_for_restore_json?: (saveJson: string) => void;
+  readonly clear_prepared_restore?: () => void;
   readonly facade_slot_layout: () => FacadeSlotLayout;
   readonly set_step_runtime_override?: (enabled: boolean) => void;
   readonly init_wasm_wait?: (spinUs: number, quietUs: number, fineUs: number, coarseUs: number) => void;
@@ -76,10 +77,12 @@ export function createFacadeEngineInitializer(options: {
   let initialArchive: StrictSaveEnvelope | null = null;
   let current: FacadeSubstrate | undefined;
   let ownedPort: MessagePort | undefined;
+  let clearPrepared: (() => void) | undefined;
   let handshake: ReturnType<typeof createFacadeEngineHandshake> | undefined;
   function dispose(): void {
     if (disposed) return;
     disposed = true; current = undefined; setup = undefined; initialArchive = null;
+    clearPrepared?.(); clearPrepared = undefined;
     handshake?.dispose(); handshake = undefined;
   }
   return {
@@ -143,6 +146,9 @@ export function createFacadeEngineInitializer(options: {
           if (typeof initializeRestore !== "function") throw Object.assign(new Error("facade glue 缺少 String restore topology initializer"), {
             code: "WASM_RESTORE_TOPOLOGY_NOT_READY", where: "facade-engine-initialize.initial-archive", context: { operation: "restore" },
           });
+          const clear = loaded.glue.clear_prepared_restore;
+          if (typeof clear !== "function") throw new Error("facade glue 缺少初始档释放接口");
+          clearPrepared = clear;
           initializeRestore(JSON.stringify(initialArchive));
         } else loaded.glue.facade_slot_init_for_setup(setup);
         const layout = loaded.glue.facade_slot_layout();

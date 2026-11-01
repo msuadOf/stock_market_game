@@ -5,6 +5,7 @@ import { restoreWasmSession } from "./wasm-restore-transaction.ts";
 export interface WasmSessionBindings {
   readonly create_session: (setup: unknown, seed: bigint) => number;
   readonly restore_json: (slot: string) => number;
+  readonly restore_prepared?: () => number;
   readonly snapshot: (handle: number) => unknown;
   readonly shutdown_session?: (handle: number) => unknown;
   readonly drop_session: (handle: number) => void;
@@ -79,14 +80,14 @@ export class WasmSessionSlot<TBindings extends WasmSessionBindings> {
     this.generation += 1;
   }
 
-  restoreInitial(parsedSlot: unknown): void {
+  restoreInitial(): void {
     if (this.initialRestoreAttempted || this.handle !== null || this.generation !== 0) throw new Error("restoreInitial 仅允许首次空槽调用一次，不能替换已有会话");
     const wasm = this.bindings();
     if (wasm === null) throw new Error("wasm 未初始化");
-    const encoded = JSON.stringify(parsedSlot);
+    if (typeof wasm.restore_prepared !== "function") throw new Error("WASM 缺少初始档消费接口");
     this.initialRestoreAttempted = true;
-    const handle = wasm.restore_json(encoded);
-    if (!Number.isInteger(handle) || handle < 1 || handle > 0xffff_ffff) throw new Error("restore_json 返回非法 SessionHandle");
+    const handle = wasm.restore_prepared();
+    if (!Number.isInteger(handle) || handle < 1 || handle > 0xffff_ffff) throw new Error("restore_prepared 返回非法 SessionHandle");
     this.handle = handle;
     this.generation = 1;
   }

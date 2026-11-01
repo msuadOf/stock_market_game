@@ -66,6 +66,7 @@ async function createFixture(
   const bindings = {
     initSync: ({ memory }: { memory: WebAssembly.Memory }) => { sharedMemory = memory; return { memory, __wbindgen_thread_destroy() {} }; },
     facade_slot_init_for_setup: () => { const words = new Int32Array(sharedMemory.buffer); Atomics.store(words, CAPACITY, 4); Atomics.store(words, GEN_BITS, 29); Atomics.store(words, FREE_HEAD, FREE_HEAD_EMPTY | 0); },
+    clear_prepared_restore: () => {},
     facade_slot_init_for_restore_json: (encoded: string) => {
       assert.deepEqual(JSON.parse(encoded), saved); calls.push("initial-topology");
       const words = new Int32Array(sharedMemory.buffer); Atomics.store(words, CAPACITY, 4); Atomics.store(words, GEN_BITS, 29); Atomics.store(words, FREE_HEAD, FREE_HEAD_EMPTY | 0);
@@ -85,6 +86,7 @@ async function createFixture(
     },
     drop_session: (current: number) => { calls.push(`drop:${current}`); if (failing === "drop" || failing === "snapshot-and-drop") throw new Error("drop failed"); },
     restore_json: (encoded: string) => { assert.deepEqual(JSON.parse(encoded), saved); calls.push(`restore:${handle}`); return handle; },
+    restore_prepared: () => { calls.push(`restore:${handle}`); return handle; },
     host_capabilities: () => ({ npcDecisionDiagnostics: false, indicatorCapabilities: { intradayAverage: false, macd: false, priceKdj: false, candleKdj: false }, personalTradeHistory: false }),
     step: (current: number) => { calls.push(`step:${current}`); return tickBatch([frame(1, 0, [0])], snapshot(1, 1)); },
     tick: () => 1n,
@@ -116,9 +118,9 @@ async function createFixture(
   replace(bindingsKey, bindings);
   replace("self", { crossOriginIsolated: true, postMessage: (message: Message) => { if (message.type === "engineLifecycle") globalLifecycle.push(message); }, addEventListener: (_type: string, callback: typeof listener) => { listener = callback; } });
   const emptyModule = [0,97,115,109,1,0,0,0];
-  const exportNames = ["restore_json", "facade_slot_init_for_restore_json"];
+  const exportNames = ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore"];
   const exportEntries = exportNames.flatMap((name, index) => [name.length, ...new TextEncoder().encode(name), 0, index]);
-  const wasmBytes = Uint8Array.from(missingWrites === "initial-archive" ? [...emptyModule, 1,4,1,96,0,0, 3,3,2,0,0, 7,exportEntries.length+1,2,...exportEntries, 10,7,2,2,0,11,2,0,11] : emptyModule);
+  const wasmBytes = Uint8Array.from(missingWrites === "initial-archive" ? [...emptyModule, 1,4,1,96,0,0, 3,5,4,0,0,0,0, 7,exportEntries.length+1,4,...exportEntries, 10,13,4,2,0,11,2,0,11,2,0,11,2,0,11] : emptyModule);
   const wasmHash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", wasmBytes))].map((byte) => byte.toString(16).padStart(2, "0")).join("");
   replace("fetch", async () => ({ ok: true, arrayBuffer: async () => wasmBytes.buffer }));
   replace("setTimeout", (callback: () => void) => { const id = ++nextTimer; timers.set(id, callback); return id; });

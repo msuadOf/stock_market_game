@@ -25,7 +25,7 @@ const command = (root, outDir) => ({ command: "wasm-pack", args: ["build", "apps
 const api = () => import("./wasm-pack-build.mjs");
 
 function wasmPackageFixture() {
-  const names = ["restore_json", "facade_slot_init_for_restore_json", "set_step_runtime_override", "init_wasm_wait", "wasm_wait_abort_layout", "shutdown_session"];
+  const names = ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "set_step_runtime_override", "init_wasm_wait", "wasm_wait_abort_layout", "shutdown_session"];
   const uleb = (value) => { const bytes = []; do { let byte = value & 0x7f; value >>>= 7; if (value !== 0) byte |= 0x80; bytes.push(byte); } while (value !== 0); return bytes; };
   const section = (id, payload) => [id, ...uleb(payload.length), ...payload];
   const type = section(1, [1, 0x60, 0, 0]);
@@ -60,7 +60,7 @@ test("成功的默认 release wasm-pack 构建生成精确绑定实际 pkg bytes
   assert.equal(capability.buildManifestSha256, createHash("sha256").update(provenanceBytes).digest("hex"));
   assert.equal(capability.wasmSha256, createHash("sha256").update(wasm).digest("hex"));
   assert.equal(capability.glueSha256, createHash("sha256").update(glue).digest("hex"));
-  assert.deepEqual(capability.exports, ["facade_slot_init_for_restore_json", "init_wasm_wait", "restore_json", "set_step_runtime_override", "shutdown_session", "wasm_wait_abort_layout"]);
+  assert.deepEqual(capability.exports, ["clear_prepared_restore", "facade_slot_init_for_restore_json", "init_wasm_wait", "restore_json", "restore_prepared", "set_step_runtime_override", "shutdown_session", "wasm_wait_abort_layout"]);
   assert.ok(provenanceBytes.toString("utf8").endsWith("\n"));
   assert.ok(capabilityBytes.toString("utf8").endsWith("\n"));
 }));

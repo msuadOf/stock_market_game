@@ -1066,6 +1066,25 @@ pub fn restore_json(save_json: String) -> Result<u32, JsValue> {
         .map_err(host_session_init_error_to_js)
 }
 
+/// 消费初始化时已解码并预检的唯一完整存档。
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen]
+pub fn restore_prepared() -> Result<u32, JsValue> {
+    let slot = PREPARED_RESTORE
+        .with(|prepared| prepared.borrow_mut().take())
+        .map_err(JsValue::from_str)?;
+    REGISTRY
+        .with(|registry| registry.borrow_mut().restore(&slot))
+        .map_err(host_session_init_error_to_js)
+}
+
+/// 取消尚未消费的初始恢复并释放存档。
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen]
+pub fn clear_prepared_restore() {
+    PREPARED_RESTORE.with(|prepared| prepared.borrow_mut().clear());
+}
+
 // ---------------------------------------------------------------------------
 // R4a 阶段 2：wasm 线程门面槽协议导出面（设计 §12-14）。
 //
@@ -1127,16 +1146,55 @@ enum RestoreFacadeInitError {
 }
 
 /// 按完整 SaveSlot JSON 校验构造前缀并计算 slot 容量；不分配 arena 或完成恢复。
-#[cfg(any(target_family = "wasm", test))]
+#[cfg(test)]
 fn facade_slot_capacity_for_restore_json(save_json: &str) -> Result<u32, RestoreFacadeInitError> {
+    Ok(decode_restore_and_capacity(save_json)?.1)
+}
+
+#[cfg(any(target_family = "wasm", test))]
+fn decode_restore_and_capacity(save_json: &str) -> Result<(SaveSlot, u32), RestoreFacadeInitError> {
     let save: SaveSlot = serde_json::from_str(save_json).map_err(RestoreFacadeInitError::Decode)?;
     require_wasm_runtime_sync_policy(save.setup.runtime_sync_policy)
         .map_err(RestoreFacadeInitError::UnsupportedRuntimeSyncPolicy)?;
     let (groups, desks) = save
         .restore_runtime_topology()
         .map_err(RestoreFacadeInitError::Topology)?;
-    facade_slot_capacity_for_topology(groups, desks).map_err(RestoreFacadeInitError::Capacity)
+    let capacity = facade_slot_capacity_for_topology(groups, desks)
+        .map_err(RestoreFacadeInitError::Capacity)?;
+    Ok((save, capacity))
 }
+
+#[cfg(any(target_family = "wasm", test))]
+#[derive(Default)]
+struct PreparedRestore {
+    slot: Option<SaveSlot>,
+}
+
+#[cfg(any(target_family = "wasm", test))]
+impl PreparedRestore {
+    fn prepare(
+        &mut self,
+        json: &str,
+        initialize: impl FnOnce(u32) -> Result<(), &'static str>,
+    ) -> Result<u32, RestoreFacadeInitError> {
+        if self.slot.is_some() {
+            return Err(RestoreFacadeInitError::Capacity("已存在待消费的恢复档"));
+        }
+        let (slot, capacity) = decode_restore_and_capacity(json)?;
+        initialize(capacity).map_err(RestoreFacadeInitError::Capacity)?;
+        self.slot = Some(slot);
+        Ok(capacity)
+    }
+    fn take(&mut self) -> Result<SaveSlot, &'static str> {
+        self.slot.take().ok_or("没有待消费的恢复档")
+    }
+    fn clear(&mut self) {
+        self.slot = None;
+    }
+}
+
+#[cfg(target_family = "wasm")]
+thread_local! { static PREPARED_RESTORE: RefCell<PreparedRestore> = RefCell::new(PreparedRestore::default()); }
 
 /// 仅按经过完整校验的默认 new setup 初始化 facade 槽；不创建 Session 或 World。
 #[cfg(target_family = "wasm")]
@@ -1156,8 +1214,9 @@ pub fn facade_slot_init_for_setup(setup: JsValue) -> Result<(), JsValue> {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen]
 pub fn facade_slot_init_for_restore_json(save_json: String) -> Result<(), JsValue> {
-    let capacity =
-        facade_slot_capacity_for_restore_json(&save_json).map_err(|error| match error {
+    let capacity = PREPARED_RESTORE
+        .with(|prepared| prepared.borrow_mut().prepare(&save_json, |_| Ok(())))
+        .map_err(|error| match error {
             RestoreFacadeInitError::Decode(error) => JsValue::from_str(&error.to_string()),
             RestoreFacadeInitError::UnsupportedRuntimeSyncPolicy(error) => {
                 JsValue::from_str(&error.to_string())
@@ -1165,7 +1224,11 @@ pub fn facade_slot_init_for_restore_json(save_json: String) -> Result<(), JsValu
             RestoreFacadeInitError::Topology(error) => session_error_to_js(error),
             RestoreFacadeInitError::Capacity(error) => JsValue::from_str(error),
         })?;
-    facade_slot_init(capacity)
+    if let Err(error) = facade_slot_init(capacity) {
+        clear_prepared_restore();
+        return Err(error);
+    }
+    Ok(())
 }
 
 #[cfg(test)]

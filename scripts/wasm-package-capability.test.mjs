@@ -12,7 +12,7 @@ import {
 } from "./wasm-package-capability.mjs";
 
 const hash = (value) => createHash("sha256").update(value).digest("hex");
-const required = ["restore_json", "facade_slot_init_for_restore_json", "set_step_runtime_override", "init_wasm_wait", "wasm_wait_abort_layout", "shutdown_session"];
+const required = ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "set_step_runtime_override", "init_wasm_wait", "wasm_wait_abort_layout", "shutdown_session"];
 const wasm = Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]);
 const glue = Buffer.from("export function restore_json() {}\n");
 function bytesFor(provenance = {}) {

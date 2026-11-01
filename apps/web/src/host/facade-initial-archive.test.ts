@@ -11,6 +11,7 @@ function dayEndArchive(): Record<string, unknown> {
 
 type FixtureOptions = {
   readonly hasRestore?: boolean;
+  readonly clear?: () => void;
   readonly restore?: (json: string) => void;
   readonly setup?: (setup: unknown) => void;
 };
@@ -29,6 +30,7 @@ function fixture(options: FixtureOptions = {}) {
       initSync: ({ memory: shared }: { memory: WebAssembly.Memory }) => { calls.push("instantiate"); return { memory: shared, __wbindgen_thread_destroy() {} }; },
       facade_slot_init_for_setup: (setup: unknown) => { calls.push("setup-init"); setups.push(setup); options.setup?.(setup); },
       ...(options.hasRestore === false ? {} : { facade_slot_init_for_restore_json: (json: string) => { calls.push("restore-string-init"); archives.push(JSON.parse(json)); options.restore?.(json); } }),
+      clear_prepared_restore: () => options.clear?.(),
       facade_slot_layout: () => { calls.push("layout"); return layout; },
     } }; }, onFailure: (error) => { throw error; },
   });
@@ -107,5 +109,14 @@ test("初始档必须是日终静点，schema合法的日内档也在memory前�
   try {
     await assert.rejects(f.initializer.initialize({ type: "init", initialArchive: currentSaveFixture(), controlPort: f.channel.port2 }), /日终/);
     assert.deepEqual(f.calls, []); assert.deepEqual(f.setups, []);
+  } finally { f.close(); }
+});
+test("初始化完成但未消费时 dispose 会释放 Rust 预检档", { timeout: 10000 }, async () => {
+  let cleared = 0;
+  const f = fixture({ clear: () => { cleared += 1; } });
+  try {
+    await f.initializer.initialize({ type: "init", initialArchive: dayEndArchive(), controlPort: f.channel.port2 });
+    f.initializer.dispose();
+    assert.equal(cleared, 1);
   } finally { f.close(); }
 });

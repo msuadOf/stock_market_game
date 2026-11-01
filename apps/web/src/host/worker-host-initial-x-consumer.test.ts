@@ -5,7 +5,7 @@ import { fixture, drain } from "./worker-host-w1.test-support.ts";
 import { commandDayEndArchiveFixture } from "../app/command-host-test-fixture.ts";
 
 // 这是可信 producer 接口的传输 fixture，不是实际发布包能力证据。
-const capability = { kind: "verified-package", wasmSha256: "a".repeat(64), glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: ["restore_json", "facade_slot_init_for_restore_json"] };
+const capability = { kind: "verified-package", wasmSha256: "a".repeat(64), glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore"] };
 test("有 verified package capability 时 bootstrap 唯一完整 X，ready 后仅 restoreInitial", { timeout: 10000 }, async () => {
   const f = fixture(); const archive = commandDayEndArchiveFixture();
   try {
