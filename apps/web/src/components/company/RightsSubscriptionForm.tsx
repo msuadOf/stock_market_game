@@ -1,5 +1,5 @@
 /* oxlint-disable react/only-export-components -- 纯校验供测试复用 */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { OwnerRightsOfferingView } from "../../host/company-contract-views.ts";
 
 export type RightsSubscription = (eventId: string, requestedShares: string) => Promise<unknown>;
@@ -15,6 +15,8 @@ export function canSubscribe(view: RightsStatus): boolean {
 }
 
 export function RightsSubscriptionForm({ view, onSubscribe, onAccepted }: { readonly view: RightsStatus; readonly onSubscribe: RightsSubscription | undefined; readonly onAccepted: () => void }) {
+  const active = useRef(false);
+  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   const [shares, setShares] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -27,12 +29,11 @@ export function RightsSubscriptionForm({ view, onSubscribe, onAccepted }: { read
     setError(null);
     try {
       await onSubscribe(view.event_id, shares);
-      setAccepted(true);
-      onAccepted();
+      if (active.current) { setAccepted(true); onAccepted(); }
     } catch (failure: unknown) {
-      setError(failure instanceof Error ? failure.message : String(failure));
+      if (active.current) setError(failure instanceof Error ? failure.message : String(failure));
     } finally {
-      setPending(false);
+      if (active.current) setPending(false);
     }
   };
   return <div>

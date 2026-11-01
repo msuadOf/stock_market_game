@@ -426,3 +426,19 @@ test("同provider只切refreshKey也失效旧请求；移除callback后迟到错
   assert.equal(view.container.textContent, "idlerefresh");
   await view.unmount();
 });
+
+test("切换配股认购上下文后旧请求迟到不刷新新面板", { timeout: 10000 }, async () => {
+  const form = await vite.ssrLoadModule("/src/components/company/RightsSubscriptionForm.tsx") as typeof import("./RightsSubscriptionForm.tsx");
+  const view = mounted(); const request = deferred<void>(); let oldRefresh = 0; let newRefresh = 0;
+  const rights = { event_id: "r1", payment_window: "Open", owner_entitlement: { rights_shares: "10", lock_until: null }, open_subscription_remaining_shares: null, queued_subscription: null, settled_subscription: null } as const;
+  await view.render(createElement(form.RightsSubscriptionForm, { key: "old", view: rights, onSubscribe: () => request.promise, onAccepted: () => { oldRefresh++; } }));
+  const input = elements(view.container).find(node => node.tagName === "INPUT"); assert.ok(input);
+  const propsKey = Object.keys(input).find(name => name.startsWith("__reactProps$")); assert.ok(propsKey);
+  const props = (input as unknown as Record<string, { onChange: (event: unknown) => void }>)[propsKey]!;
+  await act(async () => props.onChange({ currentTarget: { value: "5" } }));
+  await click(view.container, "提交认购");
+  await view.render(createElement(form.RightsSubscriptionForm, { key: "new", view: rights, onSubscribe: async () => {}, onAccepted: () => { newRefresh++; } }));
+  await act(async () => request.resolve());
+  assert.equal(oldRefresh, 0); assert.equal(newRefresh, 0);
+  await view.unmount();
+});

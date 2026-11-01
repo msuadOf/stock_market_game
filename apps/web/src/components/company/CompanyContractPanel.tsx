@@ -208,7 +208,7 @@ export function CompanyContractPanel({ companyId, onCapabilitiesQuery, onOwnerRi
                             ? `申请 ${view.settled_subscription.requested_shares} 股；已缴款认购 ${view.settled_subscription.paid_shares} 股、弃配 ${view.settled_subscription.waived_shares} 股、缴款 ${view.settled_subscription.paid_amount} 分`
                             : "无已排队或已结算认购记录"}
                       </td>
-                      <td><RightsSubscriptionForm key={`${refreshKey}:${view.event_id}`} view={view} onSubscribe={onRightsSubscribe} onAccepted={refreshRights} /></td>
+                      <td><RightsSubscriptionForm key={JSON.stringify([companyId, refreshKey, view.event_id])} view={view} onSubscribe={onRightsSubscribe} onAccepted={refreshRights} /></td>
                     </tr>
                   ))}
                 </tbody>
