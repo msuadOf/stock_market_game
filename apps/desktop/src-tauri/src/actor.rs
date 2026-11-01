@@ -1374,7 +1374,7 @@ impl<R: Runtime> SessionActor<R> {
                                 generation: self.generation.to_string(),
                                 receipt,
                             })
-                            .map_err(|error| CompanyWriteHostError::Command(error.into()))
+                            .map_err(CompanyWriteHostError::Command)
                     });
                 let result = self.finish_company_write(result);
                 let _ = reply.send(result);

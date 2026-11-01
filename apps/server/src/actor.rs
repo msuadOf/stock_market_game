@@ -2415,8 +2415,7 @@ impl SessionActor {
                 }
                 let result = self
                     .game
-                    .subscribe_rights_offering(owner, &event_id, requested_shares)
-                    .map_err(Into::into);
+                    .subscribe_rights_offering(owner, &event_id, requested_shares);
                 if let Some(fatal) = self.company_write_fatal(result.as_ref().err()) {
                     return Ok(fatal);
                 }
