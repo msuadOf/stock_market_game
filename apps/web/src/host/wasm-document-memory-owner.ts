@@ -28,6 +28,15 @@ export interface WasmMemoryAdmissionTicket {
   readonly restoreCapability: VerifiedWasmRestoreCapability | null;
   registerRelease(release: Promise<WasmFinalRelease>): void;
 }
+const admittedIntents = new WeakMap<WasmMemoryAdmissionTicket, Exclude<WasmMemoryPendingIntent, null>>();
+
+/** 仅在 registerRelease 成功后读取此票唯一已校验且冻结的载入档。 */
+export function requireAdmittedLoadArchive(ticket: WasmMemoryAdmissionTicket, supplied: unknown): StrictSaveEnvelope {
+  const intent = admittedIntents.get(ticket);
+  if (intent === undefined) throw new Error("Memory admission ticket 不是 owner 签发的票");
+  if (intent.kind !== "load" || intent.archive !== supplied) throw new Error("初始档与 admission ticket 的冻结意图不一致");
+  return intent.archive;
+}
 /** 来源是实际发布包导出和 glue 解析；装载器仍须在分配前核对真实 WASM 字节身份。 */
 export interface VerifiedWasmRestoreCapability {
   readonly kind: "verified-package";
@@ -255,7 +264,8 @@ export class WasmDocumentMemoryOwner {
       if (this.active !== state) throw new Error("Memory admission ticket 已失效");
       state.release = Promise.resolve(release).then((result) => ({ kind: "fulfilled", value: result }), (error) => ({ kind: "rejected", error }));
     } }, bound };
-    this.active = state; this.tickets.set(state.ticket, state); this.handover = undefined;
+    Object.freeze(state.ticket);
+    this.active = state; this.tickets.set(state.ticket, state); admittedIntents.set(state.ticket, intent); this.handover = undefined;
     return { kind: "admitted", ticket: state.ticket, intent };
   }
   recordCommittedBoundary(ticket: WasmMemoryAdmissionTicket, boundary: { tick: number; day: number }): void {

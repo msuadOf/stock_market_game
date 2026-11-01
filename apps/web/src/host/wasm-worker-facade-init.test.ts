@@ -50,7 +50,7 @@ test("生产 Worker init 把原输入交唯一initializer，配置前create拒�
     const input = { type: "init", setup, controlPort: transport.channels[1]!.port2 as unknown as MessagePort };
     await send({ type: "init", setup });
     for (let count = 0; count < 8; count++) await new Promise((resolve) => setImmediate(resolve));
-    assert.deepEqual(initialized, [input]); assert.equal(posted.some((item) => item.type === "ready"), false);
+    assert.deepEqual(initialized, [input]); assert.deepEqual(posted, [{ type: "initializationProgress", phase: "engine" }]);
     await send({ type: "create", setup: { marker: "wrong-second-copy" }, seed: 1n });
     for (let count = 0; count < 8; count++) await new Promise((resolve) => setImmediate(resolve));
     assert.equal(created.length, 0); assert.equal(posted.at(-1)?.type, "failure");

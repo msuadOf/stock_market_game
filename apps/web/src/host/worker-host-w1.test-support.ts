@@ -157,7 +157,7 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
         // standalone supervisor 的既有 bootstrapEngine 控制项仍使用其真实公开入口。
         if (value.type === "init" && this.dataPort === undefined && this.controlPort !== undefined) {
           this.controlPort.addEventListener("message", (event) => {
-            if ((event.data as { type?: string }).type === "facadeEngineConfigured") { configured++; this.emit({ type: "ready" }); }
+            if ((event.data as { type?: string }).type === "facadeEngineConfigured") { configured++; this.emit({ type: "initializationProgress", phase: "engine" }); this.emit({ type: "ready" }); }
           });
           this.controlPort.start();
           this.controlPort.postMessage({ type: "facadeEngineSubstrate", ...substrate });
@@ -177,7 +177,7 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
               this.dataPort!.postMessage({ type: "failure", generation: 0, code: "INIT_FIXTURE", where: "fixture.init", message: String(options.initAfterMemoryFailure), engineQuiescent: "initialization-failed", ...(options.claimUnallocatedAfterMemory === true ? { memoryAllocation: "not-allocated" } : {}) });
               this.emit({ type: "engineLifecycle", instanceId: this.instanceId, state: options.claimUnallocatedAfterMemory === true ? "unallocated" : "quiescent" });
             }
-            if (request.type === "facadeEngineConfigured") { configured++; this.dataPort!.postMessage({ type: "ready" }); }
+            if (request.type === "facadeEngineConfigured") { configured++; this.dataPort!.postMessage({ type: "initializationProgress", phase: "engine" }); this.dataPort!.postMessage({ type: "ready" }); }
           });
           this.controlPort.start();
           this.dataPort.addEventListener("message", (event) => {

@@ -96,6 +96,7 @@ const loop = new WasmTickLoop({
   failure: postFailure,
 });
 const engineInitializer = createFacadeEngineInitializer({
+  ownsIncomingArchive: true,
   isolated: () => self.crossOriginIsolated === true,
   environment: { bindFacadeThreadEnvironment, installFacadeSlotLayout, getArenaView },
   load: loadEngineModule,
@@ -353,6 +354,7 @@ function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
             if (closingSession) throw new Error("package 验证完成时实例已经关闭");
           } else if (restoreCapability !== undefined) throw new Error("新局不得携带初始 restore capability");
           memoryInitializationStarted = true;
+          ctx.postMessage({ type: "initializationProgress", phase: "engine" });
           if (engineControlPort === undefined) throw new Error("engine transport controlPort 尚未绑定");
           await engineInitializer.initialize({ ...initializerMessage, controlPort: engineControlPort });
           ctx.postMessage({ type: "ready" });

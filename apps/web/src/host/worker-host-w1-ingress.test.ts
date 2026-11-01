@@ -82,11 +82,11 @@ test("W1 当前 bind 失败仍 fatal 且关闭 engine/ingress 和所有 timer", 
   } finally { await f.cleanup(); }
 });
 
-test("W1 初始化换代不能重置 main 10000ms 总 deadline", { timeout: 10000 }, async () => {
+test("W1 初始化换代不能重置当前阶段 deadline", { timeout: 10000 }, async () => {
   const f = fixture();
   try {
     f.launch(); await drain(); f.ingress(); f.baseline(); await drain();
-    f.clock.advance(9000); f.baseline(2); f.ingress(2, 2); await drain();
+    f.clock.advance(29000); f.baseline(2); f.ingress(2, 2); await drain();
     f.clock.advance(1000); await drain();
     assert.equal(f.outcome.status, "rejected");
     if (f.outcome.status === "rejected") assert.match(String(f.outcome.error), /超时|deadline|TIMEOUT/);

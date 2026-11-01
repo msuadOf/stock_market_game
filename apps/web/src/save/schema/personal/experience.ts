@@ -113,14 +113,8 @@ function parseStock(value: unknown, path: string): number {
 
 function parseCivilDate(value: unknown, path: string): string {
   const date = civilDate(value, path)
-  const [yearText, monthText, dayText] = date.split("-")
-  if (yearText === undefined || monthText === undefined || dayText === undefined) throw new Error(`存档 ${path} 必须是有效公历日期`)
-  const year = BigInt(yearText)
-  if (year < 1900n || year > 2199n) throw new Error(`存档 ${path} 必须在公历验证窗口内`)
-  const monthDays: { readonly [key: string]: string } = {
-    "01": "31", "02": year % 4n === 0n && (year % 100n !== 0n || year % 400n === 0n) ? "29" : "28", "03": "31", "04": "30", "05": "31", "06": "30", "07": "31", "08": "31", "09": "30", "10": "31", "11": "30", "12": "31",
-  }
-  const maximum = monthDays[monthText]
-  if (maximum === undefined || BigInt(dayText) === 0n || BigInt(dayText) > BigInt(maximum)) throw new Error(`存档 ${path} 必须是有效公历日期`)
+  // civilDate 已验证月日和闰年；此处只补本领域的年份窗口。
+  const year = Number(date.slice(0, 4))
+  if (year < 1900 || year > 2199) throw new Error(`存档 ${path} 必须在公历验证窗口内`)
   return date
 }

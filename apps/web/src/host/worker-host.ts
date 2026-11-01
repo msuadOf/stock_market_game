@@ -12,8 +12,8 @@ import type {
 import { wireIntentOf } from "./protocol/stock-identity.ts";
 import type { PausePreferences } from "../types/generated/PausePreferences.ts";
 import { parseSaveSlot } from "../save/save-schema.ts";
-import type { StrictSaveEnvelope } from "../save/schema/root.ts";
 import { validateDayEndArchive } from "../save/day-end-candidate.ts";
+import type { StrictSaveEnvelope } from "../save/schema/root.ts";
 import type { EngineHost, IndicatorCapabilities, SpeedMetrics } from "./engine-host.ts";
 import type { IntradayAverageCurveInput, IntradayAverageInput, IntradayAverageResult, PersonalTradeConfirmation } from "./engine-host.ts";
 import type { CurrentMinuteHistoryRequest, CurrentMinuteHistoryResponse } from "./current-minute-history.ts";
@@ -38,8 +38,10 @@ import { parseHistoricalStockData } from "./stock-history.ts";
 import { parseInitialAllocation } from "./initial-allocation.ts";
 import { WasmHostInitializationError } from "./wasm-host-initialization-error.ts";
 import type { WasmLifecycleObservation } from "./wasm-lifecycle-observation.ts";
+import { InitializationDeadline } from "./initialization-deadline.ts";
 import { parseVerifiedRestoreCapability } from "./wasm-restore-package-capability.ts";
 import { parseWasmSessionShutdown, type WasmSessionShutdown } from "./wasm-shutdown-report.ts";
+import { requireAdmittedLoadArchive } from "./wasm-document-memory-owner.ts";
 import type { VerifiedWasmRestoreCapability, WasmFinalRelease, WasmMemoryAdmissionTicket } from "./wasm-document-memory-owner.ts";
 import type { WasmRuntimeOptions } from "./wasm-runtime-options.ts";
 
@@ -193,6 +195,7 @@ type WorkerHostOptions = {
   readonly memoryAdmissionTicket?: WasmMemoryAdmissionTicket;
   readonly enableE2EStepping?: boolean;
   readonly onSpawnFailure: (failure: HostFailure) => void;
+  readonly onInitializationProgress?: (message: string) => void;
   readonly initialArchive?: StrictSaveEnvelope | null;
 } & WasmRuntimeOptions;
 
@@ -219,13 +222,13 @@ export function createWorkerHost(
       // 只读一次外部 getter；失败明确发生在 Worker/Memory 之前。
       const suppliedArchive = options.initialArchive;
       if (suppliedArchive !== null && suppliedArchive !== undefined) {
-        initialArchive = validateDayEndArchive(parseSaveSlot(structuredClone(suppliedArchive)));
         const ticket = memoryTicket;
+        if (ticket === undefined) validateDayEndArchive(parseSaveSlot(structuredClone(suppliedArchive)));
         const candidate = ticket?.restoreCapability;
         if (ticket === undefined || candidate === undefined || candidate === null) throw new WasmHostInitializationError({
           code: "WASM_RESTORE_TOPOLOGY_NOT_READY", where: "worker-host.initial-archive", message: "WASM 日终存档恢复所需的宿主拓扑尚未就绪", context: { operation: "restore" },
         });
-        if (ticket.intent.kind !== "load" || JSON.stringify(ticket.intent.archive) !== JSON.stringify(initialArchive)) throw new Error("初始完整 X 与 memory admission ticket 的冻结 load intent 不一致");
+        initialArchive = requireAdmittedLoadArchive(ticket, suppliedArchive);
         restoreCapability = parseVerifiedRestoreCapability(candidate, options.runtimeOverride);
       }
     } catch (error) { resolveRelease?.({ kind: "not-allocated" }); reject(error); return; }
@@ -270,11 +273,9 @@ export function createWorkerHost(
     let indicatorCapabilities: IndicatorCapabilities = { intradayAverage: false, macd: false, priceKdj: false, candleKdj: false };
     let personalTradeHistory = false;
     let pendingFailure: HostFailure | null = null;
-    const timeout = setTimeout(() => {
-      if (!initialized) {
-        notifyFailure({ code: "WASM_WORKER_INIT_TIMEOUT", where: "worker-host.initialize", message: "WASM 多线程初始化超时（10s）。请检查 SharedArrayBuffer、COOP/COEP 和 WASM 线程绑定。" });
-      }
-    }, 10_000);
+    const deadline = new InitializationDeadline((phase) => {
+      if (!initialized) notifyFailure({ code: "WASM_WORKER_INIT_TIMEOUT", where: "worker-host.initialize", message: `行情引擎初始化在${phase}超时，请反馈详情。` });
+    }, (message) => options.onInitializationProgress?.(message));
 
     const notifyFailure = (failure: HostFailure, preserveVisibleBaseline = false) => {
       if (disposed) return;
@@ -304,7 +305,7 @@ export function createWorkerHost(
           }));
         } catch (shutdownError) { cleanupRequests.push(Promise.reject(shutdownError)); }
       }
-      clearTimeout(timeout);
+      deadline.dispose();
       try { controlClient.beginShutdown(performance.now() + 2000); }
       catch (error) { queueMicrotask(() => { throw new Error("请求 controlWorker 清理失败；release 保持 unknown", { cause: error }); }); }
       ingressWorker = null;
@@ -354,8 +355,8 @@ export function createWorkerHost(
       void ready.then(() => {
         if (!stillCurrent() || initialized || currentGeneration !== boundGeneration
           || cachedBaseline?.generation !== String(boundGeneration)) return;
+        if (!deadline.complete()) return;
         initialized = true;
-        clearTimeout(timeout);
         resolve(host());
       }, (error: unknown) => {
         if (!stillCurrent() || error === closingCancellation) return;
@@ -393,9 +394,14 @@ export function createWorkerHost(
             waitForInitialization();
             return;
           }
+          case "initializationProgress":
+            if (Object.keys(incoming).sort().join(",") !== "phase,type" || incoming.phase !== "engine") throw new Error("初始化进度无效");
+            deadline.advance("engine");
+            return;
           case "ready":
             await controlClient.configured;
             if (disposed || closing) return;
+            deadline.advance("restore");
             worker.postMessage(initialArchive === null ? { type: "create", seed } : { type: "restoreInitial" });
             return;
           case "created":
@@ -487,6 +493,7 @@ export function createWorkerHost(
         if (rejectRelease !== undefined) rejectRelease(error instanceof Error ? error : new Error("controlWorker release 失败", { cause: error }));
       });
       controlClient.start();
+      deadline.advance("package");
       controlClient.sendInitialization({
         type: "init",
         ...(initialArchive === null ? { setup } : { initialArchive, restoreCapability }),
@@ -628,7 +635,7 @@ export function createWorkerHost(
               disposed = true;
               requests.close(cancellation); closeIngress(cancellation);
               cachedBaseline = null;
-              clearTimeout(timeout);
+              deadline.dispose();
               worker.removeEventListener("message", onMessage);
               ingressWorker = null;
             }

@@ -86,11 +86,11 @@ export function record(value: unknown, path: string): JsonRecord {
 }
 
 export function exact(value: JsonRecord, keys: readonly string[], path: string): void {
-  const expected = new Set(keys)
-  const missing = keys.filter((key) => !Object.hasOwn(value, key))
-  const extra = Object.keys(value).filter((key) => !expected.has(key))
-  if (missing.length > 0) throw new SaveSchemaError(`${path}.${missing[0]}`, "是必填字段")
-  if (extra.length > 0) throw new SaveSchemaError(`${path}.${extra[0]}`, "不是允许字段")
+  const expected = keys.length > 16 ? new Set(keys) : undefined
+  const missing = keys.find((key) => !Object.hasOwn(value, key))
+  const extra = Object.keys(value).find((key) => expected === undefined ? !keys.includes(key) : !expected.has(key))
+  if (missing !== undefined) throw new SaveSchemaError(`${path}.${missing}`, "是必填字段")
+  if (extra !== undefined) throw new SaveSchemaError(`${path}.${extra}`, "不是允许字段")
 }
 
 export function array(value: unknown, path: string): readonly unknown[] {

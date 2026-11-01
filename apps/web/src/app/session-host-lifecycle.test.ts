@@ -498,7 +498,8 @@ test("WASM 启动档作为同一第五参数交给 createHost，构造前不调�
   const f = fixture();
   f.source.select(archive);
   f.ports.createHost = async (...args: unknown[]) => {
-    assert.equal(args.length, 5);
+    assert.equal(args.length, 7);
+    assert.equal(typeof args[6], "function");
     assert.equal(args[3] instanceof Function, true, "第四参数仍是 spawn failure sink");
     assert.equal(args[4], archive, "完整原档作为第五参数传递");
     return f.host;
@@ -990,4 +991,16 @@ test("普通 WASM 新局不请求 restore metadata 或静默等待其网络", { 
   await f.runtime.start();
   assert.ok(f.calls.includes("create")); assert.ok(f.calls.includes("ready"));
   await f.runtime.dispose();
+});
+
+test("取消旧启动后迟到的初始化进度不覆盖当前提示", { timeout: 10000 }, async () => {
+  const f = fixture(); const gate = deferred<EngineHost>(); let progress!: (message: string) => void;
+  f.ports.createHost = async (_setup, _seed, _target, _failure, _archive, _ticket, onProgress) => { progress = onProgress!; return gate.promise; };
+  const runtime = createSessionHostLifecycle(f.ports); const starting = runtime.start();
+  for (let i = 0; i < 20 && progress === undefined; i++) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(typeof progress, "function");
+  const stopping = runtime.stopCurrentSession();
+  f.calls.length = 0; progress("旧进度");
+  assert.equal(f.calls.includes("旧进度"), false);
+  gate.resolve(f.host); await starting; await stopping;
 });

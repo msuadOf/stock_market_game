@@ -167,7 +167,7 @@ async function createFixture(
   listener!({ data: { type: "bindEngineTransport", instanceId: 1, dataPort: business.port1, controlPort: control.port2 } });
   send({ type: "init", ...(missingWrites === "initial-archive" ? { initialArchive: saved, restoreCapability: { kind: "verified-package", wasmSha256: wasmHash, glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: exportNames } } : { setup: {} }) });
   await ready;
-  assert.deepEqual(posted, [{ type: "ready" }]);
+  assert.deepEqual(posted, [{ type: "initializationProgress", phase: "engine" }, { type: "ready" }]);
   posted.length = 0;
   return { send, calls, posted: posted as Message[], globalLifecycle, timers, saved, handle: (next: number) => { handle = next; }, fail: (next: typeof failing) => { failing = next; }, failPost: (type: string | null) => { failingPost = type; }, failWrite: (error: unknown) => { writeFailure = error; } };
 }

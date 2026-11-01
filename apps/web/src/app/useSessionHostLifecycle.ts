@@ -58,7 +58,7 @@ export interface SessionHostLifecyclePorts {
   setIndicatorCalculator(calculator: IndicatorCalculator): () => void;
   connectProtocol(host: EngineHost): void;
   disconnectProtocol(): void;
-  createHost(setup: SessionSetup, seed: bigint, target: StartupTarget, onSpawnFailure: (failure: HostFailure) => void, initialArchive: StrictSaveEnvelope | null, memoryAdmissionTicket?: WasmMemoryAdmissionTicket): Promise<EngineHost>;
+  createHost(setup: SessionSetup, seed: bigint, target: StartupTarget, onSpawnFailure: (failure: HostFailure) => void, initialArchive: StrictSaveEnvelope | null, memoryAdmissionTicket?: WasmMemoryAdmissionTicket, onInitializationProgress?: (message: string) => void): Promise<EngineHost>;
   onSpawnFailure(failure: HostFailure): void;
   createSeed?(): bigint;
   checkWasmEnvironment(): void;
@@ -274,8 +274,9 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
       let host: EngineHost;
       try {
         const onSpawnFailure = (failure: HostFailure) => { if (!cancelled) ports.onSpawnFailure(failure); };
-        if (memoryTicket === undefined) host = await createHost(setup, seed, startupTarget, onSpawnFailure, initialSlot);
-        else host = await createHost(setup, seed, startupTarget, onSpawnFailure, initialSlot, memoryTicket);
+        const onInitializationProgress = (message: string) => { if (!cancelled) ports.setNotice(message); };
+        if (memoryTicket === undefined) host = await createHost(setup, seed, startupTarget, onSpawnFailure, initialSlot, undefined, onInitializationProgress);
+        else host = await createHost(setup, seed, startupTarget, onSpawnFailure, initialSlot, memoryTicket, onInitializationProgress);
       } finally { createPending = false; }
       ownedHost = host;
       if (cancelled) {
@@ -420,7 +421,7 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
   };
   return { start, stopCurrentSession, releaseOwnedHost, dispose };
 }
-export function createSessionHost(setup: SessionSetup, seed: bigint, startupTarget: StartupTarget, tradingE2EMode: boolean, onSpawnFailure: (failure: HostFailure) => void, initialArchive: StrictSaveEnvelope | null, memoryAdmissionTicket?: WasmMemoryAdmissionTicket): Promise<EngineHost> {
+export function createSessionHost(setup: SessionSetup, seed: bigint, startupTarget: StartupTarget, tradingE2EMode: boolean, onSpawnFailure: (failure: HostFailure) => void, initialArchive: StrictSaveEnvelope | null, memoryAdmissionTicket?: WasmMemoryAdmissionTicket, onInitializationProgress?: (message: string) => void): Promise<EngineHost> {
   if (startupTarget.kind === "tauri") return createTauriHost(setup, seed);
   if (startupTarget.kind === "remote") return createRemoteHost(setup, seed, { baseUrl: startupTarget.baseUrl });
   let wasmRuntimeOptions;
@@ -433,7 +434,7 @@ export function createSessionHost(setup: SessionSetup, seed: bigint, startupTarg
     }
     throw error;
   }
-  const options = { enableE2EStepping: tradingE2EMode, onSpawnFailure, initialArchive, memoryAdmissionTicket, ...wasmRuntimeOptions };
+  const options = { enableE2EStepping: tradingE2EMode, onSpawnFailure, initialArchive, memoryAdmissionTicket, onInitializationProgress, ...wasmRuntimeOptions };
   return createWorkerHost(setup, seed, options);
 }
 
@@ -475,7 +476,7 @@ export function useSessionHostLifecycle(options: Options): MemoryHandoverPanelPr
         await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
         window.location.reload();
       },
-      createHost: (setup, seed, target, onSpawnFailure, initialArchive, memoryAdmissionTicket) => createSessionHost(setup, seed, target, options.TRADING_E2E_MODE, onSpawnFailure, initialArchive, memoryAdmissionTicket),
+      createHost: (setup, seed, target, onSpawnFailure, initialArchive, memoryAdmissionTicket, onInitializationProgress) => createSessionHost(setup, seed, target, options.TRADING_E2E_MODE, onSpawnFailure, initialArchive, memoryAdmissionTicket, onInitializationProgress),
       checkWasmEnvironment: () => assertWasmEnvironment(browserWasmEnvironment()),
       isDocumentHidden: () => document.hidden,
     });

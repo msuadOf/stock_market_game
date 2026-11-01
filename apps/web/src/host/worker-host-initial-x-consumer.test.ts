@@ -3,14 +3,22 @@ import test from "node:test";
 import { parseVerifiedRestoreCapability } from "./wasm-restore-package-capability.ts";
 import { fixture, drain } from "./worker-host-w1.test-support.ts";
 import { commandDayEndArchiveFixture } from "../app/command-host-test-fixture.ts";
+import { WasmDocumentMemoryOwner } from "./wasm-document-memory-owner.ts";
+import { WasmMemoryStorage } from "./wasm-memory-storage.ts";
+import { fixture as storageFixture, MiB } from "./wasm-memory-storage.test-support.ts";
 
 // 这是可信 producer 接口的传输 fixture，不是实际发布包能力证据。
 const capability = { kind: "verified-package", wasmSha256: "a".repeat(64), glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore"] };
 test("有 verified package capability 时 bootstrap 唯一完整 X，ready 后仅 restoreInitial", { timeout: 10000 }, async () => {
-  const f = fixture(); const archive = commandDayEndArchiveFixture();
+  const f = fixture(); const storage = storageFixture();
+  const owner = new WasmDocumentMemoryOwner({ maximumBytes: storage.options.maximumBytes, reclaimBytes: storage.options.reclaimBytes,
+    readCapacity: () => ({ kind: "enforced-capacity", initialPages: 1024, maximumPages: 4096, liveUpperBoundBytes: 256 * MiB }),
+    restoreCapabilities: { forArchive: () => capability as never },
+    createStorage: (liveUpperBoundBytes) => new WasmMemoryStorage({ ...storage.options, liveUpperBoundBytes }) });
+  const admission = owner.admit({ kind: "load", archive: commandDayEndArchiveFixture() });
+  if (admission.kind !== "admitted" || admission.intent.kind !== "load") throw new Error("需要载入票");
+  const archive = admission.intent.archive; const ticket = admission.ticket;
   try {
-    let release!: Promise<unknown>;
-    const ticket = { intent: { kind: "load", archive }, restoreCapability: capability, registerRelease(value: Promise<unknown>) { release = value; } };
     f.launch({ onSpawnFailure() {}, initialArchive: archive, memoryAdmissionTicket: ticket });
     await drain();
     assert.equal(f.workers.length, 1, "VERIFIED_RESTORE_MUST_REACH_WORKER");
@@ -19,8 +27,8 @@ test("有 verified package capability 时 bootstrap 唯一完整 X，ready 后�
     assert.equal(Object.hasOwn(init, "setup"), false); assert.deepEqual(init.initialArchive, archive); assert.deepEqual(init.restoreCapability, capability);
     assert.deepEqual(f.workers[0].sent.find((message) => message.type === "restoreInitial"), { type: "restoreInitial" });
     assert.equal(f.workers[0].sent.some((message) => message.type === "create" || message.type === "restore"), false);
-    const releaseFailure = assert.rejects(release, /quiescence|停止 grow/);
-    f.workers[0].error(new Error("只验证启动传输，缺少真实 quiescence")); await drain(); await releaseFailure;
+    f.workers[0].error(new Error("只验证启动传输，缺少真实 quiescence")); await drain();
+    await assert.rejects(owner.finish(ticket), /quiescence|停止 grow/);
   } finally { await f.cleanup(); }
 });
 
@@ -61,23 +69,29 @@ test("restore capability 保留 omitted/false/true 三态，与 initializer requ
   assert.deepEqual(parseVerifiedRestoreCapability(withRuntime, true), withRuntime);
 });
 
-test("显式 runtimeOverride:false 缺 setter 时零 Worker/Channel 拒绝并结 not-allocated", { timeout: 10000 }, async () => {
-  const f = fixture(); const archive = commandDayEndArchiveFixture();
-  let observedWorkers = -1, observedChannels = -1;
-  let release!: Promise<{ kind: "receipt"; receipt: unknown } | { kind: "error"; error: unknown }>;
-  let outcome: Awaited<typeof release> | undefined;
+for (const runtimeOverride of [false, true]) test(`显式 runtimeOverride:${runtimeOverride} 缺 setter 时零 Worker/Channel 拒绝并结 not-allocated`, { timeout: 10000 }, async () => {
+  const f = fixture(); const storage = storageFixture();
+  const owner = new WasmDocumentMemoryOwner({ maximumBytes: storage.options.maximumBytes, reclaimBytes: storage.options.reclaimBytes,
+    readCapacity: () => ({ kind: "enforced-capacity", initialPages: 1024, maximumPages: 4096, liveUpperBoundBytes: 256 * MiB }),
+    restoreCapabilities: { forArchive: () => capability as never },
+    createStorage: (liveUpperBoundBytes) => new WasmMemoryStorage({ ...storage.options, liveUpperBoundBytes }) });
+  const admission = owner.admit({ kind: "load", archive: commandDayEndArchiveFixture() });
+  if (admission.kind !== "admitted" || admission.intent.kind !== "load") throw new Error("需要载入票");
   try {
-    const creating = f.launch({ onSpawnFailure() {}, initialArchive: archive, runtimeOverride: false, memoryAdmissionTicket: {
-      intent: { kind: "load", archive }, restoreCapability: capability,
-      registerRelease(value: Promise<unknown>) { release = value.then((receipt) => ({ kind: "receipt", receipt }), (error: unknown) => ({ kind: "error", error })); },
-    } });
-    const rejected = assert.rejects(creating);
-    await drain(); observedWorkers = f.workers.length; observedChannels = f.channels.length;
-    // 红测也明确收尾，让错误准入表现为业务断言失败而非等到硬 deadline。
-    if (f.workers[0] !== undefined) f.workers[0].emit({ type: "failure", code: "RUNTIME_FALSE_FIXTURE_CLEANUP", where: "fixture", message: "错误准入的测试收尾" });
-    await rejected; outcome = await release;
+    await assert.rejects(f.launch({ onSpawnFailure() {}, initialArchive: admission.intent.archive, runtimeOverride, ...(runtimeOverride ? { waitSettings: { spinUs: 1, quietUs: 1, fineUs: 1, coarseUs: 1 } } : {}), memoryAdmissionTicket: admission.ticket }), /缺少初始恢复所需导出/);
+    assert.equal(f.workers.length, 0); assert.equal(f.channels.length, 0);
+    await owner.finish(admission.ticket);
   } finally { await f.cleanup(); }
-  assert.equal(observedWorkers, 0, "显式 false 缺少 setter 不得创建 Worker");
-  assert.equal(observedChannels, 0);
-  assert.deepEqual(outcome, { kind: "receipt", receipt: { kind: "not-allocated" } });
+});
+
+test("初始化进度回调抛错时仍结束 admission release", { timeout: 10000 }, async () => {
+  const f = fixture(); let release!: Promise<unknown>;
+  try {
+    const result = f.launch({ onSpawnFailure() {}, onInitializationProgress() { throw new Error("进度回调故障"); },
+      memoryAdmissionTicket: { registerRelease(value: Promise<unknown>) { release = value; } } });
+    const releaseFailure = assert.rejects(release, /quiescence|停止 grow|unknown/);
+    await assert.rejects(result, /进度回调故障/);
+    await drain(); f.clock.advance(2000); await drain();
+    await releaseFailure;
+  } finally { await f.cleanup(); }
 });

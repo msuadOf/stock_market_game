@@ -67,6 +67,7 @@ interface EngineEnvironment {
 /** new 使用 setup 默认拓扑，restore 消费唯一完整 X；均由 Rust 初始化 arena 并锚 clock。 */
 export function createFacadeEngineInitializer(options: {
   readonly isolated: () => boolean;
+  readonly ownsIncomingArchive?: boolean;
   readonly createMemory?: () => WebAssembly.Memory;
   readonly environment: EngineEnvironment;
   readonly load: () => Promise<{ readonly module: WebAssembly.Module; readonly diagnostics: boolean; readonly glue: FacadeEngineGlue }>;
@@ -102,9 +103,9 @@ export function createFacadeEngineInitializer(options: {
         const runtime = parseRuntimeOptions(source);
         handshake = createFacadeEngineHandshake({ port: receivedPort, onFailure: (error) => { dispose(); options.onFailure(error); } });
         ownedPort = receivedPort;
-        // 此处仍在 Worker 本地，克隆失败直接交唯一 reporter，禁止 String 降格。
+        // Worker 的 MessagePort 已创建独占副本；直接调用方仍须克隆以隔离嵌套引用。
         if (hasArchive) {
-          initialArchive = validateDayEndArchive(parseSaveSlot(structuredClone(source.initialArchive)));
+          initialArchive = validateDayEndArchive(parseSaveSlot(options.ownsIncomingArchive === true ? source.initialArchive : structuredClone(source.initialArchive)));
           setup = initialArchive.setup;
         } else setup = structuredClone(source.setup);
         const isolated = options.isolated();

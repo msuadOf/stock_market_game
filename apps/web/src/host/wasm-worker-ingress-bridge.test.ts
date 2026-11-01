@@ -148,22 +148,22 @@ async function createFixture(
   await send({ type: "init", setup: {} });
   await ready;
   const initialization = [...posted];
-  if (options.sharedMemory) assert.deepEqual(posted, [{ type: "ready" }]);
+  if (options.sharedMemory) assert.deepEqual(posted, [{ type: "initializationProgress", phase: "engine" }, { type: "ready" }]);
   posted.length = 0;
   return { send, posted: posted as Message[], initialization, substrate };
 }
 
 test("非共享产物初始化显式失败，不交半个 ready/create/baseline", { timeout: 10000 }, async () => {
   await withWorker({ sharedMemory: false, withIngressToken: true }, async (f) => {
-    assert.equal(f.initialization.length, 1); assert.equal(f.initialization[0].type, "failure");
-    assert.match(String(f.initialization[0].message), /memory/);
+    assert.equal(f.initialization.length, 2); assert.deepEqual(f.initialization[0], { type: "initializationProgress", phase: "engine" }); assert.equal(f.initialization[1].type, "failure");
+    assert.match(String(f.initialization[1].message), /memory/);
     assert.equal(f.substrate, undefined);
   });
 });
 
 test("非共享产物且缺 ingress_token 不能静默降级到主通道", { timeout: 10000 }, async () => {
   await withWorker({ sharedMemory: false, withIngressToken: false }, async (f) => {
-    assert.equal(f.initialization[0].type, "failure"); assert.equal(f.initialization.some((item) => item.type === "ready"), false);
+    assert.deepEqual(f.initialization[0], { type: "initializationProgress", phase: "engine" }); assert.equal(f.initialization[1].type, "failure"); assert.equal(f.initialization.length, 2); assert.equal(f.initialization.some((item) => item.type === "ready"), false);
   });
 });
 
@@ -177,9 +177,9 @@ test("SharedArrayBuffer 不暴露时显式说明隔离能力错误，不能裸 R
   Reflect.deleteProperty(globalThis, "SharedArrayBuffer");
   try {
     await withWorker({ sharedMemory: false, withIngressToken: true }, async (f) => {
-      assert.equal(f.initialization[0].type, "failure");
-      assert.match(String(f.initialization[0].message), /crossOriginIsolated|SharedArrayBuffer/);
-      assert.doesNotMatch(String(f.initialization[0].message), /is not defined/);
+      assert.deepEqual(f.initialization[0], { type: "initializationProgress", phase: "engine" }); assert.equal(f.initialization[1].type, "failure"); assert.equal(f.initialization.length, 2);
+      assert.match(String(f.initialization[1].message), /crossOriginIsolated|SharedArrayBuffer/);
+      assert.doesNotMatch(String(f.initialization[1].message), /is not defined/);
     });
   } finally {
     Object.defineProperty(globalThis, "SharedArrayBuffer", descriptor);

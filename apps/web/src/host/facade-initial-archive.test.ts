@@ -12,6 +12,7 @@ function dayEndArchive(): Record<string, unknown> {
 type FixtureOptions = {
   readonly hasRestore?: boolean;
   readonly clear?: () => void;
+  readonly ownsIncomingArchive?: boolean;
   readonly restore?: (json: string) => void;
   readonly setup?: (setup: unknown) => void;
 };
@@ -20,6 +21,7 @@ function fixture(options: FixtureOptions = {}) {
   const memory = new WebAssembly.Memory({ initial: 1, maximum: 2, shared: true });
   const layout = { baseAddr: 0, headerWords: HEADER_WORDS, slotStride: SLOT_STRIDE, joinStride: JOIN_STRIDE, capacity: 4, genBits: 29 };
   const initializer = createFacadeEngineInitializer({
+    ownsIncomingArchive: options.ownsIncomingArchive,
     isolated: () => true, createMemory: () => { calls.push("allocate"); return memory; },
     environment: {
       bindFacadeThreadEnvironment() { calls.push("bind"); },
@@ -42,6 +44,7 @@ test("初始档沿String ABI合同消费同一完整X，绝不调用default-new 
   try {
     const pending = f.initializer.initialize({ type: "init", initialArchive: archive, controlPort: f.channel.port2 });
     archive.seed = "999";
+    (((archive.civil_clock as Record<string, any>).policy.simulated_fallback.lunar_facts) as Record<string, unknown>).digest = "已修改";
     await pending;
     const configured = f.initializer.requireConfigured();
     assert.deepEqual(f.archives, [expected]); assert.deepEqual(configured.setup, expected.setup);
@@ -118,5 +121,32 @@ test("初始化完成但未消费时 dispose 会释放 Rust 预检档", { timeou
     await f.initializer.initialize({ type: "init", initialArchive: dayEndArchive(), controlPort: f.channel.port2 });
     f.initializer.dispose();
     assert.equal(cleared, 1);
+  } finally { f.close(); }
+});
+
+test("MessagePort 已隔离的初始档保留完整校验且无需再次克隆", { timeout: 10000 }, async () => {
+  const source = dayEndArchive();
+  const channel = new MessageChannel();
+  const received = new Promise<unknown>((resolve) => { channel.port2.onmessage = (event) => resolve(event.data); });
+  const expected = structuredClone(source);
+  channel.port1.postMessage(source);
+  (((source.civil_clock as Record<string, any>).policy.simulated_fallback.lunar_facts) as Record<string, unknown>).digest = "已修改";
+  const archive = await received as Record<string, unknown>;
+  source.seed = "999";
+  const f = fixture({ ownsIncomingArchive: true });
+  const clone = globalThis.structuredClone;
+  globalThis.structuredClone = (() => { throw new Error("重复克隆"); }) as typeof structuredClone;
+  try {
+    await f.initializer.initialize({ type: "init", initialArchive: archive, controlPort: f.channel.port2 });
+    assert.deepEqual(f.initializer.requireConfigured().initialArchive, expected);
+    assert.deepEqual(f.archives, [expected]);
+  } finally { globalThis.structuredClone = clone; f.close(); channel.port1.close(); channel.port2.close(); }
+});
+
+test("MessagePort 初始档无效时仍在 Memory 分配前拒绝", { timeout: 10000 }, async () => {
+  const f = fixture({ ownsIncomingArchive: true });
+  try {
+    await assert.rejects(f.initializer.initialize({ type: "init", initialArchive: { ...dayEndArchive(), seed: "坏seed" }, controlPort: f.channel.port2 }), /seed/);
+    assert.deepEqual(f.calls, []);
   } finally { f.close(); }
 });

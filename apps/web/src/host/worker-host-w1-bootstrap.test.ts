@@ -42,7 +42,7 @@ test("W1 transport 首次传唯一控制端，业务 init 直传 setup，ACK 后
 
 test("W1 main 初始化总 deadline 在首次 bootstrap post 前已登记", { timeout: 10000 }, async () => {
   let timerExistsAtPost = false;
-  const f = fixture({ beforeInitPost: (clock) => { timerExistsAtPost = [...clock.tasks.values()].some((task) => task.at === 10000); } });
+  const f = fixture({ beforeInitPost: (clock) => { timerExistsAtPost = [...clock.tasks.values()].some((task) => task.at === 120000); } });
   try { f.launch(); await drain(); assert.equal(timerExistsAtPost, true); }
   finally { await f.cleanup(); }
 });
@@ -88,7 +88,7 @@ test("W1 fixture 控制项：真实 MessageChannel 完成 substrate/ACK 往返�
     assert.equal(f.configured, 0);
     supervisor.bootstrapEngine({ type: "init", setup });
     await drain();
-    assert.equal(f.configured, 1); assert.deepEqual(ready, [{ type: "ready" }]);
+    assert.equal(f.configured, 1); assert.deepEqual(ready, [{ type: "initializationProgress", phase: "engine" }, { type: "ready" }]);
     assert.doesNotThrow(() => supervisor!.assertConfigured());
     assert.ok(f.configuredSubstrate);
     assert.notEqual(f.configuredSubstrate.memory, f.substrate.memory, "真实 clone 为 main 产生独立 wrapper");

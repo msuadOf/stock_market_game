@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { WasmDocumentMemoryOwner, getDocumentWasmMemoryOwner } from "./wasm-document-memory-owner.ts";
+import { WasmDocumentMemoryOwner, getDocumentWasmMemoryOwner, requireAdmittedLoadArchive } from "./wasm-document-memory-owner.ts";
 import type { WasmFinalRelease, WasmMemoryAdmissionTicket } from "./wasm-document-memory-owner.ts";
 import { WasmMemoryStorage } from "./wasm-memory-storage.ts";
 import { fixture, MiB, SNAPSHOT_KEY } from "./wasm-memory-storage.test-support.ts";
@@ -202,4 +202,29 @@ test("freeze的ledger准备读失败锁存同一原错误，不随恢复读取�
 test("需要用户确认的同document重试错误明确recoverable", { timeout: 10000 }, async () => {
   const { WasmDocumentMemoryError } = await import("./wasm-document-memory-owner.ts");
   assert.equal(new WasmDocumentMemoryError("MEMORY_RELOAD_RETRY_CONFIRMATION_REQUIRED", "请确认").recoverable, true);
+});
+
+test("已验证载入票只能取唯一冻结档，伪造票与不同对象被拒绝", { timeout: 10000 }, () => {
+  const s = setup(); const original = commandDayEndArchiveFixture();
+  const admitted = s.owner.admit({ kind: "load", archive: original });
+  assert.equal(admitted.kind, "admitted");
+  if (admitted.kind !== "admitted" || admitted.intent.kind !== "load") throw new Error("需要载入票");
+  const archive = admitted.intent.archive;
+  Object.assign(original, { seed: "999" });
+  assert.notEqual(archive.seed, "999");
+  assert.equal(requireAdmittedLoadArchive(admitted.ticket, archive), archive);
+  assert.throws(() => requireAdmittedLoadArchive(admitted.ticket, structuredClone(archive)), /不一致/);
+  assert.throws(() => requireAdmittedLoadArchive({ ...admitted.ticket }, archive), /票|ticket/);
+});
+
+test("发布包缺少消费导出或身份无效在准入时明确拒绝", { timeout: 10000 }, () => {
+  for (const invalid of [
+    { ...verified, exports: ["restore_json", "facade_slot_init_for_restore_json"] },
+    { ...verified, wasmSha256: "坏hash" },
+  ]) {
+    const f = fixture(); const owner = new WasmDocumentMemoryOwner({ maximumBytes: f.options.maximumBytes, reclaimBytes: f.options.reclaimBytes,
+      readCapacity: () => ({ kind: "enforced-capacity", initialPages: 1024, maximumPages: 4096, liveUpperBoundBytes: 256 * MiB }),
+      restoreCapabilities: { forArchive: () => invalid }, createStorage: (liveUpperBoundBytes) => new WasmMemoryStorage({ ...f.options, liveUpperBoundBytes }) });
+    assert.throws(() => owner.admit({ kind: "load", archive: commandDayEndArchiveFixture() }), (error: unknown) => (error as { code?: string }).code === "WASM_RESTORE_TOPOLOGY_NOT_READY");
+  }
 });
