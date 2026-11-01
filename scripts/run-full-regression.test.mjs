@@ -815,7 +815,7 @@ it("preserves deeply nested JSON extras accepted by the inventory wire format", 
           : "" };
       },
     });
-    assert.equal(calls, 14);
+    assert.equal(calls, 15);
   } finally {
     await fixture.cleanup();
   }
@@ -915,7 +915,7 @@ it("executes sealed prebuilt test binaries, then preserves doctests and 10-secon
     assert.equal(calls.filter((call) => call.command === "cargo" && call.args.includes("--doc")).length, 1);
     assert.equal(calls.find((call) => call.command === "cargo" && call.args.includes("--doc")).timeoutMs, 299_995);
     const web = calls.filter((call) => call.args?.some((argument) => argument.endsWith("scripts/run-web-tests.mjs")));
-    assert.deepEqual(web.map((call) => call.args.slice(-2)), Array.from({ length: 8 }, (_, index) => [String(index), "8"]));
+    assert.deepEqual(web.map((call) => call.args.slice(-2)), Array.from({ length: 9 }, (_, index) => [String(index), "9"]));
     assert.ok(web.every((call) => call.command === process.execPath && call.timeoutMs <= 10_000));
     const scripts = calls.filter((call) => call.args?.some((argument) => argument.endsWith(".test.mjs")));
     assert.deepEqual(scripts.map((call) => call.args.at(-1)).sort(), await discoverScriptTestFiles(process.cwd()));
@@ -927,6 +927,31 @@ it("executes sealed prebuilt test binaries, then preserves doctests and 10-secon
   } finally {
     await fixture.cleanup();
   }
+});
+
+it("第九个 Web 批次失败立即终止后续测试并服从共享剩余期限", async () => {
+  const fixture = await createSealedFixture();
+  let nowMs = 0;
+  const timeouts = [];
+  let scriptsCalled = false;
+  try {
+    await assert.rejects(executeFullRegression({
+      inventoryPath: fixture.inventoryPath, cpuCount: 8, now: () => nowMs,
+      collectFingerprint: async () => fixture.fingerprint,
+      runScripts: async () => { scriptsCalled = true; },
+      run: async (options) => {
+        if (options.args.some((arg) => arg.endsWith("scripts/run-web-tests.mjs"))) {
+          timeouts.push(options.timeoutMs);
+          nowMs += 37_000;
+          if (timeouts.length === 9) throw new Error("第九批失败");
+        }
+        return { stdout: options.args.includes("--list")
+          ? (options.args.includes("--exact") ? "lifecycle::year_boundary_keeps_company_operations_and_disclosure_state_authoritative: test\n" : (options.args.includes("--ignored") ? "" : "ordinary: test\n")) : "" };
+      },
+    }), /第九批失败/);
+    assert.deepEqual(timeouts, [10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 4000]);
+    assert.equal(scriptsCalled, false);
+  } finally { await fixture.cleanup(); }
 });
 
 it("fails fast and aborts in-flight sibling test binaries", async () => {

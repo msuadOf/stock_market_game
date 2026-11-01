@@ -152,3 +152,25 @@ it("完整回归分批覆盖全部文件并保持单批十秒门禁", async () =
   assert.deepEqual(seen.sort(), [...files].sort());
   await assert.rejects(runWebTestBatch({ batchIndex: 8, batchCount: 8, discover: async () => files }), /batch/i);
 });
+
+it("完整回归单独执行启动页完整 App SSR，其余文件恰好执行一次", async () => {
+  const startup = "/web/src/app/startup-screen.test.ts";
+  const files = [startup, ...Array.from({ length: 16 }, (_, index) => `/web/src/file-${index}.test.ts`)];
+  const seen = [];
+  for (let index = 0; index < 9; index += 1) {
+    await runWebTestBatch({ webRoot: "/web", cpuCount: 8, batchIndex: index, batchCount: 9,
+      discover: async () => files, run: async (options) => { seen.push(...options.args.slice(4)); } });
+  }
+  assert.deepEqual(seen.sort(), [...files].sort());
+  const calls = [];
+  await runWebTestBatch({ cpuCount: 8, batchIndex: 8, batchCount: 9, discover: async () => files,
+    run: async (options) => { calls.push(options); } });
+  assert.deepEqual(calls.flatMap((call) => call.args.slice(4)), [startup]);
+});
+
+it("完整回归要求唯一启动页测试，缺失或歧义显式失败", async () => {
+  const ordinary = Array.from({ length: 9 }, (_, index) => `/web/src/file-${index}.test.ts`);
+  for (const files of [ordinary, [...ordinary, "/a/app/startup-screen.test.ts", "/b/app/startup-screen.test.ts"]]) {
+    await assert.rejects(runWebTestBatch({ batchIndex: 0, batchCount: 9, discover: async () => files }), /exactly one startup-screen/);
+  }
+});

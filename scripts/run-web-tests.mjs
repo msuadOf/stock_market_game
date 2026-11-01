@@ -100,7 +100,15 @@ export async function runWebTestBatch({
     throw new Error("invalid Web test batch selection");
   }
   if (new Set(inventory).size !== inventory.length) throw new Error("Web test inventory contains duplicate paths");
-  const files = inventory.filter((_, index) => index % batchCount === batchIndex);
+  let files;
+  if (batchCount === 9) {
+    const startup = inventory.filter((file) => /(?:^|[/\\])app[/\\]startup-screen\.test\.ts$/.test(file));
+    if (startup.length !== 1) throw new Error("Web test inventory requires exactly one startup-screen test");
+    const rest = inventory.filter((file) => file !== startup[0]);
+    files = batchIndex === 8 ? startup : rest.filter((_, index) => index % 8 === batchIndex);
+  } else {
+    files = inventory.filter((_, index) => index % batchCount === batchIndex);
+  }
   const policy = buildWebTestShardPolicy(cpuCount, files);
   log(JSON.stringify({ status: "started", available_cpu_count: policy.available_cpu_count,
     max_concurrent_processes: policy.max_concurrent_processes,
