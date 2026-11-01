@@ -466,31 +466,45 @@ fn assert_same_delivery(
     assert_eq!(native.state.plans, serial.state.plans);
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Continuation {
+    Both,
+    Restore,
+    Fifo,
+}
+
 fn assert_save_restore_and_native_continuation(
     native_save: &SaveSlot,
     serial_save: &SaveSlot,
     expected_tick: u64,
+    continuation: Continuation,
 ) {
     let cursors = native_save
         .book_next_sequences
         .keys()
         .map(|stock| (*stock, 1))
         .collect::<std::collections::BTreeMap<_, _>>();
-    let (mut native, mut serial) = native_continuation(native_save, serial_save);
-    let native_events = native.step().unwrap();
-    let serial_events = serial.step().unwrap();
-    assert_same_delivery(
-        &native,
-        &serial,
-        &native_events,
-        &serial_events,
-        expected_tick,
-    );
-    let native_projection = native_semantic_projection(&native, native_save, &cursors, true);
-    let serial_projection = native_semantic_projection(&serial, serial_save, &cursors, true);
-    assert_native_semantics_equal(&native_projection, &serial_projection);
-    assert_native_restore_stable(&native, native_save, &cursors);
-    assert_native_restore_stable(&serial, serial_save, &cursors);
+    if continuation != Continuation::Fifo {
+        let (mut native, mut serial) = native_continuation(native_save, serial_save);
+        let native_events = native.step().unwrap();
+        let serial_events = serial.step().unwrap();
+        assert_same_delivery(
+            &native,
+            &serial,
+            &native_events,
+            &serial_events,
+            expected_tick,
+        );
+        let native_projection = native_semantic_projection(&native, native_save, &cursors, true);
+        let serial_projection = native_semantic_projection(&serial, serial_save, &cursors, true);
+        assert_native_semantics_equal(&native_projection, &serial_projection);
+        assert_native_restore_stable(&native, native_save, &cursors);
+        assert_native_restore_stable(&serial, serial_save, &cursors);
+
+        if continuation == Continuation::Restore {
+            return;
+        }
+    }
 
     // 从各侧原完整日结事实独立恢复，在下一日首拍真实受理，保留非日末在场单与FIFO。
     let (mut native, mut serial) = native_continuation(native_save, serial_save);
@@ -609,7 +623,11 @@ fn assert_save_restore_and_native_continuation(
     assert_native_restore_stable(&serial, serial_save, &next_cursors);
 }
 
-fn run_nonzero_plan_parity(exchange: CalendarExchange, continuation_phase: usize) {
+fn run_nonzero_plan_parity(
+    exchange: CalendarExchange,
+    continuation_phase: usize,
+    continuation: Continuation,
+) {
     let first = if exchange == CalendarExchange::Sse {
         StockExchange::Shanghai
     } else {
@@ -753,6 +771,7 @@ fn run_nonzero_plan_parity(exchange: CalendarExchange, continuation_phase: usize
                 &native_save,
                 &serial_save,
                 (phase as u64 + 1) * fixture::TICKS_PER_DAY + 1,
+                continuation,
             );
         }
         if phase == 0 {
@@ -774,20 +793,25 @@ fn run_nonzero_plan_parity(exchange: CalendarExchange, continuation_phase: usize
 // 每个exchange/phase有独立十秒case预算，全部恢复与委托断言均保留。
 #[test]
 fn mixed_nonzero_investor_plans_keep_group_mirror_and_serial_own_day_events_equal() {
-    run_nonzero_plan_parity(CalendarExchange::Sse, 0);
+    run_nonzero_plan_parity(CalendarExchange::Sse, 0, Continuation::Both);
 }
 
 #[test]
-fn mixed_sse_closed_nonzero_plan_second_day_restore_and_fifo_are_equal() {
-    run_nonzero_plan_parity(CalendarExchange::Sse, 1);
+fn mixed_sse_closed_nonzero_plan_second_day_restore_is_equal() {
+    run_nonzero_plan_parity(CalendarExchange::Sse, 1, Continuation::Restore);
 }
 
 #[test]
 fn mixed_szse_closed_nonzero_plan_first_day_restore_and_fifo_are_equal() {
-    run_nonzero_plan_parity(CalendarExchange::Szse, 0);
+    run_nonzero_plan_parity(CalendarExchange::Szse, 0, Continuation::Both);
 }
 
 #[test]
 fn mixed_szse_closed_nonzero_plan_second_day_restore_and_fifo_are_equal() {
-    run_nonzero_plan_parity(CalendarExchange::Szse, 1);
+    run_nonzero_plan_parity(CalendarExchange::Szse, 1, Continuation::Both);
+}
+
+#[test]
+fn mixed_sse_closed_nonzero_plan_second_day_fifo_is_equal() {
+    run_nonzero_plan_parity(CalendarExchange::Sse, 1, Continuation::Fifo);
 }
