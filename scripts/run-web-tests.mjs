@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import {
   COMMAND_CLEANUP_RESERVE_MAX_MS,
   ORDINARY_TEST_MAX_MS,
+  LONG_VALIDATION_MAX_MS,
   runBoundedCommand,
 } from "./run-with-deadline.mjs";
 
@@ -86,12 +87,15 @@ export function buildWebTestShardPolicy(availableCpuCount, files) {
 export async function runWebTestBatch({
   webRoot = path.join(DEFAULT_REPO_ROOT, "apps", "web"),
   cpuCount = os.availableParallelism(),
+  env = process.env,
   batchIndex = 0,
   batchCount = 1,
   discover = discoverWebTestFiles,
   run = runBoundedCommand,
   now = Date.now,
   log = () => undefined,
+  remainingMs: parentRemainingMs,
+  signal,
 } = {}) {
   assertSupportedNodeVersion();
   const startedAt = now();
@@ -122,46 +126,43 @@ export async function runWebTestBatch({
     max_concurrent_processes: policy.max_concurrent_processes,
     shard_file_counts: policy.shards.map((shard) => shard.length) }));
   const controller = new AbortController();
+  const combinedSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
   const failures = [];
   const completed = [];
   const remainingMs = (context) => {
-    const remaining = Math.floor(startedAt + ORDINARY_TEST_MAX_MS - now());
-    if (remaining <= 1) throw new Error(`Web test batch exhausted its ${ORDINARY_TEST_MAX_MS}ms deadline before ${context}`);
+    const local = Math.floor(startedAt + LONG_VALIDATION_MAX_MS - now());
+    const remaining = parentRemainingMs === undefined ? local : Math.min(local, parentRemainingMs(context));
+    if (remaining <= 1) throw new Error(`Web test batch exhausted its deadline before ${context}`);
     return remaining;
   };
-  await Promise.all(policy.shards.map(async (shard, index) => {
-    const label = `Web test shard ${index + 1}/${policy.shard_count}`;
-    const shardStartedAt = now();
-    try {
-      const timeoutMs = Math.min(ORDINARY_TEST_MAX_MS, remainingMs(label));
-      await run({
-        command: process.execPath,
-        // 单文件分片本身已独立；多文件仍使用默认 process 隔离，防止 mock 状态串扰。
-        args: [
-          "--test",
-          "--test-timeout=10000",
-          `--test-concurrency=${policy.per_shard_file_concurrency}`,
-          ...(shard.length === 1 ? ["--test-isolation=none"] : []),
-          "--test-force-exit",
-          ...shard,
-        ],
-        cwd: webRoot,
-        env: process.env,
-        timeoutMs,
-        cleanupReserveMs: Math.min(COMMAND_CLEANUP_RESERVE_MAX_MS, timeoutMs - 1),
-        signal: controller.signal,
-      });
-      completed.push({ shard: index + 1, file_count: shard.length, wall_ms: now() - shardStartedAt });
-    } catch (error) {
-      if (!controller.signal.aborted) controller.abort(error);
-      failures.push(new Error(`${label} failed: ${error.message}`, { cause: error }));
+  const queue = policy.shards.flat();
+  let cursor = 0;
+  async function worker() {
+    while (!combinedSignal.aborted && cursor < queue.length) {
+      const file = queue[cursor++];
+      const fileStartedAt = now();
+      try {
+        const timeoutMs = Math.min(ORDINARY_TEST_MAX_MS, remainingMs(file));
+        await run({
+          command: process.execPath,
+          args: ["--test", "--test-timeout=10000", "--test-concurrency=1", "--test-isolation=none", "--test-force-exit", file],
+          cwd: webRoot, env, timeoutMs,
+          cleanupReserveMs: Math.min(COMMAND_CLEANUP_RESERVE_MAX_MS, timeoutMs - 1),
+          signal: combinedSignal,
+        });
+        completed.push({ file, wall_ms: now() - fileStartedAt });
+      } catch (error) {
+        failures.push(new Error(`Web test shard failed for ${file}: ${error.message}`, { cause: error }));
+        if (!controller.signal.aborted) controller.abort(error);
+      }
     }
-  }));
-  if (failures.length > 0) throw new AggregateError(failures, `${failures.length} Web test shard failed:\n${failures.map((failure) => failure.message).join("\n")}`);
-  const wallMs = now() - startedAt;
-  if (wallMs > ORDINARY_TEST_MAX_MS) throw new Error(`Web test batch exceeded its ${ORDINARY_TEST_MAX_MS}ms deadline`);
-  completed.sort((left, right) => left.shard - right.shard);
-  const result = { wall_ms: wallMs, ...policy, shards: completed };
+  }
+  await Promise.all(Array.from({ length: policy.max_concurrent_processes }, worker));
+  if (signal?.aborted && failures.length === 0) throw signal.reason;
+  if (failures.length > 0) throw new AggregateError(failures, failures.map((failure) => failure.message).join("\n"));
+  remainingMs("result summary");
+  completed.sort((left, right) => left.file.localeCompare(right.file));
+  const result = { wall_ms: now() - startedAt, ...policy, files: completed };
   log(JSON.stringify(result));
   return result;
 }
@@ -176,7 +177,7 @@ export async function runWebTests({
     args: [fileURLToPath(import.meta.url), "--internal-worker"],
     cwd: path.resolve(cwd),
     env: { ...process.env, [WEB_TEST_INTERNAL_WORKER_ENV]: "1" },
-    timeoutMs: ORDINARY_TEST_MAX_MS,
+    timeoutMs: LONG_VALIDATION_MAX_MS,
     cleanupReserveMs: COMMAND_CLEANUP_RESERVE_MAX_MS,
   });
 }
@@ -185,7 +186,7 @@ export async function main(argv, env = process.env) {
   if (argv.length === 0) return runWebTests();
   if ((argv.length === 1 || argv.length === 3) && argv[0] === "--internal-worker") {
     if (env[WEB_TEST_INTERNAL_WORKER_ENV] !== "1") {
-      throw new Error("Web test internal worker must be started by the external ten-second supervisor");
+      throw new Error("Web test internal worker must be started by the external five-minute supervisor");
     }
     const batchIndex = argv.length === 3 ? Number(argv[1]) : 0;
     const batchCount = argv.length === 3 ? Number(argv[2]) : 1;

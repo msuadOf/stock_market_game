@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 
 import { COMMAND_CLEANUP_RESERVE_MAX_MS, LONG_VALIDATION_MAX_MS, ORDINARY_TEST_MAX_MS, runBoundedCommand } from "./run-with-deadline.mjs";
 import { prepareWorkspacePaths, validateWorkspaceOutputPath } from "./workspace-paths.mjs";
-import { WEB_TEST_INTERNAL_WORKER_ENV } from "./run-web-tests.mjs";
+import { runWebTestBatch } from "./run-web-tests.mjs";
 import { discoverScriptTestFiles, runScriptTestBatch } from "./run-script-tests.mjs";
 import { hashArtifactFiles } from "./full-regression-artifact-hash.mjs";
 import { executeSupervisedRustTestBinaries } from "./rust-test-case-supervisor.mjs";
@@ -84,11 +84,9 @@ export function fullRegressionSteps(cpuCount = os.availableParallelism(), repoRo
       env: { ...cargoEnv },
     },
     {
-      kind: "ordinary-command",
+      kind: "web-test-batch",
       label: "web ordinary tests",
-      command: process.execPath,
-      args: [path.join(resolvedRoot, "scripts", "run-web-tests.mjs"), "--internal-worker"],
-      env: { ...workspaceEnv, [WEB_TEST_INTERNAL_WORKER_ENV]: "1" },
+      env: workspaceEnv,
     },
     { kind: "script-test-batch", label: "scripts ordinary tests", env: workspaceEnv, cpuCount },
   ];
@@ -718,6 +716,7 @@ export async function executeFullRegression({
   hashArtifacts = hashArtifactFiles,
   log = () => undefined,
   runScripts = runScriptTestBatch,
+  runWeb = runWebTestBatch,
 } = {}) {
   const sourceRoot = await fsp.realpath(path.resolve(cwd));
   const workspacePaths = await prepareFullRegressionPaths(sourceRoot, targetDir);
@@ -729,7 +728,7 @@ export async function executeFullRegression({
   const steps = fullRegressionSteps(cpuCount, sourceRoot, baseEnv, workspacePaths.workspaceRoot, workspacePaths.cargoTargetDir);
   const binaryStep = steps.find((step) => step.kind === "rust-test-binaries");
   const doctestStep = steps.find((step) => step.kind === "rust-doctests");
-  const webStep = steps.find((step) => step.kind === "ordinary-command");
+  const webStep = steps.find((step) => step.kind === "web-test-batch");
   const completed = [];
   const remainingMs = (context) => phaseRemainingMs(startedAt, now, context);
 
@@ -755,8 +754,7 @@ export async function executeFullRegression({
   const isolatedResult = { file: isolatedFile, wall_ms: now() - isolatedStartedAt };
   // TypeScript 编译检查可能受并行进程争用影响，保留原检查并先独立完成。
   const webStartedAt = now();
-  const isolatedWebStep = { ...webStep, env: { ...webStep.env, STOCK_GAME_WEB_TEST_CPU_BUDGET: String(budgets.web) }, args: [...webStep.args, "12", "13"] };
-  await run(phaseCommandOptions(isolatedWebStep, sourceRoot, Math.min(ORDINARY_TEST_MAX_MS, remainingMs(webStep.label))));
+  await runWeb({ env: webStep.env, webRoot: path.join(sourceRoot, "apps", "web"), cpuCount: budgets.web, batchIndex: 12, batchCount: 13, run, now, remainingMs, log });
   const isolatedWebWall = now() - webStartedAt;
   await executeRegressionLanes(cpuCount, async (signal) => {
     let stepStartedAt = now();
@@ -777,9 +775,7 @@ export async function executeFullRegression({
     let stepStartedAt = now();
     for (let batchIndex = 0; batchIndex < 12; batchIndex += 1) {
       signal.throwIfAborted();
-      const timeoutMs = Math.min(ORDINARY_TEST_MAX_MS, remainingMs(webStep.label));
-      const step = { ...webStep, env: { ...webStep.env, STOCK_GAME_WEB_TEST_CPU_BUDGET: String(budgets.web) }, args: [...webStep.args, String(batchIndex), "13"] };
-      await run({ ...phaseCommandOptions(step, sourceRoot, timeoutMs), signal });
+      await runWeb({ env: webStep.env, webRoot: path.join(sourceRoot, "apps", "web"), cpuCount: budgets.web, batchIndex, batchCount: 13, run, now, remainingMs, log, signal });
     }
     completed.push({ label: webStep.label, wall_ms: now() - stepStartedAt + isolatedWebWall });
     signal.throwIfAborted();

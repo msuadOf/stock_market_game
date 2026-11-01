@@ -91,11 +91,8 @@ POSIX 帮助脚本进行 `.nvmrc` 诊断。CI 或隔离环境可将 `NODE_BIN` �
 - 普通自动化测试的单命令、单 case 硬上限都是 10 秒；超过时必须缩小代表性 fixture、拆分测试或去掉重复准备工作。
 - Node 普通测试同时使用 `--test-timeout=10000` 的 case 门禁和
   `scripts/run-with-deadline.mjs 10000 -- <command>` 的整命令进程树门禁；不允许通过参数把这一上限调大。
-- Web 普通测试统一由 `scripts/run-web-tests.mjs` 直接启动当前满足 `>=24.18.0` 的 Node，
-  不经过 Corepack/pnpm 的动态导入启动链。runner 递归发现 `apps/web/src/**/*.test.ts(x)`，拒绝零测试或重复路径，按 CPU 预算最多拆成 8 个真实 Node shard、文件进程最多并发 64 个；整个批次和每个 child 均不超过 10000ms，任一 shard 失败会终止在途 siblings。`apps/web` 的 package `test` script 与完整回归共用该入口。
-  多核时将 `app/workspace-grid-types.test.ts` 的 TypeScript 编译器放到独立 shard，SSR 验证由原文件执行，
-  避免与其他 Vite fixture 的全局 hooks 叠加；其他文件在剩余预算内均分。单核不额外创建
-  进程，所有文件仍恰好执行一次。启动前记录实际分片文件数，超时日志也保留资源计划。 完整回归将启动页完整 App SSR 与拆分的两个 complete-save-schema 测试各单独安排一批，其余文件按稳定顺序分为八批，每批各自遵守 10000ms 进程树门禁，仍受完整回归共享 deadline 约束。
+- Web 测试聚合属于长验收，由 `scripts/run-web-tests.mjs` 直接启动满足 `>=24.18.0` 的 Node，并由进程外 300000ms supervisor 约束。runner 递归发现 `apps/web/src/**/*.test.ts(x)`，拒绝零测试或重复路径。每个文件独立进程执行，使用 10000ms case 和进程树门禁；等待队列只消耗长验收共享期限。文件进程并发不超过 CPU 预算和 64，失败即取消在途进程并停止队列。`apps/web` 的 package `test` script 与完整回归共用该入口。
+  完整回归保留 TypeScript 编译器先独立执行，以及启动页 SSR、两个 complete-save-schema 和浏览器对比度测试独立批次；其余文件按稳定顺序分为八批。每个文件恰好执行一次，所有批次共享完整回归执行期限。
 - 确有必要的长测试，其每个 child 进程和整个批次 wall-clock 均设 300000ms 硬上限；批次截止时间覆盖结果校验、manifest 发布、进程树终止与临时文件清理，不能只给 child 设置 timeout。`simulation-acceptance` 固定把前 299000ms 用于执行/校验/发布，最后 1000ms 只用于 kill、等待 close 和删除 staged 文件。runner 内部第二截止负责异步清理收敛；正式命令同时由进程外 deadline supervisor 约束总 wall，不能只依赖被测 Node 进程自己的事件循环计时器。
 - 可并行测试必须使用真实多进程或多线程，资源预算需显式记录并避免超卖；长测试不得单核串跑。
 - 构建耗时与测试执行耗时分开记录。冷编译超过 10 秒不应伪装成测试耗时；必要构建同样使用多核并受 5 分钟硬上限约束。
@@ -112,11 +109,7 @@ POSIX 帮助脚本进行 `.nvmrc` 诊断。CI 或隔离环境可将 `NODE_BIN` �
   与其全部 CPU 预算（批 9 A7 起 Rayon threads 分量退役——引擎内部线程模型，
   不再按环境变量切分预算；单核时仍至少 1 线程，不宣称未超卖）。
   独立执行的必跑 ignored 长用例使用 1 个 harness thread。
-  执行开始即记录清单查询、普通 case 和长用例的预算；任一查询或 case 失败即终止在途 siblings，停止启动排队 case。多核时 Rust 完整链（普通 case、长用例、doctest）与 Web 后接 scripts 的链并行，共享执行期限和失败取消，等待两侧清理后汇总；单核时串行。CPU 分配给 Web 链 `max(1, floor(CPU / 4))`，其余给 Rust；单核两链各用 1 核但不同时运行。Rust 的隔离前缀仅相对其他 Rust case 隔离。真实 Chromium 的 `mobile-color-contrast.test.ts` 独立为一个 Web 批次，避免与其他 Web 文件进程争用；所有 12 批仍共享执行阶段剩余期限。Web 批次及其 child 仍受 10000ms 门禁。执行结束再次验证源码未漂移。
-  完整回归已有 Web 整批的进程外十秒监督，直接启动带显式标记的 Web internal worker，
-  不再让 Web CLI 重复启动另一层监督进程；独立 Web CLI 仍保留自己的进程外十秒监督。
-  这只去掉重复 Node 启动开销，不放宽 deadline、不跳过测试或削减分片并行。单文件分片直接在其独立 Node 进程执行，
-  多文件分片仍按文件启动隔离进程，避免 mock 状态串扰。
+  执行开始即记录清单查询、普通 case 和长用例的预算；任一查询或 case 失败即终止在途 siblings，停止启动排队 case。多核时 Rust 完整链（普通 case、长用例、doctest）与 Web 后接 scripts 的链并行，共享执行期限和失败取消，等待两侧清理后汇总；单核时串行。CPU 分配给 Web 链 `max(1, floor(CPU / 4))`，其余给 Rust；单核两链各用 1 核但不同时运行。Rust 的隔离前缀仅相对其他 Rust case 隔离。真实 Chromium 的 `mobile-color-contrast.test.ts` 独立为一个 Web 批次，避免与其他 Web 文件进程争用；所有 13 批仍共享执行阶段剩余期限。Web 文件 child 各受 10000ms 门禁。执行结束再次验证源码未漂移。
 - 根回归的 Web 测试完成后在同一执行期限内递归发现并执行 `scripts/**/*.test.mjs`，包括 runner 自身的
   短测。正式入口是 `scripts/run-script-tests.mjs`；复用原任务验证工具的完整发现方式，
   不从 `agents/` 加载生产测试执行器，也不通过 `pnpm test` 再次启动根回归。

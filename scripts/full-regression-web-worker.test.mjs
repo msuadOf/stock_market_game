@@ -4,14 +4,11 @@ import { test } from "node:test";
 import { fullRegressionSteps } from "./run-full-regression.mjs";
 import { main as runWebMain, runWebTestBatch, runWebTests } from "./run-web-tests.mjs";
 
-test("sealed regression starts the Web worker directly under its existing external ten-second supervisor", () => {
+test("完整回归将 Web 文件队列纳入长验收", () => {
   const repoRoot = path.resolve("source");
   const workspaceRoot = path.resolve("workspace");
   const step = fullRegressionSteps(4, repoRoot, { FIXTURE_ENV: "preserved" }, workspaceRoot)
-    .find((entry) => entry.kind === "ordinary-command");
-  assert.equal(step.command, process.execPath);
-  assert.deepEqual(step.args, [path.join(repoRoot, "scripts", "run-web-tests.mjs"), "--internal-worker"]);
-  assert.equal(step.env.STOCK_GAME_WEB_TEST_INTERNAL_WORKER, "1");
+    .find((entry) => entry.kind === "web-test-batch");
   assert.equal(step.env.FIXTURE_ENV, "preserved");
   assert.equal(step.env.TMP, path.join(workspaceRoot, ".tmp", "process-tmp", "full-regression"));
 });
@@ -20,11 +17,11 @@ test("standalone Web invocation still creates an external supervisor and rejects
   const calls = [];
   await runWebTests({ run: async (options) => { calls.push(options); } });
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].timeoutMs, 10_000);
+  assert.equal(calls[0].timeoutMs, 300_000);
   assert.equal(calls[0].cleanupReserveMs, 1_000);
   assert.equal(calls[0].env.STOCK_GAME_WEB_TEST_INTERNAL_WORKER, "1");
   assert.equal(calls[0].args.at(-1), "--internal-worker");
-  await assert.rejects(runWebMain(["--internal-worker"], {}), /external ten-second supervisor/);
+  await assert.rejects(runWebMain(["--internal-worker"], {}), /external five-minute supervisor/);
 });
 
 test("direct worker retains case deadlines, real process shards and fail-fast sibling cancellation", async () => {

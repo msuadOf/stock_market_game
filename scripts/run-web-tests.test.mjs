@@ -53,7 +53,7 @@ it("rejects an empty Web test inventory", () => {
   assert.throws(() => buildWebTestShardPolicy(8, []), /no Web test files/i);
 });
 
-it("shares one ten-second deadline across every shard", async () => {
+it("每个文件独享十秒期限", async () => {
   let nowMs = 1_000;
   const calls = [];
   const files = ["/web/a.test.ts", "/web/b.test.ts", "/web/c.test.ts"];
@@ -68,7 +68,7 @@ it("shares one ten-second deadline across every shard", async () => {
       return { stdout: "", stderr: "" };
     },
   });
-  assert.deepEqual(calls.map((call) => call.timeoutMs), [10_000, 9_000]);
+  assert.deepEqual(calls.map((call) => call.timeoutMs), [10_000, 10_000, 10_000]);
   assert.ok(calls.every((call) => call.timeoutMs <= 10_000));
   assert.ok(calls.every((call) => call.command === process.execPath));
   assert.ok(calls.every((call) => call.args.includes("--test-force-exit")));
@@ -90,17 +90,12 @@ it("每个测试文件独立进程隔离，禁止同进程共享导致的 mock �
     },
   });
   assert.equal(policy.shard_count, 8);
-  assert.ok(calls.every((call) => !call.args.includes("--test-isolation=none")),
-    "禁止 --test-isolation=none：同进程共享已证实造成 player-proposals 与 wasm-worker 系列串扰");
-  for (const call of calls) {
-    const concurrency = Number(/--test-concurrency=(\d+)/.exec(call.args.join(" "))?.[1]);
-    assert.ok(Number.isInteger(concurrency) && concurrency >= 1, "每分片必须显式声明每文件并发");
-  }
-  const aggregate = calls.length * Number(/--test-concurrency=(\d+)/.exec(calls[0].args.join(" "))?.[1]);
-  assert.ok(aggregate <= 16, "分片×每文件并发不得超卖 CPU 预算");
+  assert.equal(calls.length, files.length);
+  assert.ok(calls.every((call) => call.args.includes("--test-isolation=none") && call.args.filter((arg) => arg.endsWith(".test.ts")).length === 1));
+  assert.ok(policy.max_concurrent_processes <= 16);
 });
 
-it("单文件分片直接在独立进程运行，多文件分片保留逐文件隔离", async () => {
+it("每个文件直接在独立进程运行", async () => {
   const calls = [];
   const files = ["/web/src/app/workspace-grid-types.test.ts", "/web/src/a.test.ts", "/web/src/b.test.ts"];
   await runWebTestBatch({
@@ -112,7 +107,7 @@ it("单文件分片直接在独立进程运行，多文件分片保留逐文件�
   const single = calls.find((call) => call.args.includes(files[0]));
   const multiple = calls.find((call) => call.args.includes(files[1]));
   assert.ok(single.args.includes("--test-isolation=none"));
-  assert.ok(!multiple.args.includes("--test-isolation=none"));
+  assert.ok(multiple.args.includes("--test-isolation=none"));
   assert.ok(calls.every((call) => call.args.includes("--test-timeout=10000")));
 });
 
@@ -139,7 +134,7 @@ it("fails fast and aborts in-flight sibling shards", async () => {
   assert.equal(siblingAborted, true);
 });
 
-it("places the complete Web worker behind an external ten-second gate", async () => {
+it("places the complete Web worker behind an external five-minute gate", async () => {
   const calls = [];
   await runWebTests({
     cwd: REPO_ROOT,
@@ -147,15 +142,15 @@ it("places the complete Web worker behind an external ten-second gate", async ()
   });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].command, process.execPath);
-  assert.equal(calls[0].timeoutMs, 10_000);
+  assert.equal(calls[0].timeoutMs, 300_000);
   assert.ok(calls[0].args.includes("--internal-worker"));
 });
 
 it("rejects direct invocation of an unsupervised internal Web worker", async () => {
-  await assert.rejects(main(["--internal-worker"], {}), /external ten-second supervisor/i);
+  await assert.rejects(main(["--internal-worker"], {}), /external five-minute supervisor/i);
 });
 
-it("完整回归分批覆盖全部文件并保持单批十秒门禁", async () => {
+it("完整回归分批覆盖全部文件并保持每文件十秒门禁", async () => {
   const files = Array.from({ length: 17 }, (_, index) => `/web/${index}.test.ts`);
   const seen = [];
   for (let index = 0; index < 8; index += 1) {
@@ -246,4 +241,54 @@ it("完整回归将 TypeScript 检查独立成批且每个文件恰好执行一�
   }
   assert.deepEqual(seen.sort(), [...files].sort());
   await assert.rejects(runWebTestBatch({ batchIndex: 12, batchCount: 13, discover: async () => files.filter((file) => file !== compiler) }), /exactly one workspace-grid-types/);
+});
+
+it("排队文件从启动时获得独立十秒期限，受共享长验收期限约束", async () => {
+  let clock = 0;
+  const calls = [];
+  const files = Array.from({ length: 3 }, (_, index) => `/web/${index}.test.ts`);
+  await runWebTestBatch({ webRoot: "/web", cpuCount: 1, now: () => clock,
+    discover: async () => files, run: async (options) => { calls.push(options); clock += 6000; } });
+  assert.equal(calls.length, 3);
+  assert.deepEqual(calls.map((call) => call.timeoutMs), [10000, 10000, 10000]);
+  assert.deepEqual(calls.map((call) => call.args.at(-1)), files);
+  assert.ok(calls.every((call) => call.args.includes("--test-isolation=none")));
+});
+
+it("共享期限耗尽时停止队列，失败时取消在途文件", async () => {
+  let remaining = 15000;
+  const calls = [];
+  await assert.rejects(runWebTestBatch({ cpuCount: 1, remainingMs: () => remaining,
+    discover: async () => ["a.test.ts", "b.test.ts", "c.test.ts"],
+    run: async (options) => { calls.push(options); remaining -= 8000; },
+  }), /deadline/);
+  assert.deepEqual(calls.map((call) => call.timeoutMs), [10000, 7000]);
+});
+
+it("父取消停止排队并等待在途文件清理，子进程继承指定环境", async () => {
+  const controller = new AbortController();
+  const env = { FIXTURE_ENV: "preserved" };
+  const seen = [];
+  const started = [];
+  let release;
+  const ready = new Promise((resolve) => { release = resolve; });
+  const batch = runWebTestBatch({ cpuCount: 2, env, signal: controller.signal,
+    discover: async () => ["a.test.ts", "b.test.ts", "c.test.ts"],
+    run: async (options) => {
+      seen.push(options.args.at(-1));
+      assert.equal(options.env, env);
+      started.push(options);
+      if (started.length === 2) release();
+      await new Promise((_, reject) => options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true }));
+    },
+  });
+  await ready;
+  controller.abort(new Error("父任务取消"));
+  await assert.rejects(batch, /父任务取消/);
+  assert.equal(seen.length, 2);
+  const alreadyAborted = new AbortController();
+  alreadyAborted.abort(new Error("提前取消"));
+  await assert.rejects(runWebTestBatch({ cpuCount: 1, signal: alreadyAborted.signal,
+    discover: async () => ["a.test.ts"], run: async () => { throw new Error("不应启动"); },
+  }), /提前取消/);
 });

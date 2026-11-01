@@ -49,7 +49,7 @@ it("forces one workspace-local Cargo target and process-temp directory for every
     "rust-test-build",
     "rust-test-binaries",
     "rust-doctests",
-    "ordinary-command",
+    "web-test-batch",
     "script-test-batch",
   ]);
   assert.deepEqual(steps[0].args, ["test", "--workspace", "--no-run", "--message-format=json-render-diagnostics"]);
