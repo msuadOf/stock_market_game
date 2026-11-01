@@ -73,3 +73,5 @@
 对第十五批历史 Filled 缺链的后续静态核对：基线祖先 `81547a33`、`db666393` 已接入成交因果来源，现行真实成交及 retained 重试测试包含一笔 Execution 对应两腿 Filled 的断言；四个历史场景仍保留真实 NPC、三交易日与双腿数量断言。尚未找到这四例在后续基线通过的执行收据，故状态为修复已接入、四场景复验缺证；不能依据旧失败推断当前缺陷仍存在，也不能称四例已绿。
 
 第十六批将 `feat/web-correction-input-parser` `21f5d390` 和 `feat/web-proposal-input-parser` `3d01278a` 转为对应短 SHA 的归档 tag，原 worktree 保留同提交 detached HEAD。普通 JSON 的字段、枚举与数值解析在基线有对应实现；不声称完全等价：旧版拒绝部分非常规原型、symbol、不可枚举键，correction 还拒绝 getter 和数组额外属性；基线对部分此类非 JSON 对象可能接受或执行 getter。proposal 旧版返回新对象、基线返回原引用，基线还额外拒绝 u32 负零。按本轮非阻断范围记录这些差异，原 tag 保存真实 serde fixture 与历史证据；correction 原先红 stdout 已被覆盖，不能称其历史先红可审计。操作前 worktree 干净并检查进程 cwd，本次未运行测试。
+
+第十七批将 `feat/reintegration-b4c-dayend-chain` `97ee0b8d` 转为 `archive/20261102-97ee0b8d`，保留原 worktree、ignored `.tmp/` 和 `b4c-probe-temp` stash。旧 12 步链是过渡实现，后续已有受限 Admin 事务及公司行为，不宜直接移植旧链；本操作不声称旧实现或全部测试等价。历史 60k 名册差额的原规模逐笔来源及当前复现/关闭均未证实，g=2、g=16 事件差异与性能净机窗仍应按现行代码核销；旧 runner 不应直接作为现行 deadline 工具。独立复核确认此证据边界，未运行产品测试。
