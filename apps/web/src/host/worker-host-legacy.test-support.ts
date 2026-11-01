@@ -55,7 +55,12 @@ export class LegacyWorker extends EventTarget {
       const layout = { baseAddr: 0, headerWords: HEADER_WORDS, slotStride: SLOT_STRIDE, joinStride: JOIN_STRIDE, capacity: 4, genBits: 29 };
       const words = new Int32Array(memory.buffer);
       words[CAPACITY] = 4; words[GEN_BITS] = 29;
-      port.postMessage({ type: "facadeEngineSubstrate", module: new WebAssembly.Module(new Uint8Array([0,97,115,109,1,0,0,0])), memory, layout, diagnostics: false });
+      port.addEventListener("message", (event) => {
+        if ((event.data as { type?: string }).type === "facadeEngineMemoryRegistered") {
+          port.postMessage({ type: "facadeEngineConfiguration", allocationId: 1, module: new WebAssembly.Module(new Uint8Array([0,97,115,109,1,0,0,0])), layout, diagnostics: false, waitAbort: { address: 4096, bytes: 1 } });
+        }
+      });
+      port.postMessage({ type: "facadeEngineMemory", allocationId: 1, memory });
     }
     if (value.type === "bindIngress") {
       if (this.dataPort === undefined || this.instanceId === undefined) throw new Error("legacy ingress 尚未绑定 dataPort");
