@@ -77,3 +77,5 @@
 第十七批将 `feat/reintegration-b4c-dayend-chain` `97ee0b8d` 转为 `archive/20261102-97ee0b8d`，保留原 worktree、ignored `.tmp/` 和 `b4c-probe-temp` stash。旧 12 步链是过渡实现，后续已有受限 Admin 事务及公司行为，不宜直接移植旧链；本操作不声称旧实现或全部测试等价。历史 60k 名册差额的原规模逐笔来源及当前复现/关闭均未证实，g=2、g=16 事件差异与性能净机窗仍应按现行代码核销；旧 runner 不应直接作为现行 deadline 工具。独立复核确认此证据边界，未运行产品测试。
 
 第十八批将 `codex/wasm-allocation-observer-20261029` `dd267ded`、`codex/wasm-production-stop-20261029` `809dbc4d`、`feat/wasm-restore-topology-2026-10-28` `629b034d`、`feat/wasm-w1-combined-cargo-inputs` `1522e935` 转为对应短 SHA 的归档 tag，四个 worktree 保留同提交 detached HEAD。基线已有 Memory 观察、shutdown 回收、完整存档恢复容量及构建输入的主要后继路径和测试；容量策略由旧 2 GiB 测量方案演进为 3 GiB 和显式上界。前置 shutdown、完整调用链及演进测试未逐断言核完，不能称全部等价或 green；原始浏览器和红绿证据保留在 tag。操作前 worktree 干净并检查进程 cwd，本次未运行测试。
+
+第十九批将 `test/company-b4e-actor-e2-base-2026-10-28` `9ec434ed` 转为 `archive/20261102-9ec434ed`，保留原 worktree 同提交 detached HEAD。该来源含双宿主恢复、回购、行政镜像及个人信息候选与大量历史工作证据；后继集成点保留双宿主恢复原测试内容，但其他路径仍需逐项核对与运行，不能宣称整体 green。关联 E2 和 B4e stash 均保留；操作前 worktree 干净并检查进程 cwd，本次未运行产品测试。
