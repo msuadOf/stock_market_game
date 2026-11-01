@@ -152,6 +152,24 @@ it("真实 actor 成交短时限 case 独立运行后再并发其他 case", asyn
   assert.equal(peak, 2);
 });
 
+it("合并报表长 fixture 在其他 case 前独立运行", async () => {
+  const heavy = "mixed_group_closes_then_publishes_distinct_consolidated_public_report";
+  const calls = [];
+  let finished = false;
+  await executeRustTestBinaries({
+    artifacts: [{ executable: "fixture", label: "path+file:///fixture/packages/engine#0.1.0 test:session_company_assembly" }],
+    policy: buildRustTestExecutionPolicy(8, 1), cwd: process.cwd(), env: {}, now: Date.now, remainingMs: () => 10000,
+    run: async (options) => {
+      if (options.args.includes("--list")) return { stdout: options.args.includes("--ignored") ? "" : `other: test\n${heavy}: test\n` };
+      calls.push(options.args[0]);
+      if (options.args[0] === heavy) { await new Promise((resolve) => setTimeout(resolve, 10)); finished = true; }
+      else assert.equal(finished, true);
+      assert.equal(options.timeoutMs, 10000);
+    },
+  });
+  assert.deepEqual(calls, [heavy, "other"]);
+});
+
 it("actor 独立 case 失败时停止其他测试并保留剩余期限", async () => {
   const calls = [];
   await assert.rejects(executeRustTestBinaries({

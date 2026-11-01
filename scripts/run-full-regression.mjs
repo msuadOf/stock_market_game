@@ -438,8 +438,10 @@ export async function executeRustTestBinaries({ artifacts, policy, run = runBoun
   const casePolicy = { case_count: cases.length, max_concurrent_cases: concurrency, test_threads: 1, ordinary_case_timeout_ms: ORDINARY_TEST_MAX_MS };
   log(JSON.stringify({ phase: "rust-ordinary-cases-start", ...casePolicy }));
   const isActorTradeCase = (testCase) => testCase.label.includes("/apps/server#") && testCase.label.endsWith(" test:actor") && testCase.name === "actor_market_goes_live_produces_trade_events";
-  const isolatedCases = cases.filter(isActorTradeCase);
-  const remainingCases = cases.filter((testCase) => !isActorTradeCase(testCase));
+  const isReportCase = (testCase) => testCase.label.includes("/packages/engine#") && testCase.label.endsWith(" test:session_company_assembly") && testCase.name === "mixed_group_closes_then_publishes_distinct_consolidated_public_report";
+  const isIsolatedCase = (testCase) => isActorTradeCase(testCase) || isReportCase(testCase);
+  const isolatedCases = cases.filter(isIsolatedCase);
+  const remainingCases = cases.filter((testCase) => !isIsolatedCase(testCase));
   const isCalendarCase = (testCase) => /^session::calendar_(?:nonzero_plan_parity|final_boundary)_tests::/.test(testCase.name);
   const calendarCases = remainingCases.filter(isCalendarCase);
   const ordinaryCases = remainingCases.filter((testCase) => !isCalendarCase(testCase));
