@@ -434,7 +434,7 @@ export async function executeRustTestBinaries({ artifacts, policy, run = runBoun
   await Promise.all(Array.from({ length: policy.max_concurrent_binaries }, (_, index) => worker(index)));
   if (failures.length > 0) throw new AggregateError(failures, `${failures.length} prebuilt Rust test binaries failed:\n${failures.map((failure) => failure.message).join("\n")}`);
   const cases = results.flat();
-  const concurrency = Math.min(cases.length, Math.max(1, Math.min(16, Math.floor(policy.available_cpu_count / 2))));
+  const concurrency = Math.min(cases.length, Math.max(1, Math.min(24, Math.floor(policy.available_cpu_count / 2))));
   const casePolicy = { case_count: cases.length, max_concurrent_cases: concurrency, test_threads: 1, ordinary_case_timeout_ms: ORDINARY_TEST_MAX_MS };
   log(JSON.stringify({ phase: "rust-ordinary-cases-start", ...casePolicy }));
   const isCalendarCase = (testCase) => /^session::calendar_(?:nonzero_plan_parity|final_boundary)_tests::/.test(testCase.name);

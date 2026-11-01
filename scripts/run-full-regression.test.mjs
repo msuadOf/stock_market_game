@@ -595,7 +595,7 @@ it("fake build/execute 的 Cargo jobs 与所有预算日志一致且保留执行
     });
     const binaries = result.steps.find((step) => step.label === "Rust prebuilt test binaries");
     assert.equal(binaries.available_cpu_count, 128);
-    assert.equal(binaries.max_concurrent_cases, 16);
+    assert.equal(binaries.max_concurrent_cases, 24);
     assert.equal(binaries.test_threads, 1);
     assert.equal(scriptsObserved, true);
   } finally { await fixture.cleanup(); }
