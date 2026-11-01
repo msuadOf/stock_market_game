@@ -97,3 +97,44 @@ fn correction_registry_cancel_reaches_not_pending_and_keeps_queue_empty() {
         .unwrap();
     registry.remove(handle).unwrap();
 }
+
+#[test]
+fn rights_subscription_registry_preserves_owner_event_and_typed_failure() {
+    let mut registry = SessionRegistry::default();
+    let handle = registry
+        .create(
+            company_write_setup(fixture::civil_setup(
+                engine::CivilDate::from_iso("2030-06-03").unwrap(),
+            )),
+            7181,
+        )
+        .unwrap();
+    registry
+        .with_session(handle, |session| {
+            let error = subscribe_rights(session, "missing-event", 1).unwrap_err();
+            let failure = serde_json::to_value(error.public_failure()).unwrap();
+            assert_eq!(failure["kind"], "RightsSubscription");
+            assert_eq!(failure["data"]["account"], "0");
+            assert_eq!(failure["data"]["event_id"], "missing-event");
+        })
+        .unwrap();
+    registry.remove(handle).unwrap();
+}
+
+#[test]
+fn rights_subscription_wire_shares_are_canonical_u64_strings() {
+    assert_eq!(parse_rights_shares("18446744073709551615"), Ok(u64::MAX));
+    assert_eq!(parse_rights_shares("0"), Ok(0));
+    for invalid in ["", "01", "+1", "-1", " 1", "18446744073709551616"] {
+        assert!(parse_rights_shares(invalid).is_err(), "{invalid}");
+    }
+    let receipt = engine::session::RightsSubscriptionReceipt {
+        event_id: "event-1".to_owned(),
+        requested_shares: u64::MAX,
+        submitted_on: engine::CivilDate::from_iso("2030-06-03").unwrap(),
+    };
+    let value = serde_json::to_value(receipt).unwrap();
+    assert_eq!(value["requested_shares"], "18446744073709551615");
+    assert_eq!(value["event_id"], "event-1");
+    assert_eq!(value["submitted_on"], "2030-06-03");
+}

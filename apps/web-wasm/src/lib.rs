@@ -113,6 +113,40 @@ fn cancel_correction(
     })
 }
 
+fn parse_rights_shares(value: &str) -> Result<u64, &'static str> {
+    if value.is_empty()
+        || (value.len() > 1 && value.starts_with('0'))
+        || !value.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Err("配股认购股数必须是规范的 u64 十进制字符串");
+    }
+    value.parse().map_err(|_| "配股认购股数超出 u64 范围")
+}
+
+fn subscribe_rights(
+    session: &mut ProtocolSession,
+    event_id: &str,
+    shares: u64,
+) -> Result<engine::session::RightsSubscriptionReceipt, engine::session::protocol::CompanyWriteError>
+{
+    session.subscribe_rights_offering(AccountId(0), event_id, shares)
+}
+
+#[wasm_bindgen]
+pub fn subscribe_rights_offering(
+    handle: u32,
+    event_id: String,
+    requested_shares: String,
+) -> Result<JsValue, JsValue> {
+    let shares = parse_rights_shares(&requested_shares).map_err(JsValue::from_str)?;
+    with_session(handle, |session| {
+        match subscribe_rights(session, &event_id, shares) {
+            Ok(receipt) => public_dto_to_js(&receipt),
+            Err(error) => company_write_error_to_js(error, session),
+        }
+    })
+}
+
 fn company_write_error_to_js(
     error: engine::session::protocol::CompanyWriteError,
     session: &ProtocolSession,
