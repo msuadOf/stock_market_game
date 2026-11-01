@@ -468,7 +468,6 @@ fn assert_same_delivery(
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Continuation {
-    Both,
     Restore,
     Fifo,
 }
@@ -501,9 +500,7 @@ fn assert_save_restore_and_native_continuation(
         assert_native_restore_stable(&native, native_save, &cursors);
         assert_native_restore_stable(&serial, serial_save, &cursors);
 
-        if continuation == Continuation::Restore {
-            return;
-        }
+        return;
     }
 
     // 从各侧原完整日结事实独立恢复，在下一日首拍真实受理，保留非日末在场单与FIFO。
@@ -793,7 +790,7 @@ fn run_nonzero_plan_parity(
 // 每个exchange/phase有独立十秒case预算，全部恢复与委托断言均保留。
 #[test]
 fn mixed_nonzero_investor_plans_keep_group_mirror_and_serial_own_day_events_equal() {
-    run_nonzero_plan_parity(CalendarExchange::Sse, 0, Continuation::Both);
+    run_nonzero_plan_parity(CalendarExchange::Sse, 0, Continuation::Restore);
 }
 
 #[test]
@@ -802,16 +799,31 @@ fn mixed_sse_closed_nonzero_plan_second_day_restore_is_equal() {
 }
 
 #[test]
-fn mixed_szse_closed_nonzero_plan_first_day_restore_and_fifo_are_equal() {
-    run_nonzero_plan_parity(CalendarExchange::Szse, 0, Continuation::Both);
+fn mixed_szse_closed_nonzero_plan_first_day_restore_is_equal() {
+    run_nonzero_plan_parity(CalendarExchange::Szse, 0, Continuation::Restore);
 }
 
 #[test]
-fn mixed_szse_closed_nonzero_plan_second_day_restore_and_fifo_are_equal() {
-    run_nonzero_plan_parity(CalendarExchange::Szse, 1, Continuation::Both);
+fn mixed_szse_closed_nonzero_plan_second_day_restore_is_equal() {
+    run_nonzero_plan_parity(CalendarExchange::Szse, 1, Continuation::Restore);
 }
 
 #[test]
 fn mixed_sse_closed_nonzero_plan_second_day_fifo_is_equal() {
     run_nonzero_plan_parity(CalendarExchange::Sse, 1, Continuation::Fifo);
+}
+
+#[test]
+fn mixed_sse_closed_nonzero_plan_first_day_fifo_is_equal() {
+    run_nonzero_plan_parity(CalendarExchange::Sse, 0, Continuation::Fifo);
+}
+
+#[test]
+fn mixed_szse_closed_nonzero_plan_first_day_fifo_is_equal() {
+    run_nonzero_plan_parity(CalendarExchange::Szse, 0, Continuation::Fifo);
+}
+
+#[test]
+fn mixed_szse_closed_nonzero_plan_second_day_fifo_is_equal() {
+    run_nonzero_plan_parity(CalendarExchange::Szse, 1, Continuation::Fifo);
 }
