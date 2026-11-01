@@ -77,9 +77,9 @@ fn treasury_cancellation(request: &ShareDayRequest) -> bool {
 }
 
 impl TaxDayBoundaryFacts {
-    /// Exempt 不产生个人税账；仍由唯一 typed REG 校验真实市场来源与前驱。
+    /// 无个人税账时仍由唯一 typed REG 校验真实市场来源与前驱。
     /// 仅允许明确配股发行的正向 movement，不能借此放宽其他公司行为。
-    pub fn prepare_exempt(
+    pub fn prepare_without_tax_books(
         registry: &ShareRegistry,
         day: &ShareSettlementDay,
         sources: &ShareMarketSourceContext<'_>,
@@ -89,7 +89,7 @@ impl TaxDayBoundaryFacts {
             || day.actual_market_close.unit != registry.current_unit()
         {
             return Err(TaxBoundaryError::MissingSource(
-                "Exempt 盘前 movement 或市场单位与已验证 REG 不一致".into(),
+                "无税账盘前 movement 或市场单位与已验证 REG 不一致".into(),
             ));
         }
         for action in &day.post_market_actions {
@@ -99,7 +99,7 @@ impl TaxDayBoundaryFacts {
                 SharePostAction::Movement(request) => {
                     let Some(event) = request.event_id.strip_prefix("rights-offering:") else {
                         return Err(TaxBoundaryError::MissingSource(
-                            "Exempt 仅支持配股发行 movement".into(),
+                            "无税账路径仅支持配股发行 movement".into(),
                         ));
                     };
                     if event.trim().is_empty()
@@ -116,7 +116,7 @@ impl TaxDayBoundaryFacts {
                 }
                 SharePostAction::UnitMovement { .. } => {
                     return Err(TaxBoundaryError::MissingSource(
-                        "Exempt 不支持单位换算".into(),
+                        "无税账路径不支持单位换算".into(),
                     ))
                 }
             }

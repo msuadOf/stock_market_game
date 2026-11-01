@@ -805,8 +805,7 @@ impl GameSession {
                         || (settlement.failed
                             && (fact.issued_shares != 0 || fact.proceeds != Money::ZERO))
                         || (!settlement.failed
-                            && (mode
-                                != crate::company::cash_dividend_tax::CashDividendTaxMode::Exempt
+                            && (!matches!(mode, crate::company::cash_dividend_tax::CashDividendTaxMode::Exempt | crate::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding)
                                 || fact.issued_shares != settlement.total_paid_shares
                                 || fact.proceeds != settlement.total_paid_amount))
                     {

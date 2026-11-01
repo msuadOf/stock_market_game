@@ -1077,13 +1077,13 @@ fn exempt_typed_issuance_remains_valid_on_following_market_day() {
         panic!("测试须有发行 movement")
     };
     movement.event_id = "未关联的非交易过户".into();
-    assert!(TaxDayBoundaryFacts::prepare_exempt(
+    assert!(TaxDayBoundaryFacts::prepare_without_tax_books(
         &registry,
         &invalid,
         &context(&calendar, &[], Some(day.day))
     )
     .is_err());
-    let issued = TaxDayBoundaryFacts::prepare_exempt(
+    let issued = TaxDayBoundaryFacts::prepare_without_tax_books(
         &registry,
         &day,
         &context(&calendar, &[], Some(day.day)),
@@ -1097,7 +1097,7 @@ fn exempt_typed_issuance_remains_valid_on_following_market_day() {
     next.actual_market_close.request.day = next.day;
     next.actual_market_close.request.event_id = "market:2026-01-07".into();
     next.post_market_actions.clear();
-    let continued = TaxDayBoundaryFacts::prepare_exempt(
+    let continued = TaxDayBoundaryFacts::prepare_without_tax_books(
         issued.registry(),
         &next,
         &context(&calendar, &[], Some(next.day)),
@@ -1172,7 +1172,7 @@ fn treasury_cancellation_is_accepted_and_preserved_in_tax_history() {
     .unwrap();
     assert_eq!(result.registry().issued_shares(), 100);
     assert_eq!(result.books()[0].lots(), book.lots());
-    assert!(TaxDayBoundaryFacts::prepare_exempt(
+    assert!(TaxDayBoundaryFacts::prepare_without_tax_books(
         &registry,
         &day,
         &context(&calendar, &[], Some(day.day))

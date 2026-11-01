@@ -464,7 +464,7 @@ impl GameSession {
                 })
                 .map(|(index, book)| (index, book.plan().event_id.clone()))
                 .collect();
-            // Exempt 配股新股先作为本日唯一 REG 的收盘后 movement，
+            // 无个人税账的配股新股先作为本日唯一 REG 的收盘后 movement，
             // 后续 Admin 再以同一认购事实准备账户入股，不在此改真实账户。
             let mut issuance = Vec::new();
             let mut final_accounts = accounts.clone();
@@ -481,8 +481,10 @@ impl GameSession {
                 {
                     continue;
                 }
-                if self.state.setup.dividend_tax_mode != Some(CashDividendTaxMode::Exempt)
-                    || !books.is_empty()
+                if !matches!(
+                    self.state.setup.dividend_tax_mode,
+                    Some(CashDividendTaxMode::Exempt | CashDividendTaxMode::FlatWithholding)
+                ) || !books.is_empty()
                     || !candidate.applied_ex_reference_groups.iter().any(|group| {
                         group.stock == stock
                             && group.date == plan.ex_rights_on
@@ -492,7 +494,7 @@ impl GameSession {
                     return Err(failure(
                         day,
                         Some(&stock),
-                        invalid("成功配股缺少 Exempt 税制或真实除权锚"),
+                        invalid("成功配股缺少受支持的税制、无税账条件或真实除权锚"),
                     ));
                 }
                 let mut issuance_changes = Vec::new();
@@ -657,11 +659,12 @@ impl GameSession {
                 // 非交易日由同一冻结日历证明；交易日已核原 World 的真实末拍。
                 completed_through: Some(day),
             };
-            let prepared = if self.state.setup.dividend_tax_mode
-                == Some(CashDividendTaxMode::Exempt)
-                && books.is_empty()
+            let prepared = if matches!(
+                self.state.setup.dividend_tax_mode,
+                Some(CashDividendTaxMode::Exempt | CashDividendTaxMode::FlatWithholding)
+            ) && books.is_empty()
             {
-                TaxDayBoundaryFacts::prepare_exempt(registry, &request, &sources)
+                TaxDayBoundaryFacts::prepare_without_tax_books(registry, &request, &sources)
             } else {
                 TaxDayBoundaryFacts::prepare(registry, &books, &request, &sources)
             }

@@ -447,7 +447,10 @@ impl GameSession {
         &mut self,
         next_date: CivilDate,
     ) -> Result<Vec<DeskExRightsRequest>, SessionError> {
-        if self.state.setup.dividend_tax_mode != Some(CashDividendTaxMode::Exempt) {
+        if !matches!(
+            self.state.setup.dividend_tax_mode,
+            Some(CashDividendTaxMode::Exempt | CashDividendTaxMode::FlatWithholding)
+        ) {
             return Ok(Vec::new());
         }
         let Some(actions) = self.state.companies.corporate_actions() else {

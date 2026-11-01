@@ -3858,8 +3858,8 @@ impl GameSession {
                 } else {
                     false
                 };
-                let anchored = self.state.setup.dividend_tax_mode
-                    == Some(crate::company::cash_dividend_tax::CashDividendTaxMode::Exempt)
+                let anchored = matches!(self.state.setup.dividend_tax_mode,
+                    Some(crate::company::cash_dividend_tax::CashDividendTaxMode::Exempt | crate::company::cash_dividend_tax::CashDividendTaxMode::FlatWithholding))
                     && actions.dividend_tax_books.is_empty()
                     && book.status()
                         == &crate::company::rights_offering::RightsOfferingStatus::Closed

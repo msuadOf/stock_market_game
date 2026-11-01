@@ -797,6 +797,7 @@ fn failed_rights_refunds_real_debits_and_restores_without_repayment() {
 
 fn rights_session_at_ex_date(
     ratio: u64,
+    mode: CashDividendTaxMode,
 ) -> (
     GameSession,
     crate::company::rights_offering::RightsOfferingEventPlan,
@@ -805,7 +806,7 @@ fn rights_session_at_ex_date(
         RightsOfferingBook, RightsOfferingDeclaration, RightsOfferingEventPlan, RightsOfferingMode,
         RightsSubscriptionStrategy,
     };
-    let initial = payment_session(CashDividendTaxMode::Exempt);
+    let initial = payment_session(mode);
     let mut saved = initial.save().unwrap();
     saved.setup.rights_offering_enabled = true;
     let company = CompanyId(0);
@@ -877,7 +878,13 @@ fn rights_session_at_ex_date(
         // 同日现金分红先入账，再以本人真实余额缴款。
         assert_eq!(
             cash(&session, account).cents(),
-            opening.cents() + 200 - record.paid_amount.cents()
+            opening.cents()
+                + if mode == CashDividendTaxMode::Exempt {
+                    200
+                } else {
+                    180
+                }
+                - record.paid_amount.cents()
         );
     }
     advance_to_date(&mut session, plan.ex_rights_on);
@@ -886,8 +893,78 @@ fn rights_session_at_ex_date(
 }
 
 #[test]
+fn flat_withholding_rights_settlement_restores_and_continues() {
+    let (mut session, plan) =
+        rights_session_at_ex_date(100_833, CashDividendTaxMode::FlatWithholding);
+    let actions = session.corporate_actions().unwrap();
+    assert!(actions.dividend_tax_books.is_empty());
+    assert_eq!(
+        actions.flat_withholding_receipts.len(),
+        RETAIL_HOLDERS.len()
+    );
+    let anchor = actions
+        .applied_ex_reference_groups
+        .last()
+        .unwrap()
+        .reference;
+    let mut restored = restore_with_three_groups(&session.save().unwrap());
+    assert_eq!(
+        restored.runtime_market_seeds()[&StockId(0)].last_close,
+        anchor.reference_price.cents()
+    );
+    advance_to_date(&mut restored, plan.settlement_on);
+    restored.step().unwrap();
+    let before: Vec<_> = RETAIL_HOLDERS
+        .iter()
+        .map(|id| {
+            (
+                *id,
+                cash(&restored, *id),
+                restored
+                    .account(*id)
+                    .unwrap()
+                    .position(&StockId(0))
+                    .unwrap()
+                    .qty(),
+            )
+        })
+        .collect();
+    restored.end_civil_day().unwrap();
+    let book = &restored.corporate_actions().unwrap().rights_offerings[0];
+    assert!(!book.settlement().unwrap().failed);
+    for record in book.subscriptions() {
+        let HolderId::Account(account) = record.holder else {
+            panic!("预期账户持有人")
+        };
+        let (_, old_cash, old_qty) = before.iter().find(|row| row.0 == account).unwrap();
+        assert_eq!(cash(&restored, account), *old_cash);
+        assert_eq!(
+            u64::from(
+                restored
+                    .account(account)
+                    .unwrap()
+                    .position(&StockId(0))
+                    .unwrap()
+                    .qty()
+            ),
+            u64::from(*old_qty) + record.paid_shares
+        );
+    }
+    let saved = restored.save().unwrap();
+    session = restore_with_three_groups(&saved);
+    assert_eq!(
+        session.corporate_actions().unwrap().rights_offerings[0],
+        *book
+    );
+    // 上市日为周五，按冻结日历跨过周末并验证下一交易日。
+    advance_to_next_trading_day(&mut session, plan.settlement_on);
+    session.step().unwrap();
+    session.end_civil_day().unwrap();
+}
+
+#[test]
 fn non_micros_rights_ex_anchor_restores_and_credits_without_second_debit() {
-    let (session, plan) = rights_session_at_ex_date(100_833);
+    let (session, plan) = rights_session_at_ex_date(100_833, CashDividendTaxMode::Exempt);
     let book = &session.corporate_actions().unwrap().rights_offerings[0];
     let paid: u64 = book.subscriptions().iter().map(|row| row.paid_shares).sum();
     let base = book.registration().unwrap().issued_shares();
@@ -928,7 +1005,7 @@ fn non_micros_rights_ex_anchor_restores_and_credits_without_second_debit() {
 #[test]
 fn exempt_rights_ex_anchor_is_committed_to_desk_and_restored() {
     use crate::company::rights_offering::{RightsOfferingBook, RightsOfferingDeclaration};
-    let (session, plan) = rights_session_at_ex_date(100_000);
+    let (session, plan) = rights_session_at_ex_date(100_000, CashDividendTaxMode::Exempt);
     let company = CompanyId(0);
     let group = session
         .corporate_actions()
@@ -1146,7 +1223,7 @@ fn exempt_rights_ex_anchor_is_committed_to_desk_and_restored() {
 
 #[test]
 fn rights_ex_day_close_after_trade_restores() {
-    let (session, _) = rights_session_at_ex_date(100_000);
+    let (session, _) = rights_session_at_ex_date(100_000, CashDividendTaxMode::Exempt);
     let group = session
         .corporate_actions()
         .unwrap()

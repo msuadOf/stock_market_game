@@ -41,7 +41,10 @@ pub(in crate::session) fn validate(
                 || !group.cash_plan_ids.is_empty()
                 || !group.stock_event_ids.is_empty()
                 || !group.split_event_ids.is_empty()
-                || save.setup.dividend_tax_mode != Some(CashDividendTaxMode::Exempt)
+                || !matches!(
+                    save.setup.dividend_tax_mode,
+                    Some(CashDividendTaxMode::Exempt | CashDividendTaxMode::FlatWithholding)
+                )
                 || !actions.dividend_tax_books.is_empty()
             {
                 return Err(invalid("配股除权锚包含不支持的组合或税制".into()));
@@ -271,7 +274,10 @@ pub(in crate::session) fn validate(
             }
         }
     }
-    if save.setup.dividend_tax_mode == Some(CashDividendTaxMode::Exempt) {
+    if matches!(
+        save.setup.dividend_tax_mode,
+        Some(CashDividendTaxMode::Exempt | CashDividendTaxMode::FlatWithholding)
+    ) {
         for book in &actions.rights_offerings {
             if matches!(
                 book.status(),
