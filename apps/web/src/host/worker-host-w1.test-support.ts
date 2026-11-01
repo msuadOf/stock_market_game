@@ -101,9 +101,12 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
       channelConstructions++;
       if (options.channelError === true && channelConstructions > 1) throw new Error("Channel 构造失败");
       super(); channels.push(this);
+      let registeredMemory: WebAssembly.Memory | undefined;
       this.port1.addEventListener("message", (event) => {
         const data = (event as MessageEvent).data;
         if (data.type === "facadeEngineSubstrate") configuredSubstrate = data as typeof substrate;
+        if (data.type === "facadeEngineMemory") registeredMemory = data.memory;
+        if (data.type === "facadeEngineConfiguration" && registeredMemory !== undefined) configuredSubstrate = { ...data, memory: registeredMemory };
       });
       for (const rawPort of [this.port1, this.port2]) {
         const port = rawPort as unknown as MessagePort;
@@ -160,7 +163,7 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
             if ((event.data as { type?: string }).type === "facadeEngineConfigured") { configured++; this.emit({ type: "initializationProgress", phase: "engine" }); this.emit({ type: "ready" }); }
           });
           this.controlPort.start();
-          this.controlPort.postMessage({ type: "facadeEngineSubstrate", ...substrate });
+          this.controlPort.postMessage({ type: "facadeEngineSubstrate", module, memory, layout, diagnostics: false });
         }
         if (value.type === "bindEngineTransport") {
           this.controlPort = value.controlPort as MessagePort;
