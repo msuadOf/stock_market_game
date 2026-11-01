@@ -37,6 +37,9 @@ export function validateMembershipAccounts(memberships: MarketMembershipState, s
     members.add(account)
   }
   if (!members.has("0")) throw new SaveSchemaError("market_memberships.members", "初始账户 0 必须具有经济成员关系")
+  // 与 Rust 新局及恢复契约一致：公司局启用回购时，NPC 序列后有一个专户。
+  const treasury = setup.issuer_repurchase_enabled === true && setup.company_system !== undefined ? (npcCount + 1n).toString() : undefined
+  const extraTreasury = treasury !== undefined && !members.has(treasury) ? 1n : 0n
   const accounts = Object.keys(snapshot.accounts)
-  if (BigInt(accounts.length) !== BigInt(members.size) + npcCount || accounts.some((account) => !members.has(account) && (BigInt(account) < 1n || BigInt(account) > npcCount))) throw new SaveSchemaError("snapshot.accounts", "账户集合必须恰好为 NPC 与市场成员账户")
+  if (BigInt(accounts.length) !== BigInt(members.size) + npcCount + extraTreasury || accounts.some((account) => !members.has(account) && account !== treasury && (BigInt(account) < 1n || BigInt(account) > npcCount))) throw new SaveSchemaError("snapshot.accounts", "账户集合必须恰好为 NPC、市场成员及已启用的回购专户")
 }
