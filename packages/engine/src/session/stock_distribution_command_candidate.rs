@@ -246,13 +246,11 @@ pub(crate) fn prepare_stock_distribution_approval(
         .map_err(|cause| fail(cause.into()))?;
     // 用当前已结算名册仅预检既有分配算法的可行域；私有快照不冒充未来 R 日
     // 登记，不安装分配结果。R 日真实份额变化仍须重新核验。
-    let mut preview_registry = registry.clone();
-    let preview_date = registry.settled_on();
-    let preview = preview_registry
-        .register(input.plan.event_id.clone(), preview_date)
+    let preview = registry
+        .preview_current_snapshot(input.plan.event_id.clone())
         .map_err(|cause| fail(cause.into()))?;
     allocate_stock_distribution(
-        preview,
+        &preview,
         &StockDistributionPlan {
             event_id: input.plan.event_id.clone(),
             approval_reference: input.plan.approval_reference.clone(),

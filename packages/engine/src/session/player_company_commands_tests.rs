@@ -26,7 +26,22 @@ fn game_with_features_on(
     repurchase: bool,
     start: &str,
 ) -> GameSession {
+    game_with_tick_count(holding, rights, repurchase, start, None)
+}
+
+fn game_with_tick_count(
+    holding: bool,
+    rights: bool,
+    repurchase: bool,
+    start: &str,
+    ticks: Option<u64>,
+) -> GameSession {
     let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
+    if let Some(ticks) = ticks {
+        setup.ticks_per_day = ticks;
+        setup.auction_ticks = 0;
+        setup.closing_auction_ticks = 0;
+    }
     setup.stocks[0].code = crate::StockCode("600101".into());
     setup.stocks[0].total_shares = 1_000;
     setup.stocks[0].float_shares = 1_000;
@@ -383,6 +398,57 @@ fn player_command_stock_commits_actual_plan_without_crediting_new_shares() {
         .unwrap()[0]
         .credited_on
         .is_none());
+}
+
+#[test]
+fn player_command_stock_after_actual_settlement_uses_current_registry_without_capture() {
+    let mut game = game_with_tick_count(false, false, false, "2030-06-03", Some(1));
+    game.seed_order_for_test(
+        AccountId(1),
+        crate::Intent::PlaceLimit {
+            code: StockId(0),
+            side: crate::Side::Sell,
+            price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
+            qty: 100,
+        },
+        &mut Vec::new(),
+    );
+    game.enqueue_player_intent(
+        AccountId(0),
+        crate::Intent::PlaceLimit {
+            code: StockId(0),
+            side: crate::Side::Buy,
+            price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
+            qty: 100,
+        },
+    )
+    .unwrap();
+    game.step().unwrap();
+    game.end_civil_day().unwrap();
+    let before = game.corporate_actions().unwrap().registries[0].clone();
+    assert!(before.receipts().iter().any(|receipt| matches!(
+        receipt.request.scope,
+        crate::company::share_registry::MovementScope::SettlementDayMarket { .. }
+    )));
+    let receipt = game
+        .propose_player_company_action(
+            AccountId(0),
+            PlayerCompanyProposal::StockDistribution {
+                company: CompanyId(0),
+                kind: StockDistributionKind::BonusShares,
+                shares_per_existing_share_micros: 100_000,
+            },
+        )
+        .unwrap();
+    let actions = game.corporate_actions().unwrap();
+    assert_eq!(actions.registries[0], before);
+    assert!(actions.registries[0]
+        .registration(&receipt.event_id)
+        .is_none());
+    assert_eq!(
+        actions.stock_distributions[0].plan().event_id,
+        receipt.event_id
+    );
 }
 
 #[test]

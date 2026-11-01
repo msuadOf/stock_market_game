@@ -652,6 +652,35 @@ impl ShareRegistry {
         Ok(receipt)
     }
 
+    /// 仅供当前名册上的可行性计算，返回值不得作为正式登记事实安装。
+    pub(crate) fn preview_current_snapshot(
+        &self,
+        event_id: String,
+    ) -> Result<RegistrationSnapshot, ShareRegistryError> {
+        self.validate()?;
+        if self.pending_opening.is_some() {
+            return Err(error(
+                "cannot preview a registry with a pending opening movement",
+            ));
+        }
+        if event_id.trim().is_empty() || self.is_typed_movement_identity(&event_id) {
+            return Err(error("invalid or reused preview event identity"));
+        }
+        let snapshot = RegistrationSnapshot {
+            event_id,
+            stock: self.stock.clone(),
+            issuer: self.issuer,
+            registered_on: self.settled_on,
+            issued_shares: self.issued_shares,
+            settled_receipts: u64::try_from(self.receipts.len())
+                .map_err(|_| error("preview receipt count exceeds u64"))?,
+            issuer_repurchase_account: self.issuer_repurchase_account.clone(),
+            holdings: self.holdings.clone(),
+        };
+        snapshot.validate()?;
+        Ok(snapshot)
+    }
+
     pub fn register(
         &mut self,
         event_id: String,
