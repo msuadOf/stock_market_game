@@ -1936,6 +1936,7 @@ pub struct GameSession {
     runtime_external_authority: std::sync::Weak<crate::runtime::drive::RuntimeAuthorityLease>,
     /// 本 owner 已成功 Full 安装的真实市场收盘；仅用于同日 civil 失败的终态判定。
     runtime_installed_market_close: Option<(u64, u64, crate::CivilDate)>,
+    serial_committed_market_close: Option<(u64, crate::CivilDate)>,
     runtime_mirror_install_sequence: u64,
     runtime_mirror_origin: Option<crate::RuntimeMirrorOrigin>,
     runtime_publication_generation: u64,
@@ -2469,6 +2470,7 @@ impl GameSession {
             runtime_authority_identity: std::sync::Arc::clone(&self.runtime_authority_identity),
             runtime_external_authority: self.runtime_external_authority.clone(),
             runtime_installed_market_close: self.runtime_installed_market_close,
+            serial_committed_market_close: self.serial_committed_market_close,
             runtime_mirror_install_sequence: self.runtime_mirror_install_sequence,
             runtime_mirror_origin: self.runtime_mirror_origin,
             runtime_publication_generation: self.runtime_publication_generation,
@@ -2479,6 +2481,7 @@ impl GameSession {
 
     pub(super) fn commit_tick_shadow(&mut self, shadow: Self) {
         self.market_calendar_day = shadow.market_calendar_day;
+        self.serial_committed_market_close = shadow.serial_committed_market_close;
         self.ingress = shadow.ingress;
         self.state.commit_from(shadow.state);
     }
@@ -2647,6 +2650,7 @@ impl GameSession {
             runtime_authority_identity: std::sync::Arc::new(()),
             runtime_external_authority: std::sync::Weak::new(),
             runtime_installed_market_close: None,
+            serial_committed_market_close: None,
             runtime_mirror_install_sequence: 0,
             runtime_mirror_origin: None,
             runtime_publication_generation: 0,
@@ -3828,16 +3832,6 @@ impl GameSession {
                 )));
             }
         }
-        if !runtime {
-            if let Some(book) = actions.rights_offerings.iter().find(|book| {
-                book.status() != &crate::company::rights_offering::RightsOfferingStatus::Settled
-            }) {
-                return Err(SessionError::UnsupportedCapitalBoundary(format!(
-                    "串行宿主不支持配股事件 {}",
-                    book.plan().event_id
-                )));
-            }
-        }
         Ok(())
     }
 
@@ -4005,6 +3999,15 @@ impl GameSession {
         if self.uses_runtime_civil_authority() {
             return self.with_prepared_runtime_civil_day_classified(project);
         }
+        if self.state.setup.rights_offering_enabled
+            && (self.uses_runtime_civil_authority()
+                || self.has_current_external_runtime_authority())
+        {
+            return Err(SessionError::UnsupportedCapitalBoundary(
+                "runtime authority 的配股结算需要真实账户静点".into(),
+            )
+            .into());
+        }
         let market_installed = self.has_current_external_runtime_authority()
             && self.runtime_installed_market_close
                 == Some((self.runtime_authority_epoch, self.tick(), self.civil_date()));
@@ -4043,6 +4046,14 @@ impl GameSession {
                     }
                     error
                 })?;
+            let market_closed =
+                self.serial_committed_market_close == Some((self.tick(), report.settled_date));
+            candidate.prepare_serial_cash_settlement(
+                report.settled_date,
+                report.next_date,
+                market_closed,
+            )?;
+            candidate.serial_committed_market_close = None;
             candidate.deliver_public_information_with_anchors(
                 report.disclosure_instant,
                 &information_anchors,

@@ -36,6 +36,53 @@ fn invalid(detail: impl Into<String>) -> RuntimeError {
     }
 }
 
+pub(super) struct CivilSettlementView {
+    pub(super) accounts: BTreeMap<AccountId, (GroupIdx, LocalIdx, GroupAccount)>,
+    pub(super) active_plans: bool,
+}
+
+impl CivilSettlementView {
+    pub(super) fn new(
+        rows: Vec<(AccountId, GroupIdx, LocalIdx, GroupAccount)>,
+        active_plans: bool,
+    ) -> Result<Self, RuntimeError> {
+        let mut accounts = BTreeMap::new();
+        let mut coordinates = BTreeSet::new();
+        for (id, group, local, account) in rows {
+            if !coordinates.insert((group, local))
+                || accounts.insert(id, (group, local, account)).is_some()
+            {
+                return Err(invalid("现金权益账户或坐标重复"));
+            }
+        }
+        Ok(Self {
+            accounts,
+            active_plans,
+        })
+    }
+
+    fn from_baseline(baseline: &AdministrativeBaseline) -> Result<Self, RuntimeError> {
+        let mut rows = Vec::with_capacity(baseline.roster.len());
+        for (index, id) in baseline.roster.iter().enumerate() {
+            if baseline.per_group == 0 {
+                return Err(invalid("现金权益真实分组宽度为零"));
+            }
+            let group = GroupIdx::try_from(index / baseline.per_group)
+                .map_err(|_| invalid("现金权益 group 溢出"))?;
+            let local = LocalIdx::try_from(index % baseline.per_group)
+                .map_err(|_| invalid("现金权益 local 溢出"))?;
+            let account = baseline
+                .accounts
+                .get(usize::from(group))
+                .filter(|(actual, _)| *actual == group)
+                .and_then(|(_, rows)| rows.get(local as usize))
+                .ok_or_else(|| invalid("现金权益缺真实完整组账户"))?;
+            rows.push((*id, group, local, account.clone()));
+        }
+        Self::new(rows, !baseline.plans.active_plan_ids().is_empty())
+    }
+}
+
 #[derive(Clone, Copy)]
 enum IntentOperand {
     Distribution(usize),
@@ -145,35 +192,97 @@ fn rights_payment_operation(
 }
 
 impl GameSession {
+    pub(super) fn prepare_serial_cash_settlement(
+        &mut self,
+        day: CivilDate,
+        next: CivilDate,
+        market_closed: bool,
+    ) -> Result<(), SessionError> {
+        if !self.state.setup.rights_offering_enabled {
+            return Ok(());
+        }
+        if self.has_current_external_runtime_authority() {
+            return Err(SessionError::UnsupportedCapitalBoundary(
+                "外持 runtime authority 的配股结算需要真实账户静点".into(),
+            ));
+        }
+        let fail = |detail: &str| {
+            SessionError::CivilInformation(CivilInformationError::new(day, invalid(detail)))
+        };
+        if self
+            .state
+            .markets
+            .values()
+            .any(|market| market.resting_order_count() != 0)
+            || self.state.envelope_ledger.iter().next().is_some()
+        {
+            return Err(fail("串行现金权益存在无法投影的在途订单资源"));
+        }
+        let mut rows = Vec::new();
+        for (index, (id, account)) in self.state.accounts.iter().enumerate() {
+            let group = GroupIdx::try_from(index / 256).map_err(|_| fail("串行账户 group 溢出"))?;
+            let local = LocalIdx::try_from(index % 256).map_err(|_| fail("串行账户 local 溢出"))?;
+            if account.cash().cents() < 0 {
+                return Err(fail("串行账户现金为负"));
+            }
+            let mut raw = GroupAccount::new(account.cash().cents(), self.state.stocks.len());
+            for (stock, position) in account.positions() {
+                let index = stock.0 as usize;
+                if index >= self.state.stocks.len() || position.t1_locked() > position.qty() {
+                    return Err(fail("串行账户持仓坐标或冻结数量无效"));
+                }
+                raw.shares[index] = position.qty();
+                raw.frozen_today[index] = position.t1_locked();
+                raw.invested_cents[index] = position.invested_cents();
+                raw.recovered_cents[index] = position.recovered_cents();
+                raw.ever_held[index] = position.qty() == 0;
+            }
+            rows.push((*id, group, local, raw));
+        }
+        let view = CivilSettlementView::new(rows, !self.state.plans.active_plan_ids().is_empty())
+            .map_err(|source| {
+            SessionError::CivilInformation(CivilInformationError::new(day, source))
+        })?;
+        self.prepare_ordinary_tax_day_end(day, market_closed)?;
+        let (stages, prepared) = self.prepare_civil_cash_distributions_with_view(day, &view)?;
+        let accounts = prepared.apply_serial(&view, &stages)?;
+        for (id, (group, local, _)) in &view.accounts {
+            if let Some(raw) = accounts.get(&(*group, *local)) {
+                let account = self.administrative_account(*id, raw).map_err(|source| {
+                    SessionError::CivilInformation(CivilInformationError::new(day, source))
+                })?;
+                self.state.accounts.insert(*id, account);
+            }
+        }
+        self.prepare_serial_rights_ex_anchors(next)?;
+        Ok(())
+    }
+
     /// 只安装到 civil shadow；真实账户、公司付款与税账均在同一个 Admin 成功尾发布。
     pub(super) fn prepare_civil_cash_distributions(
         &mut self,
         day: crate::CivilDate,
         baseline: &AdministrativeBaseline,
     ) -> Result<(Vec<AdminOperationStage>, PreparedCivilCash), SessionError> {
+        let view = CivilSettlementView::from_baseline(baseline).map_err(|source| {
+            SessionError::CivilInformation(CivilInformationError::new(day, source))
+        })?;
+        self.prepare_civil_cash_distributions_with_view(day, &view)
+    }
+
+    pub(super) fn prepare_civil_cash_distributions_with_view(
+        &mut self,
+        day: crate::CivilDate,
+        view: &CivilSettlementView,
+    ) -> Result<(Vec<AdminOperationStage>, PreparedCivilCash), SessionError> {
         let result: Result<_, CashPreparationError> = (|| {
             let mut owners = BTreeMap::new();
             let mut available = BTreeMap::new();
             let mut raw_accounts = BTreeMap::new();
-            for (index, id) in baseline.roster.iter().enumerate() {
-                if baseline.per_group == 0 {
-                    return Err(invalid("现金权益真实分组宽度为零").into());
-                }
-                let group = GroupIdx::try_from(index / baseline.per_group)
-                    .map_err(|_| invalid("现金权益 group 溢出"))?;
-                let local = LocalIdx::try_from(index % baseline.per_group)
-                    .map_err(|_| invalid("现金权益 local 溢出"))?;
-                let raw = baseline
-                    .accounts
-                    .get(usize::from(group))
-                    .filter(|(actual, _)| *actual == group)
-                    .and_then(|(_, rows)| rows.get(local as usize))
-                    .ok_or_else(|| invalid("现金权益缺真实完整组账户"))?;
-                if owners.insert(*id, (group, local)).is_some() {
-                    return Err(invalid("现金权益名册重复账户").into());
-                }
+            for (id, (group, local, raw)) in &view.accounts {
+                owners.insert(*id, (*group, *local));
                 available.insert(*id, Money::from_cents(raw.cash));
-                raw_accounts.insert((group, local), raw.clone());
+                raw_accounts.insert((*group, *local), raw.clone());
             }
             let mut prepared = PreparedCivilCash {
                 day,
@@ -207,7 +316,7 @@ impl GameSession {
                     capital_reserve_tax_sources: &BTreeMap::new(),
                 })?;
             let next = day.next().map_err(|error| invalid(error.to_string()))?;
-            if self.validate_stock_opening_scope(next, baseline)? {
+            if self.validate_stock_opening_scope(next, view)? {
                 candidate.prepare_stock_opening(&DistributionsDayEndInput {
                     day: next,
                     calendar: self.state.civil_clock.calendar(),
@@ -219,7 +328,7 @@ impl GameSession {
                     capital_reserve_tax_sources: &BTreeMap::new(),
                 })?;
             }
-            if self.validate_split_opening_scope(next, baseline)? {
+            if self.validate_split_opening_scope(next, view)? {
                 candidate.prepare_split_opening(&DistributionsDayEndInput {
                     day: next,
                     calendar: self.state.civil_clock.calendar(),
@@ -842,6 +951,82 @@ impl GameSession {
 }
 
 impl PreparedCivilCash {
+    pub(super) fn apply_serial(
+        &self,
+        view: &CivilSettlementView,
+        stages: &[AdminOperationStage],
+    ) -> Result<BTreeMap<(GroupIdx, LocalIdx), GroupAccount>, SessionError> {
+        let apply = || -> Result<_, RuntimeError> {
+            let mut expected = BTreeMap::new();
+            for position in &self.positions {
+                let typed = match position.intent {
+                    IntentOperand::Distribution(index) => {
+                        operation(&self.intents[index], position.local)?
+                    }
+                    IntentOperand::Rights(typed) => typed,
+                };
+                if expected
+                    .insert(
+                        (position.group, position.stage, position.operation_index),
+                        typed,
+                    )
+                    .is_some()
+                {
+                    return Err(invalid("现金权益原意图坐标重复"));
+                }
+            }
+            for (key, operation) in &self.repurchase_operands {
+                if expected.insert(*key, *operation).is_some() {
+                    return Err(invalid("回购原意图坐标重复"));
+                }
+            }
+            let mut accounts: BTreeMap<_, _> = view
+                .accounts
+                .values()
+                .map(|(group, local, account)| ((*group, *local), account.clone()))
+                .collect();
+            let mut touched = BTreeSet::new();
+            let mut offsets = BTreeMap::<GroupIdx, usize>::new();
+            for (stage_index, stage) in stages.iter().enumerate() {
+                let stage_index =
+                    u32::try_from(stage_index).map_err(|_| invalid("现金权益 stage 溢出"))?;
+                for (group, operations) in &stage.operations {
+                    for operation in operations {
+                        let offset = offsets.entry(*group).or_default();
+                        if expected.remove(&(*group, stage_index, *offset)) != Some(*operation) {
+                            return Err(invalid("现金权益原意图与 serial typed operand 不一致"));
+                        }
+                        *offset = offset
+                            .checked_add(1)
+                            .ok_or_else(|| invalid("现金权益 flat index 溢出"))?;
+                        let (local, stock) = operation.coordinates();
+                        let account = accounts
+                            .get_mut(&(*group, local))
+                            .ok_or_else(|| invalid("现金权益 operand 缺少完整账户"))?;
+                        crate::runtime::group::admin_transaction::apply_operation(
+                            account, stock, *operation,
+                        )?;
+                        touched.insert((*group, local));
+                    }
+                }
+            }
+            if !expected.is_empty() {
+                return Err(invalid("现金权益漏原 typed operand"));
+            }
+            let actual: BTreeMap<_, _> = accounts
+                .into_iter()
+                .filter(|(key, _)| touched.contains(key))
+                .collect();
+            if actual != self.expected_accounts {
+                return Err(invalid("现金权益最终完整 GroupAccount 与原意图不一致"));
+            }
+            Ok(actual)
+        };
+        apply().map_err(|source| {
+            SessionError::CivilInformation(CivilInformationError::new(self.day, source))
+        })
+    }
+
     /// 回购阶段仍由原 checked apply 预演，完整账户与原 typed operand 一起核验。
     pub(super) fn include_repurchase(
         &mut self,
@@ -1006,6 +1191,74 @@ mod rights_payment_tests {
     use crate::session::corporate_actions::rights_offering_day_end::{
         RightsOfferingIntent, RightsRequestKey,
     };
+
+    #[test]
+    fn settlement_view_rejects_duplicate_account_or_coordinates() {
+        let account = GroupAccount::new(100, 1);
+        assert!(CivilSettlementView::new(
+            vec![
+                (AccountId(1), 0, 0, account.clone()),
+                (AccountId(1), 0, 1, account.clone())
+            ],
+            false
+        )
+        .is_err());
+        assert!(CivilSettlementView::new(
+            vec![
+                (AccountId(1), 0, 0, account.clone()),
+                (AccountId(2), 0, 0, account)
+            ],
+            false
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn serial_settlement_checks_operands_and_complete_account() {
+        let account = GroupAccount::new(100, 1);
+        let view = CivilSettlementView::new(vec![(AccountId(1), 0, 0, account)], false).unwrap();
+        let op = AdminOperation::PaymentDebit {
+            local: 0,
+            stock: 0,
+            amount: 40,
+        };
+        let mut expected = GroupAccount::new(60, 1);
+        let mut prepared = PreparedCivilCash {
+            day: crate::CivilDate::from_iso("2030-06-04").unwrap(),
+            intents: vec![],
+            positions: vec![IntentPosition {
+                intent: IntentOperand::Rights(op),
+                stage: 0,
+                group: 0,
+                group_index: 0,
+                local: 0,
+                operation_index: 0,
+            }],
+            repurchase_operands: vec![],
+            expected_accounts: BTreeMap::from([((0, 0), expected.clone())]),
+        };
+        let stages = vec![AdminOperationStage {
+            operations: vec![(0, vec![op])],
+        }];
+        assert_eq!(
+            prepared.apply_serial(&view, &stages).unwrap()[&(0, 0)],
+            expected
+        );
+        let wrong = vec![AdminOperationStage {
+            operations: vec![(
+                0,
+                vec![AdminOperation::PaymentDebit {
+                    local: 0,
+                    stock: 0,
+                    amount: 41,
+                }],
+            )],
+        }];
+        assert!(prepared.apply_serial(&view, &wrong).is_err());
+        expected.cash = 59;
+        prepared.expected_accounts.insert((0, 0), expected);
+        assert!(prepared.apply_serial(&view, &stages).is_err());
+    }
 
     #[test]
     fn failed_subscription_refund_uses_dedicated_credit_operand() {

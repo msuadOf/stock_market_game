@@ -103,6 +103,7 @@ impl GameSession {
             runtime_authority_identity: _,
             runtime_external_authority: _,
             runtime_installed_market_close: _,
+            serial_committed_market_close: _,
             runtime_mirror_install_sequence: _,
             runtime_mirror_origin: _,
             runtime_publication_generation: _,

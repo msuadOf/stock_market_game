@@ -259,6 +259,7 @@ pub(super) fn finalize_continuous_tick(
         session
             .freeze_serial_trading_day(day_bars)
             .map_err(finalize_error)?;
+        session.serial_committed_market_close = Some((session.tick(), session.civil_date()));
     }
     let mode_after = super::phase::PhasePolicy::capture(session).matching_mode();
     for market in session.state.markets.values_mut() {

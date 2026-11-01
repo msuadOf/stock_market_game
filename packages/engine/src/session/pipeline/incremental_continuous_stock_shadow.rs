@@ -675,7 +675,18 @@ impl IncrementalContinuousStockShadow {
                 );
                 self.terminal_keys.push(key.clone());
             }
-            self.market.end_of_day();
+            self.market.end_of_day_with_trades(
+                !self.trades.is_empty()
+                    || market_data
+                        .candle
+                        .as_ref()
+                        .is_some_and(|candle| candle.volume > 0)
+                    || self
+                        .market_prior
+                        .candle
+                        .as_ref()
+                        .is_some_and(|candle| candle.volume > 0),
+            );
         }
         Ok((
             ContinuousStockOutput {

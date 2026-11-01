@@ -111,6 +111,26 @@ pub(crate) fn price_bound_cents(
     Some(bound)
 }
 
+/// 在安装除权参考价前检查次日涨跌停和双向价格笼子的可计算性。
+pub(crate) fn validate_ex_reference_cents(
+    reference: i64,
+    tick: i64,
+    limit_bps: u32,
+) -> Result<(), &'static str> {
+    let upper = 10_000_u32.checked_add(limit_bps).ok_or("涨跌停比例溢出")?;
+    let lower = 10_000_u32.checked_sub(limit_bps).ok_or("涨跌停比例非法")?;
+    for (ratio, upward) in [
+        (upper, true),
+        (lower, false),
+        (10_200, true),
+        (9_800, false),
+    ] {
+        price_bound_cents(reference, ratio, tick, upward).ok_or("除权价格边界非法或溢出")?;
+    }
+    reference.checked_add(10).ok_or("除权价格笼子上界溢出")?;
+    Ok(())
+}
+
 impl Market {
     pub(crate) fn hash_projection(&self) -> impl serde::Serialize + '_ {
         (
@@ -569,6 +589,34 @@ impl Market {
         self.book.clear();
     }
 
+    /// 无成交日保留当前参考价，避免除权后的旧成交价覆盖新基准。
+    pub(crate) fn end_of_day_with_trades(&mut self, traded: bool) {
+        if traded {
+            self.last_close = self.last_price;
+        }
+        self.book.clear();
+    }
+
+    /// 在串行候选中安装已验证的除权参考价。
+    pub(crate) fn install_ex_reference(
+        &mut self,
+        expected_close: Money,
+        reference: Money,
+    ) -> Result<(), MarketError> {
+        if self.last_close != expected_close || self.book.resting_order_count() != 0 {
+            return Err(MarketError::InvalidParams {
+                reason: "除权时收盘价或订单簿不一致".into(),
+            });
+        }
+        validate_ex_reference_cents(reference.cents(), self.tick.cents(), self.limit_bps).map_err(
+            |reason| MarketError::InvalidParams {
+                reason: reason.into(),
+            },
+        )?;
+        self.last_close = reference;
+        Ok(())
+    }
+
     /// 卖盘深度（透传 book）：按价低→高，每价位聚合总数量。空簿返回空 Vec。
     pub fn ask_depth(&self) -> Vec<(Money, u64)> {
         self.book.ask_depth()
@@ -666,6 +714,45 @@ mod price_limit_state_tests {
         let mut market = mk_market();
         market.fixture_set_last_close(Money::from_cents(i64::MAX));
         assert!(market.up_stop().is_err());
+    }
+
+    #[test]
+    fn ex_reference_checks_all_boundaries_before_installing() {
+        assert!(validate_ex_reference_cents(1000, 1, 1000).is_ok());
+        assert!(validate_ex_reference_cents(0, 1, 1000).is_err());
+        assert!(validate_ex_reference_cents(i64::MAX, 1, 1000).is_err());
+    }
+
+    #[test]
+    fn no_trade_day_preserves_the_ex_reference() {
+        let mut market = mk_market();
+        market.fixture_set_last_close(Money::from_cents(900));
+        market.end_of_day_with_trades(false);
+        assert_eq!(market.last_close(), Money::from_cents(900));
+        market.end_of_day_with_trades(true);
+        assert_eq!(market.last_close(), Money::from_cents(1000));
+    }
+
+    #[test]
+    fn ex_reference_install_checks_close_book_and_overflow() {
+        let mut market = mk_market();
+        assert!(market
+            .install_ex_reference(Money::from_cents(999), Money::from_cents(900))
+            .is_err());
+        assert!(market
+            .install_ex_reference(Money::from_cents(1000), Money::from_cents(i64::MAX))
+            .is_err());
+        assert_eq!(market.last_close(), Money::from_cents(1000));
+        market.place(sell(1, 1_050, 100)).unwrap();
+        assert!(market
+            .install_ex_reference(Money::from_cents(1000), Money::from_cents(900))
+            .is_err());
+        market.cancel(OrderId(1)).unwrap();
+        market
+            .install_ex_reference(Money::from_cents(1000), Money::from_cents(900))
+            .unwrap();
+        assert_eq!(market.last_close(), Money::from_cents(900));
+        assert_eq!(market.last_price(), Money::from_cents(1000));
     }
 
     #[test]

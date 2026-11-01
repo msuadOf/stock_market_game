@@ -29,11 +29,36 @@ pub(in crate::session) fn all_shares_circulating(snapshot: &RegistrationSnapshot
 }
 
 impl GameSession {
+    /// 串行 civil shadow 使用同一除权候选，并在投影前校验、安装真实市场基准。
+    pub(super) fn prepare_serial_rights_ex_anchors(
+        &mut self,
+        next_date: CivilDate,
+    ) -> Result<(), SessionError> {
+        let requests = self.prepare_rights_ex_anchors(next_date)?;
+        for request in requests {
+            let stock = StockId(u32::from(request.stock));
+            let market = self.state.markets.get_mut(&stock).ok_or_else(|| {
+                SessionError::UnsupportedCapitalBoundary(format!("除权缺少证券 {stock:?} 的市场"))
+            })?;
+            market
+                .install_ex_reference(
+                    Money::from_cents(request.expected_last_close),
+                    Money::from_cents(request.reference_price),
+                )
+                .map_err(|error| {
+                    SessionError::UnsupportedCapitalBoundary(format!(
+                        "证券 {stock:?} 的除权参考价校验失败：{error}"
+                    ))
+                })?;
+        }
+        Ok(())
+    }
+
     /// 盘前送转只开放能从 Drain 后完整基线逐户勾稽的范围。
     pub(super) fn validate_stock_opening_scope(
         &self,
         next: CivilDate,
-        baseline: &crate::runtime::drive::AdministrativeBaseline,
+        baseline: &super::civil_cash_distributions::CivilSettlementView,
     ) -> Result<bool, crate::runtime::RuntimeError> {
         use crate::company::stock_distribution::StockDistributionStatus;
         let Some(actions) = self.state.companies.corporate_actions() else {
@@ -124,7 +149,7 @@ impl GameSession {
     pub(super) fn validate_split_opening_scope(
         &self,
         next: CivilDate,
-        baseline: &crate::runtime::drive::AdministrativeBaseline,
+        baseline: &super::civil_cash_distributions::CivilSettlementView,
     ) -> Result<bool, crate::runtime::RuntimeError> {
         use crate::company::share_split::ShareSplitStatus;
         let Some(actions) = self.state.companies.corporate_actions() else {
@@ -212,22 +237,14 @@ impl GameSession {
 
     fn validate_opening_accounts(
         snapshot: &RegistrationSnapshot,
-        baseline: &crate::runtime::drive::AdministrativeBaseline,
+        baseline: &super::civil_cash_distributions::CivilSettlementView,
         pending_player: bool,
         fail: impl Fn(&str) -> crate::runtime::RuntimeError,
     ) -> Result<(), crate::runtime::RuntimeError> {
-        if !baseline.plans.active_plan_ids().is_empty() || pending_player {
+        if baseline.active_plans || pending_player {
             return Err(fail("存在活动／待续行计划或待执行玩家委托"));
         }
-        for (index, account) in baseline.roster.iter().enumerate() {
-            if baseline.per_group == 0 {
-                return Err(fail("真实 Owner 分组宽度为零"));
-            }
-            let raw = baseline
-                .accounts
-                .get(index / baseline.per_group)
-                .and_then(|(_, rows)| rows.get(index % baseline.per_group))
-                .ok_or_else(|| fail("真实 Owner 缺少完整账户"))?;
+        for (account, (_, _, raw)) in &baseline.accounts {
             let registered = snapshot
                 .holdings()
                 .iter()
@@ -252,7 +269,7 @@ impl GameSession {
         }
         if snapshot.holdings().iter().any(|row| {
             matches!(row.holder, HolderId::Account(account)
-            if !baseline.roster.contains(&account))
+            if !baseline.accounts.contains_key(&account))
         }) {
             return Err(fail("登记股东不在真实 Owner 名册"));
         }

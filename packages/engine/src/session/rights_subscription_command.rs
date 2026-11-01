@@ -18,7 +18,7 @@ pub struct RightsSubscriptionReceipt {
 pub enum RightsSubscriptionError {
     #[error("本局未启用配股／增发机制（rights_offering_enabled=false）")]
     Disabled,
-    #[error("配股认购要求 native runtime；串行／WASM 当前不支持未结配股跨自然日结算")]
+    #[error("当前 runtime authority 不支持配股认购；需要真实账户结算路径")]
     UnsupportedRuntime,
     #[error("认购股数必须为正数")]
     InvalidQuantity,
@@ -28,7 +28,7 @@ pub enum RightsSubscriptionError {
     MissingCompanyState,
     #[error("未找到未结配股方案 {event_id}")]
     UnknownEvent { event_id: String },
-    #[error("配股方案 {event_id} 不支持玩家认购：仅支持面向全体股东的受限 native 路径")]
+    #[error("配股方案 {event_id} 不支持玩家认购：仅支持面向全体股东的受限路径")]
     UnsupportedPlan { event_id: String },
     #[error("配股方案 {event_id} 当前不在缴款窗口或权证尚未派发")]
     OutsidePaymentWindow { event_id: String },
@@ -77,7 +77,9 @@ impl GameSession {
         if !self.state.setup.rights_offering_enabled {
             return Err(RightsSubscriptionError::Disabled);
         }
-        if cfg!(target_arch = "wasm32") || !crate::runtime::step_runtime_enabled() {
+        if self.has_current_external_runtime_authority()
+            || (cfg!(target_arch = "wasm32") && self.uses_runtime_civil_authority())
+        {
             return Err(RightsSubscriptionError::UnsupportedRuntime);
         }
         if requested_shares == 0 {

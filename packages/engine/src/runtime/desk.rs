@@ -2822,15 +2822,12 @@ impl DeskState {
             ));
         }
         // 显式核验下一交易日涨跌停与两向价格笼子，不能在首 Commit 后才发现溢出。
-        let reference = Money::from_cents(request.reference_price);
-        self.price_bound(reference, 10_000 + self.setup.limit_bps, true)?;
-        self.price_bound(reference, 10_000 - self.setup.limit_bps, false)?;
-        self.price_bound(reference, 10_200, true)?;
-        self.price_bound(reference, 9_800, false)?;
-        request
-            .reference_price
-            .checked_add(10)
-            .ok_or_else(|| over("除权价格笼子上界溢出"))?;
+        crate::market::validate_ex_reference_cents(
+            request.reference_price,
+            1,
+            self.setup.limit_bps,
+        )
+        .map_err(over)?;
         // 私有线程内临时投影，任何结果都先恢复原行情，再保存 immutable 候选。
         let previous = self.market.last_close;
         self.market.last_close = request.reference_price;

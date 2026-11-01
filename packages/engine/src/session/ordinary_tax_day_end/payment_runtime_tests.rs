@@ -1466,3 +1466,559 @@ mod stock_opening_runtime_tests;
 
 #[path = "split_opening_runtime_tests.rs"]
 mod split_opening_runtime_tests;
+
+#[test]
+fn serial_rights_registration_payment_and_restore() {
+    if crate::runtime::step_runtime_enabled() {
+        crate::session::protocol::ProtocolSession::run_serial_checkpoint_probe_for_test();
+        return;
+    }
+    use crate::company::rights_offering::{
+        RightsOfferingBook, RightsOfferingDeclaration, RightsOfferingEventPlan, RightsOfferingMode,
+        RightsSubscriptionStrategy,
+    };
+    let mode = CashDividendTaxMode::Exempt;
+    let mut setup = setup_fixture();
+    setup.stocks.truncate(1);
+    setup.stocks[0].code = crate::StockCode(STOCK.into());
+    setup.stocks[0].exchange = crate::StockExchange::Shanghai;
+    setup.stocks[0].total_shares = 1_200;
+    setup.stocks[0].float_shares = 1_200;
+    setup.npcs.retail_count = RETAIL_HOLDERS.len() as u32;
+    setup.npcs.inst_count = 0;
+    setup.npcs.hot_count = 0;
+    setup.strategy_params.retail.arrival_rate = 0.0;
+    setup.ticks_per_day = 1;
+    setup.auction_ticks = 0;
+    setup.closing_auction_ticks = 0;
+    setup.history_len = 1;
+    setup.start_date = date(START);
+    setup.float_allocation = crate::FloatAllocation::class_percentages(
+        100.0,
+        0.0,
+        0.0,
+        crate::WithinKindDistribution::EqualPercentage,
+    );
+    let mut companies = simple_company_fixture!(crate; [STOCK]);
+    let CompanySystemConfig::Simple(simple) = &mut companies else {
+        unreachable!("fixture 显式选择 Simple")
+    };
+    // 覆盖 2029 完整自然年，保留真实法定公积金与年度利润校验。
+    simple.prehistory_periods = 17;
+    setup.company_system = Some(companies);
+    setup.dividend_tax_mode = Some(mode);
+    if mode == CashDividendTaxMode::Exempt {
+        setup.config.stamp_tax_rate = 0.0;
+    }
+    setup.flat_withholding_bp = (mode == CashDividendTaxMode::FlatWithholding).then_some(1_000);
+    setup.par_value_per_share = Some(Money::from_cents(100));
+    setup.auto_corporate_foundation = true;
+
+    let session = GameSession::new_with_runtime_groups(setup, 7, 3).expect("构造真实公司会话");
+    let initial = session;
+    let mut saved = initial.save().unwrap();
+    saved.setup.rights_offering_enabled = true;
+    let mut external = restore_with_three_groups(&saved);
+    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut external).unwrap();
+    external.runtime_step_with_install(&mut driver).unwrap();
+    assert!(matches!(
+        external.subscribe_rights_offering(AccountId(0), "真实缴款测试", 1),
+        Err(crate::session::RightsSubscriptionError::UnsupportedRuntime)
+    ));
+    let external_before = serde_json::to_value(external.save().unwrap()).unwrap();
+    let error = external.end_civil_day().unwrap_err();
+    assert!(error.to_string().contains("runtime authority"));
+    assert_eq!(
+        serde_json::to_value(external.save().unwrap()).unwrap(),
+        external_before
+    );
+
+    let mut missing_close = restore_with_three_groups(&saved);
+    missing_close.step().unwrap();
+    missing_close.serial_committed_market_close = None;
+    let missing_before = serde_json::to_value(missing_close.save().unwrap()).unwrap();
+    assert!(missing_close.end_civil_day().is_err());
+    assert_eq!(
+        serde_json::to_value(missing_close.save().unwrap()).unwrap(),
+        missing_before
+    );
+
+    let mut before_approval = restore_with_three_groups(&saved);
+    before_approval.step().unwrap();
+    before_approval.end_civil_day().unwrap();
+    assert_eq!(
+        before_approval.corporate_actions().unwrap().registries[0].settled_on(),
+        date(START)
+    );
+    let before_approval_restored = restore_with_three_groups(&before_approval.save().unwrap());
+    assert_eq!(
+        before_approval_restored
+            .corporate_actions()
+            .unwrap()
+            .registries[0]
+            .settled_on(),
+        date(START)
+    );
+    let company = CompanyId(0);
+    let capital = initial
+        .company_system()
+        .unwrap()
+        .dividend_legal_facts(&company)
+        .unwrap()
+        .unwrap()
+        .registered_capital;
+    let mut plan = RightsOfferingEventPlan {
+        event_id: "真实缴款测试".into(),
+        approval_reference: "测试批准".into(),
+        issuer: company,
+        stock: crate::StockCode(STOCK.into()),
+        exchange: crate::calendar::CalendarExchange::Sse,
+        approved_on: date(START),
+        announced_on: date(START),
+        registered_on: date(START),
+        payment_start_on: date(START),
+        payment_deadline_on: date(START),
+        ex_rights_on: date(START),
+        settlement_on: date(START),
+        listing_on: date(START),
+        price_per_share: Money::from_cents(100),
+        mode: RightsOfferingMode::RightsToAllShareholders {
+            shares_per_existing_share_micros: 100_000,
+        },
+        npc_subscription_strategy: RightsSubscriptionStrategy::FullByDefault,
+    };
+    plan.derive_schedule(initial.civil_clock().calendar(), plan.exchange, 1)
+        .unwrap();
+    saved
+        .company_state
+        .system_for_test_mut()
+        .declare_rights_offering(
+            &company,
+            RightsOfferingDeclaration {
+                event_id: plan.event_id.clone(),
+                approval_reference: plan.approval_reference.clone(),
+                approved_on: plan.approved_on,
+                price_per_share: plan.price_per_share,
+                par_value_per_share: Money::from_cents(100),
+                registered_capital_at_approval: capital,
+            },
+        )
+        .unwrap();
+    saved
+        .company_state
+        .actions_for_test_mut()
+        .rights_offerings
+        .push(RightsOfferingBook::new(plan.clone()).unwrap());
+    let mut session = restore_with_three_groups(&saved);
+    let mut seed_events = Vec::new();
+    session.seed_order_for_test(
+        RETAIL_HOLDERS[0],
+        Intent::PlaceLimit {
+            code: StockId(0),
+            side: Side::Sell,
+            price: LimitPrice::Fixed(Money::from_cents(1000)),
+            qty: 100,
+        },
+        &mut seed_events,
+    );
+    session.hydrate_or_validate_envelope_ledger().unwrap();
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code: StockId(0),
+                side: Side::Buy,
+                price: LimitPrice::Fixed(Money::from_cents(1005)),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    assert!(session
+        .step()
+        .unwrap()
+        .iter()
+        .any(|event| matches!(event, Event::Trade { qty: 100, .. })));
+    session.end_civil_day().unwrap();
+    assert_eq!(session.civil_date(), plan.payment_start_on);
+    let player_cash = cash(&session, AccountId(0));
+    let player_entitlement = session.corporate_actions().unwrap().rights_offerings[0]
+        .entitlement()
+        .unwrap()
+        .entitlements
+        .iter()
+        .find(|row| row.holder == HolderId::Account(AccountId(0)))
+        .unwrap()
+        .rights_shares;
+    assert!(player_entitlement > 0);
+    session
+        .subscribe_rights_offering(AccountId(0), &plan.event_id, player_entitlement)
+        .unwrap();
+    assert_eq!(cash(&session, AccountId(0)), player_cash);
+    assert!(matches!(
+        session.save(),
+        Err(crate::SessionError::PendingRightsSubscriptions)
+    ));
+    let before = cash(&session, RETAIL_HOLDERS[0]);
+    session.step().unwrap();
+    session.end_civil_day().unwrap();
+    let book = &session.corporate_actions().unwrap().rights_offerings[0];
+    let payment = book
+        .subscriptions()
+        .iter()
+        .find(|row| row.holder == HolderId::Account(RETAIL_HOLDERS[0]))
+        .unwrap()
+        .paid_amount;
+    assert!(payment.cents() > 0);
+    assert_eq!(
+        cash(&session, RETAIL_HOLDERS[0]).cents(),
+        before.cents() - payment.cents()
+    );
+    let player_payment = book
+        .subscriptions()
+        .iter()
+        .find(|row| row.holder == HolderId::Account(AccountId(0)))
+        .unwrap()
+        .paid_amount;
+    assert!(player_payment.cents() > 0);
+    assert_eq!(
+        cash(&session, AccountId(0)).cents(),
+        player_cash.cents() - player_payment.cents()
+    );
+    let restored = restore_with_three_groups(&session.save().unwrap());
+    assert_eq!(cash(&restored, AccountId(0)), cash(&session, AccountId(0)));
+    assert_eq!(
+        cash(&restored, RETAIL_HOLDERS[0]),
+        cash(&session, RETAIL_HOLDERS[0])
+    );
+    assert_eq!(
+        restored.corporate_actions().unwrap().rights_offerings[0],
+        *book
+    );
+    let before_position = session
+        .account(AccountId(0))
+        .unwrap()
+        .position(&StockId(0))
+        .unwrap()
+        .clone();
+    advance_to_date(&mut session, plan.listing_on);
+    session.step().unwrap();
+    session.end_civil_day().unwrap();
+    let after_position = session
+        .account(AccountId(0))
+        .unwrap()
+        .position(&StockId(0))
+        .unwrap();
+    assert_eq!(
+        after_position.qty(),
+        before_position.qty() + u32::try_from(player_entitlement).unwrap()
+    );
+    assert_eq!(
+        after_position.invested_cents(),
+        before_position.invested_cents() + player_payment.cents()
+    );
+    let restored = restore_with_three_groups(&session.save().unwrap());
+    let restored_position = restored
+        .account(AccountId(0))
+        .unwrap()
+        .position(&StockId(0))
+        .unwrap();
+    assert_eq!(restored_position.qty(), after_position.qty());
+    assert_eq!(
+        restored_position.invested_cents(),
+        after_position.invested_cents()
+    );
+    assert_eq!(
+        restored_position.recovered_cents(),
+        after_position.recovered_cents()
+    );
+    let settled = session.civil_date();
+    if session
+        .civil_clock()
+        .calendar()
+        .is_trading_day(crate::calendar::CalendarExchange::Sse, settled)
+        .unwrap()
+    {
+        session.step().unwrap();
+    }
+    session.end_civil_day().unwrap();
+    assert_eq!(
+        session.corporate_actions().unwrap().registries[0].settled_on(),
+        settled
+    );
+    let resumed = restore_with_three_groups(&session.save().unwrap());
+    assert_eq!(
+        resumed.corporate_actions().unwrap().registries[0].settled_on(),
+        settled
+    );
+}
+
+#[test]
+fn serial_failed_rights_refunds_and_survives_restore() {
+    if crate::runtime::step_runtime_enabled() {
+        crate::session::protocol::ProtocolSession::run_serial_checkpoint_probe_for_test();
+        return;
+    }
+    use crate::company::rights_offering::{
+        RightsOfferingBook, RightsOfferingDeclaration, RightsOfferingEventPlan, RightsOfferingMode,
+        RightsSubscriptionStrategy,
+    };
+    let mode = CashDividendTaxMode::Exempt;
+    let mut setup = setup_fixture();
+    setup.stocks.truncate(1);
+    setup.stocks[0].code = crate::StockCode(STOCK.into());
+    setup.stocks[0].exchange = crate::StockExchange::Shanghai;
+    setup.stocks[0].total_shares = 1_200;
+    setup.stocks[0].float_shares = 1_200;
+    setup.npcs.retail_count = RETAIL_HOLDERS.len() as u32;
+    setup.npcs.inst_count = 0;
+    setup.npcs.hot_count = 0;
+    setup.strategy_params.retail.arrival_rate = 0.0;
+    setup.ticks_per_day = 1;
+    setup.auction_ticks = 0;
+    setup.closing_auction_ticks = 0;
+    setup.history_len = 1;
+    setup.start_date = date(START);
+    setup.float_allocation = crate::FloatAllocation::class_percentages(
+        100.0,
+        0.0,
+        0.0,
+        crate::WithinKindDistribution::EqualPercentage,
+    );
+    let mut companies = simple_company_fixture!(crate; [STOCK]);
+    let CompanySystemConfig::Simple(simple) = &mut companies else {
+        unreachable!("fixture 显式选择 Simple")
+    };
+    // 覆盖 2029 完整自然年，保留真实法定公积金与年度利润校验。
+    simple.prehistory_periods = 17;
+    setup.company_system = Some(companies);
+    setup.dividend_tax_mode = Some(mode);
+    if mode == CashDividendTaxMode::Exempt {
+        setup.config.stamp_tax_rate = 0.0;
+    }
+    setup.flat_withholding_bp = (mode == CashDividendTaxMode::FlatWithholding).then_some(1_000);
+    setup.par_value_per_share = Some(Money::from_cents(100));
+    setup.auto_corporate_foundation = true;
+
+    let session = GameSession::new_with_runtime_groups(setup, 7, 3).expect("构造真实公司会话");
+    let initial = session;
+    let mut saved = initial.save().unwrap();
+    saved.setup.rights_offering_enabled = true;
+    let company = CompanyId(0);
+    let capital = initial
+        .company_system()
+        .unwrap()
+        .dividend_legal_facts(&company)
+        .unwrap()
+        .unwrap()
+        .registered_capital;
+    let mut plan = RightsOfferingEventPlan {
+        event_id: "真实缴款测试".into(),
+        approval_reference: "测试批准".into(),
+        issuer: company,
+        stock: crate::StockCode(STOCK.into()),
+        exchange: crate::calendar::CalendarExchange::Sse,
+        approved_on: date(START),
+        announced_on: date(START),
+        registered_on: date(START),
+        payment_start_on: date(START),
+        payment_deadline_on: date(START),
+        ex_rights_on: date(START),
+        settlement_on: date(START),
+        listing_on: date(START),
+        price_per_share: Money::from_cents(cash(&initial, RETAIL_HOLDERS[0]).cents() / 2 + 1),
+        mode: RightsOfferingMode::RightsToAllShareholders {
+            shares_per_existing_share_micros: 100_000,
+        },
+        npc_subscription_strategy: RightsSubscriptionStrategy::FullByDefault,
+    };
+    plan.derive_schedule(initial.civil_clock().calendar(), plan.exchange, 1)
+        .unwrap();
+    saved
+        .company_state
+        .system_for_test_mut()
+        .declare_rights_offering(
+            &company,
+            RightsOfferingDeclaration {
+                event_id: plan.event_id.clone(),
+                approval_reference: plan.approval_reference.clone(),
+                approved_on: plan.approved_on,
+                price_per_share: plan.price_per_share,
+                par_value_per_share: Money::from_cents(100),
+                registered_capital_at_approval: capital,
+            },
+        )
+        .unwrap();
+    saved
+        .company_state
+        .actions_for_test_mut()
+        .rights_offerings
+        .push(RightsOfferingBook::new(plan.clone()).unwrap());
+    let mut session = restore_with_three_groups(&saved);
+    session.step().unwrap();
+    session.end_civil_day().unwrap();
+    session.step().unwrap();
+    session.end_civil_day().unwrap();
+    let paid: Vec<_> = session.corporate_actions().unwrap().rights_offerings[0]
+        .subscriptions()
+        .iter()
+        .filter_map(|row| {
+            let HolderId::Account(account) = row.holder else {
+                return None;
+            };
+            (row.paid_amount.cents() > 0).then_some((account, row.paid_amount))
+        })
+        .collect();
+    assert!(!paid.is_empty());
+    advance_to_date(&mut session, plan.settlement_on);
+    session.step().unwrap();
+    let before: Vec<_> = paid
+        .iter()
+        .map(|(id, amount)| (*id, *amount, cash(&session, *id)))
+        .collect();
+    session.end_civil_day().unwrap();
+    assert!(
+        session.corporate_actions().unwrap().rights_offerings[0]
+            .settlement()
+            .unwrap()
+            .failed
+    );
+    for (id, amount, cash_before) in &before {
+        assert_eq!(
+            cash(&session, *id).cents(),
+            cash_before.cents() + amount.cents()
+        );
+    }
+    let restored = restore_with_three_groups(&session.save().unwrap());
+    for (id, _, _) in &before {
+        assert_eq!(cash(&restored, *id), cash(&session, *id));
+    }
+}
+
+#[test]
+fn serial_civil_projection_failure_preserves_and_retries_settlement() {
+    if crate::runtime::step_runtime_enabled() {
+        crate::session::protocol::ProtocolSession::run_serial_checkpoint_probe_for_test();
+        return;
+    }
+    use crate::company::rights_offering::{
+        RightsOfferingBook, RightsOfferingDeclaration, RightsOfferingEventPlan, RightsOfferingMode,
+        RightsSubscriptionStrategy,
+    };
+    let mode = CashDividendTaxMode::Exempt;
+    let mut setup = setup_fixture();
+    setup.stocks.truncate(1);
+    setup.stocks[0].code = crate::StockCode(STOCK.into());
+    setup.stocks[0].exchange = crate::StockExchange::Shanghai;
+    setup.stocks[0].total_shares = 1_200;
+    setup.stocks[0].float_shares = 1_200;
+    setup.npcs.retail_count = RETAIL_HOLDERS.len() as u32;
+    setup.npcs.inst_count = 0;
+    setup.npcs.hot_count = 0;
+    setup.strategy_params.retail.arrival_rate = 0.0;
+    setup.ticks_per_day = 1;
+    setup.auction_ticks = 0;
+    setup.closing_auction_ticks = 0;
+    setup.history_len = 1;
+    setup.start_date = date(START);
+    setup.float_allocation = crate::FloatAllocation::class_percentages(
+        100.0,
+        0.0,
+        0.0,
+        crate::WithinKindDistribution::EqualPercentage,
+    );
+    let mut companies = simple_company_fixture!(crate; [STOCK]);
+    let CompanySystemConfig::Simple(simple) = &mut companies else {
+        unreachable!("fixture 显式选择 Simple")
+    };
+    // 覆盖 2029 完整自然年，保留真实法定公积金与年度利润校验。
+    simple.prehistory_periods = 17;
+    setup.company_system = Some(companies);
+    setup.dividend_tax_mode = Some(mode);
+    if mode == CashDividendTaxMode::Exempt {
+        setup.config.stamp_tax_rate = 0.0;
+    }
+    setup.flat_withholding_bp = (mode == CashDividendTaxMode::FlatWithholding).then_some(1_000);
+    setup.par_value_per_share = Some(Money::from_cents(100));
+    setup.auto_corporate_foundation = true;
+
+    let session = GameSession::new_with_runtime_groups(setup, 7, 3).expect("构造真实公司会话");
+    let initial = session;
+    let mut saved = initial.save().unwrap();
+    saved.setup.rights_offering_enabled = true;
+    let company = CompanyId(0);
+    let capital = initial
+        .company_system()
+        .unwrap()
+        .dividend_legal_facts(&company)
+        .unwrap()
+        .unwrap()
+        .registered_capital;
+    let mut plan = RightsOfferingEventPlan {
+        event_id: "真实缴款测试".into(),
+        approval_reference: "测试批准".into(),
+        issuer: company,
+        stock: crate::StockCode(STOCK.into()),
+        exchange: crate::calendar::CalendarExchange::Sse,
+        approved_on: date(START),
+        announced_on: date(START),
+        registered_on: date(START),
+        payment_start_on: date(START),
+        payment_deadline_on: date(START),
+        ex_rights_on: date(START),
+        settlement_on: date(START),
+        listing_on: date(START),
+        price_per_share: Money::from_cents(cash(&initial, RETAIL_HOLDERS[0]).cents() / 2 + 1),
+        mode: RightsOfferingMode::RightsToAllShareholders {
+            shares_per_existing_share_micros: 100_000,
+        },
+        npc_subscription_strategy: RightsSubscriptionStrategy::FullByDefault,
+    };
+    plan.derive_schedule(initial.civil_clock().calendar(), plan.exchange, 1)
+        .unwrap();
+    saved
+        .company_state
+        .system_for_test_mut()
+        .declare_rights_offering(
+            &company,
+            RightsOfferingDeclaration {
+                event_id: plan.event_id.clone(),
+                approval_reference: plan.approval_reference.clone(),
+                approved_on: plan.approved_on,
+                price_per_share: plan.price_per_share,
+                par_value_per_share: Money::from_cents(100),
+                registered_capital_at_approval: capital,
+            },
+        )
+        .unwrap();
+    saved
+        .company_state
+        .actions_for_test_mut()
+        .rights_offerings
+        .push(RightsOfferingBook::new(plan.clone()).unwrap());
+    let mut session = restore_with_three_groups(&saved);
+    session.step().unwrap();
+    session.end_civil_day().unwrap();
+    session.step().unwrap();
+    let before = serde_json::to_value(session.save().unwrap()).unwrap();
+    let proof = session.serial_committed_market_close;
+    let fault = ValidationFault::new(1034, vec![75, 13]);
+    let mut reached = false;
+    let result: Result<(), SessionError> = session.with_prepared_civil_day(|candidate, _| {
+        reached = true;
+        assert!(!candidate.corporate_actions().unwrap().rights_offerings[0]
+            .subscriptions()
+            .is_empty());
+        Err(SessionError::InvalidSave(fault.clone()))
+    });
+    assert!(reached);
+    assert!(matches!(result, Err(SessionError::InvalidSave(actual)) if actual == fault));
+    assert_eq!(
+        serde_json::to_value(session.save().unwrap()).unwrap(),
+        before
+    );
+    assert_eq!(session.serial_committed_market_close, proof);
+    session.end_civil_day().unwrap();
+    assert!(!session.corporate_actions().unwrap().rights_offerings[0]
+        .subscriptions()
+        .is_empty());
+}

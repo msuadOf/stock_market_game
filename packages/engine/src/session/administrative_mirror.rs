@@ -479,7 +479,7 @@ impl GameSession {
         }
     }
 
-    fn administrative_account(
+    pub(super) fn administrative_account(
         &self,
         id: AccountId,
         raw: &crate::runtime::group::GroupAccount,

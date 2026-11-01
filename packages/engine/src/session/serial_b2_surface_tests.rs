@@ -22,6 +22,23 @@ use crate::session::npc_working_quote_tests::quote_setup;
 /// 子进程防递归标记。
 const SERIAL_PROBE: &str = "B2_SERIAL_SURFACE_PROBE";
 
+#[test]
+fn serial_close_proof_is_bound_to_real_finalizer() {
+    let mut session = b2_session("2030-01-02");
+    assert_eq!(session.serial_committed_market_close, None);
+    session
+        .freeze_serial_closed_retained_day_if_needed(session.civil_date())
+        .unwrap();
+    assert_eq!(session.serial_committed_market_close, None);
+    for _ in 0..3 {
+        session.step_pipeline_contract().unwrap();
+    }
+    assert_eq!(
+        session.serial_committed_market_close,
+        Some((session.tick(), session.civil_date()))
+    );
+}
+
 /// 静默局（tpd=3、retail=1）——retained_snapshot_tests 同式 fixture。
 fn b2_session(start: &str) -> GameSession {
     let mut setup = quote_setup(0);
@@ -194,6 +211,37 @@ fn serial_save_restore_probe() {
         restored.receipt_watermark(),
         session.receipt_watermark(),
         "回执水位 roundtrip"
+    );
+}
+
+#[test]
+fn serial_no_trade_day_keeps_ex_reference_after_a_trade() {
+    if crate::runtime::step_runtime_enabled() {
+        crate::session::protocol::ProtocolSession::run_serial_checkpoint_probe_for_test();
+        return;
+    }
+    let mut session = b2_session("2030-01-02");
+    let code = execute_buy(&mut session);
+    for _ in 0..2 {
+        session.step().unwrap();
+    }
+    session.end_civil_day().unwrap();
+    let market = session.state.markets.get_mut(&code).unwrap();
+    market
+        .install_ex_reference(
+            crate::Money::from_cents(1000),
+            crate::Money::from_cents(900),
+        )
+        .unwrap();
+    for _ in 0..3 {
+        let events = session.step().unwrap();
+        assert!(!events
+            .iter()
+            .any(|event| matches!(event, crate::Event::Trade { .. })));
+    }
+    assert_eq!(
+        session.state.markets[&code].last_close(),
+        crate::Money::from_cents(900)
     );
 }
 
