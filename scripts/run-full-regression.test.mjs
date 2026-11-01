@@ -126,6 +126,47 @@ it("Rust ordinary cases in one binary run concurrently with independent deadline
   assert.ok(calls.every((call) => call.timeoutMs === 2500));
 });
 
+it("真实 actor 成交短时限 case 独立运行后再并发其他 case", async () => {
+  const actor = "actor_market_goes_live_produces_trade_events";
+  const calls = [];
+  let actorDone = false;
+  let active = 0;
+  let peak = 0;
+  await executeRustTestBinaries({
+    artifacts: [{ executable: "actor-fixture", label: "path+file:///fixture/apps/server#server@0.1.0 test:actor" }],
+    policy: buildRustTestExecutionPolicy(8, 1), cwd: process.cwd(), env: {}, now: Date.now, remainingMs: () => 10000,
+    run: async (options) => {
+      if (options.args.includes("--list")) return { stdout: options.args.includes("--ignored") ? "" : `other: test\nother2: test\n${actor}: test\n` };
+      calls.push(options.args[0]);
+      if (options.args[0] === actor) { await new Promise((resolve) => setTimeout(resolve, 10)); actorDone = true; }
+      else {
+        assert.equal(actorDone, true, "actor case 完成前不得启动其他 case");
+        active += 1; peak = Math.max(peak, active);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        active -= 1;
+      }
+      assert.equal(options.timeoutMs, 10000);
+    },
+  });
+  assert.deepEqual(calls, [actor, "other", "other2"]);
+  assert.equal(peak, 2);
+});
+
+it("actor 独立 case 失败时停止其他测试并保留剩余期限", async () => {
+  const calls = [];
+  await assert.rejects(executeRustTestBinaries({
+    artifacts: [{ executable: "actor-fixture", label: "path+file:///fixture/apps/server#server@0.1.0 test:actor" }],
+    policy: buildRustTestExecutionPolicy(8, 1), cwd: process.cwd(), env: {}, now: Date.now, remainingMs: () => 3000,
+    run: async (options) => {
+      if (options.args.includes("--list")) return { stdout: options.args.includes("--ignored") ? "" : "other: test\nactor_market_goes_live_produces_trade_events: test\n" };
+      calls.push(options.args[0]);
+      assert.equal(options.timeoutMs, 3000);
+      throw new Error("actor fixture failed");
+    },
+  }), /actor fixture failed/);
+  assert.deepEqual(calls, ["actor_market_goes_live_produces_trade_events"]);
+});
+
 it("日历重 case 串行且其余 case 保持并发，全部仍有独立期限", async () => {
   const heavy = ["session::calendar_nonzero_plan_parity_tests::a", "session::calendar_final_boundary_tests::b"];
   const ordinary = ["ordinary::a", "ordinary::b"];

@@ -437,9 +437,12 @@ export async function executeRustTestBinaries({ artifacts, policy, run = runBoun
   const concurrency = Math.min(cases.length, Math.max(1, Math.min(24, Math.floor(policy.available_cpu_count / 2))));
   const casePolicy = { case_count: cases.length, max_concurrent_cases: concurrency, test_threads: 1, ordinary_case_timeout_ms: ORDINARY_TEST_MAX_MS };
   log(JSON.stringify({ phase: "rust-ordinary-cases-start", ...casePolicy }));
+  const isActorTradeCase = (testCase) => testCase.label.includes("/apps/server#") && testCase.label.endsWith(" test:actor") && testCase.name === "actor_market_goes_live_produces_trade_events";
+  const isolatedCases = cases.filter(isActorTradeCase);
+  const remainingCases = cases.filter((testCase) => !isActorTradeCase(testCase));
   const isCalendarCase = (testCase) => /^session::calendar_(?:nonzero_plan_parity|final_boundary)_tests::/.test(testCase.name);
-  const calendarCases = cases.filter(isCalendarCase);
-  const ordinaryCases = cases.filter((testCase) => !isCalendarCase(testCase));
+  const calendarCases = remainingCases.filter(isCalendarCase);
+  const ordinaryCases = remainingCases.filter((testCase) => !isCalendarCase(testCase));
   async function caseWorker(queue) {
     while (!stop) {
       const testCase = queue.shift();
@@ -461,8 +464,9 @@ export async function executeRustTestBinaries({ artifacts, policy, run = runBoun
       }
     }
   }
+  await caseWorker(isolatedCases);
   if (concurrency <= 1) {
-    await caseWorker(cases);
+    await caseWorker(remainingCases);
   } else {
     const calendarWorkers = Number(calendarCases.length > 0);
     const ordinaryWorkers = Math.min(ordinaryCases.length, concurrency - calendarWorkers);

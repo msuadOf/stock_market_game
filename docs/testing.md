@@ -108,7 +108,7 @@ POSIX 帮助脚本进行 `.nvmrc` 诊断。CI 或隔离环境可将 `NODE_BIN` �
   硬期限；先验证 inventory 自校验、当前源码指纹和每个二进制哈希，再按 `os.availableParallelism()`
   的可用 CPU 预算最多并发 8 个预构建 Rust test binaries 的 case 清单查询；分别读取完整清单与 ignored 清单，取差集，不运行 ignored 普通 case。
   每个普通 case 用独立进程执行 `--exact --test-threads=1`，进程外 watchdog 为 `min(10000ms, 批次剩余时间)`；
-  case 并发数为 `min(case 数量, max(1, min(24, floor(CPU 数量 / 2))))`；`session::calendar_nonzero_plan_parity_tests` 和 `session::calendar_final_boundary_tests` 共用一个串行队列，其余 case 同时并发，降低日历重 fixture 互相争用。每个 case 分配一个 harness thread
+  case 并发数为 `min(case 数量, max(1, min(24, floor(CPU 数量 / 2))))`；`session::calendar_nonzero_plan_parity_tests` 和 `session::calendar_final_boundary_tests` 共用一个串行队列，其余 case 同时并发，降低日历重 fixture 互相争用。`actor_market_goes_live_produces_trade_events` 的测试自身限定两秒，因此先独立运行，再启动其余 case；每个 case 分配一个 harness thread
   与其全部 CPU 预算（批 9 A7 起 Rayon threads 分量退役——引擎内部线程模型，
   不再按环境变量切分预算；单核时仍至少 1 线程，不宣称未超卖）。
   独立执行的必跑 ignored 长用例使用 1 个 harness thread。
