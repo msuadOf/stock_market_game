@@ -138,3 +138,17 @@ it("places the complete Web worker behind an external ten-second gate", async ()
 it("rejects direct invocation of an unsupervised internal Web worker", async () => {
   await assert.rejects(main(["--internal-worker"], {}), /external ten-second supervisor/i);
 });
+
+it("完整回归分批覆盖全部文件并保持单批十秒门禁", async () => {
+  const files = Array.from({ length: 17 }, (_, index) => `/web/${index}.test.ts`);
+  const seen = [];
+  for (let index = 0; index < 4; index += 1) {
+    await runWebTestBatch({ webRoot: "/web", cpuCount: 4, batchIndex: index, batchCount: 4,
+      discover: async () => files, run: async (options) => {
+        assert.ok(options.timeoutMs <= 10000);
+        seen.push(...options.args.slice(4));
+      } });
+  }
+  assert.deepEqual(seen.sort(), [...files].sort());
+  await assert.rejects(runWebTestBatch({ batchIndex: 4, batchCount: 4, discover: async () => files }), /batch/i);
+});

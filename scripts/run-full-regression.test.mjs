@@ -541,7 +541,7 @@ it("fake build/execute 的 Cargo jobs 与所有预算日志一致且保留执行
     });
     const binaries = result.steps.find((step) => step.label === "Rust prebuilt test binaries");
     assert.equal(binaries.available_cpu_count, 128);
-    assert.equal(binaries.max_concurrent_cases, 64);
+    assert.equal(binaries.max_concurrent_cases, 16);
     assert.equal(binaries.test_threads, 1);
     assert.equal(scriptsObserved, true);
   } finally { await fixture.cleanup(); }
@@ -761,7 +761,7 @@ it("preserves deeply nested JSON extras accepted by the inventory wire format", 
           : "" };
       },
     });
-    assert.equal(calls, 7);
+    assert.equal(calls, 10);
   } finally {
     await fixture.cleanup();
   }
@@ -860,9 +860,9 @@ it("executes sealed prebuilt test binaries, then preserves doctests and 10-secon
     assert.equal(longValidation.env.RAYON_NUM_THREADS, undefined);
     assert.equal(calls.filter((call) => call.command === "cargo" && call.args.includes("--doc")).length, 1);
     assert.equal(calls.find((call) => call.command === "cargo" && call.args.includes("--doc")).timeoutMs, 299_995);
-    const web = calls.find((call) => call.args?.some((argument) => argument.endsWith("scripts/run-web-tests.mjs")));
-    assert.equal(web.command, process.execPath);
-    assert.equal(web.timeoutMs, 10_000);
+    const web = calls.filter((call) => call.args?.some((argument) => argument.endsWith("scripts/run-web-tests.mjs")));
+    assert.deepEqual(web.map((call) => call.args.slice(-2)), [["0", "4"], ["1", "4"], ["2", "4"], ["3", "4"]]);
+    assert.ok(web.every((call) => call.command === process.execPath && call.timeoutMs <= 10_000));
     const scripts = calls.filter((call) => call.args?.some((argument) => argument.endsWith(".test.mjs")));
     assert.deepEqual(scripts.map((call) => call.args.at(-1)).sort(), await discoverScriptTestFiles(process.cwd()));
     assert.ok(scripts.every((call) => call.timeoutMs <= 10_000 && call.args.includes("--test-timeout=10000")));

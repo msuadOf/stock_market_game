@@ -85,6 +85,8 @@ export function buildWebTestShardPolicy(availableCpuCount, files) {
 export async function runWebTestBatch({
   webRoot = path.join(DEFAULT_REPO_ROOT, "apps", "web"),
   cpuCount = os.availableParallelism(),
+  batchIndex = 0,
+  batchCount = 1,
   discover = discoverWebTestFiles,
   run = runBoundedCommand,
   now = Date.now,
@@ -92,7 +94,12 @@ export async function runWebTestBatch({
 } = {}) {
   assertSupportedNodeVersion();
   const startedAt = now();
-  const files = await discover(webRoot);
+  const inventory = await discover(webRoot);
+  if (!Number.isInteger(batchCount) || batchCount < 1 || !Number.isInteger(batchIndex) || batchIndex < 0 || batchIndex >= batchCount || inventory.length < batchCount) {
+    throw new Error("invalid Web test batch selection");
+  }
+  if (new Set(inventory).size !== inventory.length) throw new Error("Web test inventory contains duplicate paths");
+  const files = inventory.filter((_, index) => index % batchCount === batchIndex);
   const policy = buildWebTestShardPolicy(cpuCount, files);
   log(JSON.stringify({ status: "started", available_cpu_count: policy.available_cpu_count,
     max_concurrent_processes: policy.max_concurrent_processes,
@@ -158,11 +165,13 @@ export async function runWebTests({
 
 export async function main(argv, env = process.env) {
   if (argv.length === 0) return runWebTests();
-  if (argv.length === 1 && argv[0] === "--internal-worker") {
+  if ((argv.length === 1 || argv.length === 3) && argv[0] === "--internal-worker") {
     if (env[WEB_TEST_INTERNAL_WORKER_ENV] !== "1") {
       throw new Error("Web test internal worker must be started by the external ten-second supervisor");
     }
-    return runWebTestBatch({ log: console.log });
+    const batchIndex = argv.length === 3 ? Number(argv[1]) : 0;
+    const batchCount = argv.length === 3 ? Number(argv[2]) : 1;
+    return runWebTestBatch({ batchIndex, batchCount, log: console.log });
   }
   throw new Error("usage: run-web-tests.mjs");
 }
