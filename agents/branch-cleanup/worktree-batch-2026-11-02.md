@@ -57,3 +57,5 @@
 第八批将 `feat/wasm-w1-combined-build-monitor` `d192e0d6` 和 `feat/wasm-w1-spawn-ui` `c4ce50c3` 分别转为同短 SHA 的 `archive/20261102-...` tag，原工作树均保留同提交 detached HEAD。检查时工作树干净、未发现进程 cwd 使用；独立复核提示早期 supervisor、bootstrap 和 handshake 仍须逐行为核销，不能宣称全部已交付。基线已有主要宿主和 spawn UI 路径，monitor 特有的历史构建工具与红绿证据保留在 tag；还需核对该工具是否仍承担现行门禁。未运行产品测试。
 
 第九批将 `feat/wasm-w2-primitives-2026-10-28` `a1069614` 转为 `archive/20261102-a1069614`，保留原工作树同提交 detached HEAD。代表性的九项等待机制 smoke 以 `9799e336` 集成到更新后的收敛线（不是本记录原冻结基线 `6fe53f65`），未声称原 23 项测试全部迁移。此 branch 尚含旧宿主、握手、测试及证据的其他差异，仍需逐项核销；归档保留完整原始历史。操作前工作树干净并检查进程 cwd；原 smoke 直接 rustc 运行 9/9 通过，Cargo 冷编译未在 9 秒内完成。
+
+第十批将未绑定 worktree 的 `integrate/product-union-2026-10-28` `87576b7a` 转为 `archive/20261102-87576b7a`。独立逐提交核查其七项变动涉及的 122 路径：候选 tip 与基线祖先 `bdb0412c`、`11cb97fa` 相比 120 个 blob 一致，另两个测试文件仅追加测试及模块声明；候选自身已替换的旧测试不能称为基线遗漏。这证明历史集成点覆盖，不能推断此后所有文件未演进或验收已通过。全部 stash 保留；未运行产品测试。
