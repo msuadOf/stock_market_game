@@ -18,6 +18,7 @@ import { createSealedFixture, resealInventory, createExternalTargetFixture } fro
 it("executes sealed prebuilt test binaries, then preserves doctests and 10-second web coverage", async () => {
   let nowMs = 0;
   const calls = [];
+  const webBatches = [];
   const fixture = await createSealedFixture();
   try {
     const result = await executeFullRegression({
@@ -26,8 +27,9 @@ it("executes sealed prebuilt test binaries, then preserves doctests and 10-secon
       cpuCount: 8, baseEnv: {},
       now: () => nowMs,
       collectFingerprint: async () => fixture.fingerprint,
+      runWeb: async ({ batchIndex, batchCount, remainingMs }) => { webBatches.push([batchIndex, batchCount, remainingMs("Web")]); },
       run: async (options) => {
-        calls.push(options);
+        calls.push({ ...options, calledAt: nowMs });
         nowMs += 1;
         return { stdout: options.args.includes("--list")
           ? (options.args.includes("--exact")
@@ -59,10 +61,10 @@ it("executes sealed prebuilt test binaries, then preserves doctests and 10-secon
     ]);
     assert.equal(longValidation.env.RAYON_NUM_THREADS, undefined);
     assert.equal(calls.filter((call) => call.command === "cargo" && call.args.includes("--doc")).length, 1);
-    assert.equal(calls.find((call) => call.command === "cargo" && call.args.includes("--doc")).timeoutMs, 299_982);
-    const web = calls.filter((call) => call.args?.some((argument) => argument.endsWith("scripts/run-web-tests.mjs")));
-    assert.deepEqual(web.map((call) => call.args.slice(-2)), [["12", "13"], ...Array.from({ length: 12 }, (_, index) => [String(index), "13"])]);
-    assert.ok(web.every((call) => call.command === process.execPath && call.timeoutMs <= 10_000));
+    const doctest = calls.find((call) => call.command === "cargo" && call.args.includes("--doc"));
+    assert.equal(doctest.timeoutMs, 300_000 - doctest.calledAt);
+    assert.deepEqual(webBatches.map(([index, count]) => [index, count]), [[12, 13], ...Array.from({ length: 12 }, (_, index) => [index, 13])]);
+    assert.ok(webBatches.every(([, , remaining]) => remaining > 0 && remaining <= 300_000));
     const scripts = calls.filter((call) => call.args?.some((argument) => argument.endsWith(".test.mjs")));
     assert.deepEqual(scripts.map((call) => call.args.at(-1)).sort(), await discoverScriptTestFiles(process.cwd()));
     assert.ok(scripts.every((call) => call.timeoutMs <= 10_000 && call.args.includes("--test-timeout=10000")));
@@ -97,11 +99,15 @@ it("TypeScript 批次失败时不启动并行执行线", { timeout: 10000 }, asy
   try {
     await assert.rejects(executeFullRegression({ inventoryPath: fixture.inventoryPath,
       collectFingerprint: async () => fixture.fingerprint,
-      run: async (options) => { calls.push(options); if (calls.length === 2) throw new Error("类型检查失败"); },
+      run: async (options) => { calls.push(options); },
+      runWeb: async ({ batchIndex, batchCount, remainingMs }) => {
+        assert.equal(batchIndex, 12); assert.equal(batchCount, 13);
+        assert.ok(remainingMs("类型检查") <= 300000);
+        throw new Error("类型检查失败");
+      },
     }), /类型检查失败/);
-    assert.equal(calls.length, 2);
-    assert.deepEqual(calls[1].args.slice(-2), ["12", "13"]);
-    assert.equal(calls[1].timeoutMs, 10000);
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].args.at(-1), /rust-test-case-supervisor-blocked\.test\.mjs$/);
   } finally { await fixture.cleanup(); }
 });
 
@@ -115,12 +121,12 @@ it("第九个 Web 批次失败立即终止后续测试并服从共享剩余期�
       inventoryPath: fixture.inventoryPath, cpuCount: 8, now: () => nowMs,
       collectFingerprint: async () => fixture.fingerprint,
       runScripts: async () => { scriptsCalled = true; },
+      runWeb: async ({ remainingMs }) => {
+        timeouts.push(Math.min(10000, remainingMs("Web fixture")));
+        nowMs += 37_000;
+        if (timeouts.length === 9) throw new Error("第九批失败");
+      },
       run: async (options) => {
-        if (options.args.some((arg) => arg.endsWith("scripts/run-web-tests.mjs"))) {
-          timeouts.push(options.timeoutMs);
-          nowMs += 37_000;
-          if (timeouts.length === 9) throw new Error("第九批失败");
-        }
         return { stdout: options.args.includes("--list")
           ? (options.args.includes("--exact") ? "lifecycle::year_boundary_keeps_company_operations_and_disclosure_state_authoritative: test\n" : (options.args.includes("--ignored") ? "" : "ordinary: test\n")) : "" };
       },
@@ -160,8 +166,13 @@ it("fails fast and aborts in-flight sibling test binaries", async () => {
       inventoryPath,
       baseEnv: {},
       collectFingerprint: async () => fingerprint,
+      runWeb: async ({ batchIndex, signal }) => {
+        if (batchIndex === 12) return;
+        await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
+        throw signal.reason;
+      },
       run: async (options) => {
-        if (options.command === process.execPath && (options.args.at(-1).endsWith("rust-test-case-supervisor-blocked.test.mjs") || options.args.at(-1) === "13" && options.args.at(-2) === "12")) return;
+        if (options.command === process.execPath && options.args.at(-1).endsWith("rust-test-case-supervisor-blocked.test.mjs")) return;
         if (options.command === process.execPath) {
           await new Promise((resolve) => options.signal.addEventListener("abort", resolve, { once: true }));
           throw options.signal.reason;
@@ -233,6 +244,8 @@ it("rejects source drift detected after the shared execution phase", async () =>
       collectFingerprint: async () => fingerprintCall++ === 0
         ? fixture.fingerprint
         : { ...fixture.fingerprint, digest: "d".repeat(64) },
+      runWeb: async () => {},
+      runScripts: async () => ({ file_count: 0 }),
       run: async ({ args }) => ({ stdout: args.includes("--list") && args.includes("--exact")
         ? "lifecycle::year_boundary_keeps_company_operations_and_disclosure_state_authoritative: test\n"
         : "", stderr: "" }),
@@ -381,6 +394,7 @@ it("长验过滤命中 0 条用例时必须显式报错，不允许空集静默�
       inventoryPath: fixture.inventoryPath,
       collectFingerprint: async () => fixture.fingerprint,
       runScripts: async () => ({ file_count: 0 }),
+      runWeb: async () => {},
       run: async ({ args }) => {
         if (args.includes("--list") && args.includes("--exact")) return { stdout: "" };
         if (args.includes("--list")) return { stdout: args.includes("--ignored") ? "" : "ordinary: test\n" };
@@ -461,6 +475,7 @@ it("外置 tiny artifact 在同一 target 封存和执行，跨 target inventory
     let ordinaryExecutions = 0;
     let scriptsObserved = false;
     const execute = { ...options, inventoryPath: build.inventory_path,
+      runWeb: async ({ env }) => { checkEnv(env); },
       runScripts: async ({ env }) => { checkEnv(env); scriptsObserved = true; return { file_count: 1 }; },
       run: async ({ command, args, env }) => {
         checkEnv(env);

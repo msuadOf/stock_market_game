@@ -267,8 +267,10 @@ it("preserves deeply nested JSON extras accepted by the inventory wire format", 
     assert.equal(JSON.stringify(inventory.toJson()), originalJson);
     await writeFile(fixture.inventoryPath, originalJson);
     let calls = 0;
+    const webBatches = [];
     await executeFullRegression({
       runScripts: async () => ({ file_count: 0 }),
+      runWeb: async ({ batchIndex }) => { webBatches.push(batchIndex); },
       inventoryPath: fixture.inventoryPath,
       collectFingerprint: async () => fixture.fingerprint,
       run: async ({ args }) => {
@@ -278,7 +280,8 @@ it("preserves deeply nested JSON extras accepted by the inventory wire format", 
           : "" };
       },
     });
-    assert.equal(calls, 20);
+    assert.equal(calls, 7);
+    assert.deepEqual(webBatches, [12, ...Array.from({ length: 12 }, (_, index) => index)]);
   } finally {
     await fixture.cleanup();
   }

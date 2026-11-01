@@ -57,3 +57,14 @@ test("Web shard 失败汇总保留原始错误信息", async () => {
     run: async () => { throw new Error("具体故障"); },
   }), /具体故障/);
 });
+
+test("真实 Web batch 将共享剩余时间传给文件进程，耗尽时不启动", async () => {
+  const calls = [];
+  await runWebTestBatch({ cpuCount: 1, discover: async () => ["fixture.test.ts"], remainingMs: () => 4000,
+    run: async (options) => { calls.push(options); } });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].timeoutMs, 4000);
+  assert.ok(calls[0].args.includes("--test-timeout=10000"));
+  await assert.rejects(runWebTestBatch({ cpuCount: 1, discover: async () => ["fixture.test.ts"], remainingMs: () => 0,
+    run: async () => { assert.fail("截止后不得启动文件进程"); } }), /deadline/);
+});
