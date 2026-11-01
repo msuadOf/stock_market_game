@@ -34,3 +34,14 @@
 | feat/company-disclosures-candidate | 316ca881 | 基线保留更正候选推进、具体错误原因链及相关测试；提交本身不属于补丁等价。 |
 
 前三项的对应提交 patch-id 不同，增删行对照不能单独证明全部上下文语义相同，因此保留原 tip tag 和 worktree。六条 worktree 均保持原提交；没有运行产品测试。
+
+第三批同样使用冻结基线 `6fe53f65`。以下四条均保留原 tip tag `archive/20261102-<短 SHA>` 和原工作树 detached HEAD，删除 branch 前复核 HEAD、工作区及进程 cwd。独立审查确认如下内容依据：
+
+| 原 branch | 原 HEAD | 依据 |
+| --- | --- | --- |
+| feat/b4c-share-transform-r3a | d239ab47 | 六项补丁等价，余项与基线祖先 46f7692c 按文件忽略空白的非空增删行相同。 |
+| feat/b4d-information-prepare | 51ca08c8 | 三项补丁等价，余两项分别与基线祖先 1e54f18b、9d74e819 按文件忽略空白的非空增删行相同。 |
+| fix/share-split-zero-issued | 2c331b5c | 与基线祖先 a568584f 按文件忽略空白的非空增删行相同。 |
+| codex/regression36-inline-repair | c000d475 | 三组 session 回归夹具的断言保留于基线，两个提交并非补丁等价。 |
+
+增删行对照并非 patch-id 相等或最终上下文的完整语义证明，因此保留原 tip tag。前两处相关 worktree 中，share-transform 的 ignored `bindings/` 及 share-split 的 ignored `.tmp/` 也随完整 worktree 保留；未清除 WIP 或运行产品测试。
