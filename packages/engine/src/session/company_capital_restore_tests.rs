@@ -35,8 +35,10 @@ use crate::company::stock_distribution::{
 };
 use crate::company::{CompanyKind, CompanySpec, IndustryId};
 use crate::orderbook::AccountId;
-use crate::session::corporate_actions::QueuedRightsSubscription;
-use crate::session::{SecurityCategory, StockExchange, StockSpec};
+use crate::session::{
+    QueuedRightsSubscription, RejectedRightsSubscription, SecurityCategory, StockExchange,
+    StockSpec,
+};
 use crate::stock::StockMeta;
 use crate::StockCode;
 
@@ -409,16 +411,17 @@ fn capital_restore_accepts_only_live_entitled_uncommitted_queue_facts() {
     let mut retry = Fixture::new();
     retry.rights_with_queue_days(0, false, 2, 500, None);
     retry.actions.rights_subscription_queue[0].submitted_on = date("2030-06-05");
-    retry.actions.rejected_rights_subscriptions.push(
-        crate::session::corporate_actions::RejectedRightsSubscription {
+    retry
+        .actions
+        .rejected_rights_subscriptions
+        .push(RejectedRightsSubscription {
             event_id: "rights-a".into(),
             account: AccountId(7),
             requested_shares: 300,
             submitted_on: date("2030-06-04"),
             rejected_on: date("2030-06-04"),
             reason: "早前拒绝不阻止后续缴款日重试".into(),
-        },
-    );
+        });
     assert!(retry
         .validate_with_queue_policy("2030-06-04", "2030-06-05", true)
         .is_ok());

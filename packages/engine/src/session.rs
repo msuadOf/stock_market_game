@@ -182,8 +182,9 @@ pub use history_reads::HistoricalStockData;
 /// 公司行为 spine 容器与 B4e 最小税务查询视图；不包含日终或命令接线。
 pub use corporate_actions::{
     AccountDividendTaxStatusView, AccountStockDividendTaxStatus, DividendTaxOutstandingView,
-    DividendTaxStatus, FlatWithholdingReceipt, SessionCorporateActions,
-    SessionCorporateActionsError, TaxpayerIdentity,
+    DividendTaxStatus, FlatWithholdingReceipt, QueuedRightsSubscription,
+    RejectedRightsSubscription, SessionCorporateActions, SessionCorporateActionsError,
+    TaxpayerIdentity,
 };
 pub use initial_allocation::{
     InitialAllocation, InitialAllocationCategory, InitialAllocationKind, InitialStockAllocation,
