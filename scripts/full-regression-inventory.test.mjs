@@ -224,6 +224,7 @@ it("accepts a correctly sealed reordered inventory with extras and duplicate art
       inventoryPath: fixture.inventoryPath,
       collectFingerprint: async () => fixture.fingerprint,
       run: async ({ command, args }) => {
+        if (command === process.execPath) return;
         assert.equal(command, fixture.artifact);
         if (args.includes("--list")) return { stdout: args.includes("--ignored") ? "" : "ordinary: test\n" };
         ordinaryExecutions += 1;
@@ -277,7 +278,7 @@ it("preserves deeply nested JSON extras accepted by the inventory wire format", 
           : "" };
       },
     });
-    assert.equal(calls, 18);
+    assert.equal(calls, 19);
   } finally {
     await fixture.cleanup();
   }

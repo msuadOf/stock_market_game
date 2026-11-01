@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { COMMAND_CLEANUP_RESERVE_MAX_MS, LONG_VALIDATION_MAX_MS, ORDINARY_TEST_MAX_MS, runBoundedCommand } from "./run-with-deadline.mjs";
 import { prepareWorkspacePaths, validateWorkspaceOutputPath } from "./workspace-paths.mjs";
 import { WEB_TEST_INTERNAL_WORKER_ENV } from "./run-web-tests.mjs";
-import { runScriptTestBatch } from "./run-script-tests.mjs";
+import { discoverScriptTestFiles, runScriptTestBatch } from "./run-script-tests.mjs";
 import { hashArtifactFiles } from "./full-regression-artifact-hash.mjs";
 import { executeSupervisedRustTestBinaries } from "./rust-test-case-supervisor.mjs";
 
@@ -741,6 +741,18 @@ export async function executeFullRegression({
   log(JSON.stringify({ phase: "execute-start", ...rustPolicy, long_validation: longValidationPolicy }));
   log(JSON.stringify({ phase: "execute-lanes", rust_cpu_count: budgets.rust, web_cpu_count: budgets.web, parallel: cpuCount > 1 }));
   const scriptStep = steps.find((step) => step.kind === "script-test-batch");
+  const scriptFiles = await discoverScriptTestFiles(sourceRoot);
+  const isolatedFile = path.join(sourceRoot, "scripts", "rust-test-case-supervisor.test.mjs");
+  if (scriptFiles.filter((file) => file === isolatedFile).length !== 1) throw new Error(`缺少唯一时序敏感测试：${isolatedFile}`);
+  // 此 fixture 的进程就绪与 /proc 清理争用敏感，先独立执行并计入同一期限。
+  const isolatedStartedAt = now();
+  const isolatedTimeout = Math.min(ORDINARY_TEST_MAX_MS, remainingMs(isolatedFile));
+  await run({ command: process.execPath,
+    args: ["--test", "--test-timeout=10000", "--test-isolation=none", "--test-concurrency=1", isolatedFile],
+    cwd: sourceRoot, env: scriptStep.env, timeoutMs: isolatedTimeout,
+    cleanupReserveMs: Math.min(COMMAND_CLEANUP_RESERVE_MAX_MS, isolatedTimeout - 1),
+  });
+  const isolatedResult = { file: isolatedFile, wall_ms: now() - isolatedStartedAt };
   await executeRegressionLanes(cpuCount, async (signal) => {
     let stepStartedAt = now();
     const casePolicy = await executeRustTestBinaries({ artifacts, policy: rustPolicy, run, cwd: sourceRoot, env: binaryStep.env, remainingMs, now, log, signal });
@@ -767,8 +779,9 @@ export async function executeFullRegression({
     completed.push({ label: webStep.label, wall_ms: now() - stepStartedAt });
     signal.throwIfAborted();
     stepStartedAt = now();
-    const scripts = await runScripts({ cwd: sourceRoot, env: scriptStep.env, cpuCount: budgets.web, run, now, remainingMs, log, signal });
-    completed.push({ label: scriptStep.label, wall_ms: now() - stepStartedAt, ...scripts });
+    const scripts = await runScripts({ cwd: sourceRoot, env: scriptStep.env, cpuCount: budgets.web, run, now, remainingMs, log, signal, discover: async () => scriptFiles.filter((file) => file !== isolatedFile) });
+    completed.push({ ...scripts, label: scriptStep.label, wall_ms: now() - stepStartedAt + isolatedResult.wall_ms,
+      file_count: scripts.file_count + 1, files: [...(scripts.files ?? []), isolatedResult].sort((a, b) => a.file.localeCompare(b.file)) });
   });
 
   const after = await collectFingerprint(sourceRoot);
