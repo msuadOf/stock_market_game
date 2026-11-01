@@ -54,3 +54,9 @@ test("direct worker retains case deadlines, real process shards and fail-fast si
   assert.equal(calls.length, 2);
   assert.equal(cancelled, true);
 });
+
+test("Web shard 失败汇总保留原始错误信息", async () => {
+  await assert.rejects(runWebTestBatch({ cpuCount: 1, discover: async () => ["fixture.test.ts"],
+    run: async () => { throw new Error("具体故障"); },
+  }), /具体故障/);
+});

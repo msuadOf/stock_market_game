@@ -152,7 +152,7 @@ export async function runWebTestBatch({
       failures.push(new Error(`${label} failed: ${error.message}`, { cause: error }));
     }
   }));
-  if (failures.length > 0) throw new AggregateError(failures, `${failures.length} Web test shard failed`);
+  if (failures.length > 0) throw new AggregateError(failures, `${failures.length} Web test shard failed:\n${failures.map((failure) => failure.message).join("\n")}`);
   const wallMs = now() - startedAt;
   if (wallMs > ORDINARY_TEST_MAX_MS) throw new Error(`Web test batch exceeded its ${ORDINARY_TEST_MAX_MS}ms deadline`);
   completed.sort((left, right) => left.shard - right.shard);

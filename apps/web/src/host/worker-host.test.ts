@@ -99,15 +99,16 @@ for (const scenario of ["consumerReject", "initializationTimeout", "staleEnqueue
       const creating = createLegacyHost({} as Parameters<typeof createWorkerHost>[0], 1n);
       const engine = IntakeWorker.instances[0];
       await bootstrapLegacy(engine, false);
-      if (scenario === "initializationTimeout") context.mock.timers.tick(1);
       engine.emit({ type: "ingress", generation: 1, token: 42, shared: true });
       await drainLegacyPorts();
       const intake = IntakeWorker.instances[1];
       if (scenario === "initializationTimeout") {
-        const rejected = assert.rejects(creating, /初始化超时/);
-        context.mock.timers.tick(9999);
+        const rejected = assert.rejects(creating, /WASM_WORKER_INIT_TIMEOUT.*初始化在.*超时/);
+        intake.emit({ type: "ingressBound", requestId: intake.sent[0].requestId, generation: 1 });
         await drainLegacyPorts();
-        context.mock.timers.tick(2001);
+        context.mock.timers.tick(30_000);
+        await drainLegacyPorts();
+        context.mock.timers.tick(2_001);
         await drainLegacyPorts();
         await rejected;
         assert.equal(engine.terminations, 1);
