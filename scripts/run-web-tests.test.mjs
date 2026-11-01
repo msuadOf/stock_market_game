@@ -102,7 +102,7 @@ it("每个测试文件独立进程隔离，禁止同进程共享导致的 mock �
 
 it("单文件分片直接在独立进程运行，多文件分片保留逐文件隔离", async () => {
   const calls = [];
-  const files = ["/web/src/app/workspace-grid.test.ts", "/web/src/a.test.ts", "/web/src/b.test.ts"];
+  const files = ["/web/src/app/workspace-grid-types.test.ts", "/web/src/a.test.ts", "/web/src/b.test.ts"];
   await runWebTestBatch({
     webRoot: "/web",
     cpuCount: 2,
@@ -162,7 +162,7 @@ it("完整回归分批覆盖全部文件并保持单批十秒门禁", async () =
     await runWebTestBatch({ webRoot: "/web", cpuCount: 4, batchIndex: index, batchCount: 8,
       discover: async () => files, run: async (options) => {
         assert.ok(options.timeoutMs <= 10000);
-        seen.push(...options.args.slice(4));
+        seen.push(...options.args.filter((arg) => !arg.startsWith("--")));
       } });
   }
   assert.deepEqual(seen.sort(), [...files].sort());
@@ -177,21 +177,21 @@ it("完整回归单独执行启动页完整 App SSR，其余文件恰好执行�
   const seen = [];
   for (let index = 0; index < 12; index += 1) {
     await runWebTestBatch({ webRoot: "/web", cpuCount: 8, batchIndex: index, batchCount: 12,
-      discover: async () => files, run: async (options) => { seen.push(...options.args.slice(4)); } });
+      discover: async () => files, run: async (options) => { seen.push(...options.args.filter((arg) => !arg.startsWith("--"))); } });
   }
   assert.deepEqual(seen.sort(), [...files].sort());
   const calls = [];
   await runWebTestBatch({ cpuCount: 8, batchIndex: 8, batchCount: 12, discover: async () => files,
     run: async (options) => { calls.push(options); } });
-  assert.deepEqual(calls.flatMap((call) => call.args.slice(4)), [startup]);
+  assert.deepEqual(calls.flatMap((call) => call.args.filter((arg) => !arg.startsWith("--"))), [startup]);
   const schemaCalls = [];
   await runWebTestBatch({ cpuCount: 8, batchIndex: 9, batchCount: 12, discover: async () => files,
     run: async (options) => { schemaCalls.push(options); } });
-  assert.deepEqual(schemaCalls.flatMap((call) => call.args.slice(4)), [schema]);
+  assert.deepEqual(schemaCalls.flatMap((call) => call.args.filter((arg) => !arg.startsWith("--"))), [schema]);
   const schema2Calls = [];
   await runWebTestBatch({ cpuCount: 8, batchIndex: 10, batchCount: 12, discover: async () => files,
     run: async (options) => { schema2Calls.push(options); } });
-  assert.deepEqual(schema2Calls.flatMap((call) => call.args.slice(4)), [schema2]);
+  assert.deepEqual(schema2Calls.flatMap((call) => call.args.filter((arg) => !arg.startsWith("--"))), [schema2]);
 });
 
 it("完整回归要求唯一启动页测试，缺失或歧义显式失败", async () => {
@@ -220,7 +220,7 @@ it("浏览器对比度测试独立成批且全部文件恰好执行一次", asyn
   const isolated = [];
   for (let index = 0; index < 12; index += 1) {
     await runWebTestBatch({ cpuCount: 8, batchIndex: index, batchCount: 12, discover: async () => files,
-      run: async ({ args }) => { all.push(...args.slice(4)); if (index === 11) isolated.push(...args.slice(4)); } });
+      run: async ({ args }) => { all.push(...args.filter((arg) => !arg.startsWith("--"))); if (index === 11) isolated.push(...args.filter((arg) => !arg.startsWith("--"))); } });
   }
   assert.deepEqual(all.sort(), [...files].sort());
   assert.deepEqual(isolated, [browser]);
