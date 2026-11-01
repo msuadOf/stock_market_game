@@ -13,6 +13,13 @@ import {
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 
+it("高负载批次仍保留多核且最多并行四个 Web 文件", () => {
+  const files = Array.from({ length: 16 }, (_, index) => `/web/${index}.test.ts`);
+  const policy = buildWebTestShardPolicy(32, files);
+  assert.equal(policy.max_concurrent_processes, 4);
+  assert.deepEqual(policy.shards.flat().sort(), [...files].sort());
+});
+
 it("discovers every Web test file deterministically and rejects non-tests", async () => {
   const files = await discoverWebTestFiles(path.join(REPO_ROOT, "apps", "web"));
   assert.ok(files.length > 0);
@@ -27,19 +34,15 @@ it("partitions files across real processes without overselling the CPU budget", 
   assert.deepEqual(buildWebTestShardPolicy(128, files), {
     available_cpu_count: 128,
     file_count: 17,
-    shard_count: 8,
+    shard_count: 4,
     per_shard_file_concurrency: 1,
-    max_concurrent_processes: 8,
-    aggregate_process_budget: 8,
+    max_concurrent_processes: 4,
+    aggregate_process_budget: 4,
     shards: [
-      [files[0], files[8], files[16]],
-      [files[1], files[9]],
-      [files[2], files[10]],
-      [files[3], files[11]],
-      [files[4], files[12]],
-      [files[5], files[13]],
-      [files[6], files[14]],
-      [files[7], files[15]],
+      [files[0], files[4], files[8], files[12], files[16]],
+      [files[1], files[5], files[9], files[13]],
+      [files[2], files[6], files[10], files[14]],
+      [files[3], files[7], files[11], files[15]],
     ],
   });
   for (let cpuCount = 1; cpuCount <= 32; cpuCount += 1) {
@@ -89,7 +92,7 @@ it("每个测试文件独立进程隔离，禁止同进程共享导致的 mock �
       return { stdout: "", stderr: "" };
     },
   });
-  assert.equal(policy.shard_count, 8);
+  assert.equal(policy.shard_count, 4);
   assert.equal(calls.length, files.length);
   assert.ok(calls.every((call) => call.args.includes("--test-isolation=none") && call.args.filter((arg) => arg.endsWith(".test.ts")).length === 1));
   assert.ok(policy.max_concurrent_processes <= 16);

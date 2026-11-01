@@ -12,8 +12,8 @@ import {
 } from "./run-with-deadline.mjs";
 
 const DEFAULT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const MAX_WEB_TEST_PROCESSES = 8;
-const MAX_WEB_FILE_PROCESSES = 8;
+const MAX_WEB_TEST_PROCESSES = 4;
+const MAX_WEB_FILE_PROCESSES = 4;
 export const WEB_TEST_INTERNAL_WORKER_ENV = "STOCK_GAME_WEB_TEST_INTERNAL_WORKER";
 
 export function assertSupportedNodeVersion(version = process.versions.node) {

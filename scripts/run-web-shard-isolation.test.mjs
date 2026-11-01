@@ -42,7 +42,7 @@ test("records real shard counts before execution so a timeout does not erase the
 test("限制文件进程并发，并在启动前让事件循环处理已有任务", async () => {
   const files = Array.from({ length: 32 }, (_, index) => `/web/src/${index}.test.ts`);
   const policy = buildWebTestShardPolicy(64, files);
-  assert.equal(policy.max_concurrent_processes, 8);
+  assert.equal(policy.max_concurrent_processes, 4);
   let active = 0;
   let peak = 0;
   let yielded = false;
@@ -57,7 +57,7 @@ test("限制文件进程并发，并在启动前让事件循环处理已有任�
       active -= 1;
     },
   });
-  assert.equal(peak, 8);
+  assert.equal(peak, 4);
   assert.equal(result.files.length, files.length);
 });
 
