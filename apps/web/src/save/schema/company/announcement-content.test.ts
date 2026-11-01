@@ -6,11 +6,11 @@ import { SaveSchemaError } from "../primitives.ts"
 const path = "public_library.announcements[0].content"
 const common = {
   event_id: "corporate-1", approval_reference: "approval-1", issuer: 4_294_967_295,
-  stock: "600000", exchange: "Sse", approved_on: "2030-01-01", announced_on: "2030-01-02",
+  stock: "600000", exchange: "sse", approved_on: "2030-01-01", announced_on: "2030-01-02",
   registered_on: "2030-01-03", ex_rights_on: "2030-01-04",
 }
 const cashPlan = {
-  plan_id: "dividend-1", issuer: 0, stock: "000001", exchange: "Szse", formula: "StandardCashOnly",
+  plan_id: "dividend-1", issuer: 0, stock: "000001", exchange: "szse", formula: "StandardCashOnly",
   approved_on: "2030-01-01", announced_on: "2030-01-02", registered_on: "2030-01-03",
   ex_dividend_on: "2030-01-04", payable_on: "2030-01-04", gross_per_share: "1", distributable_amount: "9007199254740993",
 }
@@ -21,7 +21,7 @@ const rightsPlan = {
   mode: { RightsToAllShareholders: { shares_per_existing_share_micros: "100000" } },
 }
 const repurchasePlan = {
-  event_id: "repurchase-1", approval_reference: "approval-1", issuer: 0, stock: "600000", exchange: "Sse",
+  event_id: "repurchase-1", approval_reference: "approval-1", issuer: 0, stock: "600000", exchange: "sse",
   approved_on: "2030-01-01", announced_on: "2030-01-02", window_start_on: "2030-01-03", window_deadline_on: "2030-01-04",
   price_cap_per_share: "1000", total_budget: "9007199254740993", max_shares: "18446744073709551615",
   purpose: "ReduceCapital", completion_policy: "CancelOnCompletion", approval_unit_event_id: null,
@@ -142,4 +142,8 @@ test("定向方案递归拒绝未知、缺失和非规范字段", { timeout: 100
   rejects(fixture({ DirectedPlacement: { targets: [{ Unknown: {} }] } }), `${path}.value.plan.mode.DirectedPlacement.targets[0]`)
   rejects(fixture({ DirectedPlacement: { targets: [{ OpenPublicSubscription: { shares: "01" } }] } }), `${path}.value.plan.mode.DirectedPlacement.targets[0].OpenPublicSubscription.shares`)
   rejects(fixture({ RightsToAllShareholders: { shares_per_existing_share_micros: 100000 } }), `${path}.value.plan.mode.RightsToAllShareholders.shares_per_existing_share_micros`)
+})
+
+test("交易所使用 CalendarExchange 的小写 wire 并拒绝大写变体", { timeout: 10000 }, () => {
+  for (const exchange of ["Sse", "Szse", "SSE"]) rejects({ kind: "RightsOffering", value: { plan: { ...rightsPlan, exchange } } }, `${path}.value.plan.exchange`)
 })

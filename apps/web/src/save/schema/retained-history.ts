@@ -14,6 +14,7 @@
  * 分钟累计与真实日K统计逐位一致、receipt 行的证券/日期归属。
  */
 import { parseTurnoverCents } from "../../utils/turnover.ts"
+import { u32 } from "./personal/common.ts"
 import type { DailyCandle } from "../../types/generated/DailyCandle.ts"
 import { SaveSchemaError, array, civilDate, decimal, exact, integer, money, oneOf, record } from "./primitives.ts"
 
@@ -126,7 +127,7 @@ export function validateRetainedHistoryCandles(days: readonly SavedRetainedDay[]
   }
 }
 
-export type SavedTradeReceipt = { readonly receipt_id: string; readonly civil_date: string; readonly stock: string; readonly side: "Buy" | "Sell"; readonly price_cents: string; readonly quantity_shares: number; readonly gross_cents: string; readonly actual_fees: { readonly commission: string; readonly stamp_tax: string; readonly transfer_fee: string } }
+export type SavedTradeReceipt = { readonly receipt_id: string; readonly civil_date: string; readonly stock: number; readonly side: "Buy" | "Sell"; readonly price_cents: string; readonly quantity_shares: number; readonly gross_cents: string; readonly actual_fees: { readonly commission: string; readonly stamp_tax: string; readonly transfer_fee: string } }
 
 /** receipt 日志（根级 `personal_trade_confirmations`，AccountId 数值键——
  *  B2 wire 行：stock 数值 StockId + price_cents/gross_cents 分串）。 */
@@ -145,12 +146,12 @@ export function parsePersonalTradeConfirmations(value: unknown, path = "personal
       const quantity = integer(item.quantity_shares, `${location}.quantity_shares`, 1)
       const price = money(item.price_cents, `${location}.price_cents`)
       const gross = money(item.gross_cents, `${location}.gross_cents`)
-      if (typeof item.stock !== "string" || !/^\d+$/.test(item.stock)) throw new SaveSchemaError(`${location}.stock`, "必须为数值 StockId 的字符串形态")
+      const stock = u32(item.stock, `${location}.stock`)
       if (price === "0" || BigInt(price) * BigInt(quantity) !== BigInt(gross)) throw new SaveSchemaError(location, "成交价、成交量与成交额不一致")
       return {
         receipt_id: counter(item.receipt_id, `${location}.receipt_id`),
         civil_date: civilDate(item.civil_date, `${location}.civil_date`),
-        stock: item.stock,
+        stock,
         side: oneOf(item.side, `${location}.side`, ["Buy", "Sell"] as const),
         price_cents: price,
         quantity_shares: quantity,

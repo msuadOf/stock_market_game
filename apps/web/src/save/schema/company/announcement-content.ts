@@ -33,7 +33,7 @@ function issuerIdentity(item: JsonRecord, path: string) {
   return {
     issuer: u32(item.issuer, `${path}.issuer`),
     stock: string(item.stock, `${path}.stock`),
-    exchange: oneOf(item.exchange, `${path}.exchange`, ["Sse", "Szse"] as const),
+    exchange: oneOf(item.exchange, `${path}.exchange`, ["sse", "szse"] as const),
   }
 }
 

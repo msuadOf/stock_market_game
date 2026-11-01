@@ -56,12 +56,12 @@ test("零成交开市与闰日连续覆盖不裁剪且不生成分钟", { timeou
 })
 
 test("receipt 日志按账户收存且严格递增，水位必须超过最大已发 id", { timeout: 10000 }, () => {
-  const row = { receipt_id: "7", civil_date: "2030-01-02", stock: "0", side: "Buy" as const, price_cents: "1000", quantity_shares: 100, gross_cents: "100000", actual_fees: { commission: "500", stamp_tax: "0", transfer_fee: "1" } }
+  const row = { receipt_id: "7", civil_date: "2030-01-02", stock: 0, side: "Buy" as const, price_cents: "1000", quantity_shares: 100, gross_cents: "100000", actual_fees: { commission: "500", stamp_tax: "0", transfer_fee: "1" } }
   const log = { "0": [row] }
   assert.deepEqual(parsePersonalTradeConfirmations(log), log)
   assert.throws(() => parsePersonalTradeConfirmations({ "0": [row, row] }), /严格递增/)
   assert.throws(() => parsePersonalTradeConfirmations({ "0": [{ ...row, price_cents: "999" }] }), /成交价、成交量与成交额不一致/)
-  assert.throws(() => parsePersonalTradeConfirmations({ "0": [{ ...row, stock: "600-00" }] }), /数值 StockId/)
+  for (const stock of ["0", -1, 0.5, 4294967296]) assert.throws(() => parsePersonalTradeConfirmations({ "0": [{ ...row, stock }] }), /stock/)
   assert.equal(parseReceiptWatermark(8, log), 8)
   assert.equal(parseReceiptWatermark(0, {}), 0)
   assert.throws(() => parseReceiptWatermark(7, log), /超过最大已发/)
