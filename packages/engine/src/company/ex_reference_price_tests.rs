@@ -335,6 +335,111 @@ fn stock_distribution_ex_rights_rejects_cross_market_formula_and_invalid_inputs(
 use super::{rights_offering_ex_rights_reference_price, RightsOfferingExRightsFormula};
 
 #[test]
+fn rights_formula_preserves_nonterminating_ratio_and_rounds_once() {
+    let calendar = TradingCalendar::current_default_calendar().unwrap();
+    for (exchange, formula) in [
+        (
+            CalendarExchange::Sse,
+            RightsOfferingExRightsFormula::ShanghaiCirculatingRightsChangeRational {
+                issued_shares: 1,
+                base_shares: 3,
+            },
+        ),
+        (
+            CalendarExchange::Szse,
+            RightsOfferingExRightsFormula::ShenzhenRightsShareChangeRational {
+                issued_shares: 1,
+                base_shares: 3,
+            },
+        ),
+    ] {
+        let calculate = |close| {
+            rights_offering_ex_rights_reference_price(
+                &calendar,
+                exchange,
+                formula,
+                date("2030-06-10"),
+                Money::from_cents(close),
+                Money::ZERO,
+                Money::from_cents(1),
+            )
+            .unwrap()
+            .reference_price
+        };
+        // 1/3 下分别得到 2.5 与 5.5 分，最终一次按 half-to-even 舍入。
+        assert_eq!(calculate(3), Money::from_cents(2));
+        assert_eq!(calculate(7), Money::from_cents(6));
+    }
+}
+
+#[test]
+fn rights_rational_ratio_rejects_zero_and_matches_micros() {
+    let calendar = TradingCalendar::current_default_calendar().unwrap();
+    let calculate = |formula| {
+        rights_offering_ex_rights_reference_price(
+            &calendar,
+            CalendarExchange::Sse,
+            formula,
+            date("2030-06-10"),
+            Money::from_cents(1000),
+            Money::ZERO,
+            Money::from_cents(500),
+        )
+    };
+    let rational = |issued_shares, base_shares| {
+        RightsOfferingExRightsFormula::ShanghaiCirculatingRightsChangeRational {
+            issued_shares,
+            base_shares,
+        }
+    };
+    assert_eq!(
+        calculate(rational(20, 200)).unwrap(),
+        calculate(
+            RightsOfferingExRightsFormula::ShanghaiCirculatingRightsChange {
+                ratio_micros: 100_000
+            }
+        )
+        .unwrap()
+    );
+    assert!(matches!(
+        calculate(rational(0, 200)),
+        Err(ExReferencePriceError::InvalidRightsChangeRatio)
+    ));
+    assert!(matches!(
+        calculate(rational(1, 0)),
+        Err(ExReferencePriceError::InvalidRightsChangeRatio)
+    ));
+}
+
+#[test]
+fn rights_rational_rejects_exchange_mismatch_and_reports_overflow() {
+    let calendar = TradingCalendar::current_default_calendar().unwrap();
+    let formula = RightsOfferingExRightsFormula::ShanghaiCirculatingRightsChangeRational {
+        issued_shares: u64::MAX,
+        base_shares: u64::MAX,
+    };
+    let calculate = |exchange| {
+        rights_offering_ex_rights_reference_price(
+            &calendar,
+            exchange,
+            formula,
+            date("2030-06-10"),
+            Money::from_cents(i64::MAX),
+            Money::ZERO,
+            Money::from_cents(i64::MAX),
+        )
+    };
+    assert!(matches!(
+        calculate(CalendarExchange::Szse),
+        Err(ExReferencePriceError::RightsFormulaExchangeMismatch { .. })
+    ));
+    assert!(matches!(
+        calculate(CalendarExchange::Sse),
+        Err(ExReferencePriceError::RightsArithmeticOverflow)
+    ));
+}
+
+#[test]
 fn rights_formula_combines_cash_dividend_and_rights_price_components() {
     let calendar = TradingCalendar::current_default_calendar().unwrap();
     // 沪市：前收 1000 分、红利 40 分、配股价 600 分、实际比例 30%（300_000 micros）：

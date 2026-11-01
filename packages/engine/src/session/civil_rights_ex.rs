@@ -9,17 +9,6 @@ use crate::company::share_registry::{HolderId, RegistrationSnapshot, ShareRestri
 use crate::runtime::DeskExRightsRequest;
 use crate::session::corporate_actions::AppliedExReferenceGroup;
 
-pub(in crate::session) fn exact_ratio_micros(issued: u64, base: u64) -> Result<u64, &'static str> {
-    if base == 0 || issued == 0 {
-        return Err("配股除权股数必须为正");
-    }
-    let scaled = u128::from(issued) * 1_000_000;
-    if scaled % u128::from(base) != 0 {
-        return Err("实际配股比例不能精确表示为百万分之一");
-    }
-    u64::try_from(scaled / u128::from(base)).map_err(|_| "配股除权比例溢出")
-}
-
 pub(in crate::session) fn all_shares_circulating(snapshot: &RegistrationSnapshot) -> bool {
     let mut total = 0u64;
     for holding in snapshot.holdings() {
@@ -526,14 +515,18 @@ impl GameSession {
                 .iter()
                 .try_fold(0u64, |sum, row| sum.checked_add(row.paid_shares))
                 .ok_or_else(|| fail("实缴股份合计溢出".into()))?;
-            let ratio_micros = exact_ratio_micros(paid, snapshot.issued_shares())
-                .map_err(|detail| fail(detail.into()))?;
             let formula = match plan.exchange {
                 crate::calendar::CalendarExchange::Sse => {
-                    RightsOfferingExRightsFormula::ShanghaiCirculatingRightsChange { ratio_micros }
+                    RightsOfferingExRightsFormula::ShanghaiCirculatingRightsChangeRational {
+                        issued_shares: paid,
+                        base_shares: snapshot.issued_shares(),
+                    }
                 }
                 crate::calendar::CalendarExchange::Szse => {
-                    RightsOfferingExRightsFormula::ShenzhenRightsShareChange { ratio_micros }
+                    RightsOfferingExRightsFormula::ShenzhenRightsShareChangeRational {
+                        issued_shares: paid,
+                        base_shares: snapshot.issued_shares(),
+                    }
                 }
             };
             let id = self
@@ -584,16 +577,5 @@ impl GameSession {
             .applied_ex_reference_groups
             .extend(groups);
         Ok(requests)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn rights_ratio_does_not_silently_round() {
-        assert_eq!(exact_ratio_micros(20, 200).unwrap(), 100_000);
-        assert!(exact_ratio_micros(1, 3).is_err());
-        assert!(exact_ratio_micros(0, 200).is_err());
     }
 }

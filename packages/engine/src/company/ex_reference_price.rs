@@ -45,11 +45,11 @@ pub enum StockDistributionExRightsFormula {
 
 /// 配股除权公式按上市地交易所分列参数化（与送转公式同一分列纪律）：
 ///
-/// - 沪市《交易规则（2026 年修订）》4.3.1：`[(前收盘价格−现金红利)+配股价格×流通股份变动比例]/(1+流通股份变动比例)`。
-/// - 深市《交易规则（2026 年修订）》4.4.1：`[(前收盘价−现金红利)+配股价格×股份变动比例]/(1+股份变动比例)`。
+/// - 沪市《交易规则（2026 年修订）》4.3.2：`[(前收盘价格−现金红利)+配股价格×流通股份变动比例]/(1+流通股份变动比例)`。
+/// - 深市《交易规则（2026 年修订）》4.4.2：`[(前收盘价−现金红利)+配股价格×股份变动比例]/(1+股份变动比例)`。
 ///
 /// 变动比例为**实际配股比例**（按认购结果确定的实际新增股份 ÷ 配股前股份，
-/// 百万分之一股整数单位）；公式自带现金红利项，允许与同日现金分红合并。
+/// 可以使用精确股数分子与分母）；公式自带现金红利项，允许与同日现金分红合并。
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export)]
@@ -65,6 +65,24 @@ pub enum RightsOfferingExRightsFormula {
         #[serde(with = "crate::orderbook::canonical_u64_decimal")]
         #[ts(type = "string")]
         ratio_micros: u64,
+    },
+    /// 沪市实际流通新增股数与原流通股数的精确比例。
+    ShanghaiCirculatingRightsChangeRational {
+        #[serde(with = "crate::orderbook::canonical_u64_decimal")]
+        #[ts(type = "string")]
+        issued_shares: u64,
+        #[serde(with = "crate::orderbook::canonical_u64_decimal")]
+        #[ts(type = "string")]
+        base_shares: u64,
+    },
+    /// 深市实际新增股数与原股数的精确比例。
+    ShenzhenRightsShareChangeRational {
+        #[serde(with = "crate::orderbook::canonical_u64_decimal")]
+        #[ts(type = "string")]
+        issued_shares: u64,
+        #[serde(with = "crate::orderbook::canonical_u64_decimal")]
+        #[ts(type = "string")]
+        base_shares: u64,
     },
 }
 
@@ -238,8 +256,10 @@ pub enum ExReferencePriceError {
     },
     #[error("送转除权比例必须为正数（百万分之一股整数单位）")]
     InvalidShareChangeRatio,
-    #[error("配股除权比例必须为正数（百万分之一股整数单位）")]
+    #[error("配股除权比例的分子和分母必须为正数")]
     InvalidRightsChangeRatio,
+    #[error("配股除权参考价计算的中间数值溢出")]
+    RightsArithmeticOverflow,
     #[error("配股除权公式与交易所不匹配：{formula:?} 不能用于 {exchange:?} 证券")]
     RightsFormulaExchangeMismatch {
         formula: RightsOfferingExRightsFormula,
@@ -423,27 +443,26 @@ pub fn rights_offering_ex_rights_reference_price(
     cash_dividend_per_share: Money,
     rights_price_per_share: Money,
 ) -> Result<ExReferencePrice, ExReferencePriceError> {
-    let ratio_micros = match formula {
+    let (issued_shares, base_shares, expected_exchange) = match formula {
         RightsOfferingExRightsFormula::ShanghaiCirculatingRightsChange { ratio_micros } => {
-            if exchange != CalendarExchange::Sse {
-                return Err(ExReferencePriceError::RightsFormulaExchangeMismatch {
-                    formula,
-                    exchange,
-                });
-            }
-            ratio_micros
+            (ratio_micros, 1_000_000, CalendarExchange::Sse)
         }
         RightsOfferingExRightsFormula::ShenzhenRightsShareChange { ratio_micros } => {
-            if exchange != CalendarExchange::Szse {
-                return Err(ExReferencePriceError::RightsFormulaExchangeMismatch {
-                    formula,
-                    exchange,
-                });
-            }
-            ratio_micros
+            (ratio_micros, 1_000_000, CalendarExchange::Szse)
         }
+        RightsOfferingExRightsFormula::ShanghaiCirculatingRightsChangeRational {
+            issued_shares,
+            base_shares,
+        } => (issued_shares, base_shares, CalendarExchange::Sse),
+        RightsOfferingExRightsFormula::ShenzhenRightsShareChangeRational {
+            issued_shares,
+            base_shares,
+        } => (issued_shares, base_shares, CalendarExchange::Szse),
     };
-    if ratio_micros == 0 {
+    if exchange != expected_exchange {
+        return Err(ExReferencePriceError::RightsFormulaExchangeMismatch { formula, exchange });
+    }
+    if issued_shares == 0 || base_shares == 0 {
         return Err(ExReferencePriceError::InvalidRightsChangeRatio);
     }
     if previous_close <= Money::ZERO {
@@ -468,25 +487,25 @@ pub fn rights_offering_ex_rights_reference_price(
         });
     }
     let ex_date = calendar.next_trading_day(exchange, payment_deadline)?;
-    // 分子（按百万分之一缩放）：(前收 − 红利) × 1e6 + 配股价 × 比例。
+    // 分子：(前收 − 红利) × 原股数 + 配股价 × 实际新增股数。
     let base_cents =
         i128::from(previous_close.cents()) - i128::from(cash_dividend_per_share.cents());
     if base_cents <= 0 {
         return Err(ExReferencePriceError::NonPositiveExRightsNumerator { cents: base_cents });
     }
     let numerator_scaled = base_cents
-        .checked_mul(1_000_000)
+        .checked_mul(i128::from(base_shares))
         .and_then(|scaled| {
             scaled
-                .checked_add(i128::from(rights_price_per_share.cents()) * i128::from(ratio_micros))
+                .checked_add(i128::from(rights_price_per_share.cents()) * i128::from(issued_shares))
         })
-        .ok_or(ExReferencePriceError::NonPositiveExRightsNumerator { cents: base_cents })?;
+        .ok_or(ExReferencePriceError::RightsArithmeticOverflow)?;
     if numerator_scaled <= 0 {
         return Err(ExReferencePriceError::NonPositiveExRightsNumerator {
             cents: numerator_scaled,
         });
     }
-    let denominator = 1_000_000_i128 + i128::from(ratio_micros);
+    let denominator = i128::from(base_shares) + i128::from(issued_shares);
     let quotient = numerator_scaled / denominator;
     let remainder = numerator_scaled % denominator;
     let doubled_remainder =

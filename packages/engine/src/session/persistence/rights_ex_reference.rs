@@ -80,18 +80,17 @@ pub(in crate::session) fn validate(
                 .iter()
                 .try_fold(0u64, |sum, row| sum.checked_add(row.paid_shares))
                 .ok_or_else(|| invalid("配股股份溢出".into()))?;
-            let ratio =
-                crate::session::civil_rights_ex::exact_ratio_micros(paid, snapshot.issued_shares())
-                    .map_err(|e| invalid(e.into()))?;
             let formula = match plan.exchange {
                 CalendarExchange::Sse => {
-                    RightsOfferingExRightsFormula::ShanghaiCirculatingRightsChange {
-                        ratio_micros: ratio,
+                    RightsOfferingExRightsFormula::ShanghaiCirculatingRightsChangeRational {
+                        issued_shares: paid,
+                        base_shares: snapshot.issued_shares(),
                     }
                 }
                 CalendarExchange::Szse => {
-                    RightsOfferingExRightsFormula::ShenzhenRightsShareChange {
-                        ratio_micros: ratio,
+                    RightsOfferingExRightsFormula::ShenzhenRightsShareChangeRational {
+                        issued_shares: paid,
+                        base_shares: snapshot.issued_shares(),
                     }
                 }
             };

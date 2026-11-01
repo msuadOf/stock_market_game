@@ -3,12 +3,24 @@
 /**
  * 配股除权公式按上市地交易所分列参数化（与送转公式同一分列纪律）：
  *
- * - 沪市《交易规则（2026 年修订）》4.3.1：`[(前收盘价格−现金红利)+配股价格×流通股份变动比例]/(1+流通股份变动比例)`。
- * - 深市《交易规则（2026 年修订）》4.4.1：`[(前收盘价−现金红利)+配股价格×股份变动比例]/(1+股份变动比例)`。
+ * - 沪市《交易规则（2026 年修订）》4.3.2：`[(前收盘价格−现金红利)+配股价格×流通股份变动比例]/(1+流通股份变动比例)`。
+ * - 深市《交易规则（2026 年修订）》4.4.2：`[(前收盘价−现金红利)+配股价格×股份变动比例]/(1+股份变动比例)`。
  *
  * 变动比例为**实际配股比例**（按认购结果确定的实际新增股份 ÷ 配股前股份，
- * 百万分之一股整数单位）；公式自带现金红利项，允许与同日现金分红合并。
+ * 可以使用精确股数分子与分母）；公式自带现金红利项，允许与同日现金分红合并。
  */
-export type RightsOfferingExRightsFormula = {
-  "ShanghaiCirculatingRightsChange": { ratio_micros: string };
-} | { "ShenzhenRightsShareChange": { ratio_micros: string } };
+export type RightsOfferingExRightsFormula =
+  | { "ShanghaiCirculatingRightsChange": { ratio_micros: string } }
+  | { "ShenzhenRightsShareChange": { ratio_micros: string } }
+  | {
+    "ShanghaiCirculatingRightsChangeRational": {
+      issued_shares: string;
+      base_shares: string;
+    };
+  }
+  | {
+    "ShenzhenRightsShareChangeRational": {
+      issued_shares: string;
+      base_shares: string;
+    };
+  };

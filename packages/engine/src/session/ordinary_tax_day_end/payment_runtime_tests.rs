@@ -795,7 +795,9 @@ fn failed_rights_refunds_real_debits_and_restores_without_repayment() {
     }
 }
 
-fn rights_session_at_ex_date() -> (
+fn rights_session_at_ex_date(
+    ratio: u64,
+) -> (
     GameSession,
     crate::company::rights_offering::RightsOfferingEventPlan,
 ) {
@@ -830,7 +832,7 @@ fn rights_session_at_ex_date() -> (
         listing_on: date(START),
         price_per_share: Money::from_cents(100),
         mode: RightsOfferingMode::RightsToAllShareholders {
-            shares_per_existing_share_micros: 100_000,
+            shares_per_existing_share_micros: ratio,
         },
         npc_subscription_strategy: RightsSubscriptionStrategy::FullByDefault,
     };
@@ -884,9 +886,49 @@ fn rights_session_at_ex_date() -> (
 }
 
 #[test]
+fn non_micros_rights_ex_anchor_restores_and_credits_without_second_debit() {
+    let (session, plan) = rights_session_at_ex_date(100_833);
+    let book = &session.corporate_actions().unwrap().rights_offerings[0];
+    let paid: u64 = book.subscriptions().iter().map(|row| row.paid_shares).sum();
+    let base = book.registration().unwrap().issued_shares();
+    assert_eq!((paid, base), (121, 1_200));
+    assert_ne!(u128::from(paid) * 1_000_000 % u128::from(base), 0);
+    let anchor = session
+        .corporate_actions()
+        .unwrap()
+        .applied_ex_reference_groups
+        .last()
+        .unwrap()
+        .reference;
+    let mut restored = restore_with_three_groups(&session.save().unwrap());
+    assert_eq!(
+        restored.runtime_market_seeds()[&StockId(0)].last_close,
+        anchor.reference_price.cents()
+    );
+    advance_to_date(&mut restored, plan.settlement_on);
+    restored.step().unwrap();
+    let before: Vec<_> = RETAIL_HOLDERS
+        .iter()
+        .map(|id| (*id, cash(&restored, *id)))
+        .collect();
+    restored.end_civil_day().unwrap();
+    let book = &restored.corporate_actions().unwrap().rights_offerings[0];
+    assert!(!book.settlement().unwrap().failed);
+    for (account, old_cash) in before {
+        assert_eq!(cash(&restored, account), old_cash);
+    }
+    let saved = restored.save().unwrap();
+    let restored_again = restore_with_three_groups(&saved);
+    assert_eq!(
+        restored_again.corporate_actions().unwrap().rights_offerings[0],
+        *book
+    );
+}
+
+#[test]
 fn exempt_rights_ex_anchor_is_committed_to_desk_and_restored() {
     use crate::company::rights_offering::{RightsOfferingBook, RightsOfferingDeclaration};
-    let (session, plan) = rights_session_at_ex_date();
+    let (session, plan) = rights_session_at_ex_date(100_000);
     let company = CompanyId(0);
     let group = session
         .corporate_actions()
@@ -1104,7 +1146,7 @@ fn exempt_rights_ex_anchor_is_committed_to_desk_and_restored() {
 
 #[test]
 fn rights_ex_day_close_after_trade_restores() {
-    let (session, _) = rights_session_at_ex_date();
+    let (session, _) = rights_session_at_ex_date(100_000);
     let group = session
         .corporate_actions()
         .unwrap()
