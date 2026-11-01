@@ -61,3 +61,5 @@
 第十批将未绑定 worktree 的 `integrate/product-union-2026-10-28` `87576b7a` 转为 `archive/20261102-87576b7a`。独立逐提交核查其七项变动涉及的 122 路径：候选 tip 与基线祖先 `bdb0412c`、`11cb97fa` 相比 120 个 blob 一致，另两个测试文件仅追加测试及模块声明；候选自身已替换的旧测试不能称为基线遗漏。这证明历史集成点覆盖，不能推断此后所有文件未演进或验收已通过。全部 stash 保留；未运行产品测试。
 
 第十一批将未绑定 worktree 的 `test/company-b4e-actor-recovery-2026-10-28` `94d1f0ad` 转为 `archive/20261102-94d1f0ad`。该提交本身不是基线祖先；独立对照基线祖先 `0b368b1a`，双宿主测试模块注册及原 assert 行均保留，server 有一行 receiver 流程调整，另增加溢出、顺序及错误边界断言。此为历史内容覆盖，不证明当前测试通过；全部 stash 保留，未运行产品测试。
+
+第十二批将 `feat/company-b4e-correction-lifecycle-2026-10-28` `d444f715` 和 `feat/company-b4e-repurchase-route-2026-10-28` `bea4ec29` 分别转为对应短 SHA 的 `archive/20261102-...` tag，保留原 worktree 同提交 detached HEAD。独立核查历史集成祖先 `bdb0412c`：更正队列、恢复、类型及文档一致，宿主失败处理和原测试行为保留；三个 save fatal 断言改为匹配 `SessionError::Step(actual)` 并比较原 fatal。回购候选、共同批准路由和路由测试 blob 一致，其他共享测试随错误包装演进。此为历史集成点的静态内容核对，不代表当前测试通过；操作前工作树干净并检查进程 cwd，未运行产品测试。
