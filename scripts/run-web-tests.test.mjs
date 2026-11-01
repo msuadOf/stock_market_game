@@ -28,9 +28,9 @@ it("partitions files across real processes without overselling the CPU budget", 
     available_cpu_count: 128,
     file_count: 17,
     shard_count: 8,
-    per_shard_file_concurrency: 16,
-    max_concurrent_processes: 128,
-    aggregate_process_budget: 128,
+    per_shard_file_concurrency: 8,
+    max_concurrent_processes: 64,
+    aggregate_process_budget: 64,
     shards: [
       [files[0], files[8], files[16]],
       [files[1], files[9]],
@@ -142,13 +142,13 @@ it("rejects direct invocation of an unsupervised internal Web worker", async () 
 it("完整回归分批覆盖全部文件并保持单批十秒门禁", async () => {
   const files = Array.from({ length: 17 }, (_, index) => `/web/${index}.test.ts`);
   const seen = [];
-  for (let index = 0; index < 4; index += 1) {
-    await runWebTestBatch({ webRoot: "/web", cpuCount: 4, batchIndex: index, batchCount: 4,
+  for (let index = 0; index < 8; index += 1) {
+    await runWebTestBatch({ webRoot: "/web", cpuCount: 4, batchIndex: index, batchCount: 8,
       discover: async () => files, run: async (options) => {
         assert.ok(options.timeoutMs <= 10000);
         seen.push(...options.args.slice(4));
       } });
   }
   assert.deepEqual(seen.sort(), [...files].sort());
-  await assert.rejects(runWebTestBatch({ batchIndex: 4, batchCount: 4, discover: async () => files }), /batch/i);
+  await assert.rejects(runWebTestBatch({ batchIndex: 8, batchCount: 8, discover: async () => files }), /batch/i);
 });

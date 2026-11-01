@@ -724,9 +724,9 @@ export async function executeFullRegression({
   completed.push({ label: doctestStep.label, wall_ms: now() - stepStartedAt });
 
   stepStartedAt = now();
-  for (let batchIndex = 0; batchIndex < 4; batchIndex += 1) {
+  for (let batchIndex = 0; batchIndex < 8; batchIndex += 1) {
     timeoutMs = Math.min(ORDINARY_TEST_MAX_MS, remainingMs(webStep.label));
-    await run(phaseCommandOptions({ ...webStep, args: [...webStep.args, String(batchIndex), "4"] }, sourceRoot, timeoutMs));
+    await run(phaseCommandOptions({ ...webStep, args: [...webStep.args, String(batchIndex), "8"] }, sourceRoot, timeoutMs));
   }
   completed.push({ label: webStep.label, wall_ms: now() - stepStartedAt });
 

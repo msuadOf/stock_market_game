@@ -12,6 +12,7 @@ import {
 
 const DEFAULT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MAX_WEB_TEST_PROCESSES = 8;
+const MAX_WEB_FILE_PROCESSES = 64;
 export const WEB_TEST_INTERNAL_WORKER_ENV = "STOCK_GAME_WEB_TEST_INTERNAL_WORKER";
 
 export function assertSupportedNodeVersion(version = process.versions.node) {
@@ -69,7 +70,7 @@ export function buildWebTestShardPolicy(availableCpuCount, files) {
   const sharedOffset = compilerSuite === undefined ? 0 : 1;
   if (compilerSuite !== undefined) shards[0].push(compilerSuite);
   sharedFiles.forEach((file, index) => shards[sharedOffset + index % (shardCount - sharedOffset)].push(file));
-  const perShardFileConcurrency = Math.max(1, Math.floor(availableCpuCount / shardCount));
+  const perShardFileConcurrency = Math.max(1, Math.floor(Math.min(availableCpuCount, MAX_WEB_FILE_PROCESSES) / shardCount));
   const fileProcessBudget = shardCount * perShardFileConcurrency;
   return {
     available_cpu_count: availableCpuCount,

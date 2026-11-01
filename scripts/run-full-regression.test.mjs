@@ -815,7 +815,7 @@ it("preserves deeply nested JSON extras accepted by the inventory wire format", 
           : "" };
       },
     });
-    assert.equal(calls, 10);
+    assert.equal(calls, 14);
   } finally {
     await fixture.cleanup();
   }
@@ -915,7 +915,7 @@ it("executes sealed prebuilt test binaries, then preserves doctests and 10-secon
     assert.equal(calls.filter((call) => call.command === "cargo" && call.args.includes("--doc")).length, 1);
     assert.equal(calls.find((call) => call.command === "cargo" && call.args.includes("--doc")).timeoutMs, 299_995);
     const web = calls.filter((call) => call.args?.some((argument) => argument.endsWith("scripts/run-web-tests.mjs")));
-    assert.deepEqual(web.map((call) => call.args.slice(-2)), [["0", "4"], ["1", "4"], ["2", "4"], ["3", "4"]]);
+    assert.deepEqual(web.map((call) => call.args.slice(-2)), Array.from({ length: 8 }, (_, index) => [String(index), "8"]));
     assert.ok(web.every((call) => call.command === process.execPath && call.timeoutMs <= 10_000));
     const scripts = calls.filter((call) => call.args?.some((argument) => argument.endsWith(".test.mjs")));
     assert.deepEqual(scripts.map((call) => call.args.at(-1)).sort(), await discoverScriptTestFiles(process.cwd()));
