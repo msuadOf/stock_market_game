@@ -287,7 +287,7 @@ function invokeCompanyWrite(message: WorkerMessage, requestedGeneration: number,
     respondOperationError({ ...message, generation: requestedGeneration }, new CompanyWriteRejectedError(failure).message, failure);
     return;
   }
-  ctx.postMessage({ type: successType, requestId: message.requestId, generation: requestedGeneration, result });
+  ctx.postMessage({ type: successType, requestId: message.requestId, generation: requestedGeneration, result: normalizeSerdeMaps(result) });
 }
 
 type LoadedEngineModule = { readonly module: WebAssembly.Module; readonly diagnostics: boolean; readonly glue: FacadeEngineGlue };

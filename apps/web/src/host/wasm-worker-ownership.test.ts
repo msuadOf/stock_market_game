@@ -107,7 +107,7 @@ async function createFixture(
     propose_player_company_action: (current: number, proposal: unknown) => {
       calls.push(`proposal:${current}:${JSON.stringify(proposal)}`);
       if (writeFailure !== undefined) throw writeFailure;
-      return { receipt: { account: "0", company: 0, kind: "CashDividend", event_id: "传输回执", approved_on: "2030-01-02" } };
+      return new Map([["receipt", { account: "0", company: 0, kind: "CashDividend", event_id: "传输回执", approved_on: "2030-01-02" }]]);
     },
     enqueue_report_correction: (current: number, request: { operation_id: string }) => {
       calls.push(`correction-enqueue:${current}:${JSON.stringify(request)}`);
