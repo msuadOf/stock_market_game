@@ -21,3 +21,16 @@
 | codex/runtime-convergence-20261101 | 04831a1e | /tmp/stock-runtime-convergence |
 
 相对路径位于仓库根目录；`stock_market_game-branch-cleanup` 位于仓库同级目录。共删除 15 个已等价吸收的 branch。内容涉及测试调度、测试夹具、性能记录和交接记录，未修改 A 股交易语义；未运行产品测试。
+
+第二批冻结基线同上，以下 6 条关联 worktree 均干净，先以原 tip 创建 `archive/20261102-<短 SHA>` tag，再将 worktree 切为同一提交的 detached HEAD 并删除 branch。切换前核对 HEAD、状态和进程 cwd；独立复核确认内容依据。保留 tag 以保存可能有用的原始历史。
+
+| 原 branch | 原 HEAD | 依据 |
+| --- | --- | --- |
+| fix/plan-identity-runtime | b41c8fb2 | 前五项补丁等价，末项增删行与基线祖先 14f5c703 按文件忽略空白后相同。 |
+| codex/wasm-runtime-override-20261029 | b57398a0 | 增删行与基线祖先 8a5ca157 按文件忽略空白后相同，初始化行为与测试保留。 |
+| codex/clippy-idioms-runtime-20261030 | 2043d5fc | 与基线祖先 ce4b20ba 的改动一致，仅 tick 行缩进不同。 |
+| codex/company-archive-record-20261101 | ad550ec5 | 公司归档记录补丁等价。 |
+| codex/company-convergence-20261101 | b2f0d353 | 配股除权与简税结算两项补丁等价。 |
+| feat/company-disclosures-candidate | 316ca881 | 基线保留更正候选推进、具体错误原因链及相关测试；提交本身不属于补丁等价。 |
+
+前三项的对应提交 patch-id 不同，增删行对照不能单独证明全部上下文语义相同，因此保留原 tip tag 和 worktree。六条 worktree 均保持原提交；没有运行产品测试。
