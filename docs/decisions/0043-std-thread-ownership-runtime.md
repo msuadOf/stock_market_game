@@ -129,8 +129,9 @@ taskset affinity）。2026-10-15：确认最终形态为**资源实体所有权�
 
 **负面/限制（如实登记）：**
 
-1. **WASM 串行回退**：wasm 宿主无 OS 线程，`step_runtime_enabled` 恒 `false`
-   走串行管线（`runtime/mod.rs`，Web 优先产品语义；已知限制，不做 wasm 线程化）。
+1. **WASM 宿主边界**：Web 默认显式使用 `World`/`RuntimeDriver`，经 thread facade
+   创建 Workers；WASM 的 engine 内部未设置 runtime override 时仍走串行管线（`runtime/mod.rs`）。
+   这一接入不代表完整宿主验收已通过。
 2. **线程数随规模线性增长**（G+N，协调者复用调用线程）：测试进程线程数上升，
    `World` Drop 显式 Shutdown 防泄漏；50~100 股 / 128 核场景的组数缺省推导公式
    待基准标定后写入 setup 契约（不写经验魔数）。
@@ -141,9 +142,9 @@ taskset affinity）。2026-10-15：确认最终形态为**资源实体所有权�
    （原型仅 Entity 聚合批）——962 t/s 只能作机制口径参考，正式基准批 11 重标。
 5. **同拍交付双写**引入投影与组权威两条写路径：由「下一拍整值回写」保证不双计，
    测试面已锚定（同拍全量投影/Abort 零泄漏）。
-6. **翻转现状**：`step_runtime_enabled()` 缺省 `0`=旧管线；`ENGINE_STEP_RUNTIME=1`
-   显式启用 runtime。终态=全局域迁移完成、缺省翻转、旧管线与开关退役
-   ——本 ADR 改 accepted 时按当时状态如实更新本条。Web 显式启用 runtime 时，宿主等待
+6. **翻转现状**：native 的 `step_runtime_enabled()` 缺省启用 runtime，
+   `ENGINE_STEP_RUNTIME=0` 可临时切回旧管线，首次读取后本进程不可切换。终态为全局域
+   迁移完成、旧管线与开关退役。Web 默认显式启用 runtime，宿主等待
    参数为 `spinUs=500`、`quietUs=50000`、`fineUs=500`、`coarseUs=500`（单位：微秒）；
    其中 `coarseUs` 的产品默认值依据普通 World/4 NPC 的真实浏览器 A/B：两臂连续
    交付 32 tick，暂停前均到第 33 tick、day 0，完整 start→query→dispose→join/final→
