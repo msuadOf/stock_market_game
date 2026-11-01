@@ -13,7 +13,7 @@ import {
 
 const DEFAULT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MAX_WEB_TEST_PROCESSES = 8;
-const MAX_WEB_FILE_PROCESSES = 64;
+const MAX_WEB_FILE_PROCESSES = 8;
 export const WEB_TEST_INTERNAL_WORKER_ENV = "STOCK_GAME_WEB_TEST_INTERNAL_WORKER";
 
 export function assertSupportedNodeVersion(version = process.versions.node) {
@@ -139,6 +139,8 @@ export async function runWebTestBatch({
   let cursor = 0;
   async function worker() {
     while (!combinedSignal.aborted && cursor < queue.length) {
+      await new Promise((resolve) => setImmediate(resolve));
+      if (combinedSignal.aborted || cursor >= queue.length) break;
       const file = queue[cursor++];
       const fileStartedAt = now();
       try {

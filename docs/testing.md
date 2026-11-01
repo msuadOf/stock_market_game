@@ -91,7 +91,7 @@ POSIX 帮助脚本进行 `.nvmrc` 诊断。CI 或隔离环境可将 `NODE_BIN` �
 - 普通自动化测试的单命令、单 case 硬上限都是 10 秒；超过时必须缩小代表性 fixture、拆分测试或去掉重复准备工作。
 - Node 普通测试同时使用 `--test-timeout=10000` 的 case 门禁和
   `scripts/run-with-deadline.mjs 10000 -- <command>` 的整命令进程树门禁；不允许通过参数把这一上限调大。
-- Web 测试聚合属于长验收，由 `scripts/run-web-tests.mjs` 直接启动满足 `>=24.18.0` 的 Node，并由进程外 300000ms supervisor 约束。runner 递归发现 `apps/web/src/**/*.test.ts(x)`，拒绝零测试或重复路径。每个文件独立进程执行，使用 10000ms case 和进程树门禁；等待队列只消耗长验收共享期限。文件进程并发不超过 CPU 预算和 64，失败即取消在途进程并停止队列。`apps/web` 的 package `test` script 与完整回归共用该入口。
+- Web 测试聚合属于长验收，由 `scripts/run-web-tests.mjs` 直接启动满足 `>=24.18.0` 的 Node，并由进程外 300000ms supervisor 约束。runner 递归发现 `apps/web/src/**/*.test.ts(x)`，拒绝零测试或重复路径。每个文件独立进程执行，使用 10000ms case 和进程树门禁；等待队列只消耗长验收共享期限。文件进程并发不超过 CPU 预算和 8，失败即取消在途进程并停止队列。`apps/web` 的 package `test` script 与完整回归共用该入口。
   完整回归保留 TypeScript 编译器先独立执行，以及启动页 SSR、两个 complete-save-schema 和浏览器对比度测试独立批次；其余文件按稳定顺序分为八批。每个文件恰好执行一次，所有批次共享完整回归执行期限。
 - 确有必要的长测试，其每个 child 进程和整个批次 wall-clock 均设 300000ms 硬上限；批次截止时间覆盖结果校验、manifest 发布、进程树终止与临时文件清理，不能只给 child 设置 timeout。`simulation-acceptance` 固定把前 299000ms 用于执行/校验/发布，最后 1000ms 只用于 kill、等待 close 和删除 staged 文件。runner 内部第二截止负责异步清理收敛；正式命令同时由进程外 deadline supervisor 约束总 wall，不能只依赖被测 Node 进程自己的事件循环计时器。
 - 可并行测试必须使用真实多进程或多线程，资源预算需显式记录并避免超卖；长测试不得单核串跑。
