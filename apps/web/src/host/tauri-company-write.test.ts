@@ -185,3 +185,20 @@ test("Tauri 失效后不发送配股认购", { timeout: 10000 }, async t => {
   await assert.rejects(f.host.subscribeRightsOffering!("r1", "5"), /失效/);
   assert.equal(f.calls.length, 0);
 });
+
+for (const classification of ["InvalidInput", "BusinessCondition", "UnsupportedOperation", "SystemState"]) test(`Tauri 配股认购保留 ${classification} typed 拒绝`, { timeout: 10000 }, async t => {
+  const failure = { kind: "RightsSubscription", data: { account: "0", event_id: "r1", classification, reason: "认购被拒绝" } };
+  const f = await fixture(t, () => { throw failure; });
+  await assert.rejects(f.host.subscribeRightsOffering!("r1", "5"), error => error instanceof CompanyWriteRejectedError && assert.deepEqual(error.failure, failure) === undefined);
+});
+for (const data of [{ account: "2", event_id: "r1" }, { account: "0", event_id: "other" }]) test(`Tauri 配股认购拒绝响应身份不符 ${JSON.stringify(data)}`, { timeout: 10000 }, async t => {
+  const failure = { kind: "RightsSubscription", data: { ...data, classification: "BusinessCondition", reason: "拒绝" } };
+  const f = await fixture(t, () => { throw failure; });
+  await assert.rejects(f.host.subscribeRightsOffering!("r1", "5"), error => error instanceof AggregateError);
+});
+
+test("Tauri 配股认购拒绝畸形字段和错误 family", { timeout: 10000 }, async t => {
+  const failures = [{ kind: "RightsSubscription", data: { account: "0", event_id: "r1", classification: "unknown", reason: "拒绝" } }, failure];
+  const f = await fixture(t, () => { throw failures.shift(); });
+  for (let i = 0; i < 2; i++) await assert.rejects(f.host.subscribeRightsOffering!("r1", "5"), error => error instanceof AggregateError);
+});

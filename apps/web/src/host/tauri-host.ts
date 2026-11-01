@@ -1,4 +1,4 @@
-import { createRightsSubscription } from "./rights-subscription.ts";
+import { checkRightsSubscriptionFailure, createRightsSubscription } from "./rights-subscription.ts";
 import { normalizeMarketHistoryRequest, normalizeMarketHistoryPage, wireMarketHistoryRequest } from "./market-history.ts";
 import { normalizeCurrentMinuteHistoryRequest, normalizeCurrentMinuteHistoryResponse, wireCurrentMinuteHistoryRequest } from "./current-minute-history.ts";
 import { normalizePersonalTradeHistoryRequest, normalizePersonalTradeHistoryPage, wirePersonalTradeHistoryRequest } from "./personal-trade-history.ts";
@@ -261,6 +261,13 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
         return response.receipt;
       } catch (error) {
         try { assertCurrent(); } catch (stale) { throw new Error("Tauri 配股认购确认已过期；结果未知，请核对权威状态", { cause: new AggregateError([stale], "认购确认已过期", { cause: error }) }); }
+        if (error !== null && typeof error === "object" && Object.hasOwn(error, "kind") && ["RightsSubscription", "PlayerProposal", "ReportCorrection"].includes(String((error as Record<string, unknown>).kind))) {
+          let rejection: CompanyWriteRejectedError;
+          try { rejection = new CompanyWriteRejectedError(parseCompanyWriteFailure(error)); }
+          catch (decoderError) { throw new AggregateError([decoderError], "Tauri 配股认购 typed 拒绝不符合协议", { cause: error }); }
+          checkRightsSubscriptionFailure(rejection, eventId, "0");
+          throw rejection;
+        }
         throw error instanceof Error ? error : new Error(`Tauri 配股认购失败：${describeWasmFailure(error)}`, { cause: error });
       }
     }),

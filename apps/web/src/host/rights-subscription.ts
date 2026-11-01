@@ -1,3 +1,4 @@
+import { CompanyWriteRejectedError, parseCompanyWriteFailure } from "./company-write.ts";
 import { canonicalU64, companyCivilDate, nonempty } from "./company-contract-views.ts";
 import { exact, record } from "../save/schema/primitives.ts";
 
@@ -14,4 +15,15 @@ export function createRightsSubscription(transport: (eventId: string, requestedS
     if (receipt.event_id !== eventId || receipt.requested_shares !== shares) throw new Error("配股认购受理回执与请求不一致");
     return receipt;
   };
+}
+
+/** 领域拒绝必须属于当前请求与宿主认证的账户。 */
+export function checkRightsSubscriptionFailure(error: unknown, eventId: string, owner: string): void {
+  if (!(error instanceof CompanyWriteRejectedError)) return;
+  try {
+    const failure = parseCompanyWriteFailure(error.failure);
+    if (failure.kind !== "RightsSubscription" || failure.data.account !== owner || failure.data.event_id !== eventId) throw new Error("配股认购拒绝响应与请求身份不一致");
+  } catch (decoderError) {
+    throw new AggregateError([decoderError], "配股认购拒绝响应不符合本次请求的协议或身份", { cause: error });
+  }
 }

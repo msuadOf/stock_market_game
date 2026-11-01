@@ -215,3 +215,20 @@ test("Remote 配股认购无本人身份时不发送命令", { timeout: 10000 },
   await assert.rejects(f.host.subscribeRightsOffering!("r1", "5"), /本人身份/);
   assert.equal(f.calls.length, 0);
 });
+
+for (const classification of ["InvalidInput", "BusinessCondition", "UnsupportedOperation", "SystemState"]) test(`Remote 配股认购保留 ${classification} typed 拒绝`, { timeout: 10000 }, async t => {
+  const failure = { kind: "RightsSubscription", data: { account: "1", event_id: "r1", classification, reason: "认购被拒绝" } };
+  const f = await fixture(t, () => json({ code: "RIGHTS_SUBSCRIPTION_REJECTED", failure }, 400));
+  await assert.rejects(f.host.subscribeRightsOffering!("r1", "5"), error => error instanceof CompanyWriteRejectedError && assert.deepEqual(error.failure, failure) === undefined);
+});
+for (const data of [{ account: "2", event_id: "r1" }, { account: "1", event_id: "other" }]) test(`Remote 配股认购拒绝响应身份不符 ${JSON.stringify(data)}`, { timeout: 10000 }, async t => {
+  const failure = { kind: "RightsSubscription", data: { ...data, classification: "BusinessCondition", reason: "拒绝" } };
+  const f = await fixture(t, () => json({ code: "RIGHTS_SUBSCRIPTION_REJECTED", failure }, 400));
+  await assert.rejects(f.host.subscribeRightsOffering!("r1", "5"), error => error instanceof AggregateError);
+});
+
+test("Remote 配股认购拒绝畸形字段和错误 family", { timeout: 10000 }, async t => {
+  const failures = [{ kind: "RightsSubscription", data: { account: "1", event_id: "r1", classification: "unknown", reason: "拒绝" } }, failure];
+  const f = await fixture(t, () => json({ code: "RIGHTS_SUBSCRIPTION_REJECTED", failure: failures.shift() }, 400));
+  for (let i = 0; i < 2; i++) await assert.rejects(f.host.subscribeRightsOffering!("r1", "5"), error => error instanceof AggregateError);
+});

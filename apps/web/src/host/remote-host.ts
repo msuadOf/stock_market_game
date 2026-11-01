@@ -1,4 +1,4 @@
-import { createRightsSubscription } from "./rights-subscription.ts";
+import { checkRightsSubscriptionFailure, createRightsSubscription } from "./rights-subscription.ts";
 import { normalizeMarketHistoryRequest, normalizeMarketHistoryPage, wireMarketHistoryRequest } from "./market-history.ts";
 import { normalizeCurrentMinuteHistoryRequest, normalizeCurrentMinuteHistoryResponse, wireCurrentMinuteHistoryRequest } from "./current-minute-history.ts";
 import { normalizePersonalTradeHistoryRequest, normalizePersonalTradeHistoryPage, wirePersonalTradeHistoryRequest } from "./personal-trade-history.ts";
@@ -349,7 +349,14 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
         const context = parseRemoteMarketContext(await requestJson(`${baseUrl}/api/market/context?${new URLSearchParams({ session_id: created.id })}`, { method: "GET", headers: { authorization: `Bearer ${token}` } }));
         assertCurrent(context.generation);
         if (context.session_id !== created.id || context.member === null || context.needs_rejoin) throw new Error("配股认购需要当前可信 member 本人身份，请先加入市场");
-        const response = record(await requestJson(`${baseUrl}/api/subscribe-rights-offering`, remotePost({ session_id: created.id, generation: cursor.generation, event_id: eventId, requested_shares: requestedShares }, token)), "远程配股认购");
+        let raw: unknown;
+        try {
+          raw = await requestJson(`${baseUrl}/api/subscribe-rights-offering`, remotePost({ session_id: created.id, generation: cursor.generation, event_id: eventId, requested_shares: requestedShares }, token), (fetcher, url, init) => companyWriteHttpJson(fetcher, url, init, "RIGHTS_SUBSCRIPTION_REJECTED"));
+        } catch (error) {
+          checkRightsSubscriptionFailure(error, eventId, context.member.account_id);
+          throw error;
+        }
+        const response = record(raw, "远程配股认购");
         exact(response, ["generation", "receipt"], "远程配股认购");
         assertCurrent(response.generation);
         return response.receipt;

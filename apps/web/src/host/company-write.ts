@@ -42,6 +42,7 @@ export type CompanyWriteFailure =
     readonly account: string; readonly company: number; readonly kind: PlayerProposalKind; readonly day: string;
     readonly classification: CompanyErrorClass; readonly reason: string;
   } }
+  | { readonly kind: "RightsSubscription"; readonly data: { readonly account: string; readonly event_id: string; readonly classification: CompanyErrorClass; readonly reason: string } }
   | { readonly kind: "ReportCorrection"; readonly data: ReportCorrectionFailure };
 
 function companyId(value: unknown, path: string): number { return boundedInteger(value, path, 0, 4294967295); }
@@ -51,7 +52,7 @@ export function parseCompanyWriteFailure(value: unknown): CompanyWriteFailure {
   const path = "CompanyWriteFailure";
   const wrapper = record(value, path);
   exact(wrapper, ["kind", "data"], path);
-  const family = oneOf(wrapper.kind, `${path}.kind`, ["PlayerProposal", "ReportCorrection"] as const);
+  const family = oneOf(wrapper.kind, `${path}.kind`, ["PlayerProposal", "ReportCorrection", "RightsSubscription"] as const);
   const data = record(wrapper.data, `${path}.data`);
   if (family === "PlayerProposal") {
     exact(data, ["account", "company", "kind", "day", "classification", "reason"], `${path}.data`);
@@ -61,6 +62,10 @@ export function parseCompanyWriteFailure(value: unknown): CompanyWriteFailure {
       classification: oneOf(data.classification, `${path}.data.classification`, ["InvalidInput", "BusinessCondition", "UnsupportedOperation", "SystemState"] as const),
       reason: nonempty(data.reason, `${path}.data.reason`),
     } };
+  }
+  if (family === "RightsSubscription") {
+    exact(data, ["account", "event_id", "classification", "reason"], `${path}.data`);
+    return { kind: family, data: { account: ownerAccount(data.account, `${path}.data.account`), event_id: nonempty(data.event_id, `${path}.data.event_id`), classification: oneOf(data.classification, `${path}.data.classification`, ["InvalidInput", "BusinessCondition", "UnsupportedOperation", "SystemState"] as const), reason: nonempty(data.reason, `${path}.data.reason`) } };
   }
   const kind = oneOf(data.kind, `${path}.data.kind`, ["StaleEpoch", "EmptyOperationId", "EmptyReason", "EmptyEntries", "RevisionExhausted", "OperationConflict", "NotPending", "AlreadyCompleted", "Journal", "FutureEntry"] as const);
   if (kind === "StaleEpoch" || kind === "EmptyOperationId" || kind === "EmptyReason" || kind === "EmptyEntries" || kind === "RevisionExhausted") {
@@ -92,7 +97,7 @@ export class CompanyWriteRejectedError extends Error {
   readonly failure: CompanyWriteFailure;
 
   constructor(failure: CompanyWriteFailure) {
-    super(`公司写命令被拒绝：${failure.kind === "PlayerProposal" ? failure.data.reason : JSON.stringify(failure.data)}`, { cause: failure });
+    super(`公司写命令被拒绝：${failure.kind === "ReportCorrection" ? JSON.stringify(failure.data) : failure.data.reason}`, { cause: failure });
     this.name = "CompanyWriteRejectedError";
     this.failure = failure;
   }

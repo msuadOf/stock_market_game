@@ -3,7 +3,7 @@ import { parseRawSaveJson } from "../save/schema/raw-json.ts";
 import { exact, record } from "../save/schema/primitives.ts";
 
 /** 只供三项公司写命令使用，保公开 typed failure 与原始 HTTP 详情。 */
-export async function companyWriteHttpJson(fetchFn: typeof fetch, url: string, init: RequestInit, rejectedCode: "PLAYER_COMPANY_ACTION_REJECTED" | "REPORT_CORRECTION_REJECTED"): Promise<unknown> {
+export async function companyWriteHttpJson(fetchFn: typeof fetch, url: string, init: RequestInit, rejectedCode: "PLAYER_COMPANY_ACTION_REJECTED" | "REPORT_CORRECTION_REJECTED" | "RIGHTS_SUBSCRIPTION_REJECTED"): Promise<unknown> {
   const response = await fetchFn(url, init);
   const text = await response.text();
   let raw: unknown;
