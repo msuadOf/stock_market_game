@@ -171,3 +171,17 @@ test("Tauri F2 matcher接纳完整嵌套FailureCause并拒绝循环cause", { tim
   cyclicCause.cause = cyclicCause;
   assert.equal(isReportCorrectionPrepareRejection({ ...prepareRejection, cause: cyclicCause }, "desktop", "1"), false);
 });
+
+test("Tauri 配股认购使用当前 generation 并验证受理回执", { timeout: 10000 }, async t => {
+  const receipt = { event_id: "r1", requested_shares: "5", submitted_on: "2030-06-03" };
+  const f = await fixture(t, (_command, generation) => ({ generation, receipt }));
+  assert.deepEqual(await f.host.subscribeRightsOffering!("r1", "5"), receipt);
+  assert.deepEqual(f.calls[0], { command: "subscribe_rights_offering", args: { sessionId: "current-session", generation: "1", eventId: "r1", requestedShares: "5" } });
+});
+
+test("Tauri 失效后不发送配股认购", { timeout: 10000 }, async t => {
+  const f = await fixture(t, () => { throw new Error("不应发送认购"); });
+  await f.fail();
+  await assert.rejects(f.host.subscribeRightsOffering!("r1", "5"), /失效/);
+  assert.equal(f.calls.length, 0);
+});

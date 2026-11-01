@@ -142,6 +142,7 @@ export interface EngineHost {
   queryAccountDividendTaxStatus?(): Promise<AccountDividendTaxStatusView>;
   queryDividendTaxOutstandingViews?(): Promise<readonly DividendTaxOutstandingView[]>;
   queryOwnerFlatWithholdingReceipts?(): Promise<readonly FlatWithholdingReceipt[]>;
+  subscribeRightsOffering?(eventId: string, requestedShares: string): Promise<import("./rights-subscription.ts").RightsSubscriptionReceipt>;
   queryOwnerRightsOfferings?(): Promise<readonly OwnerRightsOfferingView[]>;
   /** 公司写能力按部署宿主接线；本人由可信会话身份决定，ack 不等于未来付款或更正完成。 */
   proposePlayerCompanyAction?: CompanyWriteCommands["proposePlayerCompanyAction"];

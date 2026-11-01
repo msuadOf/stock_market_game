@@ -1,3 +1,4 @@
+import { createRightsSubscription } from "./rights-subscription.ts";
 import { normalizeMarketHistoryRequest, normalizeMarketHistoryPage, wireMarketHistoryRequest } from "./market-history.ts";
 import { normalizeCurrentMinuteHistoryRequest, normalizeCurrentMinuteHistoryResponse, wireCurrentMinuteHistoryRequest } from "./current-minute-history.ts";
 import { normalizePersonalTradeHistoryRequest, normalizePersonalTradeHistoryPage, wirePersonalTradeHistoryRequest } from "./personal-trade-history.ts";
@@ -243,6 +244,26 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
   };
 
   return {
+    subscribeRightsOffering: createRightsSubscription(async (eventId, requestedShares) => {
+      if (companyWriteFailure !== null) throw new Error("Tauri 配股认购的当前 authority 已失效", { cause: companyWriteFailure });
+      const sessionId = requireSession();
+      const cursor = timeline.captureQueryCursor();
+      const epoch = companyWriteEpoch;
+      const assertCurrent = (responseGeneration = cursor.generation) => {
+        if (companyWriteFailure !== null || epoch !== companyWriteEpoch) throw new Error("Tauri 配股认购确认已过期；结果未知，请核对权威状态");
+        assertResponseCurrent(cursor.generation, "rights_subscription");
+        timeline.assertQueryCursor(cursor, responseGeneration, "Tauri 配股认购确认已过期；结果未知，请核对权威状态");
+      };
+      try {
+        const response = record(await invoke<unknown>("subscribe_rights_offering", { sessionId, generation: cursor.generation, eventId, requestedShares }), "Tauri 配股认购");
+        exact(response, ["generation", "receipt"], "Tauri 配股认购");
+        assertCurrent(generation(response.generation, "Tauri 配股认购.generation"));
+        return response.receipt;
+      } catch (error) {
+        try { assertCurrent(); } catch (stale) { throw new Error("Tauri 配股认购确认已过期；结果未知，请核对权威状态", { cause: new AggregateError([stale], "认购确认已过期", { cause: error }) }); }
+        throw error instanceof Error ? error : new Error(`Tauri 配股认购失败：${describeWasmFailure(error)}`, { cause: error });
+      }
+    }),
     ...createCompanyWriteCommands(async command => {
       if (companyWriteFailure !== null) throw new Error("Tauri 公司写命令的当前 authority 已失效，须正常恢复新会话后再核对", { cause: companyWriteFailure });
       const id = requireSession();

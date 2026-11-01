@@ -202,3 +202,16 @@ test("Remote F2 matcher接纳完整嵌套FailureCause并拒绝循环cause", { ti
   cyclicCause.cause = cyclicCause;
   assert.equal(isReportCorrectionPrepareRejection({ ...prepareRejection, cause: cyclicCause }, "server", "1"), false);
 });
+
+test("Remote 配股认购从可信 member 注入身份并验证受理回执", { timeout: 10000 }, async t => {
+  const receipt = { event_id: "r1", requested_shares: "5", submitted_on: "2030-06-03" };
+  const f = await fixture(t, path => { assert.equal(path, "/api/subscribe-rights-offering"); return json({ generation: "1", receipt }); });
+  assert.deepEqual(await f.host.subscribeRightsOffering!("r1", "5"), receipt);
+  assert.deepEqual(f.calls[0], { path: "/api/subscribe-rights-offering", body: { session_id: "current-session", generation: "1", event_id: "r1", requested_shares: "5" }, token: "Bearer owner-token" });
+});
+
+test("Remote 配股认购无本人身份时不发送命令", { timeout: 10000 }, async t => {
+  const f = await fixture(t, () => { throw new Error("不应发送认购"); }, () => json({ ...remoteTestContext("current-session"), member: null }));
+  await assert.rejects(f.host.subscribeRightsOffering!("r1", "5"), /本人身份/);
+  assert.equal(f.calls.length, 0);
+});

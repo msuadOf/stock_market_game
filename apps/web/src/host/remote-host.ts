@@ -1,3 +1,4 @@
+import { createRightsSubscription } from "./rights-subscription.ts";
 import { normalizeMarketHistoryRequest, normalizeMarketHistoryPage, wireMarketHistoryRequest } from "./market-history.ts";
 import { normalizeCurrentMinuteHistoryRequest, normalizeCurrentMinuteHistoryResponse, wireCurrentMinuteHistoryRequest } from "./current-minute-history.ts";
 import { normalizePersonalTradeHistoryRequest, normalizePersonalTradeHistoryPage, wirePersonalTradeHistoryRequest } from "./personal-trade-history.ts";
@@ -335,6 +336,28 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
   }
 
   return {
+    subscribeRightsOffering: createRightsSubscription(async (eventId, requestedShares) => {
+      const connected = () => !disposed && publisher.currentSocket()?.readyState === 1 && publisher.isProtocolReady();
+      if (!connected()) throw new Error("远程配股认购需要健康的当前连接与 baseline");
+      const cursor = publisher.captureQueryCursor("远程配股认购缺少当前 baseline");
+      const epoch = companyWriteEpoch;
+      const assertCurrent = (responseGeneration: unknown = cursor.generation) => {
+        if (!connected() || epoch !== companyWriteEpoch) throw new Error("远程配股认购确认已过期；结果未知，请核对权威状态");
+        publisher.assertQueryCursor(cursor, responseGeneration, "远程配股认购确认已过期；结果未知，请核对权威状态");
+      };
+      try {
+        const context = parseRemoteMarketContext(await requestJson(`${baseUrl}/api/market/context?${new URLSearchParams({ session_id: created.id })}`, { method: "GET", headers: { authorization: `Bearer ${token}` } }));
+        assertCurrent(context.generation);
+        if (context.session_id !== created.id || context.member === null || context.needs_rejoin) throw new Error("配股认购需要当前可信 member 本人身份，请先加入市场");
+        const response = record(await requestJson(`${baseUrl}/api/subscribe-rights-offering`, remotePost({ session_id: created.id, generation: cursor.generation, event_id: eventId, requested_shares: requestedShares }, token)), "远程配股认购");
+        exact(response, ["generation", "receipt"], "远程配股认购");
+        assertCurrent(response.generation);
+        return response.receipt;
+      } catch (error) {
+        try { assertCurrent(); } catch (stale) { throw new Error("远程配股认购确认已过期；结果未知，请核对权威状态", { cause: new AggregateError([stale], "认购确认已过期", { cause: error }) }); }
+        throw error;
+      }
+    }),
     async proposePlayerCompanyAction(input) {
       const proposal = structuredClone(parsePlayerCompanyProposal(input));
       return withCompanyWrite(true, commands => commands.proposePlayerCompanyAction(proposal));

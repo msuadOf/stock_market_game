@@ -20,6 +20,7 @@ export function CompanyReadPanel({ companyCode, companyId, context }: {
     if (host === null || owner === null) return null;
     return {
       capabilities: host.queryCompanyCapabilities === undefined ? undefined : () => host.queryCompanyCapabilities!(companyCode),
+      subscribe: host.subscribeRightsOffering === undefined ? undefined : (eventId: string, requestedShares: string) => host.subscribeRightsOffering!(eventId, requestedShares),
       rights: host.queryOwnerRightsOfferings === undefined ? undefined : () => host.queryOwnerRightsOfferings!(),
       receipts: host.queryOwnerFlatWithholdingReceipts === undefined ? undefined : () => host.queryOwnerFlatWithholdingReceipts!(),
       explanation: host.queryCompanyPeriodExplanation === undefined ? undefined : (_company: number, periodEnd: string) => host.queryCompanyPeriodExplanation!(companyCode, periodEnd),
@@ -32,7 +33,7 @@ export function CompanyReadPanel({ companyCode, companyId, context }: {
   if (host === null) return <p className="company-state">游戏引擎尚未就绪，不能查询公司契约事实。</p>;
   if (owner === null || queries === null) return <p className="company-state">尚未加入市场，不能查询本人公司权益与税务事实。</p>;
   return <>
-    <CompanyContractPanel companyId={companyId} refreshKey={refreshKey} onCapabilitiesQuery={queries.capabilities} onOwnerRightsQuery={queries.rights} onFlatReceiptsQuery={queries.receipts} onExplanationQuery={queries.explanation} />
+    <CompanyContractPanel companyId={companyId} refreshKey={refreshKey} onCapabilitiesQuery={queries.capabilities} onOwnerRightsQuery={queries.rights} onRightsSubscribe={queries.subscribe} onFlatReceiptsQuery={queries.receipts} onExplanationQuery={queries.explanation} />
     <DividendTaxPanel refreshKey={refreshKey} onQuery={queries.tax} />
   </>;
 }

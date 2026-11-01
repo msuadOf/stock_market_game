@@ -1,5 +1,6 @@
 /* oxlint-disable react/only-export-components -- 文案 helper 供 SSR 测试与面板共用（同 RightsSubscriptionRejectionPanel 模式） */
 import { useCallback, useState } from "react";
+import { RightsSubscriptionForm, type RightsSubscription } from "./RightsSubscriptionForm.tsx";
 import { useCompanyQuery } from "./use-company-query.ts";
 import type { CorporateActionKind } from "../../types/generated/CorporateActionKind.ts";
 import type { ActivePlanStage } from "../../types/generated/ActivePlanStage.ts";
@@ -15,6 +16,7 @@ interface CompanyContractPanelProps {
   /** 公司能力面查询（owner 隔离：owner_rights 只含本人事实）；undefined 表示宿主明确不支持。 */
   readonly onCapabilitiesQuery: ((company: number) => Promise<CompanyCapabilities>) | undefined;
   /** 本人配股权益查询（owner 隔离）；undefined 表示宿主明确不支持。 */
+  readonly onRightsSubscribe?: RightsSubscription | undefined;
   readonly onOwnerRightsQuery: (() => Promise<readonly OwnerRightsOfferingView[]>) | undefined;
   /** 期间变化解释查询；undefined 表示宿主明确不支持。 */
   readonly onExplanationQuery: ((company: number, periodEnd: string) => Promise<PeriodChangeExplanation>) | undefined;
@@ -96,7 +98,7 @@ export function contractParValueText(capabilities: CompanyCapabilities): string 
  * 公司共同契约能力面（F 批收口）：只读展示公司当前事实、未完成方案阶段、
  * 各行为业务条件、本人配股权益与期间变化解释；owner 隔离查询，不新增写操作。
  */
-export function CompanyContractPanel({ companyId, onCapabilitiesQuery, onOwnerRightsQuery, onExplanationQuery, onFlatReceiptsQuery, refreshKey }: CompanyContractPanelProps) {
+export function CompanyContractPanel({ companyId, onCapabilitiesQuery, onOwnerRightsQuery, onRightsSubscribe, onExplanationQuery, onFlatReceiptsQuery, refreshKey }: CompanyContractPanelProps) {
   const capabilitiesQuery = useCallback(() => {
     if (onCapabilitiesQuery === undefined) throw new Error("当前宿主不支持公司能力面查询");
     return onCapabilitiesQuery(companyId);
@@ -172,7 +174,7 @@ export function CompanyContractPanel({ companyId, onCapabilitiesQuery, onOwnerRi
           </>
         )}
       <h5>本人配股权益（全部公司）</h5>
-      <p>以下为只读事实。已排队表示受理，日终缴款与登记按阶段记录；本视图无退款事实字段，不能据此认定已退款。</p>
+      <p>已排队表示受理，日终缴款与登记按阶段记录；本视图无退款事实字段，不能据此认定已退款。</p>
       {onOwnerRightsQuery === undefined
         ? <p className="company-state">当前宿主不支持本人配股权益查询。</p>
         : (
@@ -183,7 +185,7 @@ export function CompanyContractPanel({ companyId, onCapabilitiesQuery, onOwnerRi
             {rights !== null && rights.length === 0 && <p className="company-state">本人当前没有未完成的配股方案。</p>}
             {rights !== null && rights.length > 0 && (
               <table className="grid-table">
-                <thead><tr><th>事件</th><th>证券</th><th>阶段</th><th>缴款窗口</th><th>窗口状态</th><th>本人权利/额度</th><th>认购进度</th></tr></thead>
+                <thead><tr><th>事件</th><th>证券</th><th>阶段</th><th>缴款窗口</th><th>窗口状态</th><th>本人权利/额度</th><th>认购进度</th><th>认购</th></tr></thead>
                 <tbody>
                   {rights.map((view) => (
                     <tr key={view.event_id}>
@@ -206,6 +208,7 @@ export function CompanyContractPanel({ companyId, onCapabilitiesQuery, onOwnerRi
                             ? `申请 ${view.settled_subscription.requested_shares} 股；已缴款认购 ${view.settled_subscription.paid_shares} 股、弃配 ${view.settled_subscription.waived_shares} 股、缴款 ${view.settled_subscription.paid_amount} 分`
                             : "无已排队或已结算认购记录"}
                       </td>
+                      <td><RightsSubscriptionForm key={`${refreshKey}:${view.event_id}`} view={view} onSubscribe={onRightsSubscribe} onAccepted={refreshRights} /></td>
                     </tr>
                   ))}
                 </tbody>
