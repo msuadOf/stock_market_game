@@ -123,6 +123,58 @@ it("冻结退出竞态只跳过确证 Z 的 PID，仍清理同轮活 token 后�
   assert.deepEqual(killed, [304]);
 });
 
+it("活进程短暂拒绝读取后同 birth 重试并清理匹配 token", { timeout: 10000, skip: process.platform !== "linux" }, async () => {
+  let reads = 0;
+  const killed = [];
+  const denied = Object.assign(new Error("temporary denial"), { code: "EACCES" });
+  const cleanup = createCompletionCleanup(777, {
+    listProcesses: async () => ["330"],
+    readEnvironment: async () => { if (++reads === 1) throw denied; return Buffer.from("STOCK_GAME_RUST_CASE_TOKEN=active\0"); },
+    readProcessStat: async (pid) => frozenStat(pid),
+    terminate: async ({ pid }) => { killed.push(pid); },
+  });
+  await cleanup({ token: "active", pid: 330, total: monotonicMs() + 1000 });
+  assert.deepEqual(killed, [330]);
+  assert.ok(reads >= 3);
+});
+
+it("第二次 environ 暂时拒绝后重新验证 token 与 birth", { timeout: 10000, skip: process.platform !== "linux" }, async () => {
+  let reads = 0;
+  const killed = [];
+  const cleanup = createCompletionCleanup(777, {
+    listProcesses: async () => ["332"],
+    readEnvironment: async () => { if (++reads === 2) throw Object.assign(new Error("temporary denial"), { code: "EACCES" }); return Buffer.from("STOCK_GAME_RUST_CASE_TOKEN=active\0"); },
+    readProcessStat: async (pid) => frozenStat(pid),
+    terminate: async ({ pid }) => { killed.push(pid); },
+  });
+  await cleanup({ token: "active", pid: 332, total: monotonicMs() + 1000 });
+  assert.equal(reads, 4);
+  assert.deepEqual(killed, [332]);
+});
+
+it("重试等待受共享 deadline 限制", { timeout: 10000, skip: process.platform !== "linux" }, async () => {
+  const cleanup = createCompletionCleanup(777, {
+    listProcesses: async () => ["333"],
+    readEnvironment: async () => { throw Object.assign(new Error("denied"), { code: "EACCES" }); },
+    readProcessStat: async (pid) => frozenStat(pid),
+  });
+  await assert.rejects(cleanup({ token: "active", pid: 333, total: monotonicMs() + 4 }), /deadline/);
+});
+
+it("重试期间 PID birth 改变必须拒绝且不得清理", { timeout: 10000, skip: process.platform !== "linux" }, async () => {
+  let stats = 0;
+  let kills = 0;
+  const denied = Object.assign(new Error("temporary denial"), { code: "EACCES" });
+  const cleanup = createCompletionCleanup(777, {
+    listProcesses: async () => ["331"],
+    readEnvironment: async () => { throw denied; },
+    readProcessStat: async (pid) => frozenStat(pid, { birth: ++stats === 1 ? "100" : "200" }),
+    terminate: async () => { kills += 1; },
+  });
+  await assert.rejects(cleanup({ token: "active", pid: 331, total: monotonicMs() + 1000 }), /identity changed/);
+  assert.equal(kills, 0);
+});
+
 it("初筛旧 token 后新 PID 已无该 token，不能从初筛取得 owned 身份", { timeout: 10000, skip: process.platform !== "linux" }, async () => {
   let environmentReads = 0;
   let kills = 0;

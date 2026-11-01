@@ -107,30 +107,49 @@ export function createCompletionCleanup(launcherPid, {
         await Promise.all(entries.map(async (entry) => {
           let before;
           let candidate = false;
-          try {
-            // 首次 environ 只筛候选；归属必须由同 birth 内重读的 environ 确认。
-            if (tokenItem(await environment(Number(entry)), byToken) === undefined) return;
-            candidate = true;
-            before = await identity(Number(entry), checkBudget);
-            if (before.state === "Z" || before.state === "X") return;
-            const item = tokenItem(await environment(Number(entry)), byToken);
-            if (item === undefined) return;
-            const after = await identity(Number(entry), checkBudget);
-            if (before.birth !== after.birth) throw new Error(`case PID identity changed during environment read: ${entry}`);
-            if (after.state === "Z" || after.state === "X") return;
-            owned.push({ item, pid: Number(entry), birth: before.birth });
-          } catch (error) {
-            if (["ENOENT", "ESRCH"].includes(error.code)) return;
-            if (["EACCES", "EPERM"].includes(error.code)) {
-              let current;
-              try { current = await identity(Number(entry), checkBudget); }
-              catch (statError) { if (["ENOENT", "ESRCH"].includes(statError.code)) return; throw statError; }
-              // 僵尸已无可执行实体；退出瞬间 environ 也可能拒绝访问，不等同活进程权限未知。
-              if (current.state === "Z" || current.state === "X") return;
-              if (!candidate && current.ppid !== launcherPid && current.group !== launcherPid && before?.ppid !== launcherPid && before?.group !== launcherPid) return;
-              throw new Error(`cannot confirm owned process ${entry} (state=${current.state}, ppid=${current.ppid}, pgid=${current.group}, starttime=${current.birth}): ${error.message}`, { cause: error });
+          let deniedBirth;
+          for (let attempt = 0; ; attempt += 1) {
+            try {
+              if (deniedBirth !== undefined) {
+                const current = await identity(Number(entry), checkBudget);
+                if (current.birth !== deniedBirth) throw new Error(`case PID identity changed during environment retry: ${entry}`);
+                if (current.state === "Z" || current.state === "X") return;
+              }
+              // 首次 environ 只筛候选；归属必须由同 birth 内重读的 environ 确认。
+              if (tokenItem(await environment(Number(entry)), byToken) === undefined) return;
+              candidate = true;
+              before = await identity(Number(entry), checkBudget);
+              if (deniedBirth !== undefined && before.birth !== deniedBirth) throw new Error(`case PID identity changed during environment retry: ${entry}`);
+              if (before.state === "Z" || before.state === "X") return;
+              const item = tokenItem(await environment(Number(entry)), byToken);
+              if (item === undefined) return;
+              const after = await identity(Number(entry), checkBudget);
+              if (before.birth !== after.birth) throw new Error(`case PID identity changed during environment read: ${entry}`);
+              if (after.state === "Z" || after.state === "X") return;
+              owned.push({ item, pid: Number(entry), birth: before.birth });
+            } catch (error) {
+              if (["ENOENT", "ESRCH"].includes(error.code)) return;
+              if (["EACCES", "EPERM"].includes(error.code)) {
+                let current;
+                try { current = await identity(Number(entry), checkBudget); }
+                catch (statError) { if (["ENOENT", "ESRCH"].includes(statError.code)) return; throw statError; }
+                // 僵尸已无可执行实体；退出瞬间 environ 也可能拒绝访问，不等同活进程权限未知。
+                if (before !== undefined && current.birth !== before.birth) throw new Error(`case PID identity changed during environment retry: ${entry}`);
+                if (deniedBirth !== undefined && current.birth !== deniedBirth) throw new Error(`case PID identity changed during environment retry: ${entry}`);
+                if (current.state === "Z" || current.state === "X") return;
+                if (!candidate && current.ppid !== launcherPid && current.group !== launcherPid && before?.ppid !== launcherPid && before?.group !== launcherPid) return;
+                if (attempt < 2) {
+                  deniedBirth = current.birth;
+                  if (deadline() - monotonicMs() <= 5) throw new Error("case token cleanup deadline was exhausted before process tree confirmation");
+                  await new Promise((resolve) => setTimeout(resolve, 5));
+                  checkBudget();
+                  continue;
+                }
+                throw new Error(`cannot confirm owned process ${entry} (state=${current.state}, ppid=${current.ppid}, pgid=${current.group}, starttime=${current.birth}): ${error.message}`, { cause: error });
+              }
+              throw error;
             }
-            throw error;
+          return;
           }
         }));
         checkBudget();
