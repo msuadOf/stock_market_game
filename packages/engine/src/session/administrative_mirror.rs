@@ -450,7 +450,10 @@ impl GameSession {
             };
             self.install_administrative_mirror(&mut driver, prepared);
             if let Some(fields) = civil {
-                let next_date = fields.install_into(self);
+                let (next_date, retained) = fields.install_into(self);
+                if let Some(retained) = retained {
+                    driver.publish_prepared_retained(retained);
+                }
                 driver.install_administrative_civil_date(next_date);
                 driver.adopt_session_seq(self);
             }

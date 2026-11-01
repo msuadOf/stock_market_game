@@ -1511,6 +1511,64 @@ mod rollback_tests {
     }
 
     #[test]
+    fn runtime_closed_day_candidate_contains_retained_history() {
+        if !crate::runtime::step_runtime_enabled() {
+            return;
+        }
+        let mut setup = crate::session::protocol::civil::publication_tests::setup();
+        setup.start_date = crate::CivilDate::from_iso("2030-01-05").unwrap();
+        let mut session = ProtocolSession::new(setup, 74).unwrap();
+        let update = session.end_civil_day_update().unwrap();
+        let saved = session.save().unwrap();
+        assert_eq!(
+            saved.civil_clock.settled_through,
+            Some(update.boundary.settled_date)
+        );
+        assert_eq!(saved.retained_market_days.len(), 1);
+        assert_eq!(
+            saved.retained_market_days[0].0.date,
+            update.boundary.settled_date
+        );
+        assert_eq!(session.state.game.retained_market_days().len(), 1);
+        let security = saved.retained_market_days[0].0.securities.get(&0).unwrap();
+        assert!(!security.trading);
+        assert!(security.bars.is_empty());
+        let mut restored = ProtocolSession::restore(&saved).unwrap();
+        let restored_update = restored.end_civil_day_update().unwrap();
+        assert_eq!(
+            restored.save().unwrap().retained_market_days[1].0.date,
+            restored_update.boundary.settled_date
+        );
+        let original = serde_json::to_value(session.state.game.retained_market_days()).unwrap();
+        session.malformed_civil = true;
+        assert!(session.end_civil_day_update().is_err());
+        assert_eq!(
+            serde_json::to_value(session.state.game.retained_market_days()).unwrap(),
+            original
+        );
+        let next = session.end_civil_day_update().unwrap();
+        let next_saved = session.save().unwrap();
+        assert_eq!(next_saved.retained_market_days.len(), 2);
+        assert_eq!(
+            next_saved.retained_market_days[1].0.date,
+            next.boundary.settled_date
+        );
+        let driver = session
+            .state
+            .game
+            .runtime_driver
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap();
+        let published = driver.publication().load();
+        assert_eq!(
+            serde_json::to_value(&published.retained.days).unwrap(),
+            serde_json::to_value(session.state.game.retained_market_days()).unwrap()
+        );
+    }
+
+    #[test]
     fn protocol_closed_january_first_freezes_exact_day_end_candidate() {
         #[cfg(not(target_family = "wasm"))]
         if crate::runtime::step_runtime_enabled() {

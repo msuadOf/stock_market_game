@@ -13,6 +13,7 @@ pub(super) struct PreparedCivilFields {
     disclosures: DisclosureDispatch,
     report_corrections: ReportCorrectionStatus,
     seq: u64,
+    retained: Option<Arc<crate::runtime::publication::RetainedDaySnapshot>>,
 }
 
 impl PreparedCivilFields {
@@ -20,6 +21,7 @@ impl PreparedCivilFields {
         shadow: GameSession,
         next_date: crate::CivilDate,
         seq_from: u64,
+        retained: Option<Arc<crate::runtime::publication::RetainedDaySnapshot>>,
     ) -> Result<Self, SessionError> {
         if shadow.civil_date() != next_date
             || shadow.seq() < seq_from
@@ -36,18 +38,28 @@ impl PreparedCivilFields {
             disclosures: shadow.state.disclosures,
             report_corrections: shadow.state.report_corrections,
             seq: shadow.state.seq,
+            retained,
         })
     }
 
     /// 首 Commit 后只移动预验证五域；不接受 driver、callback 或可失败工作。
-    pub(super) fn install_into(self, session: &mut GameSession) -> crate::CivilDate {
+    pub(super) fn install_into(
+        self,
+        session: &mut GameSession,
+    ) -> (
+        crate::CivilDate,
+        Option<Arc<crate::runtime::publication::RetainedDaySnapshot>>,
+    ) {
         session.state.companies = self.companies;
         session.state.civil_clock = self.civil_clock;
         session.state.disclosures = self.disclosures;
         session.state.report_corrections = self.report_corrections;
         session.state.seq = self.seq;
+        if let Some(retained) = &self.retained {
+            session.set_runtime_retained_day(Arc::clone(retained));
+        }
         session.market_calendar_day = None;
-        session.state.civil_clock.current_date()
+        (session.state.civil_clock.current_date(), self.retained)
     }
 }
 
@@ -244,8 +256,21 @@ impl GameSession {
                     }
                     prepared.clone_into_civil_shadow(&mut shadow);
                     shadow.market_calendar_day = None;
+                    let previous_len = shadow.retained_market_days().len();
+                    shadow.freeze_serial_closed_retained_day_if_needed(report.settled_date)?;
+                    let retained =
+                        (shadow.retained_market_days().len() > previous_len).then(|| {
+                            Arc::clone(
+                                &shadow
+                                    .retained_market_days()
+                                    .last()
+                                    .expect("新增保留日必须存在")
+                                    .0,
+                            )
+                        });
                     let publication = project(&shadow, report)?;
-                    let fields = PreparedCivilFields::from_shadow(shadow, next_date, seq_from)?;
+                    let fields =
+                        PreparedCivilFields::from_shadow(shadow, next_date, seq_from, retained)?;
                     Ok((fields, (instant, publication)))
                 },
             )
