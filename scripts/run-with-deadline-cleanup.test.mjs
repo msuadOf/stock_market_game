@@ -155,7 +155,10 @@ function inFlightCleanupCase(mode) {
       await entered;
       if (mode === "failure") await cleanup.afterFailure([], Number(process.hrtime.bigint()) / 1e6 - 1);
       else {
-        await new Promise((resolve) => setTimeout(resolve, Math.max(1, earlier - Number(process.hrtime.bigint()) / 1e6 + 1)));
+        // Node timer 可能早于小数毫秒的目标返回；反复按单调时钟确认前提。
+        while (Number(process.hrtime.bigint()) / 1e6 < earlier) {
+          await new Promise((resolve) => setTimeout(resolve, Math.max(1, Math.ceil(earlier - Number(process.hrtime.bigint()) / 1e6))));
+        }
         assert.ok(Number(process.hrtime.bigint()) / 1e6 >= earlier, "必须实际跨过同 flush 的最早 total");
       }
       releaseRead();
