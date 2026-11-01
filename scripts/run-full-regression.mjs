@@ -742,7 +742,7 @@ export async function executeFullRegression({
   log(JSON.stringify({ phase: "execute-lanes", rust_cpu_count: budgets.rust, web_cpu_count: budgets.web, parallel: cpuCount > 1 }));
   const scriptStep = steps.find((step) => step.kind === "script-test-batch");
   const scriptFiles = await discoverScriptTestFiles(sourceRoot);
-  const isolatedFile = path.join(sourceRoot, "scripts", "rust-test-case-supervisor.test.mjs");
+  const isolatedFile = path.join(sourceRoot, "scripts", "rust-test-case-supervisor-blocked.test.mjs");
   if (scriptFiles.filter((file) => file === isolatedFile).length !== 1) throw new Error(`缺少唯一时序敏感测试：${isolatedFile}`);
   // 此 fixture 的进程就绪与 /proc 清理争用敏感，先独立执行并计入同一期限。
   const isolatedStartedAt = now();

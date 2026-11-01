@@ -69,7 +69,7 @@ it("executes sealed prebuilt test binaries, then preserves doctests and 10-secon
     assert.equal(new Set(scripts.map((call) => call.args.at(-1))).size, scripts.length);
     assert.equal(result.steps.find((step) => step.label === "scripts ordinary tests").file_count, scripts.length);
     assert.equal(result.steps.find((step) => step.label === "scripts ordinary tests").wall_ms, scripts.length);
-    assert.ok(calls[0].args.at(-1).endsWith("rust-test-case-supervisor.test.mjs"));
+    assert.ok(calls[0].args.at(-1).endsWith("rust-test-case-supervisor-blocked.test.mjs"));
     assert.equal(result.steps.find((step) => step.label === "Rust prebuilt test binaries").binary_count, 1);
     assert.equal(result.steps.find((step) => step.label === "Rust required long validations").case_count, 1);
   } finally {
@@ -86,7 +86,7 @@ it("时序敏感测试失败时不启动任何并行执行线", { timeout: 10000
       run: async (options) => { calls.push(options); throw new Error("隔离测试失败"); },
     }), /隔离测试失败/);
     assert.equal(calls.length, 1);
-    assert.match(calls[0].args.at(-1), /rust-test-case-supervisor\.test\.mjs$/);
+    assert.match(calls[0].args.at(-1), /rust-test-case-supervisor-blocked\.test\.mjs$/);
     assert.equal(calls[0].timeoutMs, 10000);
   } finally { await fixture.cleanup(); }
 });
@@ -161,7 +161,7 @@ it("fails fast and aborts in-flight sibling test binaries", async () => {
       baseEnv: {},
       collectFingerprint: async () => fingerprint,
       run: async (options) => {
-        if (options.command === process.execPath && (options.args.at(-1).endsWith("rust-test-case-supervisor.test.mjs") || options.args.at(-1) === "13" && options.args.at(-2) === "12")) return;
+        if (options.command === process.execPath && (options.args.at(-1).endsWith("rust-test-case-supervisor-blocked.test.mjs") || options.args.at(-1) === "13" && options.args.at(-2) === "12")) return;
         if (options.command === process.execPath) {
           await new Promise((resolve) => options.signal.addEventListener("abort", resolve, { once: true }));
           throw options.signal.reason;
@@ -384,7 +384,7 @@ it("长验过滤命中 0 条用例时必须显式报错，不允许空集静默�
       run: async ({ args }) => {
         if (args.includes("--list") && args.includes("--exact")) return { stdout: "" };
         if (args.includes("--list")) return { stdout: args.includes("--ignored") ? "" : "ordinary: test\n" };
-        if (!args.at(-1).endsWith("rust-test-case-supervisor.test.mjs") && args.at(-1) !== "13") ordinaryExecutions += 1;
+        if (!args.at(-1).endsWith("rust-test-case-supervisor-blocked.test.mjs") && args.at(-1) !== "13") ordinaryExecutions += 1;
       },
     }), /resolved to 0 test cases/);
     assert.equal(ordinaryExecutions, 1, "只有普通 case 被执行，长验空集必须在运行前拦截");
@@ -438,7 +438,7 @@ it("外置 tiny artifact 在同一 target 封存和执行，跨 target inventory
   try {
     const { cwd, targetDir } = fixture;
     await mkdir(path.join(cwd, "scripts"));
-    await writeFile(path.join(cwd, "scripts", "rust-test-case-supervisor.test.mjs"), "");
+    await writeFile(path.join(cwd, "scripts", "rust-test-case-supervisor-blocked.test.mjs"), "");
     await writeFile(path.join(cwd, "scripts", "other.test.mjs"), "");
     const artifact = path.join(targetDir, "fixture-binary");
     await writeFile(artifact, "tiny sealed artifact");
