@@ -85,7 +85,6 @@ impl GameSession {
         };
         if due.len() != 1
             || self.state.setup.stocks.len() != 1
-            || self.state.setup.issuer_repurchase_enabled
             || self.state.setup.dividend_tax_mode != Some(CashDividendTaxMode::Exempt)
             || !actions.dividend_tax_books.is_empty()
             || book.status() != &StockDistributionStatus::Registered
@@ -175,7 +174,6 @@ impl GameSession {
         };
         if due.len() != 1
             || self.state.setup.stocks.len() != 1
-            || self.state.setup.issuer_repurchase_enabled
             || self.state.setup.dividend_tax_mode != Some(CashDividendTaxMode::Exempt)
             || !actions.dividend_tax_books.is_empty()
             || book.status() != &ShareSplitStatus::Registered

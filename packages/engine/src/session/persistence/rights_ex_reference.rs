@@ -319,7 +319,6 @@ fn validate_stock_group(
         || !group.cash_plan_ids.is_empty()
         || !group.split_event_ids.is_empty()
         || save.setup.stocks.len() != 1
-        || save.setup.issuer_repurchase_enabled
         || save.setup.dividend_tax_mode != Some(CashDividendTaxMode::Exempt)
         || !actions.dividend_tax_books.is_empty()
     {
@@ -421,7 +420,6 @@ fn validate_split_group(
         || !group.cash_plan_ids.is_empty()
         || !group.stock_event_ids.is_empty()
         || save.setup.stocks.len() != 1
-        || save.setup.issuer_repurchase_enabled
         || save.setup.dividend_tax_mode != Some(CashDividendTaxMode::Exempt)
         || !actions.dividend_tax_books.is_empty()
     {

@@ -5,6 +5,66 @@ use crate::company::share_split::{
     ShareSplitStatus,
 };
 
+#[test]
+fn player_split_after_prior_day_trade_reaches_ex_rights() {
+    for direction in [ShareSplitDirection::Split, ShareSplitDirection::Consolidate] {
+        let mut setup = payment_session(CashDividendTaxMode::Exempt)
+            .state
+            .setup
+            .clone();
+        setup.start_date = date("2030-06-10");
+        setup.ticks_per_day = 4;
+        setup.issuer_repurchase_enabled = true;
+        let mut session = GameSession::new_with_runtime_groups(setup, 7, 3).unwrap();
+        super::stock_opening_runtime_tests::trade(
+            &mut session,
+            AccountId(1),
+            AccountId(0),
+            1000,
+            100,
+        );
+        for _ in 1..4 {
+            session.step().unwrap();
+        }
+        session.end_civil_day().unwrap();
+        session
+            .propose_player_company_action(
+                AccountId(0),
+                crate::session::PlayerCompanyProposal::ShareSplit {
+                    company: CompanyId(0),
+                    direction: direction.clone(),
+                    ratio: 2,
+                },
+            )
+            .unwrap();
+        for _ in 0..2 {
+            for _ in 0..4 {
+                session.step().unwrap();
+            }
+            session.end_civil_day().unwrap();
+        }
+        let expected = if direction == ShareSplitDirection::Split {
+            200
+        } else {
+            50
+        };
+        assert_eq!(
+            session
+                .account(AccountId(0))
+                .unwrap()
+                .position(&StockId(0))
+                .unwrap()
+                .qty(),
+            expected
+        );
+        assert_eq!(
+            session.corporate_actions().unwrap().share_splits[0].status(),
+            &ShareSplitStatus::Settled
+        );
+        restore_with_three_groups(&session.save().unwrap());
+    }
+}
+
 fn split_session(direction: ShareSplitDirection, ratio: u64) -> GameSession {
     split_session_on(direction, ratio, START, PAYMENT_DAY)
 }

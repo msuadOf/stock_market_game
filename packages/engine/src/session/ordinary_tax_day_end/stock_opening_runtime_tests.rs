@@ -6,9 +6,19 @@ use crate::company::stock_distribution::{
 };
 
 fn stock_session(start: &str, registered: &str, ex: &str) -> GameSession {
+    stock_session_with_repurchase(start, registered, ex, false)
+}
+
+fn stock_session_with_repurchase(
+    start: &str,
+    registered: &str,
+    ex: &str,
+    enabled: bool,
+) -> GameSession {
     let template = payment_session(CashDividendTaxMode::Exempt);
     let mut setup = template.state.setup.clone();
     setup.start_date = date(start);
+    setup.issuer_repurchase_enabled = enabled;
     let session = GameSession::new_with_runtime_groups(setup, 7, 3).unwrap();
     let mut saved = session.save().unwrap();
     let capital = session
@@ -95,6 +105,27 @@ pub(super) fn trade(
         Event::Trade { maker, taker, qty: actual, price: actual_price, .. }
         if *maker == seller && *taker == buyer && *actual == qty && actual_price.cents() == price))
     );
+}
+
+#[test]
+fn stock_opening_with_repurchase_enabled_and_no_repurchase_event() {
+    let mut session = stock_session_with_repurchase(START, START, PAYMENT_DAY, true);
+    trade(&mut session, AccountId(1), AccountId(0), 1000, 100);
+    session.end_civil_day().unwrap();
+    assert_eq!(
+        session.corporate_actions().unwrap().stock_distributions[0].status(),
+        &StockDistributionStatus::Credited
+    );
+    assert_eq!(
+        session
+            .account(AccountId(0))
+            .unwrap()
+            .position(&StockId(0))
+            .unwrap()
+            .qty(),
+        200
+    );
+    restore_with_three_groups(&session.save().unwrap());
 }
 
 #[test]
