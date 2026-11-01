@@ -69,3 +69,5 @@
 第十四批保全四条 Clippy 来源：`codex/clippy-cfg-args-leaf-rework-20261030` `b5ce43c3`、`codex/clippy-cfg-npc-tests-20261030` `292b5eaf`、`codex/clippy-cfg-settlement-rework-20261030` `b21296d1`、`codex/clippy-idioms-sessionextra-20261030` `9985c6dd`，均转为对应 `archive/20261102-<短 SHA>` tag 并保留原 worktree 同提交 detached HEAD。四项含未逐项核销的生产重构；其中参数叶来源的 `trading_day` 说明在现行文件未见，须确认是否恢复；NPC 旧类型迁移和 30 文件 session 清理仍需核对。Settlement 同源读写上下文在基线存在。记录明确原候选未完成独审或 Cargo 证据的限制；本次不宣称全部吸收或 green。操作前工作树干净并检查进程 cwd，未运行产品测试。
 
 第十五批将 `feat/tax-admin-projection` `5e123180`、`fix/finish-120-groups2` `5ff2673c` 转为对应短 SHA 的 `archive/20261102-...` tag，保留原 worktree 同提交 detached HEAD。前者保留官方原件、合同及未执行草稿；现行规则已有受限 native 税务接线，旧草稿不能代表当前尚未接线或全面支持。后者保留原始红绿与验收记录，其历史窄门不能替代最终集成验收；四个 diagnostics 场景曾出现 Filled 缺链，须以现行专项证据判断是否关闭。独立复核确认保留上述限制；操作前工作树干净并检查进程 cwd，本次未运行产品测试。
+
+对第十五批历史 Filled 缺链的后续静态核对：基线祖先 `81547a33`、`db666393` 已接入成交因果来源，现行真实成交及 retained 重试测试包含一笔 Execution 对应两腿 Filled 的断言；四个历史场景仍保留真实 NPC、三交易日与双腿数量断言。尚未找到这四例在后续基线通过的执行收据，故状态为修复已接入、四场景复验缺证；不能依据旧失败推断当前缺陷仍存在，也不能称四例已绿。
