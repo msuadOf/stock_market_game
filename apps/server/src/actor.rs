@@ -2413,9 +2413,9 @@ impl SessionActor {
                 if let Some(fatal) = self.company_write_fatal(None) {
                     return Ok(fatal);
                 }
-                let result = self
-                    .game
-                    .subscribe_rights_offering(owner, &event_id, requested_shares);
+                let result =
+                    self.game
+                        .subscribe_rights_offering(owner, &event_id, requested_shares);
                 if let Some(fatal) = self.company_write_fatal(result.as_ref().err()) {
                     return Ok(fatal);
                 }
