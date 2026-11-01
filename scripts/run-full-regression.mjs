@@ -758,10 +758,10 @@ export async function executeFullRegression({
     completed.push({ label: docStep.label, wall_ms: now() - stepStartedAt });
   }, async (signal) => {
     let stepStartedAt = now();
-    for (let batchIndex = 0; batchIndex < 11; batchIndex += 1) {
+    for (let batchIndex = 0; batchIndex < 12; batchIndex += 1) {
       signal.throwIfAborted();
       const timeoutMs = Math.min(ORDINARY_TEST_MAX_MS, remainingMs(webStep.label));
-      const step = { ...webStep, env: { ...webStep.env, STOCK_GAME_WEB_TEST_CPU_BUDGET: String(budgets.web) }, args: [...webStep.args, String(batchIndex), "11"] };
+      const step = { ...webStep, env: { ...webStep.env, STOCK_GAME_WEB_TEST_CPU_BUDGET: String(budgets.web) }, args: [...webStep.args, String(batchIndex), "12"] };
       await run({ ...phaseCommandOptions(step, sourceRoot, timeoutMs), signal });
     }
     completed.push({ label: webStep.label, wall_ms: now() - stepStartedAt });

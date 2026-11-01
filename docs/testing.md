@@ -112,7 +112,7 @@ POSIX 帮助脚本进行 `.nvmrc` 诊断。CI 或隔离环境可将 `NODE_BIN` �
   与其全部 CPU 预算（批 9 A7 起 Rayon threads 分量退役——引擎内部线程模型，
   不再按环境变量切分预算；单核时仍至少 1 线程，不宣称未超卖）。
   独立执行的必跑 ignored 长用例使用 1 个 harness thread。
-  执行开始即记录清单查询、普通 case 和长用例的预算；任一查询或 case 失败即终止在途 siblings，停止启动排队 case。多核时 Rust 完整链（普通 case、长用例、doctest）与 Web 后接 scripts 的链并行，共享执行期限和失败取消，等待两侧清理后汇总；单核时串行。CPU 分配给 Web 链 `max(1, floor(CPU / 4))`，其余给 Rust；单核两链各用 1 核但不同时运行。Rust 的隔离前缀仅相对其他 Rust case 隔离。Web 批次及其 child 仍受 10000ms 门禁。执行结束再次验证源码未漂移。
+  执行开始即记录清单查询、普通 case 和长用例的预算；任一查询或 case 失败即终止在途 siblings，停止启动排队 case。多核时 Rust 完整链（普通 case、长用例、doctest）与 Web 后接 scripts 的链并行，共享执行期限和失败取消，等待两侧清理后汇总；单核时串行。CPU 分配给 Web 链 `max(1, floor(CPU / 4))`，其余给 Rust；单核两链各用 1 核但不同时运行。Rust 的隔离前缀仅相对其他 Rust case 隔离。真实 Chromium 的 `mobile-color-contrast.test.ts` 独立为一个 Web 批次，避免与其他 Web 文件进程争用；所有 12 批仍共享执行阶段剩余期限。Web 批次及其 child 仍受 10000ms 门禁。执行结束再次验证源码未漂移。
   完整回归已有 Web 整批的进程外十秒监督，直接启动带显式标记的 Web internal worker，
   不再让 Web CLI 重复启动另一层监督进程；独立 Web CLI 仍保留自己的进程外十秒监督。
   这只去掉重复 Node 启动开销，不放宽 deadline、不跳过测试或削减分片并行。
