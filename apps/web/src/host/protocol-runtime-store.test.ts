@@ -85,3 +85,31 @@ test("late or cross-generation baseline order seeds cannot overwrite the current
     assert.equal(store.getState().snapshot, storeBefore);
   }
 });
+
+test("同游标 runtime 刷新保留日内历史并接受后续 reset 委托", { timeout: 10000 }, () => {
+  const baseline = parseProtocolSnapshot(snapshot(0, 0), "test.fixture", defaultCatalogFixture);
+  const failures: unknown[] = [];
+  const coordinator = new ProtocolCoordinator({ onBaseline: () => {}, onApplied: () => {}, onFailure: failure => failures.push(failure) });
+  coordinator.accept(createBaselineUpdate("1", baseline, catalogFixtureForSnapshot(baseline)));
+  coordinator.accept(createProtocolUpdate("1", { TickBatch: { frames: [frame(1, 0, [0])], runtime_snapshot: null, runtime_delta: {
+    seq_from: 0, seq_to: 1, tick: 1, day: 0, phase: "Continuous", mirror_origin: mirrorOrigin(1), accounts: {},
+    working_orders: { reset: true, upserts: [], removed: [] },
+  } } }));
+  const current = coordinator.status();
+  assert.equal(current.kind, "ready");
+  if (current.kind !== "ready") throw new Error("缺少前置状态");
+  const refreshed = { ...createBaselineUpdate("1", current.state.snapshot, current.state.catalogResolver), continuation: true } as const;
+  const companyBefore = store.getState().company;
+  coordinator.accept(refreshed);
+  assert.equal(store.getState().company, companyBefore, "刷新不能替换公司查询状态");
+  const after = coordinator.status();
+  assert.equal(after.kind, "ready");
+  if (after.kind !== "ready") throw new Error("缺少刷新状态");
+  assert.equal(after.state.intraday.length, 1);
+  coordinator.accept(createProtocolUpdate("1", { TickBatch: { frames: [frame(2, 1, [0])], runtime_snapshot: null, runtime_delta: {
+    seq_from: 1, seq_to: 2, tick: 2, day: 0, phase: "Continuous", mirror_origin: mirrorOrigin(2), accounts: {},
+    working_orders: { reset: true, upserts: [], removed: [] },
+  } } }));
+  assert.deepEqual(failures, []);
+  assert.equal(coordinator.status().kind, "ready");
+});

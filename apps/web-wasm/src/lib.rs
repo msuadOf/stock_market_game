@@ -228,43 +228,39 @@ static NEXT: AtomicU32 = AtomicU32::new(1);
 static INGRESS: Mutex<Option<HashMap<u32, engine::SharedSessionIngress>>> = Mutex::new(None);
 
 #[derive(Debug)]
-struct UnsupportedRuntimeSyncPolicy {
-    code: &'static str,
-    policy: engine::RuntimeSyncPolicy,
-}
+struct WasmRuntimeRequired;
 
-impl std::fmt::Display for UnsupportedRuntimeSyncPolicy {
+impl std::fmt::Display for WasmRuntimeRequired {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             formatter,
-            "{}：WASM 仅支持 every_tick，当前策略 {:?} 不受支持",
-            self.code, self.policy
+            "WASM_RUNTIME_NOT_READY：WASM 会话需要启用 World/RuntimeDriver"
         )
     }
 }
 
-fn require_wasm_runtime_sync_policy(
-    policy: engine::RuntimeSyncPolicy,
-) -> Result<(), UnsupportedRuntimeSyncPolicy> {
-    match policy {
-        engine::RuntimeSyncPolicy::EveryTick => Ok(()),
-        unsupported => Err(UnsupportedRuntimeSyncPolicy {
-            code: "WASM_RUNTIME_SYNC_POLICY_UNSUPPORTED",
-            policy: unsupported,
-        }),
+fn require_wasm_runtime() -> Result<(), WasmRuntimeRequired> {
+    require_wasm_runtime_enabled(engine::runtime::step_runtime_enabled())
+}
+
+fn require_wasm_runtime_enabled(enabled: bool) -> Result<(), WasmRuntimeRequired> {
+    if enabled {
+        Ok(())
+    } else {
+        Err(WasmRuntimeRequired)
     }
 }
 
 #[derive(Debug)]
 enum HostSessionInitError {
-    UnsupportedRuntimeSyncPolicy(UnsupportedRuntimeSyncPolicy),
+    WasmRuntimeRequired(WasmRuntimeRequired),
     Session(SessionError),
 }
 
 impl std::fmt::Display for HostSessionInitError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::UnsupportedRuntimeSyncPolicy(error) => std::fmt::Display::fmt(error, formatter),
+            Self::WasmRuntimeRequired(error) => std::fmt::Display::fmt(error, formatter),
             Self::Session(error) => std::fmt::Display::fmt(error, formatter),
         }
     }
@@ -278,9 +274,7 @@ impl From<SessionError> for HostSessionInitError {
 
 fn host_session_init_error_to_js(error: HostSessionInitError) -> JsValue {
     match error {
-        HostSessionInitError::UnsupportedRuntimeSyncPolicy(error) => {
-            JsValue::from_str(&error.to_string())
-        }
+        HostSessionInitError::WasmRuntimeRequired(error) => JsValue::from_str(&error.to_string()),
         HostSessionInitError::Session(error) => session_error_to_js(error),
     }
 }
@@ -351,15 +345,13 @@ impl SessionRegistry {
     }
 
     fn create(&mut self, setup: SessionSetup, seed: u64) -> Result<u32, HostSessionInitError> {
-        require_wasm_runtime_sync_policy(setup.runtime_sync_policy)
-            .map_err(HostSessionInitError::UnsupportedRuntimeSyncPolicy)?;
+        require_wasm_runtime().map_err(HostSessionInitError::WasmRuntimeRequired)?;
         let session = ProtocolSession::new(setup, seed)?;
         self.register(session, &NEXT).map_err(Into::into)
     }
 
     fn restore(&mut self, slot: &SaveSlot) -> Result<u32, HostSessionInitError> {
-        require_wasm_runtime_sync_policy(slot.setup.runtime_sync_policy)
-            .map_err(HostSessionInitError::UnsupportedRuntimeSyncPolicy)?;
+        require_wasm_runtime().map_err(HostSessionInitError::WasmRuntimeRequired)?;
         let session = ProtocolSession::restore(slot)?;
         self.register(session, &NEXT).map_err(Into::into)
     }
@@ -723,6 +715,17 @@ pub fn step(handle: u32) -> Result<JsValue, JsValue> {
 
 fn step_update(handle: u32) -> Result<EngineUpdate, StepUpdateError> {
     REGISTRY.with(|registry| registry.borrow_mut().step_update(handle))
+}
+
+/// 显式安装当前 runtime 来源，并返回同步后的快照。
+#[wasm_bindgen]
+pub fn flush_runtime_sync(handle: u32) -> Result<JsValue, JsValue> {
+    with_session(handle, |session| {
+        session.flush_now().map_err(|error| {
+            step_update_error_to_js(StepUpdateError::Fatal(Box::new(error.into())))
+        })?;
+        to_js(&session.snapshot())
+    })
 }
 
 /// 拉完整快照（首次连/重连/存档）。
@@ -1156,16 +1159,7 @@ fn facade_slot_capacity_for_topology(groups: usize, desks: usize) -> Result<u32,
 #[derive(Debug)]
 enum RestoreFacadeInitError {
     Decode(serde_json::Error),
-    UnsupportedRuntimeSyncPolicy(
-        #[cfg_attr(
-            all(test, not(target_family = "wasm")),
-            expect(
-                dead_code,
-                reason = "native test 不编译 WASM 恢复导出；该载荷由原 WASM 错误映射读取"
-            )
-        )]
-        UnsupportedRuntimeSyncPolicy,
-    ),
+    WasmRuntimeRequired(WasmRuntimeRequired),
     Topology(SessionError),
     Capacity(
         #[cfg_attr(
@@ -1188,8 +1182,7 @@ fn facade_slot_capacity_for_restore_json(save_json: &str) -> Result<u32, Restore
 #[cfg(any(target_family = "wasm", test))]
 fn decode_restore_and_capacity(save_json: &str) -> Result<(SaveSlot, u32), RestoreFacadeInitError> {
     let save: SaveSlot = serde_json::from_str(save_json).map_err(RestoreFacadeInitError::Decode)?;
-    require_wasm_runtime_sync_policy(save.setup.runtime_sync_policy)
-        .map_err(RestoreFacadeInitError::UnsupportedRuntimeSyncPolicy)?;
+    require_wasm_runtime().map_err(RestoreFacadeInitError::WasmRuntimeRequired)?;
     let (groups, desks) = save
         .restore_runtime_topology()
         .map_err(RestoreFacadeInitError::Topology)?;
@@ -1235,8 +1228,7 @@ thread_local! { static PREPARED_RESTORE: RefCell<PreparedRestore> = RefCell::new
 #[wasm_bindgen]
 pub fn facade_slot_init_for_setup(setup: JsValue) -> Result<(), JsValue> {
     let setup: SessionSetup = serde_wasm_bindgen::from_value(setup)?;
-    require_wasm_runtime_sync_policy(setup.runtime_sync_policy)
-        .map_err(|error| JsValue::from_str(&error.to_string()))?;
+    require_wasm_runtime().map_err(|error| JsValue::from_str(&error.to_string()))?;
     let (groups, desks) = setup
         .default_new_runtime_topology()
         .map_err(session_error_to_js)?;
@@ -1252,7 +1244,7 @@ pub fn facade_slot_init_for_restore_json(save_json: String) -> Result<(), JsValu
         .with(|prepared| prepared.borrow_mut().prepare(&save_json, |_| Ok(())))
         .map_err(|error| match error {
             RestoreFacadeInitError::Decode(error) => JsValue::from_str(&error.to_string()),
-            RestoreFacadeInitError::UnsupportedRuntimeSyncPolicy(error) => {
+            RestoreFacadeInitError::WasmRuntimeRequired(error) => {
                 JsValue::from_str(&error.to_string())
             }
             RestoreFacadeInitError::Topology(error) => session_error_to_js(error),

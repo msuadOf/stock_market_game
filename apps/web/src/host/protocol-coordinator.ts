@@ -108,12 +108,25 @@ export class ProtocolCoordinator {
 
   private installBaseline(update: Extract<HostUpdate, { type: "baseline" }>): void {
     if (this.current !== null && BigInt(update.generation) < BigInt(this.current.cursor.generation)) throw new ProtocolError("PROTOCOL_CURSOR", "baseline.generation", "拒绝旧 generation baseline");
+    const previous = this.current;
+    if (update.continuation === true && (previous === null || previous.cursor.generation !== update.generation
+      || previous.cursor.tick !== update.snapshot.tick || previous.cursor.seq !== update.snapshot.seq)) {
+      throw new ProtocolError("PROTOCOL_CURSOR", "baseline.continuation", "runtime 刷新基线必须匹配当前 generation、tick 和 seq");
+    }
     const state = createProtocolState(update.snapshot, update.generation, update.catalogResolver);
     const hydrated: ProtocolState = {
       ...state,
-      securities: update.securities,
-      publicPublicationIds: update.publicPublicationIds,
+      ...(update.continuation === true && previous !== null ? { intraday: previous.intraday, accepted: previous.accepted } : {}),
+      securities: update.continuation === true && previous !== null ? previous.securities : update.securities,
+      publicPublicationIds: update.continuation === true && previous !== null ? previous.publicPublicationIds : update.publicPublicationIds,
     };
+    if (update.continuation === true) {
+      this.current = hydrated;
+      this.currentStatus = { kind: "ready", state: hydrated };
+      this.snapshotDispatch(installProtocolSnapshotBaseline({ snapshot: hydrated.snapshot, generation: update.generation }));
+      this.callbacks.onBaseline(hydrated, update);
+      return;
+    }
     const companyGeneration = this.baselineEpoch + 1;
     const commitCompany = this.callbacks.prepareBaseline?.(hydrated, update, companyGeneration);
     commitCompany?.();

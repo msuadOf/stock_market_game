@@ -23,6 +23,7 @@ type WasmNpcDecisionTrace = (handle: number, account: bigint) => readonly NpcDec
 // 旧 bindings 的声明文件仍把 query_stock_history 标为 code: string；按 ADR 0041 以
 // 数值 StockId（u32）覆盖该成员，重建 bindings 后声明亦为数值。
 type WasmTransportExtensions = Omit<typeof import("../../wasm-pkg/web_wasm.js"), "query_stock_history"> & {
+  readonly flush_runtime_sync?: (handle: number) => unknown;
   readonly shutdown_session?: (handle: number) => unknown;
   readonly ingress_token?: (handle: number) => number;
   readonly prepare_public_baseline?: (handle: number) => void;
@@ -464,6 +465,19 @@ function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
           }
           const savedSlot = parseSaveSlot(normalizeSerdeMaps(saved));
           ctx.postMessage({ type: "saved", requestId: message.requestId, generation: requestedGeneration, slot: savedSlot });
+          return;
+        }
+        case "flushRuntimeSync": {
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          if (!Number.isSafeInteger(message.requestId) || Number(message.requestId) < 1) throw new Error("Worker runtime 刷新 requestId 必须是正安全整数");
+          exact({ ...message }, ["type", "requestId", "generation"], "Worker runtime 刷新");
+          loop.flushForControl();
+          const [session, wasm] = slot.requireHandle();
+          const flush = transportExtensions(wasm).flush_runtime_sync;
+          if (typeof flush !== "function") throw new Error("WASM 缺少 flush_runtime_sync，请重新构建 bindings");
+          const snapshot = flush(session);
+          ctx.postMessage({ type: "runtimeSyncFlushed", requestId: message.requestId, generation: requestedGeneration, snapshot,
+            stockCatalog: wasm.stock_catalog_view(session), companyCatalog: wasm.company_catalog_view(session), civilDate: wasm.civil_date(session) });
           return;
         }
         case "refreshBaseline": {

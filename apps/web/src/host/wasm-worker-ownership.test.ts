@@ -90,6 +90,7 @@ async function createFixture(
     host_capabilities: () => ({ npcDecisionDiagnostics: false, indicatorCapabilities: { intradayAverage: false, macd: false, priceKdj: false, candleKdj: false }, personalTradeHistory: false }),
     step: (current: number) => { calls.push(`step:${current}`); return tickBatch([frame(1, 0, [0])], snapshot(1, 1)); },
     tick: () => 1n,
+    flush_runtime_sync: (current: number) => { calls.push(`flush:${current}`); return snapshot(0, 0); },
     save: (current: number) => { calls.push(`save:${current}`); return saved; },
     end_civil_day: () => civilUpdate(),
     company_read_query: (current: number, query: unknown) => {
@@ -622,3 +623,21 @@ for (const variant of ["string", "unknown", "error", "getter"] as const) {
     });
   });
 }
+
+ test("Worker 显式刷新 runtime 并回传权威基线，拒绝过期 generation", { timeout: 10000 }, async () => {
+  await withWorker(async f => {
+    f.send({ type: "create", seed: 1n });
+    f.posted.length = 0;
+    const preparations = f.calls.filter(call => call === "prepare:7").length;
+    f.send({ type: "flushRuntimeSync", requestId: 7, generation: 1 });
+    assert.equal(f.calls.filter(call => call === "prepare:7").length, preparations, "刷新不能清除尚未消费的日终 save candidate");
+    assert.equal(f.calls.includes("flush:7"), true);
+    assert.equal(f.posted[0].type, "runtimeSyncFlushed");
+    assert.deepEqual(f.posted[0].snapshot, snapshot(0, 0));
+    f.posted.length = 0;
+    f.send({ type: "flushRuntimeSync", requestId: 8, generation: 0 });
+    assert.equal(f.calls.filter(call => call === "flush:7").length, 1);
+    assert.notEqual(f.posted[0].type, "runtimeSyncFlushed");
+    f.send({ type: "drop" });
+  });
+});

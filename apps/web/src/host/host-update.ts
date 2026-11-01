@@ -16,6 +16,7 @@ export type PublicMetadata = {
 export type HostUpdate =
   | ({
       readonly type: "baseline";
+      readonly continuation?: true;
       readonly generation: string;
       readonly snapshot: CodedSnapshot;
       readonly securities: readonly StockSpec[];

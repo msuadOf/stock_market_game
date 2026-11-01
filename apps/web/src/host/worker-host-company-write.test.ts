@@ -231,3 +231,19 @@ for (const transition of ["generation", "restore", "dispose"] as const) {
     });
   });
 }
+
+test("同代 runtime 刷新不使在途公司写回执失效", { timeout: 10000 }, async () => {
+  await withHost(async (host, f) => {
+    const engine = f.workers[0];
+    const writing = host.proposePlayerCompanyAction(proposal);
+    await drain();
+    const write = engine.sent.at(-1)!;
+    const flushing = host.flushRuntimeSync!();
+    await drain();
+    const flush = engine.sent.at(-1)!;
+    engine.emit({ ...catalogWorkerFixture(snapshot(0, 0)), type: "runtimeSyncFlushed", requestId: flush.requestId, generation: 1, snapshot: snapshot(0, 0), civilDate: "2030-01-02" });
+    await flushing;
+    engine.emit({ type: "playerCompanyActionAcknowledged", requestId: write.requestId, generation: 1, result: { receipt } });
+    assert.deepEqual(await writing, receipt);
+  });
+});

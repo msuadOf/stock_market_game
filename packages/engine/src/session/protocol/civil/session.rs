@@ -393,8 +393,9 @@ impl ProtocolSession {
             .game
             .public_runtime_state()
             .map_err(|fatal| self.state.game.poison_runtime_step(fatal))?;
-        self.state.committed_runtime = Some(current.clone());
-        *self.state.published_runtime.borrow_mut() = Some(current);
+        self.state.committed_runtime = Some(current);
+        // 显式同步后的宿主可能重建基线；下一批须携带完整委托而非增量。
+        *self.state.published_runtime.borrow_mut() = None;
         Ok(snapshot)
     }
 

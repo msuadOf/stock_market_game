@@ -1,4 +1,4 @@
-//! WASM 仅支持 EveryTick；策略拒绝必须发生在会话及共享 ingress 登记之前。
+//! 会话要求 runtime；三档策略由共享 engine 实现。
 
 use super::*;
 use engine::RuntimeSyncPolicy;
@@ -22,80 +22,49 @@ fn settled_save(seed: u64) -> engine::SaveSlot {
     session.save().unwrap()
 }
 
-fn assert_unsupported(error: impl std::fmt::Display) {
-    assert!(
-        error
-            .to_string()
-            .contains("WASM_RUNTIME_SYNC_POLICY_UNSUPPORTED"),
-        "WASM 策略拒绝必须给出稳定错误码，实际：{error}"
-    );
-}
-
 #[test]
-fn create_rejects_unsupported_policies_before_registering_a_session() {
-    for policy in [RuntimeSyncPolicy::DayEnd, RuntimeSyncPolicy::OnDemand] {
+fn runtime_create_and_restore_support_all_policies() {
+    for policy in [
+        RuntimeSyncPolicy::EveryTick,
+        RuntimeSyncPolicy::DayEnd,
+        RuntimeSyncPolicy::OnDemand,
+    ] {
         let mut registry = SessionRegistry::default();
-        let mut setup = setup();
-        setup.runtime_sync_policy = policy;
-
-        let result = registry.create(setup, 41);
-        match result {
-            Err(error) => assert_unsupported(error),
-            Ok(handle) => panic!("策略 {policy:?} 应在登记前拒绝，错误地登记句柄 {handle}"),
-        }
-        assert!(registry.sessions.is_empty(), "拒绝后不得登记 handle");
-    }
-}
-
-#[test]
-fn create_rejects_unsupported_policy_before_engine_setup_validation() {
-    for policy in [RuntimeSyncPolicy::DayEnd, RuntimeSyncPolicy::OnDemand] {
-        let mut setup = setup();
-        setup.runtime_sync_policy = policy;
-        setup.stocks.clear();
-        let mut registry = SessionRegistry::default();
-
-        let result = registry.create(setup, 45);
-        match result {
-            Err(error) => assert_unsupported(error),
-            Ok(handle) => panic!("策略 {policy:?} 应先于 setup 校验拒绝，登记了句柄 {handle}"),
-        }
-        assert!(registry.sessions.is_empty(), "拒绝后不得登记 handle");
-    }
-}
-
-#[test]
-fn restore_rejects_unsupported_policies_before_registering_a_session() {
-    for policy in [RuntimeSyncPolicy::DayEnd, RuntimeSyncPolicy::OnDemand] {
+        let mut config = setup();
+        config.runtime_sync_policy = policy;
+        let handle = registry.create(config, 41).expect("runtime 应支持三档策略");
+        assert!(registry.sessions.contains_key(&handle));
         let mut slot = settled_save(42);
         slot.setup.runtime_sync_policy = policy;
-        let mut registry = SessionRegistry::default();
-
-        let result = registry.restore(&slot);
-        match result {
-            Err(error) => assert_unsupported(error),
-            Ok(handle) => panic!("策略 {policy:?} 应在登记前拒绝，错误地登记句柄 {handle}"),
-        }
-        assert!(registry.sessions.is_empty(), "拒绝后不得登记 handle");
+        let restored = registry.restore(&slot).expect("runtime 应保留存档策略");
+        assert!(registry.sessions.contains_key(&restored));
     }
 }
 
 #[test]
-fn restore_rejects_unsupported_policy_before_engine_setup_validation() {
+fn session_requires_runtime_independently_of_policy() {
+    assert!(require_wasm_runtime_enabled(true).is_ok());
+    assert!(require_wasm_runtime_enabled(false)
+        .unwrap_err()
+        .to_string()
+        .contains("WASM_RUNTIME_NOT_READY"));
+}
+
+#[test]
+fn runtime_invalid_setup_and_restore_are_rejected_before_registration() {
     for policy in [RuntimeSyncPolicy::DayEnd, RuntimeSyncPolicy::OnDemand] {
+        let mut registry = SessionRegistry::default();
+        let mut config = setup();
+        config.runtime_sync_policy = policy;
+        config.stocks.clear();
+        assert!(registry.create(config, 45).is_err());
+        assert!(registry.sessions.is_empty());
+
         let mut slot = settled_save(46);
         slot.setup.runtime_sync_policy = policy;
         slot.setup.ticks_per_day = 0;
-        let mut registry = SessionRegistry::default();
-
-        let result = registry.restore(&slot);
-        match result {
-            Err(error) => assert_unsupported(error),
-            Ok(handle) => {
-                panic!("策略 {policy:?} 应先于 restore setup 校验拒绝，登记了句柄 {handle}")
-            }
-        }
-        assert!(registry.sessions.is_empty(), "拒绝后不得登记 handle");
+        assert!(registry.restore(&slot).is_err());
+        assert!(registry.sessions.is_empty());
     }
 }
 

@@ -39,6 +39,15 @@ fn protocol_flush_returns_current_snapshot_and_keeps_frame_publication_usable() 
     let mut session =
         ProtocolSession::new(boundary_setup(crate::RuntimeSyncPolicy::OnDemand), 42).unwrap();
     let first = session.step_frame().unwrap();
+    let first_batch = session.tick_batch(vec![first.clone()]).unwrap();
+    assert!(
+        first_batch
+            .runtime_delta
+            .as_ref()
+            .unwrap()
+            .working_orders
+            .reset
+    );
     let snapshot = session.flush_now().unwrap();
     assert_eq!(snapshot.tick, first.tick);
     assert_eq!(snapshot.seq, first.seq_to);
@@ -46,6 +55,10 @@ fn protocol_flush_returns_current_snapshot_and_keeps_frame_publication_usable() 
 
     let next = session.step_frame().unwrap();
     let batch = session.tick_batch(vec![next.clone()]).unwrap();
+    assert!(
+        batch.runtime_delta.as_ref().unwrap().working_orders.reset,
+        "flush 后的首批增量必须重建委托状态"
+    );
     assert_eq!(batch.frames.len(), 1, "flush 后仍可发布真实后继帧");
     assert_eq!(batch.frames[0].tick, next.tick);
     assert_eq!(batch.frames[0].seq_to, next.seq_to);
@@ -88,6 +101,7 @@ fn current_day_save_selects_requested_natural_day_while_latest_save_stays_at_pri
     }
     session.end_civil_day_update().unwrap();
     let settled = session.save().unwrap();
+    session.flush_now().unwrap();
     let selected = session.save_current_day(start).unwrap();
     assert_eq!(selected.snapshot.seq, settled.snapshot.seq);
     assert_eq!(selected.civil_clock.settled_through, Some(start));

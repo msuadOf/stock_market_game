@@ -119,6 +119,8 @@ export interface EngineHost {
   day(): number;
   civilDate?(): Promise<string>;
   endCivilDay?(): Promise<void>;
+  /** 显式刷新 OnDemand runtime 并发布权威基线，不推进 tick 或 seq；缺省表示宿主不支持。 */
+  flushRuntimeSync?(): Promise<void>;
   /** Captures the latest completed day, or the exact completed CivilUpdate candidate when keyed. */
   save(candidate?: { readonly seq: number; readonly settledDate: string }): Promise<unknown>;
   refreshBaseline(): Promise<void>;

@@ -93,7 +93,7 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
   const layout = { baseAddr: 0, headerWords: HEADER_WORDS, slotStride: SLOT_STRIDE, joinStride: JOIN_STRIDE, capacity: 4, genBits: 29 };
   const words = new Int32Array(memory.buffer);
   Atomics.store(words, CAPACITY, layout.capacity); Atomics.store(words, GEN_BITS, layout.genBits); Atomics.store(words, FREE_HEAD, FREE_HEAD_EMPTY | 0);
-  const substrate = { module, memory, layout, diagnostics: false };
+  const substrate = { module, memory, layout, diagnostics: false, waitAbort: { address: 4096, bytes: 1 as const } };
   let configured = 0;
   let configuredSubstrate: typeof substrate | undefined;
   class FixtureChannel extends NodeMessageChannel {
@@ -141,7 +141,7 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
             return;
           }
           if (options.initError !== undefined) { this.error(options.initError); return; }
-          this.controlPort!.postMessage(options.initAfterMemoryFailure === undefined ? { type: "facadeEngineSubstrate", ...substrate } : { type: "facadeEngineMemory", allocationId: 1, memory });
+          this.controlPort!.postMessage({ type: "facadeEngineMemory", allocationId: 1, memory });
         }
         if (request.type === "shutdown") workerQueueMicrotask(() => {
           this.dataPort!.postMessage({ type: "shutdownCompleted", requestId: request.requestId, generation: request.generation, report: { kind: "success", handle: 7, runtime: null } });
@@ -176,6 +176,9 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
               memory.grow(1);
               this.dataPort!.postMessage({ type: "failure", generation: 0, code: "INIT_FIXTURE", where: "fixture.init", message: String(options.initAfterMemoryFailure), engineQuiescent: "initialization-failed", ...(options.claimUnallocatedAfterMemory === true ? { memoryAllocation: "not-allocated" } : {}) });
               this.emit({ type: "engineLifecycle", instanceId: this.instanceId, state: options.claimUnallocatedAfterMemory === true ? "unallocated" : "quiescent" });
+            }
+            if (request.type === "facadeEngineMemoryRegistered" && options.initAfterMemoryFailure === undefined) {
+              this.controlPort!.postMessage({ type: "facadeEngineConfiguration", allocationId: 1, module, layout, diagnostics: false, waitAbort: substrate.waitAbort });
             }
             if (request.type === "facadeEngineConfigured") { configured++; this.dataPort!.postMessage({ type: "initializationProgress", phase: "engine" }); this.dataPort!.postMessage({ type: "ready" }); }
           });

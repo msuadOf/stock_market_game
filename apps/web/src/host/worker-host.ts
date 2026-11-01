@@ -44,7 +44,7 @@ import { parseVerifiedRestoreCapability } from "./wasm-restore-package-capabilit
 import { parseWasmSessionShutdown, type WasmSessionShutdown } from "./wasm-shutdown-report.ts";
 import { requireAdmittedLoadArchive } from "./wasm-document-memory-owner.ts";
 import type { VerifiedWasmRestoreCapability, WasmFinalRelease, WasmMemoryAdmissionTicket } from "./wasm-document-memory-owner.ts";
-import type { WasmRuntimeOptions } from "./wasm-runtime-options.ts";
+import { parseWasmRuntimeOptions, type WasmRuntimeOptions } from "./wasm-runtime-options.ts";
 
 type WorkerMessage = {
   readonly type: string;
@@ -211,6 +211,7 @@ export function createWorkerHost(
     let memoryTicket: WasmMemoryAdmissionTicket | undefined;
     let initialArchive: StrictSaveEnvelope | null = null;
     let restoreCapability: VerifiedWasmRestoreCapability | undefined;
+    let runtimeOptions: WasmRuntimeOptions;
     try {
       const ticket = options !== null && typeof options === "object" ? options.memoryAdmissionTicket : undefined;
       memoryTicket = ticket;
@@ -220,6 +221,11 @@ export function createWorkerHost(
         ticket.registerRelease(release);
       }
       if (options === null || typeof options !== "object" || typeof options.onSpawnFailure !== "function") throw new Error("WorkerHost 必须提供 onSpawnFailure callback");
+      const override = options.runtimeOverride;
+      if (override === false) throw new Error("WorkerHost 必须启用 runtime，不支持 runtimeOverride: false");
+      const waitSettings = options.waitSettings;
+      if (override === undefined && waitSettings !== undefined) throw new Error("waitSettings 必须与显式 runtimeOverride 一同提供");
+      runtimeOptions = override === undefined ? parseWasmRuntimeOptions("") : { runtimeOverride: override, waitSettings };
       // 只读一次外部 getter；失败明确发生在 Worker/Memory 之前。
       const suppliedArchive = options.initialArchive;
       if (suppliedArchive !== null && suppliedArchive !== undefined) {
@@ -230,12 +236,12 @@ export function createWorkerHost(
           code: "WASM_RESTORE_TOPOLOGY_NOT_READY", where: "worker-host.initial-archive", message: "WASM 日终存档恢复所需的宿主拓扑尚未就绪", context: { operation: "restore" },
         });
         initialArchive = requireAdmittedLoadArchive(ticket, suppliedArchive);
-        restoreCapability = parseVerifiedRestoreCapability(candidate, options.runtimeOverride);
+        restoreCapability = parseVerifiedRestoreCapability(candidate, runtimeOptions.runtimeOverride);
       }
     } catch (error) { resolveRelease?.({ kind: "not-allocated" }); reject(error); return; }
     let controlClient: ReturnType<typeof createEngineControlClient>;
     try {
-      controlClient = createEngineControlClient({ runtimeOverride: options.runtimeOverride === true,
+      controlClient = createEngineControlClient({ runtimeOverride: runtimeOptions.runtimeOverride === true,
         onLifecycleObservation: options.lifecycleObserver,
         onSpawnFailure(failure) { options.onSpawnFailure(parseWorkerFailure(failure)); },
         onFailure(error) {
@@ -498,8 +504,8 @@ export function createWorkerHost(
       controlClient.sendInitialization({
         type: "init",
         ...(initialArchive === null ? { setup } : { initialArchive, restoreCapability }),
-        ...(options.runtimeOverride === undefined ? {} : { runtimeOverride: options.runtimeOverride }),
-        ...(options.waitSettings === undefined ? {} : { waitSettings: options.waitSettings }),
+        ...(runtimeOptions.runtimeOverride === undefined ? {} : { runtimeOverride: runtimeOptions.runtimeOverride }),
+        ...(runtimeOptions.waitSettings === undefined ? {} : { waitSettings: runtimeOptions.waitSettings }),
       });
     } catch (error) {
       notifyFailure({ code: "WASM_WORKER_TRANSPORT", where: "worker-host.initialize", message: error instanceof Error ? error.message : String(error) });
@@ -805,6 +811,15 @@ export function createWorkerHost(
             : { type: "save", requestId: requests.nextRequestId(), generation: queryGeneration, candidate }, "saved", 60_000);
           if (disposed || closing || currentGeneration !== queryGeneration) throw new Error("Worker 存档响应属于已过期会话 generation");
           return response.slot;
+        },
+        async flushRuntimeSync() {
+          if (disposed || closing || pendingFailure !== null || restoringGeneration !== null) throw new Error("Worker runtime 刷新需要健康的当前会话");
+          const requestedGeneration = currentGeneration, requestedEpoch = baselineEpoch;
+          const response = await requests.request({ type: "flushRuntimeSync", requestId: requests.nextRequestId(), generation: requestedGeneration }, "runtimeSyncFlushed");
+          if (disposed || closing || pendingFailure !== null || restoringGeneration !== null || currentGeneration !== requestedGeneration || baselineEpoch !== requestedEpoch) throw new Error("Worker runtime 刷新响应属于已过期会话 generation");
+          const baseline = prepareBaselineUpdate(String(requestedGeneration), response.snapshot, response.stockCatalog, response.companyCatalog, { civilDate: parseIsoDate(response.civilDate, "Worker runtimeSyncFlushed.civilDate"), revision: null });
+          cachedBaseline = baseline;
+          deliverLiveBaseline({ ...baseline, continuation: true });
         },
         async refreshBaseline() {
           const requestedGeneration = currentGeneration;

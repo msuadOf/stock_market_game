@@ -28,13 +28,13 @@ SealAllocationSnapshot 的 `DecisionResourceSnapshot::seal` 读取报价过期�
 2.4.1 与深交所同规则 2.3.1（2026-07-06 起施行，2026-10-25 核验）；来源见
 [模拟日历政策](simulation-calendar.md) §1 与 [公司会计依据](company-accounting.md) §5。
 
-## RuntimeSyncPolicy 的 WASM 支持边界（2026-10-29）
+## RuntimeSyncPolicy 的 WASM 支持边界（2026-11-02）
 
-**不支持：** WASM 新局和读档当前仅接受 `runtime_sync_policy: "every_tick"`；显式
-`day_end` 或 `on_demand` 在构造 Session、登记句柄或初始化 facade arena 前报告
-`WASM_RUNTIME_SYNC_POLICY_UNSUPPORTED`，不能静默改成 EveryTick。新局省略字段时
-沿用 EveryTick；当前日终存档必须显式包含该字段。该限制只描述同步方式的支持范围，
-不改变撮合、现金分、股数、T+1 或交易日定义。
+WASM World/RuntimeDriver 路径支持 `every_tick`、`day_end` 和 `on_demand`；
+显式 `flush_runtime_sync()` 同步已提交来源并返回 Snapshot，不推进 tick 或事件 seq。
+WASM 宿主在会话登记或 facade arena 初始化前要求 runtime；未启用时报告
+`WASM_RUNTIME_NOT_READY`。新局省略字段时沿用 EveryTick；当前日终
+存档必须显式包含该字段。同步策略不改变撮合、现金分、股数、T+1 或交易日定义。
 
 ## 已实现
 
@@ -709,7 +709,7 @@ std-thread runtime 的 `DayEndCalendar` 明确区分 `MarketTick` 与 `ManualDay
 
 公开运行 `tick/seq/day/phase` 表达已提交进度；`mirror_origin` 明示可滞后的镜像来源及相位。
 显式 flush 不增加市场 tick 或事件 seq。只读日终候选查询不触发 flush，未完成的自然日不能
-因镜像已经同步而冒充保存成功。WASM 串行管线只支持 `EveryTick`，不支持日内镜像解耦。
+因镜像已经同步而冒充保存成功。WASM 宿主使用同一 World/RuntimeDriver 路径和同步策略。
 
 成员加入在旧 World 静点捕获完整账户、本人态、计划、在途委托、真实 RNG 与来源，
 先准备新 authority，再登记 receiver；成功后只移动已验证值，并停止旧 worker，

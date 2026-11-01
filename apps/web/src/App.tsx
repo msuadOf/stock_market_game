@@ -1,3 +1,4 @@
+import { applyBaselineEffects } from "./app/baseline-effects.ts";
 /**
  * 应用根组件（WS-4 完整版）。
  *
@@ -307,14 +308,17 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
         return company.prepareBaseline({ civilDate: baseline.civilDate, revision: baseline.revision, seq: protocolState.snapshot.seq, catalogResolver: baseline.catalogResolver }, companyGeneration);
       },
       onBaseline(protocolState, baseline) {
-        if (quickTrading.jobs().some(job => job.enabled)) setNotice("已重新同步游戏，定时自动下单已停止，请核对后重新开启");
-        quickTrading.reset();
-        saveSelectionGenerationRef.current += 1;
-        dayEndPersistenceRef.current.install(baseline.generation);
-        clearPlayerOrders();
-        installBaselineRef.current(protocolState);
-        setHostBaselineReady(true);
-        if (!TRADING_E2E_MODE) void refreshPlayerOrders();
+        applyBaselineEffects(baseline.continuation === true, {
+          replaceSession() {
+            if (quickTrading.jobs().some(job => job.enabled)) setNotice("已重新同步游戏，定时自动下单已停止，请核对后重新开启");
+            quickTrading.reset();
+            saveSelectionGenerationRef.current += 1;
+            dayEndPersistenceRef.current.install(baseline.generation);
+            clearPlayerOrders();
+          },
+          installView() { installBaselineRef.current(protocolState); setHostBaselineReady(true); },
+          refreshOrders() { if (!TRADING_E2E_MODE) void refreshPlayerOrders(); },
+        });
       },
       onApplied(reduction, metadata) {
         const companyCoordinator = companyCoordinatorRef.current;
