@@ -98,7 +98,12 @@ async function createFixture(
       if (failing === "company-read-typed") throw { kind: "CorporateState", data: { reason: "实际公司拒绝原因" } };
       return { owner: "0", value: { kind: "OwnerRightsOfferings", data: [] } };
     },
-    // 三写返回值是 synthetic transport fixture，不证明真实 Rust 公司批准或 Correction 生命周期。
+    // 公司写返回值是 synthetic transport fixture，不证明真实 Rust 公司批准或 Correction 生命周期。
+    subscribe_rights_offering: (current: number, eventId: string, shares: string) => {
+      calls.push(`rights:${current}:${eventId}:${shares}`);
+      if (writeFailure !== undefined) throw writeFailure;
+      return { event_id: eventId, requested_shares: shares, submitted_on: "2030-01-02" };
+    },
     propose_player_company_action: (current: number, proposal: unknown) => {
       calls.push(`proposal:${current}:${JSON.stringify(proposal)}`);
       if (writeFailure !== undefined) throw writeFailure;
@@ -138,7 +143,7 @@ async function createFixture(
     load(url, context, nextLoad) {
       if (url.startsWith("virtual:wasm-pkg:owner-")) {
         const exports = Object.keys(bindings)
-          .map((key) => (missingWrites === true || missingWrites === "malformed") && ["propose_player_company_action", "enqueue_report_correction", "cancel_report_correction"].includes(key) ? `export const ${key} = ${missingWrites === "malformed" ? "17" : "undefined"};` : `export const ${key} = (...args) => bindings.${key}(...args);`).join("\n");
+          .map((key) => (missingWrites === true || missingWrites === "malformed") && ["propose_player_company_action", "enqueue_report_correction", "cancel_report_correction", "subscribe_rights_offering"].includes(key) ? `export const ${key} = ${missingWrites === "malformed" ? "17" : "undefined"};` : `export const ${key} = (...args) => bindings.${key}(...args);`).join("\n");
         return { shortCircuit: true, format: "module", source: `const bindings = globalThis[Symbol.for("stock-game-wasm-owner-tests")];\n${exports}` };
       }
       if (url.startsWith("virtual:owner-env:")) return { shortCircuit: true, format: "module", source: `import {createFacadeThreadBinding} from ${JSON.stringify(new URL("./facade-thread-binding.ts", import.meta.url).href)}; const binding=createFacadeThreadBinding({isWorker:()=>true}); export const {bindFacadeThreadEnvironment,installFacadeSlotLayout,getArenaView}=binding;` };
@@ -174,6 +179,7 @@ async function createFixture(
 
 const correctionWriteRequest = { operation_id: "传输检查", company: 0, supersedes: 7, entries: [{ source: 900000001, date: "2030-01-02", kind: "CashRevenue", cash_flow: "Operating", lines: [{ account: "1002", side: "Debit", amount: "10.00" }, { account: "6001", side: "Credit", amount: "10.00" }] }], reason: "synthetic transport fixture" };
 const companyWrites = [
+  { type: "subscribeRightsOffering", payload: { event_id: "r1", requested_shares: "5" }, successType: "rightsSubscriptionAcknowledged", result: { event_id: "r1", requested_shares: "5", submitted_on: "2030-01-02" }, call: "rights:7:r1:5" },
   { type: "proposePlayerCompanyAction", payload: { proposal: { CashDividend: { company: 0, gross_per_share: "5" } } }, successType: "playerCompanyActionAcknowledged", result: { receipt: { account: "0", company: 0, kind: "CashDividend", event_id: "传输回执", approved_on: "2030-01-02" } }, call: 'proposal:7:{"CashDividend":{"company":0,"gross_per_share":"5"}}' },
   { type: "enqueueReportCorrection", payload: { request: correctionWriteRequest }, successType: "reportCorrectionEnqueueAcknowledged", result: { operation_id: "传输检查" }, call: `correction-enqueue:7:${JSON.stringify(correctionWriteRequest)}` },
   { type: "cancelReportCorrection", payload: { operation_id: "传输检查" }, successType: "reportCorrectionCancelAcknowledged", result: { operation_id: "传输检查" }, call: "correction-cancel:7:传输检查" },
@@ -238,7 +244,7 @@ test("Worker 三写 typed 业务拒绝保关联与公开 failure，同会话继�
   await withWorker(async f => {
     f.send({ type: "create", seed: 1n });
     for (const row of companyWrites) for (const classification of ["InvalidInput", "BusinessCondition", "UnsupportedOperation", "SystemState"]) {
-      const failure = row.type === "proposePlayerCompanyAction"
+      const failure = row.type === "subscribeRightsOffering" ? { kind: "RightsSubscription", data: { account: "0", event_id: "r1", classification, reason: "具体业务拒绝，非 fatal" } } : row.type === "proposePlayerCompanyAction"
         ? { kind: "PlayerProposal", data: { account: "0", company: 0, kind: "CashDividend", day: "2030-01-02", classification, reason: "具体业务拒绝，非 fatal" } }
         : { kind: "ReportCorrection", data: { kind: "NotPending", data: { operation_id: "传输检查" } } };
       f.failWrite(failure); f.posted.length = 0;
@@ -261,7 +267,7 @@ test("Worker recognized 畸形或错 family 为协议故障，真正 Step 仍沿
   ]) await withWorker(async f => {
     f.send({ type: "create", seed: 1n }); f.send({ type: "start", requestId: 1, generation: 1 });
     f.failWrite(error); f.posted.length = 0;
-    f.send({ type: "proposePlayerCompanyAction", requestId: 7, generation: 1, proposal: companyWrites[0].payload.proposal });
+    f.send({ type: "proposePlayerCompanyAction", requestId: 7, generation: 1, proposal: { CashDividend: { company: 0, gross_per_share: "5" } } });
     assert.equal(f.posted[0].type, "failure"); assert.equal(f.timers.size, 0);
     if ("code" in error) {
       assert.equal(f.posted[0].code, error.code); assert.deepEqual(f.posted[0].context, error.context);

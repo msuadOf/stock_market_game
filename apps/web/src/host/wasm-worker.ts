@@ -35,6 +35,7 @@ type WasmTransportExtensions = Omit<typeof import("../../wasm-pkg/web_wasm.js"),
   readonly company_read_query?: (handle: number, query: unknown) => unknown;
   readonly propose_player_company_action?: (handle: number, proposal: unknown) => unknown;
   readonly enqueue_report_correction?: (handle: number, request: unknown) => unknown;
+  readonly subscribe_rights_offering?: (handle: number, eventId: unknown, requestedShares: unknown) => unknown;
   readonly cancel_report_correction?: (handle: number, operationId: unknown) => unknown;
   readonly calculate_indicators?: (prices: number[], candles: readonly { high: number; low: number; close: number }[]) => unknown;
   readonly npc_decision_trace?: WasmNpcDecisionTrace;
@@ -277,11 +278,11 @@ function invokeCompanyWrite(message: WorkerMessage, requestedGeneration: number,
     try { kind = error !== null && typeof error === "object" ? Reflect.get(error, "kind") : undefined; }
     catch (decoderError) { throw companyWriteProtocolFailure(error, decoderError); }
     // 未识别错误及真正 Step 保原对象进入既有错误链，不以四分类推断 fatal。
-    if (kind !== "PlayerProposal" && kind !== "ReportCorrection") throw error;
+    if (kind !== "PlayerProposal" && kind !== "ReportCorrection" && kind !== "RightsSubscription") throw error;
     let failure: CompanyWriteFailure;
     try {
       failure = parseCompanyWriteFailure(error);
-      if (failure.kind !== (message.type === "proposePlayerCompanyAction" ? "PlayerProposal" : "ReportCorrection")) throw new Error("failure family 与当前公司写命令不符");
+      if (failure.kind !== (message.type === "proposePlayerCompanyAction" ? "PlayerProposal" : message.type === "subscribeRightsOffering" ? "RightsSubscription" : "ReportCorrection")) throw new Error("failure family 与当前公司写命令不符");
     } catch (decoderError) { throw companyWriteProtocolFailure(error, decoderError); }
     respondOperationError({ ...message, generation: requestedGeneration }, new CompanyWriteRejectedError(failure).message, failure);
     return;
@@ -515,6 +516,16 @@ function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
           const [session, wasm] = slot.requireHandle();
           loop.publish(wasm.end_civil_day(session));
           ctx.postMessage({ type: "civilDayEnded", requestId: message.requestId, generation: requestedGeneration });
+          return;
+        }
+        case "subscribeRightsOffering": {
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          if (typeof message.requestId !== "number" || !Number.isSafeInteger(message.requestId) || message.requestId < 1) throw new Error("Worker 配股认购 requestId 必须是正安全整数");
+          exact({ ...message }, ["type", "requestId", "generation", "event_id", "requested_shares"], "Worker 配股认购");
+          const [session, wasm] = slot.requireHandle();
+          const binding = transportExtensions(wasm).subscribe_rights_offering;
+          if (typeof binding !== "function") throw new Error("当前 WASM bindings 不支持配股认购，请重建 bindings");
+          invokeCompanyWrite(message, requestedGeneration, "rightsSubscriptionAcknowledged", () => binding(session, message.event_id, message.requested_shares));
           return;
         }
         case "proposePlayerCompanyAction":

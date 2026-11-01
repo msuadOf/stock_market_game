@@ -139,13 +139,13 @@ export class WorkerRequestScope {
         } catch (decoderError) {
           resource.reject(new AggregateError([decoderError], "Worker 公司只读查询 typed failure 响应协议无效", { cause: { response, failure, decoderError } }));
         }
-      } else if (["proposePlayerCompanyAction", "enqueueReportCorrection", "cancelReportCorrection"].includes(request.type)) {
+      } else if (["proposePlayerCompanyAction", "enqueueReportCorrection", "cancelReportCorrection", "subscribeRightsOffering"].includes(request.type)) {
         let failure: unknown;
         try {
           if (Object.hasOwn(response, "failure")) {
             failure = response.failure;
             const parsed = parseCompanyWriteFailure(failure);
-            const family = request.type === "proposePlayerCompanyAction" ? "PlayerProposal" : "ReportCorrection";
+            const family = request.type === "proposePlayerCompanyAction" ? "PlayerProposal" : request.type === "subscribeRightsOffering" ? "RightsSubscription" : "ReportCorrection";
             if (parsed.kind !== family) throw new Error("Worker 公司写命令 failure family 与请求不符");
             resource.reject(new CompanyWriteRejectedError(parsed));
           } else {

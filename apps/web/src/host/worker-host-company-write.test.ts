@@ -190,3 +190,44 @@ for (const method of ["proposePlayerCompanyAction", "enqueueReportCorrection", "
     } finally { await f.cleanup(); }
   });
 }
+
+test("Worker Host 认购透传请求并核对本人 typed 拒绝", { timeout: 10000 }, async () => {
+  await withHost(async (host, f) => {
+    const engine = f.workers[0];
+    const control = engine.onPost!;
+    engine.onPost = (raw, transfer) => {
+      if (raw.type === "shutdown" || raw.type === "quiesceIngress") { control(raw, transfer); return; }
+      engine.emit({ type: "rightsSubscriptionAcknowledged", requestId: raw.requestId, generation: raw.generation, result: { event_id: "r1", requested_shares: "5", submitted_on: "2030-01-02" } });
+    };
+    assert.equal(typeof host.subscribeRightsOffering, "function");
+    assert.deepEqual(await host.subscribeRightsOffering!("r1", "5"), { event_id: "r1", requested_shares: "5", submitted_on: "2030-01-02" });
+    const sent = engine.sent.at(-1)!;
+    assert.deepEqual({ type: sent.type, generation: sent.generation, event_id: sent.event_id, requested_shares: sent.requested_shares }, { type: "subscribeRightsOffering", generation: 1, event_id: "r1", requested_shares: "5" });
+    const ownFailure = { kind: "RightsSubscription", data: { account: "0", event_id: "r1", classification: "BusinessCondition", reason: "拒绝" } };
+    engine.onPost = raw => engine.emit({ type: "operationError", requestId: raw.requestId, generation: raw.generation, message: "拒绝", failure: ownFailure });
+    await assert.rejects(host.subscribeRightsOffering!("r1", "5"), error => error instanceof CompanyWriteRejectedError && assert.deepEqual(error.failure, ownFailure) === undefined);
+    engine.onPost = raw => engine.emit({ type: "operationError", requestId: raw.requestId, generation: raw.generation, message: "拒绝", failure: { kind: "RightsSubscription", data: { account: "1", event_id: "r1", classification: "BusinessCondition", reason: "拒绝" } } });
+    await assert.rejects(host.subscribeRightsOffering!("r1", "5"), AggregateError);
+    engine.onPost = control;
+  });
+});
+
+for (const transition of ["generation", "restore", "dispose"] as const) {
+  test(`Worker 认购在 ${transition} 后拒绝迟到的确认`, { timeout: 10000 }, async () => {
+    await withHost(async (host, f) => {
+      const engine = f.workers[0];
+      const pending = host.subscribeRightsOffering!("r1", "5").then(() => null, (error: unknown) => error);
+      await drain();
+      const sent = engine.sent.at(-1)!;
+      let loading: Promise<unknown> | undefined;
+      if (transition === "generation") f.baseline(2);
+      if (transition === "restore") { loading = host.load(currentSaveFixture()).catch(error => error); f.ingress(2, 202); }
+      if (transition === "dispose") await host.dispose();
+      engine.emit({ type: "rightsSubscriptionAcknowledged", requestId: sent.requestId, generation: sent.generation, result: { event_id: "r1", requested_shares: "5", submitted_on: "2030-01-02" } });
+      const error = await pending;
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /过期|销毁|restore/);
+      if (loading !== undefined) { await host.dispose(); await loading; }
+    });
+  });
+}

@@ -1,3 +1,4 @@
+import { checkRightsSubscriptionFailure, createRightsSubscription } from "./rights-subscription.ts";
 import type { CatalogResolver } from "./catalog-resolver.ts";
 import { createCompanyReadQueries } from "./company-read.ts";
 import { createCompanyWriteCommands, type CompanyWriteCommands } from "./company-write.ts";
@@ -520,6 +521,21 @@ export function createWorkerHost(
 
     function host(): EngineHost & WorkerE2EHost & CompanyWriteCommands {
       return {
+        subscribeRightsOffering: createRightsSubscription(async (eventId, requestedShares) => {
+          if (disposed || closing || pendingFailure !== null || cachedBaseline === null || restoringGeneration !== null || ingressGeneration !== currentGeneration) throw new Error("Worker 公司写命令需要健康的当前会话基线");
+          const requestedGeneration = currentGeneration, requestedEpoch = baselineEpoch;
+          const stale = () => disposed || closing || pendingFailure !== null || currentGeneration !== requestedGeneration || baselineEpoch !== requestedEpoch || restoringGeneration !== null || ingressGeneration !== requestedGeneration;
+          let response;
+          try {
+            response = await requests.request({ type: "subscribeRightsOffering", event_id: eventId, requested_shares: requestedShares, requestId: requests.nextRequestId(), generation: requestedGeneration }, "rightsSubscriptionAcknowledged");
+          } catch (error) {
+            if (stale()) throw new Error("Worker 配股认购拒绝属于已过期或已销毁会话 generation", { cause: error });
+            checkRightsSubscriptionFailure(error, eventId, "0");
+            throw error;
+          }
+          if (stale()) throw new Error("Worker 配股认购确认属于已过期或已销毁会话 generation");
+          return response.result;
+        }),
         ...createCompanyWriteCommands(async command => {
           if (disposed || closing || pendingFailure !== null || cachedBaseline === null || restoringGeneration !== null || ingressGeneration !== currentGeneration) throw new Error("Worker 公司写命令需要健康的当前会话基线");
           const requestedGeneration = currentGeneration, requestedEpoch = baselineEpoch;
