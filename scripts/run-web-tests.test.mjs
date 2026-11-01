@@ -232,3 +232,18 @@ it("完整回归要求唯一浏览器对比度测试", async () => {
     await assert.rejects(runWebTestBatch({ batchIndex: 0, batchCount: 12, discover: async () => [...base, ...paths] }), /exactly one mobile-color-contrast/);
   }
 });
+
+it("完整回归将 TypeScript 检查独立成批且每个文件恰好执行一次", async () => {
+  const compiler = "/web/src/app/workspace-grid-types.test.ts";
+  const files = [compiler, "/web/src/app/startup-screen.test.ts", "/web/src/save/complete-save-schema.test.ts", "/web/src/save/complete-save-schema-extra.test.ts", "/web/src/mobile/mobile-color-contrast.test.ts", ...Array.from({ length: 16 }, (_, index) => `/web/src/file-${index}.test.ts`)];
+  const seen = [];
+  for (let index = 0; index < 13; index += 1) {
+    const batch = [];
+    await runWebTestBatch({ cpuCount: 8, batchIndex: index, batchCount: 13, discover: async () => files,
+      run: async ({ args }) => { batch.push(...args.filter((arg) => !arg.startsWith("--"))); } });
+    if (index === 12) assert.deepEqual(batch, [compiler]);
+    seen.push(...batch);
+  }
+  assert.deepEqual(seen.sort(), [...files].sort());
+  await assert.rejects(runWebTestBatch({ batchIndex: 12, batchCount: 13, discover: async () => files.filter((file) => file !== compiler) }), /exactly one workspace-grid-types/);
+});

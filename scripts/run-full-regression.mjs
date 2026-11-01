@@ -753,6 +753,11 @@ export async function executeFullRegression({
     cleanupReserveMs: Math.min(COMMAND_CLEANUP_RESERVE_MAX_MS, isolatedTimeout - 1),
   });
   const isolatedResult = { file: isolatedFile, wall_ms: now() - isolatedStartedAt };
+  // TypeScript 编译检查可能受并行进程争用影响，保留原检查并先独立完成。
+  const webStartedAt = now();
+  const isolatedWebStep = { ...webStep, env: { ...webStep.env, STOCK_GAME_WEB_TEST_CPU_BUDGET: String(budgets.web) }, args: [...webStep.args, "12", "13"] };
+  await run(phaseCommandOptions(isolatedWebStep, sourceRoot, Math.min(ORDINARY_TEST_MAX_MS, remainingMs(webStep.label))));
+  const isolatedWebWall = now() - webStartedAt;
   await executeRegressionLanes(cpuCount, async (signal) => {
     let stepStartedAt = now();
     const casePolicy = await executeRustTestBinaries({ artifacts, policy: rustPolicy, run, cwd: sourceRoot, env: binaryStep.env, remainingMs, now, log, signal });
@@ -773,10 +778,10 @@ export async function executeFullRegression({
     for (let batchIndex = 0; batchIndex < 12; batchIndex += 1) {
       signal.throwIfAborted();
       const timeoutMs = Math.min(ORDINARY_TEST_MAX_MS, remainingMs(webStep.label));
-      const step = { ...webStep, env: { ...webStep.env, STOCK_GAME_WEB_TEST_CPU_BUDGET: String(budgets.web) }, args: [...webStep.args, String(batchIndex), "12"] };
+      const step = { ...webStep, env: { ...webStep.env, STOCK_GAME_WEB_TEST_CPU_BUDGET: String(budgets.web) }, args: [...webStep.args, String(batchIndex), "13"] };
       await run({ ...phaseCommandOptions(step, sourceRoot, timeoutMs), signal });
     }
-    completed.push({ label: webStep.label, wall_ms: now() - stepStartedAt });
+    completed.push({ label: webStep.label, wall_ms: now() - stepStartedAt + isolatedWebWall });
     signal.throwIfAborted();
     stepStartedAt = now();
     const scripts = await runScripts({ cwd: sourceRoot, env: scriptStep.env, cpuCount: budgets.web, run, now, remainingMs, log, signal, discover: async () => scriptFiles.filter((file) => file !== isolatedFile) });

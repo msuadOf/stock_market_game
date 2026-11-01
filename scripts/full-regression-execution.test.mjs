@@ -59,9 +59,9 @@ it("executes sealed prebuilt test binaries, then preserves doctests and 10-secon
     ]);
     assert.equal(longValidation.env.RAYON_NUM_THREADS, undefined);
     assert.equal(calls.filter((call) => call.command === "cargo" && call.args.includes("--doc")).length, 1);
-    assert.equal(calls.find((call) => call.command === "cargo" && call.args.includes("--doc")).timeoutMs, 299_983);
+    assert.equal(calls.find((call) => call.command === "cargo" && call.args.includes("--doc")).timeoutMs, 299_982);
     const web = calls.filter((call) => call.args?.some((argument) => argument.endsWith("scripts/run-web-tests.mjs")));
-    assert.deepEqual(web.map((call) => call.args.slice(-2)), Array.from({ length: 12 }, (_, index) => [String(index), "12"]));
+    assert.deepEqual(web.map((call) => call.args.slice(-2)), [["12", "13"], ...Array.from({ length: 12 }, (_, index) => [String(index), "13"])]);
     assert.ok(web.every((call) => call.command === process.execPath && call.timeoutMs <= 10_000));
     const scripts = calls.filter((call) => call.args?.some((argument) => argument.endsWith(".test.mjs")));
     assert.deepEqual(scripts.map((call) => call.args.at(-1)).sort(), await discoverScriptTestFiles(process.cwd()));
@@ -88,6 +88,20 @@ it("时序敏感测试失败时不启动任何并行执行线", { timeout: 10000
     assert.equal(calls.length, 1);
     assert.match(calls[0].args.at(-1), /rust-test-case-supervisor\.test\.mjs$/);
     assert.equal(calls[0].timeoutMs, 10000);
+  } finally { await fixture.cleanup(); }
+});
+
+it("TypeScript 批次失败时不启动并行执行线", { timeout: 10000 }, async () => {
+  const fixture = await createSealedFixture();
+  const calls = [];
+  try {
+    await assert.rejects(executeFullRegression({ inventoryPath: fixture.inventoryPath,
+      collectFingerprint: async () => fixture.fingerprint,
+      run: async (options) => { calls.push(options); if (calls.length === 2) throw new Error("类型检查失败"); },
+    }), /类型检查失败/);
+    assert.equal(calls.length, 2);
+    assert.deepEqual(calls[1].args.slice(-2), ["12", "13"]);
+    assert.equal(calls[1].timeoutMs, 10000);
   } finally { await fixture.cleanup(); }
 });
 
@@ -147,7 +161,7 @@ it("fails fast and aborts in-flight sibling test binaries", async () => {
       baseEnv: {},
       collectFingerprint: async () => fingerprint,
       run: async (options) => {
-        if (options.command === process.execPath && options.args.at(-1).endsWith("rust-test-case-supervisor.test.mjs")) return;
+        if (options.command === process.execPath && (options.args.at(-1).endsWith("rust-test-case-supervisor.test.mjs") || options.args.at(-1) === "13" && options.args.at(-2) === "12")) return;
         if (options.command === process.execPath) {
           await new Promise((resolve) => options.signal.addEventListener("abort", resolve, { once: true }));
           throw options.signal.reason;
@@ -370,7 +384,7 @@ it("长验过滤命中 0 条用例时必须显式报错，不允许空集静默�
       run: async ({ args }) => {
         if (args.includes("--list") && args.includes("--exact")) return { stdout: "" };
         if (args.includes("--list")) return { stdout: args.includes("--ignored") ? "" : "ordinary: test\n" };
-        if (!args.at(-1).endsWith("rust-test-case-supervisor.test.mjs")) ordinaryExecutions += 1;
+        if (!args.at(-1).endsWith("rust-test-case-supervisor.test.mjs") && args.at(-1) !== "13") ordinaryExecutions += 1;
       },
     }), /resolved to 0 test cases/);
     assert.equal(ordinaryExecutions, 1, "只有普通 case 被执行，长验空集必须在运行前拦截");

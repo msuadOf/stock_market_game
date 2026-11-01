@@ -101,7 +101,7 @@ export async function runWebTestBatch({
   }
   if (new Set(inventory).size !== inventory.length) throw new Error("Web test inventory contains duplicate paths");
   let files;
-  if (batchCount === 12) {
+  if (batchCount === 12 || batchCount === 13) {
     const startup = inventory.filter((file) => /(?:^|[/\\])app[/\\]startup-screen\.test\.ts$/.test(file));
     if (startup.length !== 1) throw new Error("Web test inventory requires exactly one startup-screen test");
     const schema = inventory.filter((file) => /(?:^|[/\\])save[/\\]complete-save-schema\.test\.ts$/.test(file));
@@ -110,8 +110,10 @@ export async function runWebTestBatch({
     if (schemaExtra.length !== 1) throw new Error("Web test inventory requires exactly one complete-save-schema-extra test");
     const browser = inventory.filter((file) => /(?:^|[/\\])mobile[/\\]mobile-color-contrast\.test\.ts$/.test(file));
     if (browser.length !== 1) throw new Error("Web test inventory requires exactly one mobile-color-contrast test");
-    const rest = inventory.filter((file) => file !== startup[0] && file !== schema[0] && file !== schemaExtra[0] && file !== browser[0]);
-    files = batchIndex === 8 ? startup : batchIndex === 9 ? schema : batchIndex === 10 ? schemaExtra : batchIndex === 11 ? browser : rest.filter((_, index) => index % 8 === batchIndex);
+    const compiler = inventory.filter((file) => /(?:^|[/\\])app[/\\]workspace-grid-types\.test\.ts$/.test(file));
+    if (batchCount === 13 && compiler.length !== 1) throw new Error("Web test inventory requires exactly one workspace-grid-types test");
+    const rest = inventory.filter((file) => file !== startup[0] && file !== schema[0] && file !== schemaExtra[0] && file !== browser[0] && (batchCount !== 13 || file !== compiler[0]));
+    files = batchIndex === 8 ? startup : batchIndex === 9 ? schema : batchIndex === 10 ? schemaExtra : batchIndex === 11 ? browser : batchIndex === 12 ? compiler : rest.filter((_, index) => index % 8 === batchIndex);
   } else {
     files = inventory.filter((_, index) => index % batchCount === batchIndex);
   }

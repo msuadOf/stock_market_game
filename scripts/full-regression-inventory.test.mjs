@@ -278,7 +278,7 @@ it("preserves deeply nested JSON extras accepted by the inventory wire format", 
           : "" };
       },
     });
-    assert.equal(calls, 19);
+    assert.equal(calls, 20);
   } finally {
     await fixture.cleanup();
   }
