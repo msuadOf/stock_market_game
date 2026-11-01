@@ -4,7 +4,7 @@ import { buildWebTestShardPolicy, runWebTestBatch } from "./run-web-tests.mjs";
 
 test("isolates the TypeScript compiler and SSR suite instead of loading it with unrelated fixtures", () => {
   for (const separator of ["/", "\\"]) {
-    const compilerSuite = ["web", "src", "app", "workspace-grid.test.ts"].join(separator);
+    const compilerSuite = ["web", "src", "app", "workspace-grid-types.test.ts"].join(separator);
     const ordinaryFiles = Array.from({ length: 100 }, (_, index) => `/web/src/ordinary-${index}.test.ts`);
     const files = [ordinaryFiles[0], compilerSuite, ...ordinaryFiles.slice(1)];
     const policy = buildWebTestShardPolicy(4, files);
@@ -17,7 +17,7 @@ test("isolates the TypeScript compiler and SSR suite instead of loading it with 
 });
 
 test("single-CPU execution never creates an extra process or drops the compiler suite", () => {
-  const files = ["/web/src/app/workspace-grid.test.ts", "/web/src/ordinary.test.ts"];
+  const files = ["/web/src/app/workspace-grid-types.test.ts", "/web/src/ordinary.test.ts"];
   const policy = buildWebTestShardPolicy(1, files);
   assert.equal(policy.shard_count, 1);
   assert.deepEqual(policy.shards, [files]);
@@ -26,7 +26,7 @@ test("single-CPU execution never creates an extra process or drops the compiler 
 
 test("records real shard counts before execution so a timeout does not erase the resource plan", async () => {
   const logs = [];
-  const files = ["/web/src/app/workspace-grid.test.ts", "/web/src/ordinary.test.ts"];
+  const files = ["/web/src/app/workspace-grid-types.test.ts", "/web/src/ordinary.test.ts"];
   await runWebTestBatch({
     webRoot: "/web", cpuCount: 2, discover: async () => files,
     log: (line) => logs.push(JSON.parse(line)),

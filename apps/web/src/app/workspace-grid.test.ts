@@ -1,9 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
-import { fileURLToPath } from "node:url";
 import { createElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import ts from "typescript";
 import { createServer, type ViteDevServer } from "vite";
 import type { ResponsiveGridLayoutProps } from "react-grid-layout";
 import { createWorkspaceLayouts, WORKSPACE_PANEL_IDS, type WorkspaceBreakpoint } from "./workspace-layout.ts";
@@ -32,22 +30,6 @@ function panels() {
     createElement("canvas", { "aria-label": `${id}图表` }),
   ));
 }
-
-test("React 18 容器 ref 与桌面组件 createElement 接线通过类型校验", () => {
-  const configPath = fileURLToPath(new URL("../../tsconfig.app.json", import.meta.url));
-  const config = ts.readConfigFile(configPath, ts.sys.readFile);
-  if (config.error) throw new Error(ts.flattenDiagnosticMessageText(config.error.messageText, "\n"));
-  const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, fileURLToPath(new URL("../../", import.meta.url)));
-  const program = ts.createProgram({
-    rootNames: [
-      fileURLToPath(new URL("./WorkspaceGrid.tsx", import.meta.url)),
-      fileURLToPath(import.meta.url),
-    ],
-    options: { ...parsed.options, incremental: false, noEmit: true },
-  });
-  const diagnostics = [...parsed.errors, ...ts.getPreEmitDiagnostics(program)];
-  assert.deepEqual(diagnostics.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n")), []);
-});
 
 test("独立旧工作台组件的六个面板都提供显式标题拖柄和缩放柄，子内容原样保留", () => {
   const html = renderToStaticMarkup(createElement(views.WorkspaceDesktopLayout, { width: 1400, layouts: createWorkspaceLayouts(), onLayoutChange: () => undefined }, panels()));

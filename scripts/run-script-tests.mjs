@@ -43,7 +43,7 @@ export function buildScriptTestPolicy(cpuCount, files) {
 export async function runScriptTestBatch({
   cwd = DEFAULT_REPO_ROOT, env = process.env, cpuCount = os.availableParallelism(),
   discover = discoverScriptTestFiles, run = runBoundedCommand, now = Date.now,
-  remainingMs, log = () => undefined,
+  remainingMs, log = () => undefined, signal,
 } = {}) {
   assertSupportedNodeVersion();
   const startedAt = now();
@@ -58,18 +58,19 @@ export async function runScriptTestBatch({
   remaining("测试发现");
   log(JSON.stringify({ phase: "scripts-start", ...policy }));
   const controller = new AbortController();
+  const combinedSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
   const failures = [];
   const completed = [];
   let cursor = 0;
   async function worker() {
-    while (!controller.signal.aborted && cursor < files.length) {
+    while (!combinedSignal.aborted && cursor < files.length) {
       const filename = files[cursor++];
       const fileStartedAt = now();
       try {
         const timeoutMs = Math.min(ORDINARY_TEST_MAX_MS, remaining(filename));
         await run({ command: process.execPath,
           args: ["--test", "--test-timeout=10000", "--test-isolation=none", "--test-concurrency=1", filename],
-          cwd, env, timeoutMs, signal: controller.signal,
+          cwd, env, timeoutMs, signal: combinedSignal,
           cleanupReserveMs: Math.min(COMMAND_CLEANUP_RESERVE_MAX_MS, timeoutMs - 1),
         });
         completed.push({ file: filename, wall_ms: now() - fileStartedAt });
@@ -80,6 +81,7 @@ export async function runScriptTestBatch({
     }
   }
   await Promise.all(Array.from({ length: policy.concurrent_file_workers }, worker));
+  if (signal?.aborted && failures.length === 0) throw signal.reason;
   if (failures.length > 0) throw new AggregateError(failures, failures.map((failure) => failure.message).join("\n"));
   remaining("结果汇总");
   completed.sort((left, right) => left.file.localeCompare(right.file));

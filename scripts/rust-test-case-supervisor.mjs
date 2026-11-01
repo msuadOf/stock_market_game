@@ -189,7 +189,7 @@ export function createCompletionCleanup(launcherPid, {
   return cleanup;
 }
 
-export async function executeSupervisedRustTestBinaries({ artifacts, policy, cwd, env, remainingMs, log = () => undefined, launcherPath = SELF, terminateDomain = stopDomain }) {
+export async function executeSupervisedRustTestBinaries({ artifacts, policy, cwd, env, remainingMs, log = () => undefined, launcherPath = SELF, terminateDomain = stopDomain, signal }) {
   const timeoutMs = Math.floor(remainingMs("Rust supervisor preparation"));
   const batchDeadline = monotonicMs() + timeoutMs;
   let response;
@@ -198,7 +198,7 @@ export async function executeSupervisedRustTestBinaries({ artifacts, policy, cwd
   let failure;
   try {
     await runBoundedCommand({ command: process.execPath, args: [SELF, "--watchdog"], cwd, env,
-      timeoutMs, cleanupReserveMs: Math.min(1000, timeoutMs - 1),
+      timeoutMs, cleanupReserveMs: Math.min(1000, timeoutMs - 1), signal,
       spawnProcess: (command, args, options) => {
         supervisor = spawn(command, args, { ...options, stdio: ["ignore", "inherit", "inherit", "ipc"] });
         supervisor.on("message", (message) => {

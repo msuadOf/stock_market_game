@@ -93,7 +93,7 @@ POSIX 帮助脚本进行 `.nvmrc` 诊断。CI 或隔离环境可将 `NODE_BIN` �
   `scripts/run-with-deadline.mjs 10000 -- <command>` 的整命令进程树门禁；不允许通过参数把这一上限调大。
 - Web 普通测试统一由 `scripts/run-web-tests.mjs` 直接启动当前满足 `>=24.18.0` 的 Node，
   不经过 Corepack/pnpm 的动态导入启动链。runner 递归发现 `apps/web/src/**/*.test.ts(x)`，拒绝零测试或重复路径，按 CPU 预算最多拆成 8 个真实 Node shard、文件进程最多并发 64 个；整个批次和每个 child 均不超过 10000ms，任一 shard 失败会终止在途 siblings。`apps/web` 的 package `test` script 与完整回归共用该入口。
-  多核时将 `app/workspace-grid.test.ts` 的 TypeScript 编译器与 SSR 验证放到独立 shard，
+  多核时将 `app/workspace-grid-types.test.ts` 的 TypeScript 编译器放到独立 shard，SSR 验证由原文件执行，
   避免与其他 Vite fixture 的全局 hooks 叠加；其他文件在剩余预算内均分。单核不额外创建
   进程，所有文件仍恰好执行一次。启动前记录实际分片文件数，超时日志也保留资源计划。 完整回归将启动页完整 App SSR 与拆分的两个 complete-save-schema 测试各单独安排一批，其余文件按稳定顺序分为八批，每批各自遵守 10000ms 进程树门禁，仍受完整回归共享 deadline 约束。
 - 确有必要的长测试，其每个 child 进程和整个批次 wall-clock 均设 300000ms 硬上限；批次截止时间覆盖结果校验、manifest 发布、进程树终止与临时文件清理，不能只给 child 设置 timeout。`simulation-acceptance` 固定把前 299000ms 用于执行/校验/发布，最后 1000ms 只用于 kill、等待 close 和删除 staged 文件。runner 内部第二截止负责异步清理收敛；正式命令同时由进程外 deadline supervisor 约束总 wall，不能只依赖被测 Node 进程自己的事件循环计时器。
@@ -112,11 +112,11 @@ POSIX 帮助脚本进行 `.nvmrc` 诊断。CI 或隔离环境可将 `NODE_BIN` �
   与其全部 CPU 预算（批 9 A7 起 Rayon threads 分量退役——引擎内部线程模型，
   不再按环境变量切分预算；单核时仍至少 1 线程，不宣称未超卖）。
   独立执行的必跑 ignored 长用例使用 1 个 harness thread。
-  执行开始即记录清单查询、普通 case 和长用例的预算；任一查询或 case 失败即终止在途 siblings，停止启动排队 case；同一执行期限随后覆盖 workspace doctests 和上述多进程 Web 普通测试入口，其中 Web 批次及其 child 仍受 10000ms 门禁。执行结束再次验证源码未漂移。
+  执行开始即记录清单查询、普通 case 和长用例的预算；任一查询或 case 失败即终止在途 siblings，停止启动排队 case。多核时 Rust 完整链（普通 case、长用例、doctest）与 Web 后接 scripts 的链并行，共享执行期限和失败取消，等待两侧清理后汇总；单核时串行。CPU 分配给 Web 链 `max(1, floor(CPU / 4))`，其余给 Rust；单核两链各用 1 核但不同时运行。Rust 的隔离前缀仅相对其他 Rust case 隔离。Web 批次及其 child 仍受 10000ms 门禁。执行结束再次验证源码未漂移。
   完整回归已有 Web 整批的进程外十秒监督，直接启动带显式标记的 Web internal worker，
   不再让 Web CLI 重复启动另一层监督进程；独立 Web CLI 仍保留自己的进程外十秒监督。
   这只去掉重复 Node 启动开销，不放宽 deadline、不跳过测试或削减分片并行。
-- 根回归的同一执行期限随后递归发现并执行 `scripts/**/*.test.mjs`，包括 runner 自身的
+- 根回归的 Web 测试完成后在同一执行期限内递归发现并执行 `scripts/**/*.test.mjs`，包括 runner 自身的
   短测。正式入口是 `scripts/run-script-tests.mjs`；复用原任务验证工具的完整发现方式，
   不从 `agents/` 加载生产测试执行器，也不通过 `pnpm test` 再次启动根回归。
   每文件使用独立 Node 进程、`--test-isolation=none`、`--test-concurrency=1` 和
@@ -149,9 +149,9 @@ POSIX 帮助脚本进行 `.nvmrc` 诊断。CI 或隔离环境可将 `NODE_BIN` �
 ### 完整回归的 Cargo 独立构建预算
 
 `STOCK_GAME_FULL_REGRESSION_CARGO_BUILD_JOBS` 仅控制 Rust test build 与 doctest 的
-`CARGO_BUILD_JOBS`。未设置时沿用全部可用 CPU；显式值必须是无前导零、空白或符号的
+`CARGO_BUILD_JOBS`。构建未设置时沿用全部可用 CPU，doctest 另受 Rust 链预算上限约束；显式值必须是无前导零、空白或符号的
 ASCII 正整数字符串，且为 safe integer、不超过可用 CPU 数；非法值明确报错，不截断或回退。
-Rust case、hash workers、Web shards 与 scripts workers 仍使用总可用 CPU 预算。
+hash workers 使用总可用 CPU 预算；执行阶段的 Rust case、Web shards 与 scripts workers 使用各自链的 CPU 预算。
 
 POSIX shell 可将配置放在最外层 supervisor 前，使其继承到所有内部 phase：
 

@@ -64,7 +64,7 @@ export function buildWebTestShardPolicy(availableCpuCount, files) {
   const shardCount = Math.min(MAX_WEB_TEST_PROCESSES, availableCpuCount, files.length);
   const shards = Array.from({ length: shardCount }, () => []);
   const compilerSuite = shardCount > 1
-    ? files.find((file) => /(?:^|[/\\])app[/\\]workspace-grid\.test\.ts$/.test(file))
+    ? files.find((file) => /(?:^|[/\\])app[/\\]workspace-grid-types\.test\.ts$/.test(file))
     : undefined;
   const sharedFiles = compilerSuite === undefined ? files : files.filter((file) => file !== compilerSuite);
   const sharedOffset = compilerSuite === undefined ? 0 : 1;
@@ -184,7 +184,11 @@ export async function main(argv, env = process.env) {
     }
     const batchIndex = argv.length === 3 ? Number(argv[1]) : 0;
     const batchCount = argv.length === 3 ? Number(argv[2]) : 1;
-    return runWebTestBatch({ batchIndex, batchCount, log: console.log });
+    const budget = env.STOCK_GAME_WEB_TEST_CPU_BUDGET;
+    if (budget !== undefined && (!/^[1-9][0-9]*(?![\s\S])/.test(budget) || !Number.isSafeInteger(Number(budget)) || Number(budget) > os.availableParallelism())) {
+      throw new Error("Web test CPU budget is invalid");
+    }
+    return runWebTestBatch({ batchIndex, batchCount, cpuCount: budget === undefined ? os.availableParallelism() : Number(budget), log: console.log });
   }
   throw new Error("usage: run-web-tests.mjs");
 }

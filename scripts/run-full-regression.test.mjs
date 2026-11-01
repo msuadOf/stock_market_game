@@ -635,7 +635,7 @@ it("fake build/execute 的 Cargo jobs 与所有预算日志一致且保留执行
       collectFingerprint: async () => fixture.fingerprint,
       runScripts: async ({ env, cpuCount }) => {
         assert.equal(env[CARGO_BUILD_JOBS_ENV], "8");
-        assert.equal(cpuCount, 128);
+        assert.equal(cpuCount, 32);
         scriptsObserved = true;
         return { file_count: 1 };
       },
@@ -643,7 +643,7 @@ it("fake build/execute 的 Cargo jobs 与所有预算日志一致且保留执行
         assert.equal(env[CARGO_BUILD_JOBS_ENV], "8");
         if (command === "cargo") {
           assert.equal(env.CARGO_BUILD_JOBS, "8");
-          assert.equal(args.at(-1), "--test-threads=127");
+          assert.equal(args.at(-1), "--test-threads=95");
         }
         return { stdout: args.includes("--list")
           ? (args.includes("--exact")
@@ -653,7 +653,7 @@ it("fake build/execute 的 Cargo jobs 与所有预算日志一致且保留执行
       },
     });
     const binaries = result.steps.find((step) => step.label === "Rust prebuilt test binaries");
-    assert.equal(binaries.available_cpu_count, 128);
+    assert.equal(binaries.available_cpu_count, 96);
     assert.equal(binaries.max_concurrent_cases, 32);
     assert.equal(binaries.test_threads, 1);
     assert.equal(scriptsObserved, true);
@@ -818,6 +818,7 @@ it("accepts a correctly sealed reordered inventory with extras and duplicate art
     await writeFile(fixture.inventoryPath, JSON.stringify(reordered));
     let ordinaryExecutions = 0;
     await assert.rejects(executeFullRegression({
+      cpuCount: 1,
       inventoryPath: fixture.inventoryPath,
       collectFingerprint: async () => fixture.fingerprint,
       run: async ({ command, args }) => {
@@ -972,7 +973,7 @@ it("executes sealed prebuilt test binaries, then preserves doctests and 10-secon
     ]);
     assert.equal(longValidation.env.RAYON_NUM_THREADS, undefined);
     assert.equal(calls.filter((call) => call.command === "cargo" && call.args.includes("--doc")).length, 1);
-    assert.equal(calls.find((call) => call.command === "cargo" && call.args.includes("--doc")).timeoutMs, 299_995);
+    assert.equal(calls.find((call) => call.command === "cargo" && call.args.includes("--doc")).timeoutMs, 299_984);
     const web = calls.filter((call) => call.args?.some((argument) => argument.endsWith("scripts/run-web-tests.mjs")));
     assert.deepEqual(web.map((call) => call.args.slice(-2)), Array.from({ length: 11 }, (_, index) => [String(index), "11"]));
     assert.ok(web.every((call) => call.command === process.execPath && call.timeoutMs <= 10_000));
@@ -1038,11 +1039,16 @@ it("fails fast and aborts in-flight sibling test binaries", async () => {
   let siblingAborted = false;
   try {
     await assert.rejects(executeFullRegression({
+      cpuCount: 8,
       cwd: process.cwd(),
       inventoryPath,
-      cpuCount: 8, baseEnv: {},
+      baseEnv: {},
       collectFingerprint: async () => fingerprint,
       run: async (options) => {
+        if (options.command === process.execPath) {
+          await new Promise((resolve) => options.signal.addEventListener("abort", resolve, { once: true }));
+          throw options.signal.reason;
+        }
         if (options.command === artifactPaths[0]) {
           await siblingStarted;
           throw new Error("injected test failure");
@@ -1254,6 +1260,7 @@ it("长验过滤命中 0 条用例时必须显式报错，不允许空集静默�
   let ordinaryExecutions = 0;
   try {
     await assert.rejects(executeFullRegression({
+      cpuCount: 1,
       inventoryPath: fixture.inventoryPath,
       collectFingerprint: async () => fixture.fingerprint,
       runScripts: async () => ({ file_count: 0 }),

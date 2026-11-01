@@ -393,16 +393,17 @@ export function parseRustTestCases(stdout) {
   return [...names];
 }
 
-export async function executeRustTestBinaries({ artifacts, policy, run = runBoundedCommand, cwd, env, remainingMs, now, log = () => undefined }) {
-  if (run === runBoundedCommand) return executeSupervisedRustTestBinaries({ artifacts, policy, cwd, env, remainingMs, log });
+export async function executeRustTestBinaries({ artifacts, policy, run = runBoundedCommand, cwd, env, remainingMs, now, log = () => undefined, signal }) {
+  if (run === runBoundedCommand) return executeSupervisedRustTestBinaries({ artifacts, policy, cwd, env, remainingMs, log, signal });
   let nextIndex = 0;
   let stop = false;
   const failures = [];
   const results = new Array(artifacts.length);
   const controller = new AbortController();
+  const combinedSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
   async function worker(workerIndex) {
     const budget = policy.worker_budgets[workerIndex];
-    while (!stop) {
+    while (!stop && !combinedSignal.aborted) {
       const index = nextIndex;
       nextIndex += 1;
       if (index >= artifacts.length) return;
@@ -417,7 +418,7 @@ export async function executeRustTestBinaries({ artifacts, policy, run = runBoun
             env: { ...env },
             cwd, timeoutMs, captureOutput: true,
             cleanupReserveMs: Math.min(COMMAND_CLEANUP_RESERVE_MAX_MS, timeoutMs - 1),
-            signal: controller.signal,
+            signal: combinedSignal,
           });
           lists.push(parseRustTestCases(output?.stdout));
         }
@@ -432,6 +433,7 @@ export async function executeRustTestBinaries({ artifacts, policy, run = runBoun
     }
   }
   await Promise.all(Array.from({ length: policy.max_concurrent_binaries }, (_, index) => worker(index)));
+  if (signal?.aborted && failures.length === 0) throw signal.reason;
   if (failures.length > 0) throw new AggregateError(failures, `${failures.length} prebuilt Rust test binaries failed:\n${failures.map((failure) => failure.message).join("\n")}`);
   const cases = results.flat();
   const concurrency = Math.min(cases.length, Math.max(1, Math.min(32, Math.floor(policy.available_cpu_count / 2))));
@@ -447,7 +449,7 @@ export async function executeRustTestBinaries({ artifacts, policy, run = runBoun
   const calendarCases = remainingCases.filter(isCalendarCase);
   const ordinaryCases = remainingCases.filter((testCase) => !isCalendarCase(testCase));
   async function caseWorker(queue) {
-    while (!stop) {
+    while (!stop && !combinedSignal.aborted) {
       const testCase = queue.shift();
       if (testCase === undefined) return;
       try {
@@ -458,7 +460,7 @@ export async function executeRustTestBinaries({ artifacts, policy, run = runBoun
           env: { ...env },
           cwd, timeoutMs,
           cleanupReserveMs: Math.min(COMMAND_CLEANUP_RESERVE_MAX_MS, timeoutMs - 1),
-          signal: controller.signal,
+          signal: combinedSignal,
         });
       } catch (error) {
         stop = true;
@@ -478,13 +480,15 @@ export async function executeRustTestBinaries({ artifacts, policy, run = runBoun
       ...Array.from({ length: ordinaryWorkers }, () => caseWorker(ordinaryCases)),
     ]);
   }
+  if (signal?.aborted && failures.length === 0) throw signal.reason;
   if (failures.length > 0) throw new AggregateError(failures, `ordinary Rust test cases failed:\n${failures.map((failure) => failure.message).join("\n")}`);
   return casePolicy;
 }
 
-async function executeRequiredLongValidations({ artifacts, policy, run, cwd, env, remainingMs, now }) {
+async function executeRequiredLongValidations({ artifacts, policy, run, cwd, env, remainingMs, now, signal }) {
   const results = [];
   for (const validation of REQUIRED_LONG_VALIDATIONS) {
+    signal.throwIfAborted();
     const matches = artifacts.filter((artifact) => artifact.label.includes(validation.targetLabel));
     if (matches.length !== 1) {
       throw new Error(`required long validation target ${validation.targetLabel} resolved to ${matches.length} prebuilt binaries`);
@@ -499,6 +503,7 @@ async function executeRequiredLongValidations({ artifacts, policy, run, cwd, env
       cwd,
       timeoutMs: listTimeoutMs,
       captureOutput: true,
+      signal,
       cleanupReserveMs: Math.min(COMMAND_CLEANUP_RESERVE_MAX_MS, Math.max(1, listTimeoutMs - 1)),
     });
     const listedCases = parseRustTestCases(listing?.stdout);
@@ -513,6 +518,7 @@ async function executeRequiredLongValidations({ artifacts, policy, run, cwd, env
       env: { ...env },
       cwd,
       timeoutMs,
+      signal,
       cleanupReserveMs: Math.min(COMMAND_CLEANUP_RESERVE_MAX_MS, Math.max(1, timeoutMs - 1)),
     });
     results.push({ filter: validation.filter, label: artifact.label, wall_ms: now() - startedAt });
@@ -671,6 +677,35 @@ export async function buildFullRegressionArtifacts({
   return { ...result, inventory };
 }
 
+export function regressionLaneBudget(cpuCount) {
+  if (!Number.isInteger(cpuCount) || cpuCount < 1) throw new Error("full regression requires a positive CPU count");
+  if (cpuCount === 1) return { rust: 1, web: 1 };
+  const web = Math.max(1, Math.floor(cpuCount / 4));
+  return { rust: cpuCount - web, web };
+}
+
+export async function executeRegressionLanes(cpuCount, rust, web) {
+  const controller = new AbortController();
+  if (cpuCount === 1) {
+    await rust(controller.signal);
+    await web(controller.signal);
+    return;
+  }
+  let firstFailure;
+  const lane = async (work) => {
+    try { await work(controller.signal); }
+    catch (error) {
+      if (firstFailure === undefined) { firstFailure = error; controller.abort(error); }
+      throw error;
+    }
+  };
+  const results = await Promise.allSettled([lane(rust), lane(web)]);
+  if (firstFailure !== undefined) {
+    const errors = results.filter((result) => result.status === "rejected").map((result) => result.reason);
+    throw new AggregateError(errors, `full regression lane failed: ${firstFailure.message}`);
+  }
+}
+
 export async function executeFullRegression({
   run = runBoundedCommand,
   now = Date.now,
@@ -698,49 +733,43 @@ export async function executeFullRegression({
   const completed = [];
   const remainingMs = (context) => phaseRemainingMs(startedAt, now, context);
 
-  const policy = buildRustTestExecutionPolicy(binaryStep.cpuCount, artifacts.length);
+  const budgets = regressionLaneBudget(cpuCount);
+  const rustPolicy = buildRustTestExecutionPolicy(budgets.rust, artifacts.length);
   const longValidationPolicy = {
     testThreadsPerBinary: 1,
   };
-  log(JSON.stringify({ phase: "execute-start", ...policy, long_validation: longValidationPolicy }));
-  let stepStartedAt = now();
-  const casePolicy = await executeRustTestBinaries({ artifacts, policy, run, cwd: sourceRoot, env: binaryStep.env, remainingMs, now, log });
-  completed.push({ label: binaryStep.label, wall_ms: now() - stepStartedAt, binary_count: artifacts.length, ...policy, ...casePolicy });
-
-  stepStartedAt = now();
-  const longValidationResults = await executeRequiredLongValidations({
-    artifacts,
-    policy: longValidationPolicy,
-    run,
-    cwd: sourceRoot,
-    env: binaryStep.env,
-    remainingMs,
-    now,
-  });
-  completed.push({
-    label: "Rust required long validations",
-    wall_ms: now() - stepStartedAt,
-    case_count: longValidationResults.length,
-    test_threads: longValidationPolicy.testThreadsPerBinary,
-    cases: longValidationResults,
-  });
-
-  stepStartedAt = now();
-  let timeoutMs = remainingMs(doctestStep.label);
-  await run(phaseCommandOptions(doctestStep, sourceRoot, timeoutMs));
-  completed.push({ label: doctestStep.label, wall_ms: now() - stepStartedAt });
-
-  stepStartedAt = now();
-  for (let batchIndex = 0; batchIndex < 11; batchIndex += 1) {
-    timeoutMs = Math.min(ORDINARY_TEST_MAX_MS, remainingMs(webStep.label));
-    await run(phaseCommandOptions({ ...webStep, args: [...webStep.args, String(batchIndex), "11"] }, sourceRoot, timeoutMs));
-  }
-  completed.push({ label: webStep.label, wall_ms: now() - stepStartedAt });
-
-  stepStartedAt = now();
+  log(JSON.stringify({ phase: "execute-start", ...rustPolicy, long_validation: longValidationPolicy }));
+  log(JSON.stringify({ phase: "execute-lanes", rust_cpu_count: budgets.rust, web_cpu_count: budgets.web, parallel: cpuCount > 1 }));
   const scriptStep = steps.find((step) => step.kind === "script-test-batch");
-  const scripts = await runScripts({ cwd: sourceRoot, env: scriptStep.env, cpuCount: scriptStep.cpuCount, run, now, remainingMs, log });
-  completed.push({ label: scriptStep.label, wall_ms: now() - stepStartedAt, ...scripts });
+  await executeRegressionLanes(cpuCount, async (signal) => {
+    let stepStartedAt = now();
+    const casePolicy = await executeRustTestBinaries({ artifacts, policy: rustPolicy, run, cwd: sourceRoot, env: binaryStep.env, remainingMs, now, log, signal });
+    completed.push({ label: binaryStep.label, wall_ms: now() - stepStartedAt, binary_count: artifacts.length, ...rustPolicy, ...casePolicy });
+    signal.throwIfAborted();
+    stepStartedAt = now();
+    const cases = await executeRequiredLongValidations({ artifacts, policy: longValidationPolicy, run, cwd: sourceRoot, env: binaryStep.env, remainingMs, now, signal });
+    completed.push({ label: "Rust required long validations", wall_ms: now() - stepStartedAt, case_count: cases.length, test_threads: 1, cases });
+    signal.throwIfAborted();
+    stepStartedAt = now();
+    const configuredJobs = Number(doctestStep.env.CARGO_BUILD_JOBS);
+    const docStep = { ...doctestStep, env: { ...doctestStep.env, CARGO_BUILD_JOBS: String(Math.min(configuredJobs, budgets.rust)) },
+      args: [...doctestStep.args.slice(0, -1), `--test-threads=${Math.max(1, budgets.rust - 1)}`] };
+    await run({ ...phaseCommandOptions(docStep, sourceRoot, remainingMs(docStep.label)), signal });
+    completed.push({ label: docStep.label, wall_ms: now() - stepStartedAt });
+  }, async (signal) => {
+    let stepStartedAt = now();
+    for (let batchIndex = 0; batchIndex < 11; batchIndex += 1) {
+      signal.throwIfAborted();
+      const timeoutMs = Math.min(ORDINARY_TEST_MAX_MS, remainingMs(webStep.label));
+      const step = { ...webStep, env: { ...webStep.env, STOCK_GAME_WEB_TEST_CPU_BUDGET: String(budgets.web) }, args: [...webStep.args, String(batchIndex), "11"] };
+      await run({ ...phaseCommandOptions(step, sourceRoot, timeoutMs), signal });
+    }
+    completed.push({ label: webStep.label, wall_ms: now() - stepStartedAt });
+    signal.throwIfAborted();
+    stepStartedAt = now();
+    const scripts = await runScripts({ cwd: sourceRoot, env: scriptStep.env, cpuCount: budgets.web, run, now, remainingMs, log, signal });
+    completed.push({ label: scriptStep.label, wall_ms: now() - stepStartedAt, ...scripts });
+  });
 
   const after = await collectFingerprint(sourceRoot);
   if (after.digest !== fingerprint.digest) throw new Error("full regression source changed during test execution");
