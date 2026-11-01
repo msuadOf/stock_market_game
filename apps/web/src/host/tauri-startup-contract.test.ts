@@ -11,13 +11,13 @@ describe("Tauri host startup contract", () => {
 
     assert.match(appSource, /return createTauriHost\(setup, seed\)/);
     assert.match(appSource, /const onSpawnFailure = \(failure: HostFailure\) => \{ if \(!cancelled\) ports\.onSpawnFailure\(failure\); \};/);
-    assert.match(appSource, /if \(memoryTicket === undefined\) host = await createHost\(setup, seed, startupTarget, onSpawnFailure, initialSlot\);/);
-    assert.match(appSource, /else host = await createHost\(setup, seed, startupTarget, onSpawnFailure, initialSlot, memoryTicket\);/);
+    assert.match(appSource, /if \(memoryTicket === undefined\) host = await createHost\(setup, seed, startupTarget, onSpawnFailure, initialSlot, undefined, onInitializationProgress\);/);
+    assert.match(appSource, /else host = await createHost\(setup, seed, startupTarget, onSpawnFailure, initialSlot, memoryTicket, onInitializationProgress\);/);
     assert.match(appSource, /if \(startupTarget\.kind === "tauri"\) return createTauriHost\(setup, seed\);/);
     assert.match(appSource, /if \(startupTarget\.kind === "remote"\) return createRemoteHost\(setup, seed, \{ baseUrl: startupTarget\.baseUrl \}\);/);
-    assert.match(appSource, /const options = \{ enableE2EStepping: tradingE2EMode, onSpawnFailure, initialArchive, memoryAdmissionTicket, \.\.\.wasmRuntimeOptions \};/);
-    const hostReadyIndex = appSource.indexOf("host = await createHost(setup, seed, startupTarget, onSpawnFailure, initialSlot);");
-    const ticketHostReadyIndex = appSource.indexOf("host = await createHost(setup, seed, startupTarget, onSpawnFailure, initialSlot, memoryTicket);");
+    assert.match(appSource, /const options = \{ enableE2EStepping: tradingE2EMode, onSpawnFailure, initialArchive, memoryAdmissionTicket, onInitializationProgress, \.\.\.wasmRuntimeOptions \};/);
+    const hostReadyIndex = appSource.indexOf("host = await createHost(setup, seed, startupTarget, onSpawnFailure, initialSlot, undefined, onInitializationProgress);");
+    const ticketHostReadyIndex = appSource.indexOf("host = await createHost(setup, seed, startupTarget, onSpawnFailure, initialSlot, memoryTicket, onInitializationProgress);");
     const conditionalLoadIndex = appSource.indexOf("if (initialSlot !== null && startupTarget.kind !== \"wasm\") await host.load(initialSlot);");
     const appWiringIndex = appSource.indexOf("hostRef.current = host;", hostReadyIndex);
     assert.notEqual(hostReadyIndex, -1);
