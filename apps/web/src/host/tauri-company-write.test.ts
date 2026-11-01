@@ -202,3 +202,14 @@ test("Tauri 配股认购拒绝畸形字段和错误 family", { timeout: 10000 },
   const f = await fixture(t, () => { throw failures.shift(); });
   for (let i = 0; i < 2; i++) await assert.rejects(f.host.subscribeRightsOffering!("r1", "5"), error => error instanceof AggregateError);
 });
+
+for (const response of ["success", "rejection"] as const) for (const change of ["refresh", "restore", "dispose", "failure"] as const) test(`Tauri 配股认购迟到 ${response} 在 ${change} 后拒绝`, { timeout: 10000 }, async t => {
+  let finish!: (value: unknown) => void;
+  let reject!: (value: unknown) => void;
+  const f = await fixture(t, () => new Promise((resolve, rejected) => { finish = resolve; reject = rejected; }));
+  const pending = assert.rejects(f.host.subscribeRightsOffering!("r1", "5"), /过期|失效|销毁/);
+  if (change === "dispose") await f.host.dispose(); else if (change === "restore") await f.host.load({}); else if (change === "failure") await f.fail(); else await f.host.refreshBaseline();
+  if (response === "success") finish({ generation: "1", receipt: { event_id: "r1", requested_shares: "5", submitted_on: "2030-06-03" } });
+  else reject({ kind: "RightsSubscription", data: { account: "0", event_id: "r1", classification: "BusinessCondition", reason: "拒绝" } });
+  await pending;
+});

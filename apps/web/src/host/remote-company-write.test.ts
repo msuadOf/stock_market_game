@@ -232,3 +232,24 @@ test("Remote 配股认购拒绝畸形字段和错误 family", { timeout: 10000 }
   const f = await fixture(t, () => json({ code: "RIGHTS_SUBSCRIPTION_REJECTED", failure: failures.shift() }, 400));
   for (let i = 0; i < 2; i++) await assert.rejects(f.host.subscribeRightsOffering!("r1", "5"), error => error instanceof AggregateError);
 });
+
+for (const change of ["refresh", "restore", "failure"] as const) test(`Remote 配股认购等待 context 时 ${change} 不得发送写入`, { timeout: 10000 }, async t => {
+  let finish!: (value: Response) => void;
+  const f = await fixture(t, () => { throw new Error("不应发送认购"); }, () => new Promise(resolve => { finish = resolve; }));
+  const pending = assert.rejects(f.host.subscribeRightsOffering!("r1", "5"), /过期|中断|失效/);
+  await Promise.resolve();
+  if (change === "failure") f.fail(); else f.publish(change === "restore" ? 2 : 1);
+  finish(json(remoteTestContext("current-session")));
+  await pending;
+  assert.equal(f.calls.length, 0);
+});
+
+for (const response of ["success", "rejection"] as const) for (const change of ["refresh", "restore", "dispose", "failure"] as const) test(`Remote 配股认购迟到 ${response} 在 ${change} 后拒绝`, { timeout: 10000 }, async t => {
+  let finish!: (value: Response) => void;
+  const f = await fixture(t, () => new Promise(resolve => { finish = resolve; }));
+  const pending = assert.rejects(f.host.subscribeRightsOffering!("r1", "5"), /过期|中断|失效|销毁/);
+  while (finish === undefined) await new Promise(resolve => setImmediate(resolve));
+  if (change === "dispose") await f.host.dispose(); else if (change === "failure") f.fail(); else f.publish(change === "restore" ? 2 : 1);
+  finish(response === "success" ? json({ generation: "1", receipt: { event_id: "r1", requested_shares: "5", submitted_on: "2030-06-03" } }) : json({ code: "RIGHTS_SUBSCRIPTION_REJECTED", failure: { kind: "RightsSubscription", data: { account: "1", event_id: "r1", classification: "BusinessCondition", reason: "拒绝" } } }, 400));
+  await pending;
+});

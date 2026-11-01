@@ -9,7 +9,7 @@ export interface CompanyReadContext {
   readonly refreshKey: string;
 }
 
-/** 仅消费当前宿主的只读查询；本人数据不接受 UI 传入账户参数。 */
+/** 通过当前宿主查询公司事实和提交配股认购；本人身份由宿主确定。 */
 export function CompanyReadPanel({ companyCode, companyId, context }: {
   readonly companyCode: string;
   readonly companyId: number;

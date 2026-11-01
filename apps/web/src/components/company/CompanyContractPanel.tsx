@@ -95,8 +95,8 @@ export function contractParValueText(capabilities: CompanyCapabilities): string 
 }
 
 /**
- * 公司共同契约能力面（F 批收口）：只读展示公司当前事实、未完成方案阶段、
- * 各行为业务条件、本人配股权益与期间变化解释；owner 隔离查询，不新增写操作。
+ * 公司共同契约能力面：展示公司事实、本人配股权益与期间变化解释，
+ * 并通过宿主提交本人配股认购。
  */
 export function CompanyContractPanel({ companyId, onCapabilitiesQuery, onOwnerRightsQuery, onRightsSubscribe, onExplanationQuery, onFlatReceiptsQuery, refreshKey }: CompanyContractPanelProps) {
   const capabilitiesQuery = useCallback(() => {
