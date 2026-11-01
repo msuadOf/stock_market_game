@@ -45,3 +45,5 @@
 | codex/regression36-inline-repair | c000d475 | 三组 session 回归夹具的断言保留于基线，两个提交并非补丁等价。 |
 
 增删行对照并非 patch-id 相等或最终上下文的完整语义证明，因此保留原 tip tag。前两处相关 worktree 中，share-transform 的 ignored `bindings/` 及 share-split 的 ignored `.tmp/` 也随完整 worktree 保留；未清除 WIP 或运行产品测试。
+
+第四批将 `integrate/source-a-latest-validation-2026-10-27` 的 `bd1f1dfb` 归档为 `archive/20261102-bd1f1dfb`，保留原工作树的同提交 detached HEAD 并删除 branch。独立对照确认公司精确股数、root 与 retail 正每股估值等新增断言在基线保留；基线调整了公开前史和财务 fixture，因此不称补丁等价。操作前工作树干净并检查进程 cwd；未运行产品测试。
