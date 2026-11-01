@@ -49,3 +49,5 @@
 第四批将 `integrate/source-a-latest-validation-2026-10-27` 的 `bd1f1dfb` 归档为 `archive/20261102-bd1f1dfb`，保留原工作树的同提交 detached HEAD 并删除 branch。独立对照确认公司精确股数、root 与 retail 正每股估值等新增断言在基线保留；基线调整了公开前史和财务 fixture，因此不称补丁等价。操作前工作树干净并检查进程 cwd；未运行产品测试。
 
 第五批将 `feat/registry-physical-day-phase` 的 `23759efa` 转为 `archive/20261102-23759efa`，worktree 保持原提交的 detached HEAD。该分支唯一提交的新增与删除内容在基线祖先 `6578cff5` 中均有对应，五处旧 `corporate_actions` 访问已适配为 `company_state.actions()`；基线祖先含其他改动，不能称完整 diff 相同。独立复核了存档来源校验和测试适配，操作前确认工作树干净并检查进程 cwd。未运行产品测试。
+
+第六批将 `feat/admin-funds-cost-p1` 的 `547d86df` 转为 `archive/20261102-547d86df`，并保留原工作树同提交 detached HEAD。独立核查确认其 11 个提交只涉及三个资金成本和回滚测试文件；这三个文件在候选 tip 与基线祖先 `18f38220` 的 blob 完全一致。该比较证明当时集成的文件一致，不证明之后没有演进。操作前确认工作树干净并检查进程 cwd；未运行产品测试。
