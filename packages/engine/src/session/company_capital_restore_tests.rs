@@ -35,6 +35,7 @@ use crate::company::stock_distribution::{
 };
 use crate::company::{CompanyKind, CompanySpec, IndustryId};
 use crate::orderbook::AccountId;
+use crate::session::corporate_actions::QueuedRightsSubscription;
 use crate::session::{SecurityCategory, StockExchange, StockSpec};
 use crate::stock::StockMeta;
 use crate::StockCode;
@@ -195,20 +196,85 @@ impl Fixture {
         self.validate_with_approval(through, through)
     }
 
+    fn entitled_rights_queue(&mut self, requested_shares: u64) {
+        self.rights_with_queue_days(0, false, 1, requested_shares, None);
+    }
+
+    fn rights_with_queue_days(
+        &mut self,
+        paid_shares: u64,
+        settle: bool,
+        payment_days: u32,
+        requested_shares: u64,
+        open_public_shares: Option<u64>,
+    ) {
+        self.rights_approved_on_with_payment_days(
+            paid_shares,
+            settle,
+            date("2030-06-03"),
+            payment_days,
+            open_public_shares,
+        );
+        let book = &mut self.actions.rights_offerings[0];
+        let plan = book.plan().clone();
+        book.announce(plan.announced_on).unwrap();
+        let registry = &mut self.actions.registries[0];
+        let snapshot = registry
+            .register(plan.event_id.clone(), plan.registered_on)
+            .unwrap()
+            .clone();
+        book.entitle(snapshot, &self.calendar).unwrap();
+        self.actions
+            .rights_subscription_queue
+            .push(QueuedRightsSubscription {
+                event_id: plan.event_id,
+                requested_shares,
+                submitted_on: plan.payment_start_on,
+                account: AccountId(7),
+            });
+    }
+
     fn validate_with_approval(
         &self,
         committed_through: &str,
         approved_through: &str,
+    ) -> Result<CapitalReplaySummary, CompanyCapitalRestoreError> {
+        self.validate_with_queue_policy(committed_through, approved_through, false)
+    }
+
+    fn validate_with_queue_policy(
+        &self,
+        committed_through: &str,
+        approved_through: &str,
+        allow_pending_rights_queue: bool,
+    ) -> Result<CapitalReplaySummary, CompanyCapitalRestoreError> {
+        self.validate_queue_with_account_kind(
+            committed_through,
+            approved_through,
+            allow_pending_rights_queue,
+            crate::AccountKind::Player,
+        )
+    }
+
+    fn validate_queue_with_account_kind(
+        &self,
+        committed_through: &str,
+        approved_through: &str,
+        allow_pending_rights_queue: bool,
+        kind: crate::AccountKind,
     ) -> Result<CapitalReplaySummary, CompanyCapitalRestoreError> {
         validate_company_capital_restore(CapitalRestoreInput {
             setup_stocks: &self.setup_stocks,
             setup_issuers: &self.initial,
             system: &self.system,
             actions: &self.actions,
+            account_kinds: &BTreeMap::from([(AccountId(7), kind)]),
             catalog: &self.catalog,
             calendar: &self.calendar,
             committed_through: date(committed_through),
             approved_through: date(approved_through),
+            queue_current_day: date(approved_through),
+            allow_pending_rights_queue,
             initial_par: Some(Money::from_cents(100)),
         })
     }
@@ -308,6 +374,126 @@ impl Fixture {
             )
             .unwrap();
     }
+}
+
+#[test]
+fn capital_restore_accepts_only_live_entitled_uncommitted_queue_facts() {
+    let mut valid = Fixture::new();
+    valid.entitled_rights_queue(500);
+    assert!(valid
+        .validate_with_approval("2030-06-03", "2030-06-04")
+        .is_err());
+    // CapitalApprovalContext 在同一当前日复用恢复校验；当前日可等于 committed_through。
+    assert!(valid
+        .validate_with_queue_policy("2030-06-04", "2030-06-04", true)
+        .is_ok());
+
+    let mut invalid = Fixture::new();
+    invalid.entitled_rights_queue(500);
+    invalid.actions.rights_subscription_queue[0].account = AccountId(99);
+    assert!(invalid
+        .validate_with_queue_policy("2030-06-03", "2030-06-04", true)
+        .is_err());
+
+    let mut invalid = Fixture::new();
+    invalid.entitled_rights_queue(500);
+    assert!(invalid
+        .validate_queue_with_account_kind(
+            "2030-06-04",
+            "2030-06-04",
+            true,
+            crate::AccountKind::IssuerRepurchase,
+        )
+        .is_err());
+
+    let mut retry = Fixture::new();
+    retry.rights_with_queue_days(0, false, 2, 500, None);
+    retry.actions.rights_subscription_queue[0].submitted_on = date("2030-06-05");
+    retry.actions.rejected_rights_subscriptions.push(
+        crate::session::corporate_actions::RejectedRightsSubscription {
+            event_id: "rights-a".into(),
+            account: AccountId(7),
+            requested_shares: 300,
+            submitted_on: date("2030-06-04"),
+            rejected_on: date("2030-06-04"),
+            reason: "早前拒绝不阻止后续缴款日重试".into(),
+        },
+    );
+    assert!(retry
+        .validate_with_queue_policy("2030-06-04", "2030-06-05", true)
+        .is_ok());
+
+    let mut invalid = Fixture::new();
+    invalid.entitled_rights_queue(501);
+    assert!(invalid
+        .validate_with_queue_policy("2030-06-03", "2030-06-04", true)
+        .is_err());
+
+    let mut invalid = Fixture::new();
+    invalid.entitled_rights_queue(500);
+    invalid.actions.rights_subscription_queue[0].submitted_on = date("2030-06-03");
+    assert!(invalid
+        .validate_with_queue_policy("2030-06-03", "2030-06-04", true)
+        .is_err());
+
+    let mut invalid = Fixture::new();
+    invalid.entitled_rights_queue(500);
+    invalid.actions.rights_subscription_queue[0].requested_shares = 0;
+    assert!(invalid
+        .validate_with_queue_policy("2030-06-03", "2030-06-04", true)
+        .is_err());
+
+    let mut invalid = Fixture::new();
+    invalid.entitled_rights_queue(500);
+    invalid
+        .actions
+        .rights_subscription_queue
+        .push(invalid.actions.rights_subscription_queue[0].clone());
+    assert!(invalid
+        .validate_with_queue_policy("2030-06-03", "2030-06-04", true)
+        .is_err());
+
+    let mut invalid = Fixture::new();
+    invalid.entitled_rights_queue(500);
+    invalid.actions.rights_subscription_queue[0].event_id = "missing".into();
+    assert!(invalid
+        .validate_with_queue_policy("2030-06-03", "2030-06-04", true)
+        .is_err());
+
+    let mut invalid = Fixture::new();
+    invalid.entitled_rights_queue(500);
+    invalid.actions.rights_offerings[0]
+        .close_payment_window(date("2030-06-04"))
+        .unwrap();
+    assert!(matches!(
+        invalid.validate_with_queue_policy("2030-06-04", "2030-06-04", true),
+        Err(CompanyCapitalRestoreError::RightsQueue { .. })
+    ));
+
+    let mut invalid = Fixture::new();
+    invalid.entitled_rights_queue(500);
+    invalid.actions.rights_offerings[0]
+        .record_subscription(RightsSubscriptionRecord {
+            holder: HolderId::Account(AccountId(7)),
+            requested_shares: 500,
+            price_per_share: Money::from_cents(200),
+            submitted_on: date("2030-06-04"),
+            origin: SubscriptionOrigin::Explicit,
+            paid_shares: 0,
+            paid_amount: Money::ZERO,
+            waived_shares: 500,
+        })
+        .unwrap();
+    assert!(matches!(
+        invalid.validate_with_queue_policy("2030-06-04", "2030-06-04", true),
+        Err(CompanyCapitalRestoreError::RightsQueue { .. })
+    ));
+
+    let mut invalid = Fixture::new();
+    invalid.rights_with_queue_days(0, false, 1, 501, Some(500));
+    assert!(invalid
+        .validate_with_queue_policy("2030-06-03", "2030-06-04", true)
+        .is_err());
 }
 
 impl Fixture {
@@ -495,6 +681,17 @@ impl Fixture {
         settle: bool,
         approved_on: CivilDate,
     ) -> CivilDate {
+        self.rights_approved_on_with_payment_days(paid_shares, settle, approved_on, 1, None)
+    }
+
+    fn rights_approved_on_with_payment_days(
+        &mut self,
+        paid_shares: u64,
+        settle: bool,
+        approved_on: CivilDate,
+        payment_days: u32,
+        open_public_shares: Option<u64>,
+    ) -> CivilDate {
         let mut plan = RightsOfferingEventPlan {
             event_id: "rights-a".into(),
             approval_reference: "批准-rights-a".into(),
@@ -510,12 +707,17 @@ impl Fixture {
             settlement_on: date("2030-06-04"),
             listing_on: date("2030-06-04"),
             price_per_share: Money::from_cents(200),
-            mode: RightsOfferingMode::RightsToAllShareholders {
-                shares_per_existing_share_micros: 500_000,
+            mode: match open_public_shares {
+                Some(shares) => RightsOfferingMode::DirectedPlacement {
+                    targets: vec![crate::company::rights_offering::DirectedPlacementTarget::OpenPublicSubscription { shares }],
+                },
+                None => RightsOfferingMode::RightsToAllShareholders {
+                    shares_per_existing_share_micros: 500_000,
+                },
             },
             npc_subscription_strategy: RightsSubscriptionStrategy::FullByDefault,
         };
-        plan.derive_schedule(&self.calendar, CalendarExchange::Sse, 1)
+        plan.derive_schedule(&self.calendar, CalendarExchange::Sse, payment_days)
             .unwrap();
         self.system
             .declare_rights_offering(
@@ -834,10 +1036,13 @@ impl Fixture {
             setup_issuers: &self.initial,
             system: &self.system,
             actions: &self.actions,
+            account_kinds: &BTreeMap::from([(AccountId(7), crate::AccountKind::Player)]),
             catalog: &self.catalog,
             calendar: &self.calendar,
             committed_through: date(through),
             approved_through: date(through),
+            queue_current_day: date(through),
+            allow_pending_rights_queue: false,
             initial_par: None,
         })
     }

@@ -110,10 +110,18 @@ impl CapitalApprovalContext {
             setup_issuers: &initial,
             system: &state.system,
             actions: &state.corporate_actions,
+            account_kinds: &session
+                .state
+                .accounts
+                .iter()
+                .map(|(id, account)| (*id, account.kind()))
+                .collect(),
             catalog: &session.state.stocks,
             calendar: session.state.civil_clock.calendar(),
             committed_through: day,
             approved_through: day,
+            queue_current_day: day,
+            allow_pending_rights_queue: true,
             initial_par: session
                 .state
                 .setup

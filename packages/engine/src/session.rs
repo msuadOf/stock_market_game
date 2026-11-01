@@ -5212,10 +5212,18 @@ impl GameSession {
                         setup_issuers: rebuilt.system.issuers(),
                         system,
                         actions: corporate_actions,
+                        account_kinds: &sess
+                            .state
+                            .accounts
+                            .iter()
+                            .map(|(id, account)| (*id, account.kind()))
+                            .collect(),
                         catalog: &sess.state.stocks,
                         calendar: sess.state.civil_clock.calendar(),
                         committed_through,
                         approved_through: save.civil_clock.current_date,
+                        queue_current_day: save.civil_clock.current_date,
+                        allow_pending_rights_queue: false,
                         initial_par: save
                             .setup
                             .auto_corporate_foundation

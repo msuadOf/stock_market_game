@@ -421,10 +421,18 @@ fn capital_context_manual_foundation_uses_installed_capital_instead_of_setup_par
             setup_issuers: &initial,
             system: &state.system,
             actions: &state.corporate_actions,
+            account_kinds: &game
+                .state
+                .accounts
+                .iter()
+                .map(|(id, account)| (*id, account.kind()))
+                .collect(),
             catalog: &game.state.stocks,
             calendar: game.state.civil_clock.calendar(),
             committed_through: game.civil_date(),
             approved_through: game.civil_date(),
+            queue_current_day: game.civil_date(),
+            allow_pending_rights_queue: false,
             initial_par: None,
         },
     )

@@ -18,12 +18,18 @@ pub(crate) struct CapitalRestoreInput<'a> {
     pub(crate) setup_issuers: &'a IssuerRegistry,
     pub(crate) system: &'a CompanySystem,
     pub(crate) actions: &'a SessionCorporateActions,
+    pub(crate) account_kinds: &'a BTreeMap<crate::orderbook::AccountId, crate::AccountKind>,
     pub(crate) catalog: &'a StockCatalog,
     pub(crate) calendar: &'a TradingCalendar,
     /// 日终已完成的实际事实截止；不因当日批准窗口而放宽。
     pub(crate) committed_through: CivilDate,
     /// 同步命令已完成的批准截止；restore 可包含当前自然日的 Approved 方案。
     pub(crate) approved_through: CivilDate,
+    /// 待处理命令允许提交的当前自然日。恢复时为存档 current_date；
+    /// 日内资本复核时也为会话当前日。
+    pub(crate) queue_current_day: CivilDate,
+    /// 公共恢复禁止待受理请求；日内资本复核允许校验当前会话的运行态队列。
+    pub(crate) allow_pending_rights_queue: bool,
     pub(crate) initial_par: Option<Money>,
 }
 
@@ -141,6 +147,11 @@ pub(crate) enum CompanyCapitalRestoreError {
         context: CapitalRestoreContext,
         #[source]
         source: crate::company::rights_offering::RightsOfferingError,
+    },
+    #[error("资本恢复配股认购队列无效：{context:?}，原因 {reason}")]
+    RightsQueue {
+        context: CapitalRestoreContext,
+        reason: &'static str,
     },
     #[error("资本恢复回购账簿无效：{context:?}：{source}")]
     IssuerRepurchase {
@@ -1394,6 +1405,167 @@ fn prepare_rights_offerings(
             }),
             source,
         })?;
+    validate_rights_subscription_queue(input)?;
+    Ok(())
+}
+
+fn validate_rights_subscription_queue(
+    input: &CapitalRestoreInput<'_>,
+) -> Result<(), CompanyCapitalRestoreError> {
+    use crate::company::rights_offering::RightsOfferingStatus;
+    use crate::company::share_registry::HolderId;
+    let queue = &input.actions.rights_subscription_queue;
+    if !input.allow_pending_rights_queue && !queue.is_empty() {
+        let queued = &queue[0];
+        return Err(CompanyCapitalRestoreError::RightsQueue {
+            context: CapitalRestoreContext {
+                kind: Some(CorporateCapitalKind::RightsOffering),
+                event_id: Some(queued.event_id.clone()),
+                day: Some(queued.submitted_on),
+                ..Default::default()
+            },
+            reason: "公共加载不接受待受理认购请求",
+        });
+    }
+    let mut identities = std::collections::BTreeSet::new();
+    for queued in queue {
+        let candidates: Vec<_> = input
+            .actions
+            .rights_offerings
+            .iter()
+            .filter(|book| book.plan().event_id == queued.event_id)
+            .collect();
+        let book = candidates.first().copied();
+        let context_for = |book: Option<&crate::company::rights_offering::RightsOfferingBook>| {
+            book.map(|book| CapitalRestoreContext {
+                company: Some(book.plan().issuer),
+                stock: input.catalog.id(&book.plan().stock.0),
+                kind: Some(CorporateCapitalKind::RightsOffering),
+                event_id: Some(queued.event_id.clone()),
+                day: Some(queued.submitted_on),
+                ..Default::default()
+            })
+            .unwrap_or_else(|| CapitalRestoreContext {
+                kind: Some(CorporateCapitalKind::RightsOffering),
+                event_id: Some(queued.event_id.clone()),
+                day: Some(queued.submitted_on),
+                ..Default::default()
+            })
+        };
+        let reject = |reason| CompanyCapitalRestoreError::RightsQueue {
+            context: context_for(book),
+            reason,
+        };
+        if candidates.len() != 1 {
+            return Err(reject("队列事件不存在或身份不唯一"));
+        }
+        let book = book.expect("候选数量已验证为一");
+        if !identities.insert((
+            queued.event_id.as_str(),
+            queued.account,
+            queued.submitted_on,
+        )) {
+            return Err(reject("申请身份重复"));
+        }
+        let Some(kind) = input.account_kinds.get(&queued.account) else {
+            return Err(reject("申请账户不存在"));
+        };
+        if *kind == crate::AccountKind::IssuerRepurchase {
+            return Err(reject("发行人回购专户不能认购新股"));
+        }
+        if queued.requested_shares == 0 {
+            return Err(reject("申请股数必须为正数"));
+        }
+        if queued.submitted_on != input.queue_current_day
+            || input.queue_current_day < input.committed_through
+            || input.queue_current_day > input.approved_through
+            || !book.plan().payment_window_contains(queued.submitted_on)
+            || book.status() != &RightsOfferingStatus::Entitled
+            || book.entitlement().is_none()
+        {
+            return Err(reject("申请日期或配股账簿状态不允许保留待处理申请"));
+        }
+        let holder = HolderId::Account(queued.account);
+        if book
+            .subscriptions()
+            .iter()
+            .any(|subscription| subscription.holder == holder)
+        {
+            return Err(reject("该账户已有已记录认购"));
+        }
+        if input
+            .actions
+            .rejected_rights_subscriptions
+            .iter()
+            .any(|rejected| {
+                rejected.event_id == queued.event_id
+                    && rejected.account == queued.account
+                    && rejected.submitted_on == queued.submitted_on
+            })
+        {
+            return Err(reject("该账户已有明确拒绝回执"));
+        }
+        let entitlement = book.entitlement().expect("已验证权证存在");
+        if let Some(rights) = entitlement
+            .entitlements
+            .iter()
+            .find(|entry| entry.holder == holder)
+        {
+            if queued.requested_shares > rights.rights_shares {
+                return Err(reject("申请股数超过本人权证"));
+            }
+        } else if entitlement.open_subscription_shares == 0 {
+            return Err(reject("申请账户无本人权证且方案没有公开配售额度"));
+        }
+    }
+
+    for book in &input.actions.rights_offerings {
+        let Some(entitlement) = book.entitlement() else {
+            continue;
+        };
+        if entitlement.open_subscription_shares > 0 {
+            let named: std::collections::BTreeSet<_> = entitlement
+                .entitlements
+                .iter()
+                .map(|entry| entry.holder.clone())
+                .collect();
+            let used = book
+                .subscriptions()
+                .iter()
+                .filter(|subscription| !named.contains(&subscription.holder))
+                .map(|subscription| subscription.requested_shares)
+                .chain(
+                    queue
+                        .iter()
+                        .filter(|item| item.event_id == book.plan().event_id)
+                        .filter(|item| !named.contains(&HolderId::Account(item.account)))
+                        .map(|item| item.requested_shares),
+                )
+                .try_fold(0_u64, |total, shares| total.checked_add(shares))
+                .ok_or_else(|| CompanyCapitalRestoreError::RightsQueue {
+                    context: CapitalRestoreContext {
+                        company: Some(book.plan().issuer),
+                        stock: input.catalog.id(&book.plan().stock.0),
+                        kind: Some(CorporateCapitalKind::RightsOffering),
+                        event_id: Some(book.plan().event_id.clone()),
+                        ..Default::default()
+                    },
+                    reason: "公开配售申请合计溢出",
+                })?;
+            if used > entitlement.open_subscription_shares {
+                return Err(CompanyCapitalRestoreError::RightsQueue {
+                    context: CapitalRestoreContext {
+                        company: Some(book.plan().issuer),
+                        stock: input.catalog.id(&book.plan().stock.0),
+                        kind: Some(CorporateCapitalKind::RightsOffering),
+                        event_id: Some(book.plan().event_id.clone()),
+                        ..Default::default()
+                    },
+                    reason: "队列与已认购申请超过公开配售额度",
+                });
+            }
+        }
+    }
     Ok(())
 }
 

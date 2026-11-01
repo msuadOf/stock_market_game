@@ -39,8 +39,8 @@ pub struct SessionCorporateActions {
     /// 拆股／缩股（股份重新计值）事件账簿。
     pub share_splits: Vec<crate::company::share_split::ShareSplitBook>,
     pub rights_offerings: Vec<crate::company::rights_offering::RightsOfferingBook>,
-    /// 盘中显式认购排队（玩家／宿主当日提交，日终划扣后转入账簿）；
-    /// 受理命令通道随 B4d 接线，本批仅随档持久化。
+    /// 盘中显式认购队列（运行态由玩家／宿主当日提交，日终划扣后转入账簿）；
+    /// ADR-0025 §8 的公共加载只接受完整日结档，因此恢复时拒绝非空队列。
     pub rights_subscription_queue: Vec<QueuedRightsSubscription>,
     /// 日终公开配售超额认购的显式拒绝回执（受理侧额度校验之后的极端竞态兜底）。
     pub rejected_rights_subscriptions: Vec<RejectedRightsSubscription>,
@@ -53,7 +53,7 @@ pub struct SessionCorporateActions {
     pub applied_ex_reference_groups: Vec<AppliedExReferenceGroup>,
 }
 
-/// 盘中排队的显式配股认购（日内提交、当日日终划扣；随日终档持久化）。
+/// 盘中运行态的显式配股认购（日内提交、当日日终划扣；公共恢复不接受非空队列）。
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct QueuedRightsSubscription {
