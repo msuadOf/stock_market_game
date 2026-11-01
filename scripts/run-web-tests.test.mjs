@@ -155,22 +155,44 @@ it("完整回归分批覆盖全部文件并保持单批十秒门禁", async () =
 
 it("完整回归单独执行启动页完整 App SSR，其余文件恰好执行一次", async () => {
   const startup = "/web/src/app/startup-screen.test.ts";
-  const files = [startup, ...Array.from({ length: 16 }, (_, index) => `/web/src/file-${index}.test.ts`)];
+  const schema = "/web/src/save/complete-save-schema.test.ts";
+  const schema2 = "/web/src/save/complete-save-schema-extra.test.ts";
+  const files = [startup, schema, schema2, ...Array.from({ length: 16 }, (_, index) => `/web/src/file-${index}.test.ts`)];
   const seen = [];
-  for (let index = 0; index < 9; index += 1) {
-    await runWebTestBatch({ webRoot: "/web", cpuCount: 8, batchIndex: index, batchCount: 9,
+  for (let index = 0; index < 11; index += 1) {
+    await runWebTestBatch({ webRoot: "/web", cpuCount: 8, batchIndex: index, batchCount: 11,
       discover: async () => files, run: async (options) => { seen.push(...options.args.slice(4)); } });
   }
   assert.deepEqual(seen.sort(), [...files].sort());
   const calls = [];
-  await runWebTestBatch({ cpuCount: 8, batchIndex: 8, batchCount: 9, discover: async () => files,
+  await runWebTestBatch({ cpuCount: 8, batchIndex: 8, batchCount: 11, discover: async () => files,
     run: async (options) => { calls.push(options); } });
   assert.deepEqual(calls.flatMap((call) => call.args.slice(4)), [startup]);
+  const schemaCalls = [];
+  await runWebTestBatch({ cpuCount: 8, batchIndex: 9, batchCount: 11, discover: async () => files,
+    run: async (options) => { schemaCalls.push(options); } });
+  assert.deepEqual(schemaCalls.flatMap((call) => call.args.slice(4)), [schema]);
+  const schema2Calls = [];
+  await runWebTestBatch({ cpuCount: 8, batchIndex: 10, batchCount: 11, discover: async () => files,
+    run: async (options) => { schema2Calls.push(options); } });
+  assert.deepEqual(schema2Calls.flatMap((call) => call.args.slice(4)), [schema2]);
 });
 
 it("完整回归要求唯一启动页测试，缺失或歧义显式失败", async () => {
-  const ordinary = Array.from({ length: 9 }, (_, index) => `/web/src/file-${index}.test.ts`);
+  const ordinary = Array.from({ length: 11 }, (_, index) => `/web/src/file-${index}.test.ts`);
   for (const files of [ordinary, [...ordinary, "/a/app/startup-screen.test.ts", "/b/app/startup-screen.test.ts"]]) {
-    await assert.rejects(runWebTestBatch({ batchIndex: 0, batchCount: 9, discover: async () => files }), /exactly one startup-screen/);
+    await assert.rejects(runWebTestBatch({ batchIndex: 0, batchCount: 11, discover: async () => files }), /exactly one startup-screen/);
+  }
+});
+
+it("完整回归要求两个 schema 文件各唯一，缺失或歧义显式失败", async () => {
+  const ordinary = Array.from({ length: 11 }, (_, index) => `/web/src/file-${index}.test.ts`);
+  const startup = "/web/src/app/startup-screen.test.ts";
+  for (const [filename, other] of [["complete-save-schema.test.ts", "complete-save-schema-extra.test.ts"], ["complete-save-schema-extra.test.ts", "complete-save-schema.test.ts"]]) {
+    const otherPath = `/web/src/save/${other}`;
+    for (const paths of [[], [`/a/save/${filename}`, `/b/save/${filename}`]]) {
+      await assert.rejects(runWebTestBatch({ batchIndex: 0, batchCount: 11,
+        discover: async () => [...ordinary, startup, otherPath, ...paths] }), /requires exactly one complete-save-schema/);
+    }
   }
 });

@@ -95,7 +95,7 @@ POSIX 帮助脚本进行 `.nvmrc` 诊断。CI 或隔离环境可将 `NODE_BIN` �
   不经过 Corepack/pnpm 的动态导入启动链。runner 递归发现 `apps/web/src/**/*.test.ts(x)`，拒绝零测试或重复路径，按 CPU 预算最多拆成 8 个真实 Node shard、文件进程最多并发 64 个；整个批次和每个 child 均不超过 10000ms，任一 shard 失败会终止在途 siblings。`apps/web` 的 package `test` script 与完整回归共用该入口。
   多核时将 `app/workspace-grid.test.ts` 的 TypeScript 编译器与 SSR 验证放到独立 shard，
   避免与其他 Vite fixture 的全局 hooks 叠加；其他文件在剩余预算内均分。单核不额外创建
-  进程，所有文件仍恰好执行一次。启动前记录实际分片文件数，超时日志也保留资源计划。 完整回归将启动页完整 App SSR 单独安排一批，其余文件按稳定顺序分为八批，每批各自遵守 10000ms 进程树门禁，仍受完整回归共享 deadline 约束。
+  进程，所有文件仍恰好执行一次。启动前记录实际分片文件数，超时日志也保留资源计划。 完整回归将启动页完整 App SSR 与拆分的两个 complete-save-schema 测试各单独安排一批，其余文件按稳定顺序分为八批，每批各自遵守 10000ms 进程树门禁，仍受完整回归共享 deadline 约束。
 - 确有必要的长测试，其每个 child 进程和整个批次 wall-clock 均设 300000ms 硬上限；批次截止时间覆盖结果校验、manifest 发布、进程树终止与临时文件清理，不能只给 child 设置 timeout。`simulation-acceptance` 固定把前 299000ms 用于执行/校验/发布，最后 1000ms 只用于 kill、等待 close 和删除 staged 文件。runner 内部第二截止负责异步清理收敛；正式命令同时由进程外 deadline supervisor 约束总 wall，不能只依赖被测 Node 进程自己的事件循环计时器。
 - 可并行测试必须使用真实多进程或多线程，资源预算需显式记录并避免超卖；长测试不得单核串跑。
 - 构建耗时与测试执行耗时分开记录。冷编译超过 10 秒不应伪装成测试耗时；必要构建同样使用多核并受 5 分钟硬上限约束。
@@ -108,7 +108,7 @@ POSIX 帮助脚本进行 `.nvmrc` 诊断。CI 或隔离环境可将 `NODE_BIN` �
   硬期限；先验证 inventory 自校验、当前源码指纹和每个二进制哈希，再按 `os.availableParallelism()`
   的可用 CPU 预算最多并发 8 个预构建 Rust test binaries 的 case 清单查询；分别读取完整清单与 ignored 清单，取差集，不运行 ignored 普通 case。
   每个普通 case 用独立进程执行 `--exact --test-threads=1`，进程外 watchdog 为 `min(10000ms, 批次剩余时间)`；
-  case 并发数为 `min(case 数量, max(1, min(24, floor(CPU 数量 / 2))))`；`session::calendar_nonzero_plan_parity_tests` 和 `session::calendar_final_boundary_tests` 共用一个串行队列，其余 case 同时并发，降低日历重 fixture 互相争用。`actor_market_goes_live_produces_trade_events` 的测试自身限定两秒，因此先独立运行，再启动其余 case；每个 case 分配一个 harness thread
+  case 并发数为 `min(case 数量, max(1, min(32, floor(CPU 数量 / 2))))`；`session::calendar_nonzero_plan_parity_tests` 和 `session::calendar_final_boundary_tests` 共用一个串行队列，其余 case 同时并发，降低日历重 fixture 互相争用。`actor_market_goes_live_produces_trade_events` 的测试自身限定两秒，因此先独立运行，再启动其余 case；每个 case 分配一个 harness thread
   与其全部 CPU 预算（批 9 A7 起 Rayon threads 分量退役——引擎内部线程模型，
   不再按环境变量切分预算；单核时仍至少 1 线程，不宣称未超卖）。
   独立执行的必跑 ignored 长用例使用 1 个 harness thread。

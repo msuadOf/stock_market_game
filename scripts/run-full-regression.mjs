@@ -434,7 +434,7 @@ export async function executeRustTestBinaries({ artifacts, policy, run = runBoun
   await Promise.all(Array.from({ length: policy.max_concurrent_binaries }, (_, index) => worker(index)));
   if (failures.length > 0) throw new AggregateError(failures, `${failures.length} prebuilt Rust test binaries failed:\n${failures.map((failure) => failure.message).join("\n")}`);
   const cases = results.flat();
-  const concurrency = Math.min(cases.length, Math.max(1, Math.min(24, Math.floor(policy.available_cpu_count / 2))));
+  const concurrency = Math.min(cases.length, Math.max(1, Math.min(32, Math.floor(policy.available_cpu_count / 2))));
   const casePolicy = { case_count: cases.length, max_concurrent_cases: concurrency, test_threads: 1, ordinary_case_timeout_ms: ORDINARY_TEST_MAX_MS };
   log(JSON.stringify({ phase: "rust-ordinary-cases-start", ...casePolicy }));
   const isActorTradeCase = (testCase) => testCase.label.includes("/apps/server#") && testCase.label.endsWith(" test:actor") && testCase.name === "actor_market_goes_live_produces_trade_events";
@@ -728,9 +728,9 @@ export async function executeFullRegression({
   completed.push({ label: doctestStep.label, wall_ms: now() - stepStartedAt });
 
   stepStartedAt = now();
-  for (let batchIndex = 0; batchIndex < 9; batchIndex += 1) {
+  for (let batchIndex = 0; batchIndex < 11; batchIndex += 1) {
     timeoutMs = Math.min(ORDINARY_TEST_MAX_MS, remainingMs(webStep.label));
-    await run(phaseCommandOptions({ ...webStep, args: [...webStep.args, String(batchIndex), "9"] }, sourceRoot, timeoutMs));
+    await run(phaseCommandOptions({ ...webStep, args: [...webStep.args, String(batchIndex), "11"] }, sourceRoot, timeoutMs));
   }
   completed.push({ label: webStep.label, wall_ms: now() - stepStartedAt });
 
