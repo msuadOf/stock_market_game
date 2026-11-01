@@ -91,6 +91,18 @@ fn validate_context(
     Ok(())
 }
 
+pub(super) fn has_rights_ex_date_conflict(
+    actions: &SessionCorporateActions,
+    company: CompanyId,
+    stock: &StockCode,
+    ex_on: CivilDate,
+) -> bool {
+    actions.rights_offerings.iter().any(|book| {
+        let plan = book.plan();
+        plan.issuer == company && &plan.stock == stock && plan.ex_rights_on == ex_on
+    })
+}
+
 fn validate_ex_date(
     input: &CapitalCommandInput<'_>,
     company: CompanyId,
@@ -103,12 +115,31 @@ fn validate_ex_date(
     if input.actions.stock_distributions.iter().any(|book| {
         let plan = book.plan();
         same(plan.issuer, &plan.stock, plan.ex_rights_on)
-    }) || input.actions.rights_offerings.iter().any(|book| {
+    }) || has_rights_ex_date_conflict(input.actions, company, stock, ex_on)
+        || input.actions.share_splits.iter().any(|book| {
+            let plan = book.plan();
+            same(plan.issuer, &plan.stock, plan.ex_rights_on)
+        })
+    {
+        return Err(CapitalCommandError::SameExDate {
+            company,
+            stock: stock.clone(),
+            ex_on,
+        });
+    }
+    Ok(())
+}
+
+fn validate_rights_ex_date(
+    input: &CapitalCommandInput<'_>,
+    company: CompanyId,
+    stock: &StockCode,
+    ex_on: CivilDate,
+) -> Result<(), CapitalCommandError> {
+    validate_ex_date(input, company, stock, ex_on)?;
+    if input.actions.dividends.iter().any(|book| {
         let plan = book.plan();
-        same(plan.issuer, &plan.stock, plan.ex_rights_on)
-    }) || input.actions.share_splits.iter().any(|book| {
-        let plan = book.plan();
-        same(plan.issuer, &plan.stock, plan.ex_rights_on)
+        plan.issuer == company && &plan.stock == stock && plan.ex_dividend_on == ex_on
     }) {
         return Err(CapitalCommandError::SameExDate {
             company,
@@ -221,7 +252,7 @@ pub(super) fn prepare_rights_approval(
             event_id: plan.event_id,
         });
     }
-    validate_ex_date(&input, plan.issuer, &plan.stock, plan.ex_rights_on)?;
+    validate_rights_ex_date(&input, plan.issuer, &plan.stock, plan.ex_rights_on)?;
     validate_pending_split_before_credit(
         input.actions,
         plan.issuer,

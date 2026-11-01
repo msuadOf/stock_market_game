@@ -99,6 +99,7 @@ fn cash_approval(error: &CompanyCommandError) -> CompanyErrorClass {
             CashDividendApprovalIssue::NoEligibleShares
             | CashDividendApprovalIssue::AmountExceedsPlan
             | CashDividendApprovalIssue::ConflictingIdentity => BusinessCondition,
+            CashDividendApprovalIssue::UnsupportedRightsCombination => UnsupportedOperation,
             CashDividendApprovalIssue::UnsupportedFormula => UnsupportedOperation,
             CashDividendApprovalIssue::DateMismatch
             | CashDividendApprovalIssue::ExchangeMismatch

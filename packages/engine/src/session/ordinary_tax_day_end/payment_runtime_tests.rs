@@ -634,14 +634,59 @@ fn rights_payment_commits_npc_debits_and_survives_restore() {
     let mut session = restore_with_three_groups(&saved);
     register_on_june_3(&mut session);
     assert_eq!(session.civil_date(), plan.payment_start_on);
+    let holder = RETAIL_HOLDERS[0];
+    let entitlement = session.corporate_actions().unwrap().rights_offerings[0]
+        .entitlement()
+        .unwrap()
+        .entitlements
+        .iter()
+        .find(|row| row.holder == HolderId::Account(holder))
+        .unwrap()
+        .rights_shares;
+    let cash_before_subscription = cash(&session, holder);
+    let revision_before_subscription = session.external_revision();
+    let too_many = session
+        .subscribe_rights_offering(holder, &plan.event_id, entitlement + 1)
+        .unwrap_err();
+    assert!(matches!(
+        too_many,
+        crate::session::RightsSubscriptionError::ExceedsEntitlement { .. }
+    ));
+    assert_eq!(session.external_revision(), revision_before_subscription);
+    let accepted = session
+        .subscribe_rights_offering(holder, &plan.event_id, entitlement)
+        .unwrap();
+    assert_eq!(accepted.submitted_on, session.civil_date());
+    assert_eq!(accepted.requested_shares, entitlement);
+    assert_eq!(cash(&session, holder), cash_before_subscription);
+    assert_eq!(
+        session.external_revision(),
+        revision_before_subscription + 1
+    );
+    assert!(matches!(
+        session.save(),
+        Err(crate::SessionError::PendingRightsSubscriptions)
+    ));
+    assert!(matches!(
+        session.subscribe_rights_offering(holder, &plan.event_id, entitlement),
+        Err(crate::session::RightsSubscriptionError::Duplicate { .. })
+    ));
     session.step().unwrap();
     let before: Vec<_> = RETAIL_HOLDERS
         .iter()
         .map(|account| (*account, cash(&session, *account)))
         .collect();
     session.end_civil_day().unwrap();
-    let book = &session.corporate_actions().unwrap().rights_offerings[0];
+    let book = session.corporate_actions().unwrap().rights_offerings[0].clone();
     assert_eq!(book.subscriptions().len(), RETAIL_HOLDERS.len());
+    assert!(book.subscriptions().iter().any(|record| {
+        record.holder == HolderId::Account(holder)
+            && record.origin == crate::company::rights_offering::SubscriptionOrigin::Explicit
+    }));
+    assert!(matches!(
+        session.subscribe_rights_offering(holder, &plan.event_id, entitlement),
+        Err(crate::session::RightsSubscriptionError::OutsidePaymentWindow { .. })
+    ));
     for record in book.subscriptions() {
         let HolderId::Account(account) = record.holder else {
             panic!("预期账户持有人")
@@ -662,6 +707,152 @@ fn rights_payment_commits_npc_debits_and_survives_restore() {
     for account in RETAIL_HOLDERS {
         assert_eq!(cash(&restored, account), cash(&session, account));
     }
+}
+
+#[test]
+fn cash_proposal_rejects_same_ex_date_after_real_rights_payment() {
+    use crate::company::rights_offering::{
+        RightsOfferingBook, RightsOfferingDeclaration, RightsOfferingEventPlan, RightsOfferingMode,
+        RightsSubscriptionStrategy,
+    };
+    let initial = payment_session(CashDividendTaxMode::FlatWithholding);
+    let mut saved = initial.save().unwrap();
+    saved.setup.rights_offering_enabled = true;
+    let company = CompanyId(0);
+    let capital = initial
+        .company_system()
+        .unwrap()
+        .dividend_legal_facts(&company)
+        .unwrap()
+        .unwrap()
+        .registered_capital;
+    let mut plan = RightsOfferingEventPlan {
+        event_id: "缴款后冲突测试".into(),
+        approval_reference: "测试批准".into(),
+        issuer: company,
+        stock: crate::StockCode(STOCK.into()),
+        exchange: crate::calendar::CalendarExchange::Sse,
+        approved_on: date(START),
+        announced_on: date(START),
+        registered_on: date(START),
+        payment_start_on: date(START),
+        payment_deadline_on: date(START),
+        ex_rights_on: date(START),
+        settlement_on: date(START),
+        listing_on: date(START),
+        price_per_share: Money::from_cents(100),
+        mode: RightsOfferingMode::RightsToAllShareholders {
+            shares_per_existing_share_micros: 100_000,
+        },
+        npc_subscription_strategy: RightsSubscriptionStrategy::FullByDefault,
+    };
+    plan.derive_schedule(initial.civil_clock().calendar(), plan.exchange, 2)
+        .unwrap();
+    saved
+        .company_state
+        .system_for_test_mut()
+        .declare_rights_offering(
+            &company,
+            RightsOfferingDeclaration {
+                event_id: plan.event_id.clone(),
+                approval_reference: plan.approval_reference.clone(),
+                approved_on: plan.approved_on,
+                price_per_share: plan.price_per_share,
+                par_value_per_share: Money::from_cents(100),
+                registered_capital_at_approval: capital,
+            },
+        )
+        .unwrap();
+    saved
+        .company_state
+        .actions_for_test_mut()
+        .rights_offerings
+        .push(RightsOfferingBook::new(plan.clone()).unwrap());
+    let mut session = restore_with_three_groups(&saved);
+    register_on_june_3(&mut session);
+    let holder = RETAIL_HOLDERS[0];
+    let entitlement = session.corporate_actions().unwrap().rights_offerings[0]
+        .entitlement()
+        .unwrap()
+        .entitlements
+        .iter()
+        .find(|row| row.holder == HolderId::Account(holder))
+        .unwrap()
+        .rights_shares;
+    session
+        .subscribe_rights_offering(holder, &plan.event_id, entitlement)
+        .unwrap();
+    let player = AccountId(0);
+    session.seed_order_for_test(
+        holder,
+        Intent::PlaceLimit {
+            code: StockId(0),
+            side: Side::Sell,
+            price: LimitPrice::Fixed(Money::from_cents(1_000)),
+            qty: 100,
+        },
+        &mut Vec::new(),
+    );
+    session
+        .enqueue_player_intent(
+            player,
+            Intent::PlaceLimit {
+                code: StockId(0),
+                side: Side::Buy,
+                price: LimitPrice::Fixed(Money::from_cents(1_000)),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    let events = session.step().unwrap();
+    assert!(events.iter().any(|event| matches!(event,
+        Event::Trade { code, maker, taker, qty: 100, price, .. }
+            if *code == StockId(0) && *maker == holder && *taker == player
+                && price.cents() == 1_000
+    )));
+    assert_eq!(
+        session
+            .account(player)
+            .unwrap()
+            .position(&StockId(0))
+            .unwrap()
+            .qty(),
+        100
+    );
+    session.end_civil_day().unwrap();
+    assert!(session.corporate_actions().unwrap().rights_offerings[0]
+        .subscriptions()
+        .iter()
+        .any(
+            |record| record.holder == HolderId::Account(holder) && record.paid_amount > Money::ZERO
+        ));
+    let (_, cash_ex_on) = crate::company::simple::preferences::preference_ex_dates(
+        session.civil_clock().calendar(),
+        plan.exchange,
+        session.civil_date(),
+    )
+    .unwrap();
+    assert_eq!(cash_ex_on, plan.ex_rights_on);
+    let before = serde_json::to_value(session.save().unwrap()).unwrap();
+    let revision = session.external_revision();
+    let error = session
+        .propose_player_company_action(
+            player,
+            crate::session::PlayerCompanyProposal::CashDividend {
+                company,
+                gross_per_share: Money::from_cents(1),
+            },
+        )
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("UnsupportedRightsCombination"),
+        "{error}"
+    );
+    assert_eq!(
+        serde_json::to_value(session.save().unwrap()).unwrap(),
+        before
+    );
+    assert_eq!(session.external_revision(), revision);
 }
 
 #[test]

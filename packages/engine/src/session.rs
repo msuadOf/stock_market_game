@@ -64,6 +64,8 @@ pub use administrative_mirror::CivilInformationError;
 mod company_command_candidates;
 mod player_company_command_candidates;
 mod player_company_commands;
+mod rights_subscription_command;
+pub use rights_subscription_command::{RightsSubscriptionError, RightsSubscriptionReceipt};
 mod stock_distribution_command_candidate;
 pub use company_commands_types::{PlayerCompanyProposal, PlayerProposalKind};
 pub use player_company_commands::{PlayerCompanyCommandError, PlayerCompanyCommandReceipt};
@@ -1113,6 +1115,9 @@ pub enum SessionError {
     /// pending 更正不能在保存时丢弃；健康会话可先日终提交或取消。
     #[error("存在待处理报表更正，请先完成日终披露或取消更正后再保存")]
     PendingReportCorrections,
+    /// 配股认购队列只允许在日终消费后生成可公共恢复的存档。
+    #[error("存在待处理配股认购申请，请先完成日终结算后再保存")]
+    PendingRightsSubscriptions,
     /// 日终更正保留真实 cause，分类只控制健康业务拒绝与系统失败的处理方式。
     #[error("report correction day end failed: {0}")]
     ReportCorrectionDayEnd(#[source] ReportCorrectionDayEndError),

@@ -46,6 +46,7 @@ pub(crate) enum CashDividendApprovalIssue {
     AmountExceedsPlan,
     UnsupportedFormula,
     ConflictingIdentity,
+    UnsupportedRightsCombination,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -172,6 +173,16 @@ pub(crate) fn prepare_cash_dividend_approval(
         .and_then(|amount| i64::try_from(amount).ok())
         .map(Money::from_cents)
         .ok_or_else(|| invalid(CashDividendApprovalIssue::GrossOverflow))?;
+    if super::capital_command_candidates::has_rights_ex_date_conflict(
+        input.actions,
+        input.plan.issuer,
+        &input.plan.stock,
+        input.plan.ex_dividend_on,
+    ) {
+        return Err(invalid(
+            CashDividendApprovalIssue::UnsupportedRightsCombination,
+        ));
+    }
     if total_gross == Money::ZERO {
         return Err(invalid(CashDividendApprovalIssue::NoEligibleShares));
     }

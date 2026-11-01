@@ -620,6 +620,24 @@ impl ProtocolSession {
 
 // 显式转发现有领域命令；不授予权限，不替换 epoch，不触发推进或存档。
 impl ProtocolSession {
+    pub fn subscribe_rights_offering(
+        &mut self,
+        account: crate::AccountId,
+        event_id: &str,
+        requested_shares: u64,
+    ) -> Result<crate::session::RightsSubscriptionReceipt, super::super::CompanyWriteError> {
+        self.state
+            .game
+            .subscribe_rights_offering(account, event_id, requested_shares)
+            .map_err(
+                |source| super::super::CompanyWriteError::RightsSubscription {
+                    account,
+                    event_id: event_id.to_owned(),
+                    source,
+                },
+            )
+    }
+
     pub fn propose_player_company_action(
         &mut self,
         account: crate::AccountId,

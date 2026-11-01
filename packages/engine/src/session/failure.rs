@@ -2400,6 +2400,14 @@ impl GameSession {
         if self.has_pending_report_corrections() {
             return Err(SessionError::PendingReportCorrections);
         }
+        if self
+            .state
+            .companies
+            .corporate_actions()
+            .is_some_and(|actions| !actions.rights_subscription_queue.is_empty())
+        {
+            return Err(SessionError::PendingRightsSubscriptions);
+        }
         let mut save = self.save_committed_projection()?;
         self.project_shared_ingress_save(&mut save)?;
         Ok(save)

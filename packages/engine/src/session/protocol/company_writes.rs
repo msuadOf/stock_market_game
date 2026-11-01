@@ -1,6 +1,6 @@
 //! 三宿主共用的公司写命令错误投影；Rust cause 保持原类型。
 
-use crate::session::{PlayerCompanyCommandError, ReportCorrectionError};
+use crate::session::{PlayerCompanyCommandError, ReportCorrectionError, RightsSubscriptionError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum CompanyWriteError {
@@ -8,6 +8,13 @@ pub enum CompanyWriteError {
     PlayerProposal(#[from] PlayerCompanyCommandError),
     #[error("{0}")]
     ReportCorrection(#[from] ReportCorrectionError),
+    #[error("配股认购受理失败：{source}")]
+    RightsSubscription {
+        account: crate::AccountId,
+        event_id: String,
+        #[source]
+        source: RightsSubscriptionError,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
@@ -22,6 +29,12 @@ pub enum CompanyWriteFailure {
         reason: String,
     },
     ReportCorrection(ReportCorrectionFailure),
+    RightsSubscription {
+        account: crate::AccountId,
+        event_id: String,
+        classification: crate::company::CompanyErrorClass,
+        reason: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
@@ -81,6 +94,40 @@ impl CompanyWriteError {
                     error.to_string()
                 },
             },
+            Self::RightsSubscription {
+                account,
+                event_id,
+                source,
+            } => {
+                use RightsSubscriptionError as E;
+                let classification = match source {
+                    E::Disabled | E::UnsupportedRuntime | E::UnsupportedPlan { .. } => {
+                        crate::company::CompanyErrorClass::UnsupportedOperation
+                    }
+                    E::InvalidQuantity | E::UnknownAccount { .. } => {
+                        crate::company::CompanyErrorClass::InvalidInput
+                    }
+                    E::UnknownEvent { .. }
+                    | E::OutsidePaymentWindow { .. }
+                    | E::NoEntitlement { .. }
+                    | E::ExceedsEntitlement { .. }
+                    | E::Duplicate { .. } => crate::company::CompanyErrorClass::BusinessCondition,
+                    E::UnsupportedTaxMode | E::UnsupportedSettlementScope { .. } => {
+                        crate::company::CompanyErrorClass::UnsupportedOperation
+                    }
+                    E::UnsupportedAccountKind => crate::company::CompanyErrorClass::InvalidInput,
+                    E::RevisionExhausted => crate::company::CompanyErrorClass::SystemState,
+                    E::MissingCompanyState | E::Capability { .. } | E::Step(_) => {
+                        crate::company::CompanyErrorClass::SystemState
+                    }
+                };
+                CompanyWriteFailure::RightsSubscription {
+                    account: *account,
+                    event_id: event_id.clone(),
+                    classification,
+                    reason: source.to_string(),
+                }
+            }
             Self::ReportCorrection(error) => {
                 use ReportCorrectionError as E;
                 use ReportCorrectionFailure as F;

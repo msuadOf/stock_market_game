@@ -623,3 +623,330 @@ fn player_command_driver_tick_mismatch_is_terminal() {
 
 #[path = "player_company_classification_tests.rs"]
 mod classification_tests;
+
+#[test]
+fn rights_subscription_rejects_zero_shares_without_queue_mutation() {
+    let mut game = game_with_features(true, true, false);
+    let before = game
+        .corporate_actions()
+        .unwrap()
+        .rights_subscription_queue
+        .clone();
+    let result = game.subscribe_rights_offering(AccountId(0), "event-1", 0);
+    assert!(matches!(
+        result,
+        Err(crate::session::RightsSubscriptionError::InvalidQuantity)
+    ));
+    assert_eq!(
+        game.corporate_actions().unwrap().rights_subscription_queue,
+        before
+    );
+}
+
+#[test]
+fn pending_rights_subscription_cannot_be_saved_as_unrestorable_public_slot() {
+    let mut game = game_with_features(false, true, false);
+    let submitted_on = game.civil_date();
+    let crate::session::company_state::SessionCompanies::CompanySystem(state) =
+        &mut game.state.companies
+    else {
+        panic!("测试 fixture 使用 CompanySystem")
+    };
+    state.corporate_actions.rights_subscription_queue.push(
+        crate::session::corporate_actions::QueuedRightsSubscription {
+            event_id: "pending-rights".into(),
+            requested_shares: 1,
+            submitted_on,
+            account: AccountId(0),
+        },
+    );
+    assert!(matches!(
+        game.save(),
+        Err(crate::session::SessionError::PendingRightsSubscriptions)
+    ));
+}
+
+#[test]
+fn cash_dividend_rejects_existing_rights_with_same_ex_date_without_mutation() {
+    let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
+    setup.stocks.truncate(1);
+    setup.stocks[0].code = crate::StockCode("600101".into());
+    setup.stocks[0].total_shares = 1_000;
+    setup.stocks[0].float_shares = 1_000;
+    setup.start_date = CivilDate::from_iso("2030-06-03").unwrap();
+    setup.npcs.inst_count = 0;
+    setup.npcs.hot_count = 1;
+    setup.ticks_per_day = 1;
+    setup.auction_ticks = 0;
+    setup.closing_auction_ticks = 0;
+    setup.company_system = Some(simple_company_fixture!(crate; ["600101"]));
+    setup.dividend_tax_mode = Some(CashDividendTaxMode::FlatWithholding);
+    setup.flat_withholding_bp = Some(1_000);
+    setup.par_value_per_share = Some(Money::from_cents(100));
+    setup.auto_corporate_foundation = true;
+    setup.rights_offering_enabled = true;
+    let mut game = GameSession::new_with_runtime_groups(setup, 7, 3).unwrap();
+    game.fixture_account_mut(&AccountId(0))
+        .unwrap()
+        .fixture_set_positions(std::collections::BTreeMap::from([(
+            StockId(0),
+            crate::account::Position::from_restored_parts(1, 1, 100, 0),
+        )]));
+    use crate::company::rights_offering::{
+        RightsOfferingBook, RightsOfferingDeclaration, RightsOfferingEventPlan, RightsOfferingMode,
+        RightsSubscriptionStrategy,
+    };
+    let today = game.civil_date();
+    let calendar = game.civil_clock().calendar();
+    let company = CompanyId(0);
+    let capital = game
+        .company_system()
+        .unwrap()
+        .dividend_legal_facts(&company)
+        .unwrap()
+        .unwrap()
+        .registered_capital;
+    let mut rights_plan = RightsOfferingEventPlan {
+        event_id: "fixture-matching-rights-ex-date".into(),
+        approval_reference: "同日配股测试 fixture".into(),
+        issuer: company,
+        stock: crate::StockCode("600101".into()),
+        exchange: crate::calendar::CalendarExchange::Sse,
+        approved_on: today,
+        announced_on: today,
+        registered_on: today,
+        payment_start_on: today,
+        payment_deadline_on: today,
+        ex_rights_on: today,
+        settlement_on: today,
+        listing_on: today,
+        price_per_share: Money::from_cents(100),
+        mode: RightsOfferingMode::RightsToAllShareholders {
+            shares_per_existing_share_micros: 100_000,
+        },
+        npc_subscription_strategy: RightsSubscriptionStrategy::FullByDefault,
+    };
+    rights_plan
+        .derive_schedule(calendar, rights_plan.exchange, 1)
+        .unwrap();
+    let cash_ex_date = calendar
+        .next_trading_day(
+            crate::calendar::CalendarExchange::Sse,
+            calendar
+                .next_trading_day(crate::calendar::CalendarExchange::Sse, today)
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(rights_plan.ex_rights_on, cash_ex_date);
+    let crate::session::company_state::SessionCompanies::CompanySystem(state) =
+        &mut game.state.companies
+    else {
+        panic!("测试 fixture 使用 CompanySystem")
+    };
+    std::sync::Arc::make_mut(&mut state.system)
+        .declare_rights_offering(
+            &company,
+            RightsOfferingDeclaration {
+                event_id: rights_plan.event_id.clone(),
+                approval_reference: rights_plan.approval_reference.clone(),
+                approved_on: today,
+                price_per_share: rights_plan.price_per_share,
+                par_value_per_share: Money::from_cents(100),
+                registered_capital_at_approval: capital,
+            },
+        )
+        .unwrap();
+    state
+        .corporate_actions
+        .rights_offerings
+        .push(RightsOfferingBook::new(rights_plan).unwrap());
+    let before = serde_json::to_value(game.save().unwrap()).unwrap();
+    let revision = game.external_revision();
+    let error = game
+        .propose_player_company_action(AccountId(0), cash(1))
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("UnsupportedRightsCombination"),
+        "{error}"
+    );
+    assert_eq!(serde_json::to_value(game.save().unwrap()).unwrap(), before);
+    assert_eq!(game.external_revision(), revision);
+}
+
+#[test]
+fn rights_approval_rejects_existing_cash_dividend_with_same_ex_date_without_mutation() {
+    use crate::calendar::CalendarExchange;
+    use crate::company::cash_dividend::{CashDividendBook, CashDividendPlan};
+    use crate::company::ex_reference_price::CashDividendFormula;
+
+    let mut game = game_with_features(true, true, false);
+    let today = game.civil_date();
+    let calendar = game.civil_clock().calendar();
+    let registered_on = calendar
+        .next_trading_day(CalendarExchange::Sse, today)
+        .unwrap();
+    let payment_start = calendar
+        .next_trading_day(CalendarExchange::Sse, registered_on)
+        .unwrap();
+    let shared_ex_date = calendar
+        .next_trading_day(CalendarExchange::Sse, payment_start)
+        .unwrap();
+    let plan = CashDividendPlan::new(
+        "fixture-shared-ex-date".into(),
+        CompanyId(0),
+        crate::StockCode("600101".into()),
+        CalendarExchange::Sse,
+        CashDividendFormula::StandardCashOnly,
+        today,
+        today,
+        payment_start,
+        shared_ex_date,
+        shared_ex_date,
+        Money::from_cents(1),
+        Money::from_cents(1_000),
+        calendar,
+    )
+    .unwrap();
+    let capital = game
+        .company_system()
+        .unwrap()
+        .dividend_legal_facts(&CompanyId(0))
+        .unwrap()
+        .unwrap()
+        .registered_capital;
+    let crate::session::company_state::SessionCompanies::CompanySystem(state) =
+        &mut game.state.companies
+    else {
+        panic!("测试 fixture 使用 CompanySystem")
+    };
+    std::sync::Arc::make_mut(&mut state.system)
+        .declare_dividend(
+            &CompanyId(0),
+            crate::company::DividendDeclaration {
+                plan_id: plan.plan_id.clone(),
+                approved_on: today,
+                total_gross: crate::accounting::AccountingAmount::from_money(Money::from_cents(
+                    1_000,
+                )),
+                registered_capital: capital,
+            },
+        )
+        .unwrap();
+    state
+        .corporate_actions
+        .dividends
+        .push(CashDividendBook::new(plan).unwrap());
+    let restored_before = GameSession::restore(&game.save().unwrap()).unwrap();
+    assert_eq!(
+        restored_before.corporate_actions().unwrap().dividends[0]
+            .plan()
+            .plan_id,
+        "fixture-shared-ex-date"
+    );
+    let before = serde_json::to_value(game.save().unwrap()).unwrap();
+    let revision = game.external_revision();
+    let error = game
+        .propose_player_company_action(AccountId(0), rights())
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("未支持合并的非现金除权事件"),
+        "{error}"
+    );
+    assert_eq!(serde_json::to_value(game.save().unwrap()).unwrap(), before);
+    assert_eq!(game.external_revision(), revision);
+}
+
+#[test]
+fn rights_subscription_rejects_when_new_game_feature_is_disabled() {
+    let mut game = game_with_features(true, false, false);
+    let before = game
+        .corporate_actions()
+        .unwrap()
+        .rights_subscription_queue
+        .clone();
+    let result = game.subscribe_rights_offering(AccountId(0), "event-1", 1);
+    assert!(matches!(
+        result,
+        Err(crate::session::RightsSubscriptionError::Disabled)
+    ));
+    assert_eq!(
+        game.corporate_actions().unwrap().rights_subscription_queue,
+        before
+    );
+}
+
+#[test]
+fn rights_subscription_reports_unsupported_tax_mode_before_event_lookup() {
+    let mut game = game_with_features(true, true, false);
+    game.state.setup.dividend_tax_mode = Some(CashDividendTaxMode::AShareIndividual);
+    assert!(matches!(
+        game.subscribe_rights_offering(AccountId(0), "missing-event", 1),
+        Err(crate::session::RightsSubscriptionError::UnsupportedTaxMode)
+    ));
+}
+
+#[test]
+fn rights_subscription_rejects_existing_personal_tax_books_before_window() {
+    let mut game = game_with_features(true, true, false);
+    let receipt = game
+        .propose_player_company_action(AccountId(0), rights())
+        .unwrap();
+    let day = game.civil_date();
+    let tax_book = crate::company::cash_dividend_tax::CashDividendTaxBook::new(
+        AccountId(0),
+        crate::StockCode("600101".into()),
+        crate::company::cash_dividend_tax::DividendTaxProfile::IndividualPublicMarket,
+        day,
+        vec![],
+    )
+    .unwrap();
+    let crate::session::company_state::SessionCompanies::CompanySystem(state) =
+        &mut game.state.companies
+    else {
+        panic!("测试 fixture 使用 CompanySystem")
+    };
+    state.corporate_actions.dividend_tax_books.push(tax_book);
+    assert!(matches!(
+        game.subscribe_rights_offering(AccountId(0), &receipt.event_id, 1),
+        Err(crate::session::RightsSubscriptionError::UnsupportedSettlementScope { .. })
+    ));
+}
+
+#[test]
+fn rights_subscription_preserves_poisoned_session_and_queue() {
+    let mut game = game_with_features(true, true, false);
+    let fatal = crate::session::StepFatal::InvariantViolation {
+        description: "注入配股受理前故障".into(),
+        location: "rights_subscription.test".into(),
+    };
+    game.inject_step_failure(fatal.clone());
+    assert_eq!(game.step().unwrap_err(), fatal);
+    let queued = game
+        .corporate_actions()
+        .unwrap()
+        .rights_subscription_queue
+        .clone();
+    assert!(matches!(
+        game.subscribe_rights_offering(AccountId(0), "missing-event", 1),
+        Err(crate::session::RightsSubscriptionError::Step(actual)) if actual == fatal
+    ));
+    assert_eq!(
+        game.corporate_actions().unwrap().rights_subscription_queue,
+        queued
+    );
+}
+
+#[test]
+fn rights_subscription_receipt_uses_canonical_decimal_shares() {
+    let receipt = crate::session::RightsSubscriptionReceipt {
+        event_id: "配股-1".into(),
+        requested_shares: u64::MAX,
+        submitted_on: CivilDate::from_iso("2030-06-03").unwrap(),
+    };
+    let encoded = serde_json::to_value(&receipt).unwrap();
+    assert_eq!(encoded["requested_shares"], u64::MAX.to_string());
+    assert_eq!(
+        serde_json::from_value::<crate::session::RightsSubscriptionReceipt>(encoded).unwrap(),
+        receipt
+    );
+}
