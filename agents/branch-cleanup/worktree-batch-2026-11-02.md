@@ -55,3 +55,5 @@
 第七批对未绑定 worktree 的两条公司来源 branch 保留原 tip tag 后删除引用：`feat/company-b4e-commands` `9c671946` → `archive/20261102-9c671946`；`feat/b4c-rights-offering-r3b` `429e9182` → `archive/20261102-429e9182`。这是历史保全，不代表其生产与测试内容均已吸收。前者缺原测试/fixture，须继续核对送转批准边界；后者保留回购 binding Web 存档验证与独审证据，须继续核销演进后的解析行为。相关 stash 原样保留，稳定 OID 分别为 `0d33313de6cccef6f0789983b02824c3050d125a`、`6614e27629bae13cc62ca98de5866c0fa6c54359` 和 `6e342ccfb3e428c15481087abc4cfbc7cd0b01ef`。未运行产品测试。
 
 第八批将 `feat/wasm-w1-combined-build-monitor` `d192e0d6` 和 `feat/wasm-w1-spawn-ui` `c4ce50c3` 分别转为同短 SHA 的 `archive/20261102-...` tag，原工作树均保留同提交 detached HEAD。检查时工作树干净、未发现进程 cwd 使用；独立复核提示早期 supervisor、bootstrap 和 handshake 仍须逐行为核销，不能宣称全部已交付。基线已有主要宿主和 spawn UI 路径，monitor 特有的历史构建工具与红绿证据保留在 tag；还需核对该工具是否仍承担现行门禁。未运行产品测试。
+
+第九批将 `feat/wasm-w2-primitives-2026-10-28` `a1069614` 转为 `archive/20261102-a1069614`，保留原工作树同提交 detached HEAD。代表性的九项等待机制 smoke 以 `9799e336` 集成到更新后的收敛线（不是本记录原冻结基线 `6fe53f65`），未声称原 23 项测试全部迁移。此 branch 尚含旧宿主、握手、测试及证据的其他差异，仍需逐项核销；归档保留完整原始历史。操作前工作树干净并检查进程 cwd；原 smoke 直接 rustc 运行 9/9 通过，Cargo 冷编译未在 9 秒内完成。
