@@ -22,10 +22,12 @@ type CalendarPolicy = {
 
 export function parseCivilClock(value: unknown, path = "civil_clock"): CivilClock {
   const parsed = record(value, path)
-  const hasPolicyDigest = Object.hasOwn(parsed, "policy_digest")
-  exact(parsed, hasPolicyDigest ? ["current_date", "settled_through", "policy", "policy_digest"] : ["current_date", "settled_through", "policy"], path)
+  const hasPolicyDigestField = Object.hasOwn(parsed, "policy_digest")
+  exact(parsed, hasPolicyDigestField ? ["current_date", "settled_through", "policy", "policy_digest"] : ["current_date", "settled_through", "policy"], path)
   const policy = parsePolicy(parsed.policy, `${path}.policy`)
-  const parsedPolicyDigest = hasPolicyDigest ? policyContentDigest(parsed.policy_digest, `${path}.policy_digest`) : undefined
+  const parsedPolicyDigest = parsed.policy_digest === null
+    ? undefined
+    : hasPolicyDigestField ? policyContentDigest(parsed.policy_digest, `${path}.policy_digest`) : undefined
   if (parsedPolicyDigest === undefined && policy.official_coverage.length > 0) {
     throw new SaveSchemaError(`${path}.policy_digest`, "官方覆盖政策缺少 content digest")
   }

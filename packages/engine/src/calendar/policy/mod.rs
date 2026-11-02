@@ -27,6 +27,13 @@ use coverage::official_2026_coverage;
 /// 合同计息基准（游戏假设，fixture `calendar.day_count_basis`）。
 pub const DAY_COUNT_BASIS_ACT_365F: &str = "ACT/365F";
 
+/// 升级前 `main@0f40ffbc` 默认政策的冻结 `content_digest`。
+///
+/// 该政策为 algorithm_version 1、官方覆盖为空、模拟回退 version 1 / 2026
+/// 边界与同一农历事实表。只能作为旧档缺 `policy_digest` 的精确历史白名单；
+/// 不得用当前默认政策动态重算替代。绑定测试见 `tests/calendar/frozen.rs`。
+pub const PRE_2026_LEGACY_CALENDAR_POLICY_DIGEST: &str = "34ff926274f28f77";
+
 /// 政策装配入参（`from_parts` 全量校验后生成带 digest 的 `CalendarPolicy`）。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CalendarPolicySpec {

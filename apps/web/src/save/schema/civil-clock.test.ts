@@ -36,6 +36,20 @@ test("升级前无 digest 且无官方覆盖的旧档可解析为冻结模拟政
   assert.deepEqual(parsed.policy.official_coverage, [])
 })
 
+test("policy_digest=null 与 Rust Option::None 同义，空官方覆盖旧档可解析", () => {
+  const legacy = clock()
+  legacy.policy_digest = null
+  const parsed = parseCivilClock(legacy)
+  assert.equal("policy_digest" in parsed, false)
+})
+
+test("policy_digest=null 且带官方覆盖仍必须拒绝", () => {
+  const missing = clock()
+  missing.policy_digest = null
+  policy(missing).official_coverage = [OFFICIAL_COVERAGE]
+  assert.throws(() => parseCivilClock(missing), /policy_digest.*content digest/)
+})
+
 test("官方覆盖存档缺少 policy digest 必须拒绝", () => {
   const missing = clock()
   delete missing.policy_digest

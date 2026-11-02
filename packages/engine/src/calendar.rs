@@ -27,6 +27,7 @@ pub use holidays::TradingCalendar;
 pub use policy::{
     CalendarExchange, CalendarPolicy, CalendarPolicySpec, DateRange, OfficialCoverageEntry,
     SimulatedFallbackRuleset, YearCoverageLabel, DAY_COUNT_BASIS_ACT_365F,
+    PRE_2026_LEGACY_CALENDAR_POLICY_DIGEST,
 };
 
 /// 交易日序数 newtype：由 `TradingCalendar` 在特定政策下赋予/解析

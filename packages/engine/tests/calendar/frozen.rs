@@ -127,6 +127,11 @@ fn pre_upgrade_2026_policy_stays_frozen_through_civil_clock_restore() {
     let mut old_spec = current_default.spec();
     old_spec.official_coverage.clear();
     let saved_policy = CalendarPolicy::from_parts(old_spec).unwrap();
+    assert_eq!(
+        saved_policy.content_digest(),
+        engine::calendar::PRE_2026_LEGACY_CALENDAR_POLICY_DIGEST,
+        "升级前旧档白名单必须绑定 0f40ffbc 的冻结 digest，不能随当前默认漂移"
+    );
 
     // 新默认表使用 2026 官方通知，并与旧档在真实开休边界上分歧。
     let current = TradingCalendar::from_policy(current_default).unwrap();

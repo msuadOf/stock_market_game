@@ -484,3 +484,51 @@ fn official_coverage_without_policy_digest_is_rejected() {
         "官方覆盖旧档缺 policy digest 必须显式拒绝：{error:?}"
     );
 }
+
+#[test]
+fn exact_pre_upgrade_calendar_without_policy_digest_restores_and_reseals() {
+    let mut legacy = seasoned_fixture().clone_save_value();
+    legacy["civil_clock"]["policy"]["official_coverage"] = Value::Array(Vec::new());
+    legacy["civil_clock"]
+        .as_object_mut()
+        .unwrap()
+        .remove("policy_digest")
+        .expect("current save must persist policy_digest");
+
+    let restored =
+        restore_tampered(&legacy).expect("exact pre-upgrade CalendarPolicy must restore");
+    let resaved =
+        serde_json::to_value(restored.save().expect("restored session must save")).unwrap();
+    assert_eq!(
+        resaved["civil_clock"]["policy_digest"].as_str(),
+        Some(engine::calendar::PRE_2026_LEGACY_CALENDAR_POLICY_DIGEST),
+        "旧档恢复后必须补齐冻结旧政策 digest"
+    );
+    assert_eq!(
+        resaved["civil_clock"]["policy"]["official_coverage"],
+        Value::Array(Vec::new())
+    );
+}
+
+#[test]
+fn missing_policy_digest_cannot_mask_tampered_legacy_spec() {
+    let mut legacy = seasoned_fixture().clone_save_value();
+    legacy["civil_clock"]["policy"]["official_coverage"] = Value::Array(Vec::new());
+    legacy["civil_clock"]
+        .as_object_mut()
+        .unwrap()
+        .remove("policy_digest")
+        .expect("current save must persist policy_digest");
+    legacy["civil_clock"]["policy"]["algorithm_version"] = Value::from(2);
+
+    let error = expect_rejection(&legacy);
+    assert!(
+        matches!(
+            &error,
+            SessionError::CivilClock(engine::session::CivilClockError::SaveInconsistent {
+                detail,
+            }) if detail.contains("frozen pre-2026")
+        ),
+        "缺 digest 的旧档不能掩盖算法版本改写：{error:?}"
+    );
+}

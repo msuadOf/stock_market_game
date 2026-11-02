@@ -198,14 +198,14 @@ impl CivilClock {
                 });
             }
             None => {
-                // 升级前旧档没有 policy_digest，且默认政策尚无官方覆盖。只接受
-                // 与该升级前默认政策完全相同的 spec，避免“缺摘要”掩盖算法版本、
-                // 边界、回退事实或来源区间的静默改写。新档由 save() 总会写入摘要。
-                let mut legacy = crate::calendar::CalendarPolicy::current_default_policy()?.spec();
-                legacy.official_coverage.clear();
-                if save.policy != legacy {
+                // 升级前旧档没有 policy_digest。只接受与 0f40ffbc 冻结政策完全
+                // 相同的内容摘要，避免“缺摘要”掩盖算法版本、边界、回退事实或
+                // 来源区间的静默改写。新档由 save() 总会写入摘要。
+                if policy.content_digest()
+                    != crate::calendar::PRE_2026_LEGACY_CALENDAR_POLICY_DIGEST
+                {
                     return Err(CivilClockError::SaveInconsistent {
-                        detail: "missing policy_digest is only allowed for the exact pre-2026 default policy".into(),
+                        detail: "missing policy_digest is only allowed for the frozen pre-2026 default policy".into(),
                     });
                 }
             }

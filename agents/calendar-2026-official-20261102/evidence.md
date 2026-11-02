@@ -81,15 +81,17 @@
 - runtime 日历分组：4/4；reopen：1/1；混合开休信息交集：8/8；information clock context：3/3；cancel-all：5/5；chain-caller：8/8；projection：3/3；public restore：8/8；final boundary：4/4；企业资本冻结日历：1/1。
 - `calendar_entry_cache_tests` 6 个与 `calendar_nonzero_plan_parity_tests` 8 个逐 case 执行，14/14 通过；每个 0.72–5.29 秒。
 - `mixed_calendar_c2c`：9/9，5.30 秒；`mixed_calendar_c2c_feedback`：2/2，0.91 秒；`mixed_calendar_feedback`：17/17，7.51 秒。
-- `save_contract` 43 个用例按模块/单 case 分片全部通过；完整 42 用例批次曾在 10 秒外层 deadline 收到 exit 124，未计通过。新增关键绿灯：存档 `policy_digest` 为 16 位十六进制；篡改 `source_digest` 或 `closed_ranges` 均由真实 SaveSlot 恢复拒绝；携带官方覆盖却缺 digest 的档拒绝；缺失 digest 但 spec 精确等于升级前默认政策的旧档可恢复并重新保存补 digest。
-- Web schema：`civil-clock.test.ts` 5/5；`save-schema-contract` 32/32；`current-wire-contract` 11/11；`complete-save-schema` 4/4；`complete-save-schema-extra` 1/1；均以 Node 24.18.0、`timeout 10`、`--test-timeout=10000` 直接运行。
+- `save_contract` 现有 45 个用例按模块/单 case 分片执行；完整批次曾在 10 秒外层 deadline 收到 exit 124，未计通过。新增关键绿灯：存档 `policy_digest` 为 16 位十六进制；篡改 `source_digest` 或 `closed_ranges` 均由真实 SaveSlot 恢复拒绝；携带官方覆盖却缺 digest 的档拒绝；缺失 digest 的精确 `0f40ffbc` 旧档可经真实 SaveSlot decode/restore，并在重新保存后写出冻结 digest `34ff926274f28f77`；同一旧档改写 `algorithm_version` 后拒绝。
+- Web schema：`civil-clock.test.ts` 7/7，覆盖缺字段与 `null` 两种 legacy 编码、非空官方覆盖拒绝、16 位小写十六进制、当前档接受；`save-schema-contract` 32/32；`current-wire-contract` 11/11；`complete-save-schema` 4/4；`complete-save-schema-extra` 1/1；均以 Node 24.18.0、`timeout 10`、`--test-timeout=10000` 直接运行。
 - `tsc -b --pretty false` 通过；定向 oxlint 通过；`cargo fmt --all --check` 与 `git diff --check` 通过。
 
 ## 独立审查发现与修复
 
+第二轮复审后进一步把旧档白名单从“当前默认政策减 coverage 的动态派生”改为 `main@0f40ffbc` 冻结 digest `34ff926274f28f77`，增加真实 `SaveSlot` 的正例和改写负例；并把 Web `null` 与 Rust `Option::None` 统一。以下记录首轮与复审核查结论：
+
 首轮独审确认官方日期、来源摘要、2026 外模拟年份、旧标签和排序调整均正确，但发现实际 `SaveSlot` 只保存 `CalendarPolicySpec`，恢复时重算 content digest，没有比较持久化 digest；因此篡改 `source_digest` 或保持出处而改 `closed_ranges` 会静默成为新合法政策。
 
-修复：`CivilClockSave` 新增新档必写的 `policy_digest`；恢复时先由 spec 全量校验并重算 digest，再与存档值严格比较。升级前缺 digest 的旧档没有任意放宽：只接受 spec 精确等于升级前默认政策（官方覆盖为空且算法版本、边界、回退数据全部一致）的冻结模拟政策，并经过全部内层 digest 校验；任何官方覆盖、字段改写或缺摘要均显式拒绝。恢复后再保存会补齐新 digest。真实完整存档测试覆盖 source digest、closed_ranges、缺 digest 与旧档精确白名单。
+修复：`CivilClockSave` 新增新档必写的 `policy_digest`；恢复时先由 spec 全量校验并重算 digest，再与存档值严格比较。升级前缺 digest 的旧档没有任意放宽：恢复只接受重算 digest 精确等于 `0f40ffbc` 冻结值 `34ff926274f28f77` 的政策，并经过全部内层 digest 校验；任何官方覆盖、算法版本、边界、回退事实改写或缺摘要均显式拒绝。恢复后再保存会补齐新 digest。真实完整存档测试覆盖 source digest、closed_ranges、带官方覆盖缺 digest、精确旧档正例及旧 spec 改写负例。Web `policy_digest=null` 按 Rust `Option::None` 解释；带官方覆盖仍拒绝。
 
 诚实边界：曾把 141 个名称含 `calendar` 的 lib 用例合成一批，因超过 10 秒进程树 deadline 收到 exit 124；该批未计为通过。随后只运行本 diff 影响的模块，并把两个超过 10 秒的模块拆成 14 个单 case，全部在 10 秒内完成。没有放宽 deadline，也没有把超时分片的部分输出当作通过。
 
