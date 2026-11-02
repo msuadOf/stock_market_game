@@ -448,10 +448,11 @@ pub(crate) fn prepare_plan_seeds(
         .collect()
 }
 
-/// 本组名册段（P0 缺陷修复的统一收口点）：全局名册投影按 `roster_offset`
-/// 切出**本组局部切片**，供 `cash_with_pending_at` / `held_qty_with_pending_at`
-/// / `equity_cents_with_pending` 直接以组内 local 索引（三者的
-/// `account_ids` 形参语义=局部切片，体内 `get(local)` 因此不变）。
+/// 本组名册段（P0 缺陷修复的**切片语义钉桩**）：全局名册投影按 `roster_offset`
+/// 切出**本组局部切片**。生产路径不经本函数——各调用点直接以
+/// `self.roster_offset + local` 取全局位（如 `account_by_owner`、
+/// `apply_fill_plan_progress`），故此处只服务测试面（`owns_plan_account` 与
+/// `roster_offset_tests` 的切片断言），整体以 `#[cfg(test)]` 门禁。
 ///
 /// 上界按全局名册长**截断**（非 panic），偏移**越界则为空段**（同样非
 /// panic）——两者都是**合法**世界配置，不是损坏状态：
@@ -464,6 +465,7 @@ pub(crate) fn prepare_plan_seeds(
 /// （空槽从不参与决策）。对空段断言"越界即显式失败"会把合法配置打成
 /// 组线程崩溃（独立复核发现：原 `assert!(offset <= len)` 在 npcs=5/G=4
 /// 上 panic，而该配置 world.rs 明确以 None 补齐支持）。
+#[cfg(test)]
 fn roster_slice(
     account_ids: &[crate::AccountId],
     roster_offset: usize,
@@ -5748,7 +5750,7 @@ fn account_risk_observation_at_view(
     let equity = for_each_held_position(acct, market, |code, qty, price| {
         let idx = code.0 as usize;
         positions.insert(
-            code.clone(),
+            code,
             crate::observation::RiskPositionInput {
                 qty,
                 cost_price: crate::account::Position::from_restored_parts(

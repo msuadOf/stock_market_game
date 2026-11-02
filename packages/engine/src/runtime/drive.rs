@@ -13,7 +13,7 @@
 use super::bridge::{accounts_projection_from_session, world_spec_from_setup};
 use super::decision::{DecisionSetup, NpcProfile};
 use super::event_bridge::{collect_lifecycle, project_auction_events, project_lifecycle_events};
-use super::type_aliases::{GroupAccountShard, GroupAccountShards};
+use super::type_aliases::{DeliveryBatch, GroupAccountShard, GroupAccountShards};
 use super::world::World;
 use std::sync::Arc;
 mod administrative_mirror;
@@ -2452,18 +2452,7 @@ impl RuntimeDriver {
                 crate::observation::information_clock::InformationTradingAnchor,
             >,
         >,
-    ) -> Result<
-        (
-            Vec<(
-                usize,
-                crate::AccountId,
-                crate::session::NpcAttentionState,
-                crate::session::SharedRuntimePersonal,
-            )>,
-            Option<crate::calendar::CivilInstant>,
-        ),
-        String,
-    > {
+    ) -> Result<DeliveryBatch, String> {
         let now = clock.cutoff();
         let attentions_full = session.runtime_attention_full_states();
         let by_id: std::collections::BTreeMap<crate::AccountId, _> =

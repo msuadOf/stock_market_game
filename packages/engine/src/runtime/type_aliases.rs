@@ -144,3 +144,13 @@ pub(crate) type OpenDerivationPlanResult = (
     Vec<(crate::PlanId, super::decision::PendingOp)>,
     Vec<(LocalIdx, super::StockIdx, u64)>,
 );
+
+/// 单条信息投递更新：`belief_cache` 全局索引、账户 id、注意力状态与共享运行时个人视图。
+pub(crate) type DeliveryUpdate = (
+    usize,
+    crate::AccountId,
+    crate::session::NpcAttentionState,
+    crate::session::SharedRuntimePersonal,
+);
+/// 一次信息投递的**跨组**更新批次与本拍信息检查下界（各组下界取最小；`None`=无业务下界）。
+pub(crate) type DeliveryBatch = (Vec<DeliveryUpdate>, Option<crate::calendar::CivilInstant>);
