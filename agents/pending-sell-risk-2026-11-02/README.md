@@ -60,12 +60,10 @@
   `checked_add` + 显式 panic。
 - 已修：测试只改票余量、未同步账户级 `pending_sell_qty` 镜像 → 测试夹具
   同时维护两者。
-- 未修（登记为后续任务）：`held_qty_with_pending_at` 仍只从计划链
-  `ChildTicket` 加回，而账户级权威镜像 `pending_sell_qty` 覆盖**全部**卖单；
-  若出现无 `ChildTicket` 的在途卖单，风险观察仍会漏记。
-  `RuntimeDriver::inject_player_intents` 可路由任意 owner，外部/无票卖单
-  可能使两口径分离；仅正常计划链路径下两者重合。完整账户契约需改用
-  checked 的 `shares + pending_sell_qty` 并补无票用例。
+- 已按复核意见改为 checked 的 `shares + pending_sell_qty`：账户级镜像覆盖
+  全部卖单（含外部/无票单），权益与风险持仓共用；新增无票全未成交/部分
+  成交红测（`red-mirror.txt`：旧票口径 2 passed / 7 failed）及成本价边界
+  （净成本为正、回收超投入不可用）。
 - 未修（测试覆盖缺口）：offset 用例直接调用 `group_urgency_at_view`，
   未经过 `run_chain_decision` / `GroupReviewHost` 生产调用点；两处源码目前
   都传 `self.roster_offset`，属防回归缺口而非现存错误。

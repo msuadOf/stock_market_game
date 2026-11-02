@@ -1,0 +1,65 @@
+
+running 9 tests
+test runtime::group::pending_sell_risk_tests::missing_market_view_fails_explicitly - should panic ... FAILED
+test runtime::group::pending_sell_risk_tests::missing_personal_peak_keeps_risk_unavailable ... ok
+test runtime::group::pending_sell_risk_tests::multi_stock_weights_include_in_flight_sell_positions ... FAILED
+test runtime::group::pending_sell_risk_tests::mirror_covers_sells_without_child_ticket ... FAILED
+test runtime::group::pending_sell_risk_tests::pending_cost_basis_matches_full_position ... FAILED
+test runtime::group::pending_sell_risk_tests::non_zero_roster_offset_keeps_in_flight_tickets_isolated ... FAILED
+test runtime::group::pending_sell_risk_tests::sell_pending_states_share_one_equity_and_drawdown_basis ... FAILED
+test runtime::group::pending_sell_risk_tests::buy_purse_is_cash_and_zero_remaining_is_no_position ... ok
+test runtime::group::pending_sell_risk_tests::valuation_overflow_fails_explicitly - should panic ... FAILED
+
+failures:
+
+---- runtime::group::pending_sell_risk_tests::missing_market_view_fails_explicitly stdout ----
+note: test did not panic as expected at packages/engine/src/runtime/group.rs:10435:8
+---- runtime::group::pending_sell_risk_tests::multi_stock_weights_include_in_flight_sell_positions stdout ----
+
+thread 'runtime::group::pending_sell_risk_tests::multi_stock_weights_include_in_flight_sell_positions' (700387) panicked at packages/engine/src/runtime/group.rs:10271:9:
+assertion `left == right` failed
+  left: Money(300000)
+ right: Money(500000)
+
+---- runtime::group::pending_sell_risk_tests::mirror_covers_sells_without_child_ticket stdout ----
+
+thread 'runtime::group::pending_sell_risk_tests::mirror_covers_sells_without_child_ticket' (700384) panicked at packages/engine/src/runtime/group.rs:10373:13:
+assertion `left == right` failed
+  left: Money(100000)
+ right: Money(300000)
+
+---- runtime::group::pending_sell_risk_tests::pending_cost_basis_matches_full_position stdout ----
+
+thread 'runtime::group::pending_sell_risk_tests::pending_cost_basis_matches_full_position' (700389) panicked at packages/engine/src/runtime/group.rs:10395:9:
+assertion `left == right` failed: 净成本 200_000/200=1000=现价
+  left: Some(-0.6999699969997)
+ right: Some(0.0)
+
+---- runtime::group::pending_sell_risk_tests::non_zero_roster_offset_keeps_in_flight_tickets_isolated stdout ----
+
+thread 'runtime::group::pending_sell_risk_tests::non_zero_roster_offset_keeps_in_flight_tickets_isolated' (700388) panicked at packages/engine/src/runtime/group.rs:10158:32:
+风险观察缺股 0
+
+---- runtime::group::pending_sell_risk_tests::sell_pending_states_share_one_equity_and_drawdown_basis stdout ----
+
+thread 'runtime::group::pending_sell_risk_tests::sell_pending_states_share_one_equity_and_drawdown_basis' (700390) panicked at packages/engine/src/runtime/group.rs:10206:9:
+assertion `left == right` failed
+  left: Money(100000)
+ right: Money(300000)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- runtime::group::pending_sell_risk_tests::valuation_overflow_fails_explicitly stdout ----
+note: test did not panic as expected at packages/engine/src/runtime/group.rs:10445:8
+
+failures:
+    runtime::group::pending_sell_risk_tests::mirror_covers_sells_without_child_ticket
+    runtime::group::pending_sell_risk_tests::missing_market_view_fails_explicitly
+    runtime::group::pending_sell_risk_tests::multi_stock_weights_include_in_flight_sell_positions
+    runtime::group::pending_sell_risk_tests::non_zero_roster_offset_keeps_in_flight_tickets_isolated
+    runtime::group::pending_sell_risk_tests::pending_cost_basis_matches_full_position
+    runtime::group::pending_sell_risk_tests::sell_pending_states_share_one_equity_and_drawdown_basis
+    runtime::group::pending_sell_risk_tests::valuation_overflow_fails_explicitly
+
+test result: FAILED. 2 passed; 7 failed; 0 ignored; 0 measured; 3489 filtered out; finished in 0.01s
+
+bounded command exited with 101
