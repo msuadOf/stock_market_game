@@ -424,3 +424,63 @@ fn rejections_leave_the_running_session_untouched() {
         "rejected restores must leave the running session byte-identical"
     );
 }
+
+#[test]
+fn tampered_official_source_digest_is_rejected_by_real_save_restore() {
+    let mut tampered = seasoned_fixture().clone_save_value();
+    tampered["civil_clock"]["policy"]["official_coverage"][0]["source_digest"] =
+        Value::from("0000000000000000000000000000000000000000000000000000000000000000");
+    let error = expect_rejection(&tampered);
+    assert!(
+        matches!(
+            &error,
+            SessionError::CivilClock(engine::session::CivilClockError::Calendar(
+                engine::calendar::CalendarError::DigestMismatch {
+                    field: "content_digest",
+                    ..
+                }
+            ))
+        ),
+        "篡改官方来源摘要必须由真实 SaveSlot digest 绑定拒绝：{error:?}"
+    );
+}
+
+#[test]
+fn tampered_official_closed_range_is_rejected_by_real_save_restore() {
+    let mut tampered = seasoned_fixture().clone_save_value();
+    tampered["civil_clock"]["policy"]["official_coverage"][0]["closed_ranges"][0]["from"] =
+        Value::from("2026-01-02");
+    let error = expect_rejection(&tampered);
+    assert!(
+        matches!(
+            &error,
+            SessionError::CivilClock(engine::session::CivilClockError::Calendar(
+                engine::calendar::CalendarError::DigestMismatch {
+                    field: "content_digest",
+                    ..
+                }
+            ))
+        ),
+        "保持原出处但篡改闭市区间必须被真实 SaveSlot 拒绝：{error:?}"
+    );
+}
+
+#[test]
+fn official_coverage_without_policy_digest_is_rejected() {
+    let mut missing = seasoned_fixture().clone_save_value();
+    missing["civil_clock"]
+        .as_object_mut()
+        .unwrap()
+        .remove("policy_digest")
+        .expect("current save must persist policy_digest");
+    let error = expect_rejection(&missing);
+    assert!(
+        matches!(
+            &error,
+            SessionError::CivilClock(engine::session::CivilClockError::SaveInconsistent {
+                detail,
+            }) if detail.contains("missing policy_digest")
+        ),
+        "官方覆盖旧档缺 policy digest 必须显式拒绝：{error:?}"
+    );
+}

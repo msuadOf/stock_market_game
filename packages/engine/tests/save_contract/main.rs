@@ -2,7 +2,9 @@
 //!
 //! 公司域、结账登记簿、公开信息库、披露游标、计划簿、个人信息集、信念簿、
 //! 关注列表、待应用事实、冻结日历政策与模拟政策身份均不可缺失。
-//! 仅接受完整当前结构；额外版本标记、旧字段与缺失字段显式拒绝，不提供兼容迁移。
+//! 仅接受完整当前结构；额外版本标记、旧字段与缺失字段显式拒绝。唯一例外是
+//! 升级前 `official_coverage` 为空的 CalendarPolicy 缺少 `policy_digest`：恢复时
+//! 必须与精确的升级前默认 spec 完全相同，其他缺少或改写均显式拒绝。
 //! 恢复保留已发生事实与随机状态，未来自由并发受理不承诺仅凭同 seed 字节相等。
 
 include!("../../test-support/company_state/legacy_saved.rs");
@@ -314,11 +316,19 @@ fn frozen_policy_disclosure_and_retention_invariants_hold_on_real_saves() {
         .save()
         .expect("healthy save");
 
-    // 日历政策本体随档冻结（digest 字段在场；恢复路径重算复核）。
+    // 日历政策本体与 policy 级 content digest 随档冻结，恢复路径严格比对。
     let value = serde_json::to_value(&save).unwrap();
     assert!(
         value["civil_clock"]["policy"]["simulated_fallback"]["digest"].is_string(),
         "the frozen calendar policy must travel with the save"
+    );
+    let policy_digest = value["civil_clock"]["policy_digest"]
+        .as_str()
+        .expect("save must persist the policy-level content digest");
+    assert_eq!(policy_digest.len(), 16, "content_digest is FNV-1a 64 hex");
+    assert!(
+        policy_digest.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "policy digest must be hexadecimal: {policy_digest:?}"
     );
     // 披露游标 = 已日结日的 18:00 相位。
     let settled = save

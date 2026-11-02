@@ -50,7 +50,7 @@ pub struct CivilDayEndReport {
 }
 
 /// 存档中的自然日时钟状态；恢复时按存档携带的
-/// [`CalendarPolicySpec`] 重建日历（`from_parts` 重算 digest 并全量校验），
+/// [`CalendarPolicySpec`] 重建日历，并比较存档 `policy_digest` 与重算值，
 /// 绝不被当前进程的默认政策表覆盖。观察者是进程内 hook，不入档。
 /// 公司到期不在此处镜像（单一 authority 在 `OperatingScheduler`），
 /// 携带旧镜像字段（`pending_due`/`next_due_seq`）的 JSON 显式拒绝。
@@ -60,10 +60,14 @@ pub struct CivilClockSave {
     pub current_date: CivilDate,
     /// 最后一个已完成日结的自然日；`None` = 尚未日结（current == start）。
     pub settled_through: Option<CivilDate>,
-    /// 本局使用的完整日历政策（算法版本/覆盖/回退/事实表）；恢复时经
-    /// digest 与形状校验重建——同档永远按同一政策推进。
+    /// 本局使用的完整日历政策事实（算法版本/覆盖/回退/事实表）。
     #[ts(skip)]
     pub policy: crate::calendar::CalendarPolicySpec,
+    /// 日历政策 `CalendarPolicySpec` 的 `content_digest`。新档必须与从
+    /// `policy` 重算的值一致；升级前无此字段的旧档仅允许 policy spec
+    /// 精确等于升级前默认政策时按冻结模拟政策恢复。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_digest: Option<String>,
 }
 
 /// 自然日时钟错误（类型化）。任何变体返回时状态零变更。
@@ -176,9 +180,37 @@ impl CivilClock {
         exchanges: impl IntoIterator<Item = CalendarExchange>,
     ) -> Result<Self, CivilClockError> {
         let exchanges = Self::canonical_exchanges(exchanges)?;
-        let calendar = TradingCalendar::from_policy(crate::calendar::CalendarPolicy::from_parts(
-            save.policy.clone(),
-        )?)?;
+        let policy = crate::calendar::CalendarPolicy::from_parts(save.policy.clone())?;
+        match save.policy_digest.as_deref() {
+            Some(stored) => {
+                if stored != policy.content_digest() {
+                    return Err(CalendarError::DigestMismatch {
+                        field: "content_digest",
+                        stored: stored.to_string(),
+                        computed: policy.content_digest().to_string(),
+                    }
+                    .into());
+                }
+            }
+            None if !save.policy.official_coverage.is_empty() => {
+                return Err(CivilClockError::SaveInconsistent {
+                    detail: "missing policy_digest for saved official coverage".into(),
+                });
+            }
+            None => {
+                // 升级前旧档没有 policy_digest，且默认政策尚无官方覆盖。只接受
+                // 与该升级前默认政策完全相同的 spec，避免“缺摘要”掩盖算法版本、
+                // 边界、回退事实或来源区间的静默改写。新档由 save() 总会写入摘要。
+                let mut legacy = crate::calendar::CalendarPolicy::current_default_policy()?.spec();
+                legacy.official_coverage.clear();
+                if save.policy != legacy {
+                    return Err(CivilClockError::SaveInconsistent {
+                        detail: "missing policy_digest is only allowed for the exact pre-2026 default policy".into(),
+                    });
+                }
+            }
+        }
+        let calendar = TradingCalendar::from_policy(policy)?;
         calendar.validate_runtime_start(start_date)?;
         let inconsistent = |detail: String| CivilClockError::SaveInconsistent { detail };
         if save.current_date < start_date {
@@ -368,6 +400,7 @@ impl CivilClock {
             current_date: self.current_date,
             settled_through: self.settled_through,
             policy: self.calendar.policy().spec(),
+            policy_digest: Some(self.calendar.policy().content_digest().to_string()),
         }
     }
 }

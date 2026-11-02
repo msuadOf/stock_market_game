@@ -159,6 +159,7 @@ fn pre_upgrade_2026_policy_stays_frozen_through_civil_clock_restore() {
         current_date: d("2026-01-02"),
         settled_through: Some(d("2026-01-01")),
         policy: saved_policy.spec(),
+        policy_digest: None,
     };
     let restored_clock = CivilClock::from_parts_for_exchanges(
         d("2026-01-01"),
@@ -168,9 +169,26 @@ fn pre_upgrade_2026_policy_stays_frozen_through_civil_clock_restore() {
     .unwrap();
     assert_eq!(restored_clock.phase(), CivilPhase::IntradayTrading);
     assert_eq!(restored_clock.save().policy, saved_clock.policy);
+    assert!(
+        restored_clock.save().policy_digest.is_some(),
+        "旧档恢复后再保存必须补齐 policy digest"
+    );
     assert_eq!(
         restored_clock.save().policy,
         saved_policy.spec(),
         "恢复后再次保存必须保持升级前政策"
     );
+
+    // 旧档缺 digest 不能掩盖其它 policy 字段改写：只有精确的升级前默认政策
+    // 才允许走兼容分支。
+    let mut tampered_legacy = saved_clock.clone();
+    tampered_legacy.policy.algorithm_version += 1;
+    assert!(matches!(
+        CivilClock::from_parts_for_exchanges(
+            d("2026-01-01"),
+            &tampered_legacy,
+            [CalendarExchange::Sse, CalendarExchange::Szse],
+        ),
+        Err(engine::session::CivilClockError::SaveInconsistent { .. })
+    ));
 }

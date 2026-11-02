@@ -102,6 +102,12 @@ pub fn initial_save(closed: CalendarExchange, first: StockExchange, auction: boo
         .policy
         .official_coverage
         .sort_by_key(|entry| (entry.exchange, entry.year));
+    save.civil_clock.policy_digest = Some(
+        engine::calendar::CalendarPolicy::from_parts(save.civil_clock.policy.clone())
+            .unwrap()
+            .content_digest()
+            .to_string(),
+    );
     save
 }
 

@@ -68,6 +68,7 @@ fn initial_save() -> SaveSlot {
     let open = initial.stock_id("000101").unwrap();
     let mut save = initial.save().unwrap();
     save.civil_clock.policy = template.civil_clock.policy;
+    save.civil_clock.policy_digest = template.civil_clock.policy_digest;
     save.plans
         .create(crate::plans::PlanOpen {
             account: AccountId(0),

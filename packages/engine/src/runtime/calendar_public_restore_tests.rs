@@ -440,6 +440,12 @@ fn mixed_initial_restore_at_closed_runtime_ceiling_does_not_query_a_future_sessi
     // 仅初始存档冻结 synthetic ceiling；Jan1 休市覆盖保留，不改前史事实。
     let mut save = fixture::initial_save(CalendarExchange::Sse, StockExchange::Shanghai, false);
     save.civil_clock.policy.runtime_max_end = date(START_DATE);
+    save.civil_clock.policy_digest = Some(
+        crate::calendar::CalendarPolicy::from_parts(save.civil_clock.policy.clone())
+            .unwrap()
+            .content_digest()
+            .to_string(),
+    );
     assert_eq!(save.snapshot.tick, 0);
     assert!(save.price_history.values().all(Vec::is_empty));
     assert!(save

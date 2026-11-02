@@ -11,7 +11,9 @@
 
 include!("../test-support/company_state/legacy_saved.rs");
 use engine::account::StockCode;
-use engine::calendar::{CivilDate, CivilInstant, ClosedReason, DayStatus, HolidayKind};
+use engine::calendar::{
+    CalendarPolicy, CivilDate, CivilInstant, ClosedReason, DayStatus, HolidayKind,
+};
 use engine::money::Money;
 use engine::orderbook::{AccountId, Side};
 use engine::session::{
@@ -1080,6 +1082,12 @@ fn mixed_clock_session_save(
         .policy
         .official_coverage
         .sort_by_key(|entry| (entry.exchange, entry.year));
+    save.civil_clock.policy_digest = Some(
+        CalendarPolicy::from_parts(save.civil_clock.policy.clone())
+            .unwrap()
+            .content_digest()
+            .to_string(),
+    );
     save
 }
 
@@ -1167,6 +1175,12 @@ fn mixed_clock_union_count_phase_and_next_status_share_one_calendar_rule() {
             .policy
             .official_coverage
             .sort_by_key(|entry| (entry.exchange, entry.year));
+        saved.policy_digest = Some(
+            CalendarPolicy::from_parts(saved.policy.clone())
+                .unwrap()
+                .content_digest()
+                .to_string(),
+        );
     }
     for exchanges in [
         vec![CalendarExchange::Sse, CalendarExchange::Szse],
@@ -1265,6 +1279,12 @@ fn mixed_clock_closed_reason_is_a_canonical_representative() {
         .policy
         .official_coverage
         .sort_by_key(|entry| (entry.exchange, entry.year));
+    saved.policy_digest = Some(
+        CalendarPolicy::from_parts(saved.policy.clone())
+            .unwrap()
+            .content_digest()
+            .to_string(),
+    );
     let calendar =
         TradingCalendar::from_policy(CalendarPolicy::from_parts(saved.policy.clone()).unwrap())
             .unwrap();

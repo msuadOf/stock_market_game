@@ -120,6 +120,7 @@ export function currentSaveFixture(): JsonObject {
           digest: "fixture",
         },
       },
+      policy_digest: "0123456789abcdef",
     },
     groups: [],
     company_operations: {

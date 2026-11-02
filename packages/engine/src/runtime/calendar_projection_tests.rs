@@ -43,6 +43,12 @@ fn mixed_game(all_closed: bool) -> GameSession {
             .official_coverage
             .sort_by_key(|entry| (entry.exchange, entry.year));
     }
+    save.civil_clock.policy_digest = Some(
+        crate::calendar::CalendarPolicy::from_parts(save.civil_clock.policy.clone())
+            .unwrap()
+            .content_digest()
+            .to_string(),
+    );
     GameSession::restore(&save).expect("合法首次冻结 synthetic Calendar")
 }
 

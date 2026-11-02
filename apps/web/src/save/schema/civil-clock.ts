@@ -1,4 +1,4 @@
-import { array, civilDate, exact, integer, oneOf, record, string } from "./primitives.ts"
+import { array, civilDate, exact, integer, oneOf, record, SaveSchemaError, string } from "./primitives.ts"
 
 // 公司 due 的单一 authority 在 company_operations.scheduler（OperatingScheduler）；
 // 时钟存档不携带逐项公司镜像（pending_due/next_due_seq 是旧格式的未知字段）。
@@ -6,6 +6,8 @@ type CivilClock = {
   readonly current_date: string
   readonly settled_through: string | null
   readonly policy: CalendarPolicy
+  /** 新档必填；升级前旧档仅在 official_coverage 为空时可缺省。 */
+  readonly policy_digest?: string
 }
 
 type CalendarPolicy = {
@@ -20,12 +22,25 @@ type CalendarPolicy = {
 
 export function parseCivilClock(value: unknown, path = "civil_clock"): CivilClock {
   const parsed = record(value, path)
-  exact(parsed, ["current_date", "settled_through", "policy"], path)
-  return {
+  const hasPolicyDigest = Object.hasOwn(parsed, "policy_digest")
+  exact(parsed, hasPolicyDigest ? ["current_date", "settled_through", "policy", "policy_digest"] : ["current_date", "settled_through", "policy"], path)
+  const policy = parsePolicy(parsed.policy, `${path}.policy`)
+  const parsedPolicyDigest = hasPolicyDigest ? policyContentDigest(parsed.policy_digest, `${path}.policy_digest`) : undefined
+  if (parsedPolicyDigest === undefined && policy.official_coverage.length > 0) {
+    throw new SaveSchemaError(`${path}.policy_digest`, "官方覆盖政策缺少 content digest")
+  }
+  const clock = {
     current_date: civilDate(parsed.current_date, `${path}.current_date`),
     settled_through: parsed.settled_through === null ? null : civilDate(parsed.settled_through, `${path}.settled_through`),
-    policy: parsePolicy(parsed.policy, `${path}.policy`),
+    policy,
   }
+  return parsedPolicyDigest === undefined ? clock : { ...clock, policy_digest: parsedPolicyDigest }
+}
+
+function policyContentDigest(value: unknown, path: string): string {
+  const parsed = string(value, path)
+  if (!/^[0-9a-f]{16}$/.test(parsed)) throw new SaveSchemaError(path, "必须是 16 位小写十六进制 content digest")
+  return parsed
 }
 
 function parsePolicy(value: unknown, path: string): CalendarPolicy {

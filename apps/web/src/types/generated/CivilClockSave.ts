@@ -3,7 +3,7 @@ import type { CivilDate } from "./CivilDate";
 
 /**
  * 存档中的自然日时钟状态；恢复时按存档携带的
- * [`CalendarPolicySpec`] 重建日历（`from_parts` 重算 digest 并全量校验），
+ * [`CalendarPolicySpec`] 重建日历，并比较存档 `policy_digest` 与重算值，
  * 绝不被当前进程的默认政策表覆盖。观察者是进程内 hook，不入档。
  * 公司到期不在此处镜像（单一 authority 在 `OperatingScheduler`），
  * 携带旧镜像字段（`pending_due`/`next_due_seq`）的 JSON 显式拒绝。
@@ -14,4 +14,10 @@ export type CivilClockSave = {
    * 最后一个已完成日结的自然日；`None` = 尚未日结（current == start）。
    */
   settled_through: CivilDate | null;
+  /**
+   * 日历政策 `CalendarPolicySpec` 的 `content_digest`。新档必须与从
+   * `policy` 重算的值一致；升级前无此字段的旧档仅允许 policy spec
+   * 精确等于升级前默认政策时按冻结模拟政策恢复。
+   */
+  policy_digest?: string | null;
 };
