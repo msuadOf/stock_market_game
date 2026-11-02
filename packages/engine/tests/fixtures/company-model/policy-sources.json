@@ -17,12 +17,51 @@
     "runtime_max_end": "2099-12-31",
     "init_only_min_start": "1998-01-01",
     "day_count_basis": "ACT/365F",
+    "retrieval_date": "2026-11-02",
     "official_coverage": [
       {
+        "exchange": "sse",
         "year": 2026,
-        "status": "notice-text-unverified",
-        "note": "沪深 2026 年度休市通知客观存在（按惯例于上年末发布），但本任务多次取证未获原文；在任务 4 取得通知原文前，2026 年与其他年份一致按模拟回退规则处理。",
-        "notice_source_ids": ["sse-2026-holiday-notice", "szse-2026-holiday-notice"]
+        "status": "verified-official",
+        "source_citation_id": "sse-2026-holiday-notice",
+        "source_digest": "3ecade6151ea19fe223b747eea08212be430f69ae7a52056f1961b2087e939bc",
+        "closed_ranges": [
+          { "from": "2026-01-01", "to": "2026-01-03" },
+          { "from": "2026-01-04", "to": "2026-01-04" },
+          { "from": "2026-02-14", "to": "2026-02-14" },
+          { "from": "2026-02-15", "to": "2026-02-23" },
+          { "from": "2026-02-28", "to": "2026-02-28" },
+          { "from": "2026-04-04", "to": "2026-04-06" },
+          { "from": "2026-05-01", "to": "2026-05-05" },
+          { "from": "2026-05-09", "to": "2026-05-09" },
+          { "from": "2026-06-19", "to": "2026-06-21" },
+          { "from": "2026-09-20", "to": "2026-09-20" },
+          { "from": "2026-09-25", "to": "2026-09-27" },
+          { "from": "2026-10-01", "to": "2026-10-07" },
+          { "from": "2026-10-10", "to": "2026-10-10" }
+        ]
+      },
+      {
+        "exchange": "szse",
+        "year": 2026,
+        "status": "verified-official",
+        "source_citation_id": "szse-2026-holiday-notice",
+        "source_digest": "87ecf6071c1aa57eb6dc70327e7d763481976300079d622739b27766b789535f",
+        "closed_ranges": [
+          { "from": "2026-01-01", "to": "2026-01-03" },
+          { "from": "2026-01-04", "to": "2026-01-04" },
+          { "from": "2026-02-14", "to": "2026-02-14" },
+          { "from": "2026-02-15", "to": "2026-02-23" },
+          { "from": "2026-02-28", "to": "2026-02-28" },
+          { "from": "2026-04-04", "to": "2026-04-06" },
+          { "from": "2026-05-01", "to": "2026-05-05" },
+          { "from": "2026-05-09", "to": "2026-05-09" },
+          { "from": "2026-06-19", "to": "2026-06-21" },
+          { "from": "2026-09-20", "to": "2026-09-20" },
+          { "from": "2026-09-25", "to": "2026-09-27" },
+          { "from": "2026-10-01", "to": "2026-10-07" },
+          { "from": "2026-10-10", "to": "2026-10-10" }
+        ]
       }
     ],
     "simulated_fallback": {
@@ -401,30 +440,26 @@
     {
       "id": "sse-2026-holiday-notice",
       "kind": "notice",
-      "title": "上海证券交易所关于2026年休市安排的通知",
+      "title": "关于上海证券交易所2026年部分节假日休市安排的通知",
       "issuer": "上海证券交易所",
-      "retrieval_date": "2026-09-10",
-      "status": "blocked",
-      "blocked_reason": "通知原文（含 2026 年具体休市日期表）未能从官方域名取得；在取得前 2026 年不标记为 Official。",
-      "attempts": [
-        "第一次：Bing 精确标题/关键词多组查询均未命中官方页；sse.com.cn 首页/公告索引 403 或 JS 渲染；query.sse.com.cn 公告接口不可用；chinaclear.cn 系统维护中；www.gov.cn 403",
-        "第二次（2026-09-10 补充）：https://www.sse.com.cn/disclosure/announcement/general/ 经 curl 返回 200 但正文为 JS 空壳（31KB 无任何公告链接），公告数据接口需未知参数"
-      ],
-      "summary": "任务 4 必须先取得沪深两地 2026 休市通知原文，才能将 2026 年从模拟回退升级为 Official。"
+      "document_number": "上证公告〔2025〕45号",
+      "url": "https://www.sse.com.cn/disclosure/announcement/general/c/c_20251222_10802507.shtml",
+      "issue_date": "2025-12-22",
+      "retrieval_date": "2026-11-02",
+      "status": "verified-official",
+      "summary": "公告正文已独立取得并逐条核对。2026 年休市安排：元旦 01-01..=01-03、春节 02-15..=02-23、清明 04-04..=04-06、劳动节 05-01..=05-05、端午 06-19..=06-21、中秋 09-25..=09-27、国庆 10-01..=10-07；另列 01-04、02-14、02-28、05-09、09-20、10-10 为周末休市。正文规范化文本 SHA-256 为 3ecade6151ea19fe223b747eea08212be430f69ae7a52056f1961b2087e939bc，证据见 agents/calendar-2026-official-20261102/。"
     },
     {
       "id": "szse-2026-holiday-notice",
       "kind": "notice",
-      "title": "深圳证券交易所关于2026年休市安排的通知",
+      "title": "关于2026年部分节假日休市安排的通知",
       "issuer": "深圳证券交易所",
-      "retrieval_date": "2026-09-10",
-      "status": "blocked",
-      "blocked_reason": "同 sse-2026-holiday-notice。",
-      "attempts": [
-        "第一次：szse.cn 公告索引 JS 渲染；/api/disc/notice/annList 404；docs.static.szse.cn 需已知文件 ID；Bing 检索噪声；gov.cn 403",
-        "第二次（2026-09-10 补充）：www.szse.cn/lawrules/rule/stock/supervision/currency/index.html 等规则栏目页均 200 但条目列表 JS 渲染无服务端内容"
-      ],
-      "summary": "同 sse-2026-holiday-notice。"
+      "document_number": "深证会〔2025〕481号",
+      "url": "https://investor.szse.cn/disclosure/notice/general/t20251222_618087.html",
+      "issue_date": "2025-12-22",
+      "retrieval_date": "2026-11-02",
+      "status": "verified-official",
+      "summary": "公告正文已独立取得并逐条核对，休市日期与上交所公告一致；正文引用中国证监会证监办发〔2025〕130号。2026 年休市安排：元旦 01-01..=01-03、春节 02-15..=02-23、清明 04-04..=04-06、劳动节 05-01..=05-05、端午 06-19..=06-21、中秋 09-25..=09-27、国庆 10-01..=10-07；另列 01-04、02-14、02-28、05-09、09-20、10-10 为周末休市。正文规范化文本 SHA-256 为 87ecf6071c1aa57eb6dc70327e7d763481976300079d622739b27766b789535f，证据见 agents/calendar-2026-official-20261102/。"
     },
     {
       "id": "vat-law-current",

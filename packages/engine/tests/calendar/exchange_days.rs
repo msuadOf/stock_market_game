@@ -3,8 +3,8 @@
 
 use super::{d, default_calendar, policy_with_synthetic_coverage};
 use engine::calendar::{
-    CalendarError, CalendarExchange, ClosedReason, DayStatus, HolidayKind, TradingCalendar,
-    TradingDayOrdinal, YearCoverageLabel,
+    CalendarError, CalendarExchange, CalendarPolicy, ClosedReason, DayStatus, HolidayKind,
+    TradingCalendar, TradingDayOrdinal, YearCoverageLabel,
 };
 use std::collections::BTreeSet;
 
@@ -239,7 +239,7 @@ pub(crate) fn makeup_weekends_and_holiday_fallback() {
 
 pub(crate) fn year_labels() {
     let cal = default_calendar();
-    // 语义三分（§3.4）：历史缺通知 / 2026 通知原文未核验 / 未来未发布。
+    // 语义标签（§3.4）：历史缺通知 / 2026 已核验 / 旧档未核验 / 未来未发布。
     assert_eq!(
         cal.year_label(CalendarExchange::Sse, 1998).unwrap(),
         YearCoverageLabel::SimulatedHistorical
@@ -248,8 +248,19 @@ pub(crate) fn year_labels() {
         cal.year_label(CalendarExchange::Sse, 2024).unwrap(),
         YearCoverageLabel::SimulatedHistorical
     );
+    for exchange in [CalendarExchange::Sse, CalendarExchange::Szse] {
+        assert_eq!(
+            cal.year_label(exchange, 2026).unwrap(),
+            YearCoverageLabel::Official,
+            "两所 2026 均已取得原始公告"
+        );
+    }
+    // 旧档兼容标签保留：删除官方覆盖后仍是升级前的 notice-text-unverified 语义。
+    let mut legacy = cal.policy().spec();
+    legacy.official_coverage.clear();
+    let legacy = TradingCalendar::from_policy(CalendarPolicy::from_parts(legacy).unwrap()).unwrap();
     assert_eq!(
-        cal.year_label(CalendarExchange::Szse, 2026).unwrap(),
+        legacy.year_label(CalendarExchange::Sse, 2026).unwrap(),
         YearCoverageLabel::NoticeTextUnverified
     );
     assert_eq!(

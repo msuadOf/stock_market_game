@@ -22,6 +22,7 @@ pub use coverage::{
 use super::data::embedded_lunar_facts;
 use super::date::CivilDate;
 use super::CalendarError;
+use coverage::official_2026_coverage;
 
 /// 合同计息基准（游戏假设，fixture `calendar.day_count_basis`）。
 pub const DAY_COUNT_BASIS_ACT_365F: &str = "ACT/365F";
@@ -52,8 +53,7 @@ pub struct CalendarPolicy {
 }
 
 impl CalendarPolicy {
-    /// 当前发布的默认日历政策（内嵌 HKO 事实表；2026 通知原文未取得 → 无
-    /// Official 条目，2026 按通知未核验年处理）。
+    /// 当前发布的默认日历政策（内嵌 HKO 事实表与沪深 2026 官方休市通知）。
     pub fn current_default_policy() -> Result<Self, CalendarError> {
         Self::from_parts(CalendarPolicySpec {
             algorithm_version: 1,
@@ -61,7 +61,7 @@ impl CalendarPolicy {
             runtime_min_start: CivilDate::from_iso("2000-01-01")?,
             runtime_max_end: CivilDate::from_iso("2099-12-31")?,
             init_only_min_start: CivilDate::from_iso("1998-01-01")?,
-            official_coverage: Vec::new(),
+            official_coverage: official_2026_coverage()?,
             simulated_fallback: SimulatedFallbackRuleset::new(1, 2026, embedded_lunar_facts()?)?,
         })
     }

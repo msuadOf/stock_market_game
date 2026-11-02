@@ -8021,6 +8021,9 @@ mod sol_recheck3_tests {
             "synthetic-test".into(),
             "synthetic-test".into(),
         ));
+        policy
+            .official_coverage
+            .sort_by_key(|entry| (entry.exchange, entry.year));
         let calendar =
             TradingCalendar::from_policy(CalendarPolicy::from_parts(policy).unwrap()).unwrap();
         let source = MarketCalendarSource::new(

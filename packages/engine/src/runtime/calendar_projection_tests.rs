@@ -38,6 +38,10 @@ fn mixed_game(all_closed: bool) -> GameSession {
                 "synthetic-test-c2c-calendar-projection".into(),
                 "synthetic-test-c2c-calendar-projection-source".into(),
             ));
+        save.civil_clock
+            .policy
+            .official_coverage
+            .sort_by_key(|entry| (entry.exchange, entry.year));
     }
     GameSession::restore(&save).expect("合法首次冻结 synthetic Calendar")
 }

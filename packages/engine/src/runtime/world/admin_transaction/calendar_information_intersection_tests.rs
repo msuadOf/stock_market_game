@@ -60,6 +60,9 @@ fn world_with_scripts(
         "synthetic-c2c-v10-info".into(),
         "synthetic-c2c-v10-info-digest".into(),
     ));
+    policy
+        .official_coverage
+        .sort_by_key(|entry| (entry.exchange, entry.year));
     if all_closed {
         // 前日SZSE真实open已形成union day1；仅当前日双所closed，不伪造既有tick。
         policy.official_coverage.push(OfficialCoverageEntry::new(
@@ -69,6 +72,9 @@ fn world_with_scripts(
             "synthetic-c2c-v10-allclosed".into(),
             "synthetic-c2c-v10-allclosed-digest".into(),
         ));
+        policy
+            .official_coverage
+            .sort_by_key(|entry| (entry.exchange, entry.year));
     }
     let calendar =
         TradingCalendar::from_policy(CalendarPolicy::from_parts(policy).unwrap()).unwrap();

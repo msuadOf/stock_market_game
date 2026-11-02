@@ -99,6 +99,10 @@ pub fn initial_save(closed: CalendarExchange, first: StockExchange, auction: boo
             "synthetic-test-c2c-mixed-calendar".into(),
             "synthetic-test-c2c-source-digest".into(),
         ));
+    save.civil_clock
+        .policy
+        .official_coverage
+        .sort_by_key(|entry| (entry.exchange, entry.year));
     save
 }
 

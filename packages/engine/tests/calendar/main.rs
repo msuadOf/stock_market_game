@@ -17,6 +17,7 @@ mod fixture_binding;
 mod frozen;
 mod future_representation;
 mod gregorian;
+mod official_2026;
 
 use engine::calendar::{CalendarPolicy, CivilDate, OfficialCoverageEntry, TradingCalendar};
 
@@ -47,9 +48,9 @@ pub(crate) fn default_calendar() -> TradingCalendar {
 
 /// 在默认政策之上为指定交易所/年份追加一条**测试专用合成**官方覆盖。
 ///
-/// 真实 `Official` 必须有已核验通知原文（docs/simulation-calendar.md §3.1，
-/// 2026 年通知原文未取得，保持 notice-text-unverified）；默认表当前不含任何
-/// Official 条目。合成条目仅用于验证“官方覆盖优先于模拟回退”的机制。
+/// 真实 `Official` 必须有已核验通知原文（docs/simulation-calendar.md §3.1）。
+/// 默认表已有沪深 2026 Official 条目；合成条目仅用于验证其他年份的
+/// “官方覆盖优先于模拟回退”机制。
 pub(crate) fn policy_with_synthetic_coverage(
     exchange: engine::calendar::CalendarExchange,
     year: i32,
@@ -68,5 +69,7 @@ pub(crate) fn policy_with_synthetic_coverage(
         "synthetic-test-notice".to_string(),
         "synthetic-test-digest".to_string(),
     ));
+    spec.official_coverage
+        .sort_by_key(|entry| (entry.exchange, entry.year));
     CalendarPolicy::from_parts(spec).expect("synthetic coverage policy must validate")
 }

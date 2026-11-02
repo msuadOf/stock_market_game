@@ -35,7 +35,7 @@ impl CalendarExchange {
     }
 }
 
-/// 年份覆盖语义标签（§3.4）。三者必须可区分地进入存档与诊断。
+/// 年份覆盖语义标签（§3.4）。四种必须可区分地进入存档与诊断。
 #[derive(
     Copy,
     Clone,
@@ -50,13 +50,13 @@ impl CalendarExchange {
     ts_rs::TS,
 )]
 pub enum YearCoverageLabel {
-    /// 当年存在已核验原文的交易所休市通知（当前发布：无）。
+    /// 当年存在已核验原文的交易所休市通知。
     Official,
     /// 历史年份缺已核验通知，按模拟回退（1998–2025）。
     SimulatedHistorical,
     /// 未来年份通知未发布（2027+），按模拟回退。
     SimulatedFuture,
-    /// 2026 专态：通知客观存在但原文未核验（fixture `official_coverage[2026]`）。
+    /// 历史上通知客观存在但原文未核验的专态；保留用于恢复升级前冻结政策。
     NoticeTextUnverified,
 }
 
@@ -79,7 +79,7 @@ pub struct DateRange {
 }
 
 /// 一条已核验的交易所年度休市覆盖。**必须**带原文出处标识与摘要——没有
-/// 已核验通知原文的年份不得登记（默认表当前为空，2026 待补证）。
+/// 已核验通知原文的年份不得登记。
 #[derive(
     Clone,
     Eq,
@@ -140,7 +140,8 @@ impl OfficialCoverageEntry {
 )]
 pub struct SimulatedFallbackRuleset {
     pub version: u32,
-    /// 通知客观存在但原文未核验的年份（晚于此年 → `SimulatedFuture`）。
+    /// 升级前“通知原文未核验”的年份边界（晚于此年 → `SimulatedFuture`）。
+    /// 2026 已升级为官方覆盖；该值继续保留，使升级前的冻结政策可按原语义恢复。
     pub notice_unverified_year: i32,
     /// 内嵌农历/节气事实表（随存档冻结）。
     pub lunar_facts: LunarYearFacts,
@@ -201,4 +202,59 @@ impl SimulatedFallbackRuleset {
             lunar_facts.digest(),
         ])
     }
+}
+
+/// 2026 年沪深交易所年度休市覆盖。
+///
+/// 两所公告日期相同、休市安排一致，但来源标识与正文摘要分别绑定本所原文：
+/// - SSE：上证公告〔2025〕45号，2025-12-22 发布；
+/// - SZSE：深证会〔2025〕481号，2025-12-22 发布。
+///
+/// `closed_ranges` 是公告逐字列出的节假日闭市区间与“另外”周末休市日的并集。
+/// 交易日解析仍先判周末，因此补班周末保持 `Weekend` 原因，不会变为交易日。
+/// `source_digest` 是公告正文规范化文本的 SHA-256；取证记录与规范化方法见
+/// `agents/calendar-2026-official-20261102/evidence.md`。
+pub(super) fn official_2026_coverage() -> Result<Vec<OfficialCoverageEntry>, CalendarError> {
+    const SSE_2026_NOTICE_SOURCE: &str = "sse-2026-holiday-notice";
+    const SSE_2026_NOTICE_DIGEST: &str =
+        "3ecade6151ea19fe223b747eea08212be430f69ae7a52056f1961b2087e939bc";
+    const SZSE_2026_NOTICE_SOURCE: &str = "szse-2026-holiday-notice";
+    const SZSE_2026_NOTICE_DIGEST: &str =
+        "87ecf6071c1aa57eb6dc70327e7d763481976300079d622739b27766b789535f";
+
+    let ranges = [
+        ("2026-01-01", "2026-01-03"), // 元旦
+        ("2026-01-04", "2026-01-04"), // 元旦相邻周末
+        ("2026-02-14", "2026-02-14"), // 春节调休周末
+        ("2026-02-15", "2026-02-23"), // 春节
+        ("2026-02-28", "2026-02-28"), // 春节调休周末
+        ("2026-04-04", "2026-04-06"), // 清明
+        ("2026-05-01", "2026-05-05"), // 劳动节
+        ("2026-05-09", "2026-05-09"), // 劳动节调休周末
+        ("2026-06-19", "2026-06-21"), // 端午
+        ("2026-09-20", "2026-09-20"), // 国庆调休周末
+        ("2026-09-25", "2026-09-27"), // 中秋
+        ("2026-10-01", "2026-10-07"), // 国庆
+        ("2026-10-10", "2026-10-10"), // 国庆调休周末
+    ]
+    .into_iter()
+    .map(|(from, to)| Ok((CivilDate::from_iso(from)?, CivilDate::from_iso(to)?)))
+    .collect::<Result<Vec<_>, CalendarError>>()?;
+
+    Ok(vec![
+        OfficialCoverageEntry::new(
+            CalendarExchange::Sse,
+            2026,
+            ranges.clone(),
+            SSE_2026_NOTICE_SOURCE.to_string(),
+            SSE_2026_NOTICE_DIGEST.to_string(),
+        ),
+        OfficialCoverageEntry::new(
+            CalendarExchange::Szse,
+            2026,
+            ranges,
+            SZSE_2026_NOTICE_SOURCE.to_string(),
+            SZSE_2026_NOTICE_DIGEST.to_string(),
+        ),
+    ])
 }

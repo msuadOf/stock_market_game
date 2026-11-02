@@ -165,6 +165,8 @@ fn follows_exchange_specific_calendar_coverage() {
         "synthetic-test-coverage".to_string(),
         "synthetic-test-digest".to_string(),
     ));
+    spec.official_coverage
+        .sort_by_key(|entry| (entry.exchange, entry.year));
     let calendar = TradingCalendar::from_policy(CalendarPolicy::from_parts(spec).unwrap()).unwrap();
 
     let sse = cash_dividend_ex_reference_price(

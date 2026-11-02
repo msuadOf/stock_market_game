@@ -153,6 +153,9 @@ fn real_mixed_calendar_projection_keeps_different_stock_ordinals() {
         "synthetic-test-info-mixed-calendar".into(),
         "synthetic-test-info-mixed-calendar-source".into(),
     ));
+    saved
+        .official_coverage
+        .sort_by_key(|entry| (entry.exchange, entry.year));
     let calendar =
         TradingCalendar::from_policy(CalendarPolicy::from_parts(saved).unwrap()).unwrap();
     let bindings = vec![

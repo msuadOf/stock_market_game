@@ -1878,6 +1878,10 @@ fn market_holiday_gate_follows_frozen_closures_on_both_exchanges() {
                 "synthetic-holiday-gate-test-only".into(),
                 "synthetic-digest".into(),
             ));
+        save.civil_clock
+            .policy
+            .official_coverage
+            .sort_by_key(|entry| (entry.exchange, entry.year));
         let mut game = GameSession::restore(&save).expect("冻结政策必须自洽且不改变前史");
         let before = game.business_state_hash().unwrap();
         let error = game
@@ -1920,6 +1924,8 @@ fn per_stock_trading_flag_follows_the_frozen_calendar_not_the_default_table() {
             "synthetic-sse-2031-closure".to_string(),
             "synthetic-digest".to_string(),
         ));
+    spec.official_coverage
+        .sort_by_key(|entry| (entry.exchange, entry.year));
     save.civil_clock.policy = spec;
     let frozen = GameSession::restore(&save).expect("冻结政策必须可恢复");
 

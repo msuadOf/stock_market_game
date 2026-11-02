@@ -76,6 +76,9 @@ fn real_buy_survives_two_closed_sse_dates_and_sells_on_own_next_session() {
         "synthetic-test-c2c-real-reopen".into(),
         "synthetic-test-c2c-real-reopen-source".into(),
     ));
+    policy
+        .official_coverage
+        .sort_by_key(|entry| (entry.exchange, entry.year));
     let calendar =
         TradingCalendar::from_policy(CalendarPolicy::from_parts(policy).unwrap()).unwrap();
     let mut world = World::spawn(spec, calendar).unwrap();

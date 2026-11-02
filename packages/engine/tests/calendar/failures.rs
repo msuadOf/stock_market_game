@@ -114,6 +114,8 @@ fn rejects_duplicate_and_conflicting_official_coverage() {
                 "sse-2030".to_string(),
                 "digest-a".to_string(),
             ));
+        spec.official_coverage
+            .sort_by_key(|entry| (entry.exchange, entry.year));
     }
     assert!(matches!(
         CalendarPolicy::from_parts(spec),
@@ -133,6 +135,8 @@ fn rejects_duplicate_and_conflicting_official_coverage() {
             "sse-2030".to_string(),
             "digest-a".to_string(),
         ));
+    spec.official_coverage
+        .sort_by_key(|entry| (entry.exchange, entry.year));
     assert!(matches!(
         CalendarPolicy::from_parts(spec),
         Err(CalendarError::ConflictingOfficialCoverage { .. })
@@ -148,6 +152,8 @@ fn rejects_duplicate_and_conflicting_official_coverage() {
             "sse-2030".to_string(),
             "digest-a".to_string(),
         ));
+    spec.official_coverage
+        .sort_by_key(|entry| (entry.exchange, entry.year));
     assert!(matches!(
         CalendarPolicy::from_parts(spec),
         Err(CalendarError::PolicyInvalid { .. })
@@ -163,6 +169,8 @@ fn rejects_duplicate_and_conflicting_official_coverage() {
             String::new(),
             "digest-a".to_string(),
         ));
+    spec.official_coverage
+        .sort_by_key(|entry| (entry.exchange, entry.year));
     assert!(matches!(
         CalendarPolicy::from_parts(spec),
         Err(CalendarError::PolicyInvalid { .. })
@@ -187,6 +195,23 @@ fn rejects_wrong_digest_on_restore() {
     // 篡改政策级 digest。
     let mut tampered: serde_json::Value = serde_json::from_str(&json).unwrap();
     tampered["content_digest"] = serde_json::json!("0000000000000000");
+    let restored: CalendarPolicy = serde_json::from_value(tampered).unwrap();
+    assert!(matches!(
+        engine::calendar::TradingCalendar::from_policy(restored),
+        Err(CalendarError::DigestMismatch {
+            field: "content_digest",
+            ..
+        })
+    ));
+
+    // 篡改 2026 官方覆盖的来源摘要 → 政策级 content digest 必须拒绝。
+    assert!(
+        !default_policy.official_coverage().is_empty(),
+        "默认政策必须包含 2026 官方覆盖"
+    );
+    let mut tampered: serde_json::Value = serde_json::from_str(&json).unwrap();
+    tampered["official_coverage"][0]["source_digest"] =
+        serde_json::json!("0000000000000000000000000000000000000000000000000000000000000000");
     let restored: CalendarPolicy = serde_json::from_value(tampered).unwrap();
     assert!(matches!(
         engine::calendar::TradingCalendar::from_policy(restored),

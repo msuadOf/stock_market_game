@@ -52,6 +52,9 @@ fn calendar(closed: CalendarExchange) -> TradingCalendar {
         "synthetic-test-c2c-v7-group-day-end".into(),
         "synthetic-test-c2c-v7-group-day-end-source".into(),
     ));
+    policy
+        .official_coverage
+        .sort_by_key(|entry| (entry.exchange, entry.year));
     TradingCalendar::from_policy(CalendarPolicy::from_parts(policy).unwrap()).unwrap()
 }
 

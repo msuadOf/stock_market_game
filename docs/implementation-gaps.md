@@ -152,10 +152,10 @@
 
 ## 5. 规则数据、证据或验收缺口，不算游戏功能代码未实现
 
-- 官方休市事实：默认 `CalendarPolicy::current_default_policy` 的 `official_coverage` 为空，2026 通知
-  仍待原文取证，历史年份亦有模拟标签；插入官方覆盖的代码与模拟回退已有。
-  见 `docs/simulation-calendar.md:35`、`packages/engine/src/calendar/policy/mod.rs:54`。
-  “不用真实市场数据”不等于可以编造交易所制度/休市依据，本次未联网补证。
+- 官方休市事实：默认 `CalendarPolicy::current_default_policy` 已含沪深 2026 两条
+  `Official` 覆盖；2027+ 与未取证历史年份仍使用明确标注的模拟回退。
+  见 `docs/simulation-calendar.md` §3.1。
+  “不用真实市场数据”不等于可以编造交易所制度/休市依据。
 - 部分会计/税务/披露官方原文仍 blocked；对应已支持计算不应据此全判未实现。
   CAS 6 无形资产摊销在材料中有取证提及，但本次未确认独立产品业务入口已获批准，
   不把它擅自增加为必须实现的合同/资产类型。

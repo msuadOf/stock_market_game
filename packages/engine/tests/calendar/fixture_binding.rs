@@ -39,23 +39,52 @@ fn policy_constants_match_frozen_fixture() {
         engine::calendar::DAY_COUNT_BASIS_ACT_365F
     );
 
-    // fixture 2026 条目状态 notice-text-unverified ⇔ 引擎年标签一致。
-    let coverage_2026 = calendar["official_coverage"]
+    // 2026 两所官方覆盖逐项对账：来源、摘要和闭市区间都由 fixture 锁定。
+    let fixture_entries = calendar["official_coverage"]
         .as_array()
-        .unwrap()
-        .iter()
-        .find(|e| e["year"].as_i64() == Some(2026))
-        .expect("fixture has 2026 coverage entry");
-    assert_eq!(
-        coverage_2026["status"].as_str().unwrap(),
-        "notice-text-unverified"
-    );
-    assert_eq!(
-        default_calendar()
-            .year_label(engine::calendar::CalendarExchange::Sse, 2026)
-            .unwrap(),
-        engine::calendar::YearCoverageLabel::NoticeTextUnverified
-    );
+        .expect("calendar.official_coverage 必须是数组");
+    let policy_entries = default_calendar().policy().official_coverage().to_vec();
+    assert_eq!(fixture_entries.len(), 2);
+    assert_eq!(policy_entries.len(), 2);
+    for (fixture, actual) in fixture_entries.iter().zip(&policy_entries) {
+        assert_eq!(fixture["year"].as_i64(), Some(2026));
+        assert_eq!(fixture["status"].as_str(), Some("verified-official"));
+        assert_eq!(fixture["exchange"].as_str(), Some(actual.exchange.id()));
+        assert_eq!(
+            fixture["source_citation_id"].as_str(),
+            Some(actual.source_citation_id.as_str())
+        );
+        assert_eq!(
+            fixture["source_digest"].as_str(),
+            Some(actual.source_digest.as_str())
+        );
+        let expected_ranges: Vec<(String, String)> = fixture["closed_ranges"]
+            .as_array()
+            .expect("closed_ranges 必须是数组")
+            .iter()
+            .map(|range| {
+                (
+                    range["from"].as_str().unwrap().to_string(),
+                    range["to"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect();
+        let actual_ranges: Vec<(String, String)> = actual
+            .closed_ranges
+            .iter()
+            .map(|range| (range.from.to_iso(), range.to.to_iso()))
+            .collect();
+        assert_eq!(actual_ranges, expected_ranges);
+    }
+    for exchange in [
+        engine::calendar::CalendarExchange::Sse,
+        engine::calendar::CalendarExchange::Szse,
+    ] {
+        assert_eq!(
+            default_calendar().year_label(exchange, 2026).unwrap(),
+            engine::calendar::YearCoverageLabel::Official
+        );
+    }
 }
 
 #[test]

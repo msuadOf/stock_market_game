@@ -165,6 +165,9 @@ fn world_with_paused_plans(closed_first: CalendarExchange, paused: bool) -> Worl
         "synthetic-c2c-dual-plan-caller".into(),
         "synthetic-c2c-dual-plan-caller-source".into(),
     ));
+    policy
+        .official_coverage
+        .sort_by_key(|entry| (entry.exchange, entry.year));
     World::spawn(
         spec,
         TradingCalendar::from_policy(CalendarPolicy::from_parts(policy).unwrap()).unwrap(),
@@ -917,6 +920,9 @@ fn mixed_due_world(closed_first: CalendarExchange, with_closed_plan: bool) -> Wo
         "synthetic-c2c-dual-plan-caller".into(),
         "synthetic-c2c-dual-plan-caller-source".into(),
     ));
+    policy
+        .official_coverage
+        .sort_by_key(|entry| (entry.exchange, entry.year));
     World::spawn(
         spec,
         TradingCalendar::from_policy(CalendarPolicy::from_parts(policy).unwrap()).unwrap(),

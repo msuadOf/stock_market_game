@@ -101,12 +101,26 @@ fn official_source_digest_changes_frozen_policy_identity() {
         "synthetic-test-notice".into(),
         "synthetic-source-one".into(),
     ));
+    spec.official_coverage
+        .sort_by_key(|entry| (entry.exchange, entry.year));
     let original = CalendarPolicy::from_parts(spec.clone()).unwrap();
-    spec.official_coverage[0].source_digest = "synthetic-source-two".into();
+    let synthetic = spec
+        .official_coverage
+        .iter_mut()
+        .find(|entry| entry.source_citation_id == "synthetic-test-notice")
+        .expect("synthetic coverage entry");
+    synthetic.source_digest = "synthetic-source-two".into();
     let changed = CalendarPolicy::from_parts(spec).unwrap();
     assert_ne!(original.content_digest(), changed.content_digest());
     let mut wire = serde_json::to_value(original).unwrap();
-    wire["official_coverage"][0]["source_digest"] = serde_json::json!("synthetic-source-two");
+    let synthetic_index = wire["official_coverage"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|entry| entry["source_citation_id"] == "synthetic-test-notice")
+        .expect("wire synthetic coverage entry");
+    wire["official_coverage"][synthetic_index]["source_digest"] =
+        serde_json::json!("synthetic-source-two");
     let tampered: CalendarPolicy = serde_json::from_value(wire).unwrap();
     assert!(tampered.validate().is_err());
 }

@@ -1353,6 +1353,8 @@ fn capital_34_validator_uses_explicit_frozen_calendar_instead_of_default() {
             "synthetic-capital-restore-policy".into(),
             "synthetic-fixture-not-official-source".into(),
         ));
+    spec.official_coverage
+        .sort_by_key(|entry| (entry.exchange, entry.year));
     f.calendar =
         TradingCalendar::from_policy(crate::calendar::CalendarPolicy::from_parts(spec).unwrap())
             .unwrap();

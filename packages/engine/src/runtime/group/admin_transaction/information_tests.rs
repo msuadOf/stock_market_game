@@ -230,6 +230,9 @@ fn info_06_mixed_days_reach_belief_inputs_and_active_plan_qualification() {
         "synthetic-test-info-mixed".into(),
         "synthetic-test-info-mixed-source".into(),
     ));
+    policy
+        .official_coverage
+        .sort_by_key(|entry| (entry.exchange, entry.year));
     let bindings = vec![
         (StockId(0), CalendarExchange::Sse),
         (StockId(1), CalendarExchange::Szse),

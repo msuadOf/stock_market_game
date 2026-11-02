@@ -1076,6 +1076,10 @@ fn mixed_clock_session_save(
             "synthetic-test-mixed-clock".into(),
             "synthetic-test-source-digest".into(),
         ));
+    save.civil_clock
+        .policy
+        .official_coverage
+        .sort_by_key(|entry| (entry.exchange, entry.year));
     save
 }
 
@@ -1159,6 +1163,10 @@ fn mixed_clock_union_count_phase_and_next_status_share_one_calendar_rule() {
                 "synthetic-test-union".into(),
                 "synthetic-test-digest".into(),
             ));
+        saved
+            .policy
+            .official_coverage
+            .sort_by_key(|entry| (entry.exchange, entry.year));
     }
     for exchanges in [
         vec![CalendarExchange::Sse, CalendarExchange::Szse],
@@ -1253,6 +1261,10 @@ fn mixed_clock_closed_reason_is_a_canonical_representative() {
             "synthetic-test-representative".into(),
             "synthetic-test-digest".into(),
         ));
+    saved
+        .policy
+        .official_coverage
+        .sort_by_key(|entry| (entry.exchange, entry.year));
     let calendar =
         TradingCalendar::from_policy(CalendarPolicy::from_parts(saved.policy.clone()).unwrap())
             .unwrap();

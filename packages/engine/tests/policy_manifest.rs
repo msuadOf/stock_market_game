@@ -4,7 +4,7 @@
 //! 校验——日期/适用区间/来源/状态/不支持合同映射，不校验自然语言措辞（由独立
 //! 语义 review 负责）。负向用例在进程内构造畸形副本并断言拒绝。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 
 const MANIFEST_PATH: &str = concat!(
@@ -120,7 +120,7 @@ fn sources(value: &serde_json::Value) -> Result<Vec<serde_json::Value>, Manifest
 
 fn check_source_entry(
     entry: &serde_json::Value,
-    retrieval_date: &str,
+    expected_retrieval_date: &str,
 ) -> Result<String, ManifestError> {
     let id =
         as_str(entry, "id").ok_or_else(|| err("missing-field", "source entry without `id`"))?;
@@ -142,10 +142,10 @@ fn check_source_entry(
     }
     let retrieval = as_str(entry, "retrieval_date").unwrap();
     check_iso_date(retrieval, id, "retrieval_date")?;
-    if retrieval != retrieval_date {
+    if retrieval != expected_retrieval_date {
         return Err(err(
             "retrieval-date-mismatch",
-            format!("source {id}: {retrieval}"),
+            format!("source {id}: {retrieval}, expected {expected_retrieval_date}"),
         ));
     }
     match status {
@@ -201,12 +201,21 @@ fn check_source_entry(
 /// 校验来源条目与其适用区间；返回 (scope → [(from, to, id)]) 供重叠检查。
 fn check_sources(
     value: &serde_json::Value,
-    retrieval_date: &str,
+    default_retrieval_date: &str,
+    calendar_retrieval_date: &str,
+    calendar_source_ids: &HashSet<String>,
 ) -> Result<WindowsByScope, ManifestError> {
     let mut windows = BTreeMap::new();
     let mut seen = std::collections::HashSet::new();
     for entry in sources(value)? {
-        let id = check_source_entry(&entry, retrieval_date)?;
+        let source_id = as_str(&entry, "id").unwrap_or_default();
+        let expected = if calendar_source_ids.contains(source_id) {
+            calendar_retrieval_date
+        } else {
+            default_retrieval_date
+        };
+        let id = check_source_entry(&entry, expected)?;
+        let retrieval = as_str(&entry, "retrieval_date").expect("已由 check_source_entry 校验");
         if !seen.insert(id.clone()) {
             return Err(err("duplicate-id", format!("source {id}")));
         }
@@ -238,7 +247,7 @@ fn check_sources(
                     ));
                 }
             }
-            let future_official = from > retrieval_date
+            let future_official = from > retrieval
                 && as_str(&entry, "status") == Some("verified-official")
                 && as_str(&entry, "kind") != Some("game-assumption");
             if future_official {
@@ -359,11 +368,30 @@ fn check_calendar(
             ));
         }
     }
-    for coverage in cal
+    let coverage_entries = cal
         .get("official_coverage")
         .and_then(|o| o.as_array())
-        .unwrap_or(&vec![])
-    {
+        .ok_or_else(|| err("missing-field", "calendar.official_coverage"))?;
+    if coverage_entries.is_empty() {
+        return Err(err(
+            "missing-coverage",
+            "calendar.official_coverage 不得为空（2026 已取得两所原文）",
+        ));
+    }
+    let mut coverage_keys = std::collections::BTreeSet::new();
+    for coverage in coverage_entries {
+        let exchange = as_str(coverage, "exchange").ok_or_else(|| {
+            err(
+                "missing-field",
+                "calendar.official_coverage entry without exchange",
+            )
+        })?;
+        if !matches!(exchange, "sse" | "szse") {
+            return Err(err(
+                "invalid-exchange",
+                format!("calendar.official_coverage exchange {exchange:?}"),
+            ));
+        }
         let year = coverage
             .get("year")
             .and_then(|y| y.as_u64())
@@ -374,17 +402,93 @@ fn check_calendar(
                 format!("official_coverage year {year}"),
             ));
         }
-        for notice in coverage
-            .get("notice_source_ids")
-            .and_then(|n| n.as_array())
-            .unwrap_or(&vec![])
-            .iter()
-            .filter_map(|n| n.as_str())
-        {
-            if !known_ids.contains(notice) {
+        if as_str(coverage, "status") != Some("verified-official") {
+            return Err(err(
+                "invalid-status",
+                format!("calendar.official_coverage {exchange}/{year}"),
+            ));
+        }
+        if !coverage_keys.insert((exchange.to_string(), year)) {
+            return Err(err(
+                "duplicate-coverage",
+                format!("calendar.official_coverage {exchange}/{year}"),
+            ));
+        }
+        let source_id = as_str(coverage, "source_citation_id").ok_or_else(|| {
+            err(
+                "missing-field",
+                format!("calendar.official_coverage {exchange}/{year}: source_citation_id"),
+            )
+        })?;
+        if !known_ids.contains(source_id) {
+            return Err(err(
+                "unknown-source-ref",
+                format!("calendar {exchange}/{year}: source {source_id}"),
+            ));
+        }
+        let digest = as_str(coverage, "source_digest").ok_or_else(|| {
+            err(
+                "missing-field",
+                format!("calendar.official_coverage {exchange}/{year}: source_digest"),
+            )
+        })?;
+        if digest.len() != 64 || !digest.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(err(
+                "invalid-digest",
+                format!("calendar.official_coverage {exchange}/{year}: {digest}"),
+            ));
+        }
+        let ranges = coverage
+            .get("closed_ranges")
+            .and_then(|r| r.as_array())
+            .ok_or_else(|| {
+                err(
+                    "missing-field",
+                    format!("calendar.official_coverage {exchange}/{year}: closed_ranges"),
+                )
+            })?;
+        if ranges.is_empty() {
+            return Err(err(
+                "missing-coverage",
+                format!("calendar.official_coverage {exchange}/{year}: empty closed_ranges"),
+            ));
+        }
+        let mut parsed_ranges = Vec::new();
+        for range in ranges {
+            let from = as_str(range, "from").ok_or_else(|| {
+                err(
+                    "missing-field",
+                    format!("calendar.official_coverage {exchange}/{year}: range.from"),
+                )
+            })?;
+            let to = as_str(range, "to").ok_or_else(|| {
+                err(
+                    "missing-field",
+                    format!("calendar.official_coverage {exchange}/{year}: range.to"),
+                )
+            })?;
+            check_iso_date(from, "calendar.coverage", "closed_ranges.from")?;
+            check_iso_date(to, "calendar.coverage", "closed_ranges.to")?;
+            if from > to
+                || !from.starts_with(&format!("{year}-"))
+                || !to.starts_with(&format!("{year}-"))
+            {
                 return Err(err(
-                    "unknown-source-ref",
-                    format!("calendar year {year}: source {notice}"),
+                    "invalid-date",
+                    format!("calendar.official_coverage {exchange}/{year}: {from}..{to}"),
+                ));
+            }
+            parsed_ranges.push((from, to));
+        }
+        parsed_ranges.sort();
+        for pair in parsed_ranges.windows(2) {
+            if pair[0].1 >= pair[1].0 {
+                return Err(err(
+                    "overlap",
+                    format!(
+                        "calendar.official_coverage {exchange}/{year}: {}..{} vs {}..{}",
+                        pair[0].0, pair[0].1, pair[1].0, pair[1].1
+                    ),
                 ));
             }
         }
@@ -466,11 +570,51 @@ fn check_business_events(
     Ok(())
 }
 
+fn calendar_retrieval_date(value: &serde_json::Value) -> Result<String, ManifestError> {
+    let calendar = value
+        .get("calendar")
+        .ok_or_else(|| err("missing-field", "top-level `calendar`"))?;
+    let calendar_date = as_str(calendar, "retrieval_date")
+        .ok_or_else(|| err("missing-field", "calendar.retrieval_date"))?;
+    check_iso_date(calendar_date, "calendar", "retrieval_date")?;
+    Ok(calendar_date.to_string())
+}
+
+fn calendar_official_source_ids(
+    value: &serde_json::Value,
+) -> Result<HashSet<String>, ManifestError> {
+    let calendar = value
+        .get("calendar")
+        .ok_or_else(|| err("missing-field", "top-level `calendar`"))?;
+    let entries = calendar
+        .get("official_coverage")
+        .and_then(|coverage| coverage.as_array())
+        .ok_or_else(|| err("missing-field", "calendar.official_coverage"))?;
+    let mut ids = HashSet::new();
+    for entry in entries {
+        let id = as_str(entry, "source_citation_id").ok_or_else(|| {
+            err(
+                "missing-field",
+                "calendar.official_coverage entry without source_citation_id",
+            )
+        })?;
+        ids.insert(id.to_string());
+    }
+    Ok(ids)
+}
+
 fn validate(value: &serde_json::Value) -> Result<(), ManifestError> {
-    let retrieval_date = as_str(value, "retrieval_date")
+    let default_retrieval_date = as_str(value, "retrieval_date")
         .ok_or_else(|| err("missing-field", "top-level `retrieval_date`"))?;
-    check_iso_date(retrieval_date, "manifest", "retrieval_date")?;
-    let windows = check_sources(value, retrieval_date)?;
+    check_iso_date(default_retrieval_date, "manifest", "retrieval_date")?;
+    let calendar_retrieval_date = calendar_retrieval_date(value)?;
+    let calendar_source_ids = calendar_official_source_ids(value)?;
+    let windows = check_sources(
+        value,
+        default_retrieval_date,
+        &calendar_retrieval_date,
+        &calendar_source_ids,
+    )?;
     check_no_overlaps(&windows)?;
     let known: std::collections::HashSet<String> = sources(value)?
         .iter()
@@ -486,6 +630,53 @@ fn load_manifest() -> serde_json::Value {
     let raw = std::fs::read_to_string(MANIFEST_PATH)
         .unwrap_or_else(|e| panic!("读取 fixture 失败 {MANIFEST_PATH}: {e}"));
     serde_json::from_str(&raw).expect("fixture 必须是合法 JSON")
+}
+
+#[test]
+fn undeclared_source_retrieval_date_is_rejected() {
+    let mut manifest = load_manifest();
+    let entry = manifest["sources"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|s| s["id"].as_str() == Some("sse-2026-holiday-notice"))
+        .expect("fixture 必须包含上交所 2026 休市公告");
+    entry["retrieval_date"] = serde_json::json!("2026-10-30");
+    let error = validate(&manifest).expect_err("未登记的来源取证日必须被拒绝");
+    assert_eq!(error.code, "retrieval-date-mismatch", "unexpected: {error}");
+}
+
+#[test]
+fn calendar_retrieval_date_is_rejected_for_non_calendar_source() {
+    let mut manifest = load_manifest();
+    let calendar_date = manifest["calendar"]["retrieval_date"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let entry = manifest["sources"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|s| s["id"].as_str() == Some("cas-30-presentation-2026"))
+        .expect("fixture 必须包含非 calendar 的会计准则来源");
+    entry["retrieval_date"] = serde_json::json!(calendar_date);
+    let error = validate(&manifest).expect_err("非 calendar 来源不得使用 calendar 取证日");
+    assert_eq!(error.code, "retrieval-date-mismatch", "unexpected: {error}");
+}
+
+#[test]
+fn calendar_source_must_use_calendar_retrieval_date() {
+    let mut manifest = load_manifest();
+    let default_date = manifest["retrieval_date"].as_str().unwrap().to_string();
+    let entry = manifest["sources"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|s| s["id"].as_str() == Some("sse-2026-holiday-notice"))
+        .expect("fixture 必须包含上交所 2026 休市公告");
+    entry["retrieval_date"] = serde_json::json!(default_date);
+    let error = validate(&manifest).expect_err("calendar 官方来源必须使用 calendar 取证日");
+    assert_eq!(error.code, "retrieval-date-mismatch", "unexpected: {error}");
 }
 
 #[test]
