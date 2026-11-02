@@ -93,6 +93,8 @@
 
 修复：`CivilClockSave` 新增新档必写的 `policy_digest`；恢复时先由 spec 全量校验并重算 digest，再与存档值严格比较。升级前缺 digest 的旧档没有任意放宽：恢复只接受重算 digest 精确等于 `0f40ffbc` 冻结值 `34ff926274f28f77` 的政策，并经过全部内层 digest 校验；任何官方覆盖、算法版本、边界、回退事实改写或缺摘要均显式拒绝。恢复后再保存会补齐新 digest。真实完整存档测试覆盖 source digest、closed_ranges、带官方覆盖缺 digest、精确旧档正例及旧 spec 改写负例。Web `policy_digest=null` 按 Rust `Option::None` 解释；带官方覆盖仍拒绝。
 
+**明确兼容降级边界：** 没有独立 schema generation/signature 时，若主动把新档的 official coverage 清空、移除 policy_digest，并让其余 spec 恰好等于冻结旧默认政策，它和真实旧档在现有 wire 上不可区分，会按旧模拟政策恢复。该兼容分支只证明“政策内容等于升级前冻结值”，不证明档的来源版本；要阻止这种主动降级必须新增 generation 契约。该限制已写入 `docs/simulation-calendar.md`。
+
 诚实边界：曾把 141 个名称含 `calendar` 的 lib 用例合成一批，因超过 10 秒进程树 deadline 收到 exit 124；该批未计为通过。随后只运行本 diff 影响的模块，并把两个超过 10 秒的模块拆成 14 个单 case，全部在 10 秒内完成。没有放宽 deadline，也没有把超时分片的部分输出当作通过。
 
 并发排序说明：默认政策现含 `[SSE 2026, SZSE 2026]`；测试向尾部追加 SSE 2030/2031 后再按 `(exchange, year)` 排序，保持生产 `from_parts` 的严格排序拒绝不变。依赖 `[0]` 的 synthetic 来源篡改用例改为按 `source_citation_id` 定位；原有断言保留，另增加“新默认不得覆盖旧档”“2026 旧标签可恢复”等断言。
