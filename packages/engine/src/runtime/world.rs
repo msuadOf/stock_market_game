@@ -2306,7 +2306,13 @@ impl World {
     pub fn deliver_information(
         &mut self,
         payload: GroupInformationPayload,
-    ) -> Result<super::type_aliases::GroupAttentionUpdates, RuntimeError> {
+    ) -> Result<
+        (
+            super::type_aliases::GroupAttentionUpdates,
+            Option<crate::calendar::CivilInstant>,
+        ),
+        RuntimeError,
+    > {
         if self.group_txs.len() != self.n_groups {
             return Err(RuntimeError::Disconnected {
                 who: None,
@@ -2350,6 +2356,7 @@ impl World {
         let mut out = Vec::with_capacity(self.n_groups);
         let mut left = self.n_groups;
         let mut seen_groups = std::collections::BTreeSet::new();
+        let mut information_check_floor: Option<crate::calendar::CivilInstant> = None;
         let expected_locals: Vec<std::collections::BTreeSet<_>> = payload
             .attentions
             .iter()
@@ -2357,7 +2364,11 @@ impl World {
             .collect();
         while left > 0 {
             match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
-                UpMsg::GroupDeliveryDone { group, updates } => {
+                UpMsg::GroupDeliveryDone {
+                    group,
+                    updates,
+                    information_check_floor: group_floor,
+                } => {
                     let sent = expected_locals.get(usize::from(group)).ok_or_else(|| {
                         RuntimeError::ProtocolInvariant {
                             detail: format!("信息投递回执未知组：group={group}"),
@@ -2369,7 +2380,7 @@ impl World {
                         });
                     }
                     let mut seen_locals = std::collections::BTreeSet::new();
-                    for (local, _) in &updates {
+                    for (local, _, _) in &updates {
                         if !sent.contains(local) || !seen_locals.insert(*local) {
                             return Err(RuntimeError::ProtocolInvariant {
                                 detail: format!(
@@ -2379,6 +2390,10 @@ impl World {
                         }
                     }
                     out.push((group, updates));
+                    information_check_floor = match (information_check_floor, group_floor) {
+                        (Some(current), Some(next)) => Some(current.min(next)),
+                        (current, next) => current.or(next),
+                    };
                     left -= 1;
                 }
                 UpMsg::Failed { who, error } => {
@@ -2398,7 +2413,7 @@ impl World {
             }
         }
         out.sort_by_key(|(g, _)| *g);
-        Ok(out)
+        Ok((out, information_check_floor))
     }
 
     /// 信念个人态收集（D3a-2b：EchoBelief 广播→收齐）。

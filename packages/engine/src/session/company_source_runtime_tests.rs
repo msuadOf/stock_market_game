@@ -333,3 +333,926 @@ fn selected_simple_publication_failure_after_market_install_is_terminal_without_
         "terminal后重试不得再次推进Simple或发布报告"
     );
 }
+
+fn monthly_intraday_setup() -> SessionSetup {
+    use crate::information::{MonthlyReportDelay, MonthlyReportSchedule, ReportFrequency};
+    let mut setup = month_end_setup(true);
+    setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+    setup.ticks_per_day = 120;
+    setup.auction_ticks = 0;
+    setup.closing_auction_ticks = 0;
+    setup.report_frequency = Some(ReportFrequency::Monthly {
+        schedule: MonthlyReportSchedule::Custom {
+            day: 2,
+            second_of_day: 10 * 3600 + 30 * 60,
+            delay: MonthlyReportDelay::None,
+        },
+    });
+    setup
+}
+
+fn monthly_query() -> crate::company::PublicReportQuery {
+    crate::company::PublicReportQuery {
+        company_id: 0,
+        cursor: None,
+        page_size: Some(100),
+    }
+}
+
+#[test]
+fn simple_monthly_report_is_public_at_intraday_tick_and_restore_does_not_republish() {
+    let setup = monthly_intraday_setup();
+    let mut session = GameSession::new(setup.clone(), 42).unwrap();
+    for _ in 0..29 {
+        session.step_pipeline_contract().unwrap();
+    }
+    assert!(!session
+        .query_public_reports(&monthly_query())
+        .unwrap()
+        .reports
+        .iter()
+        .any(|report| report.period == "2029-12-31"
+            && matches!(report.kind, crate::company::PublicReportKind::Monthly)));
+    let events = session.step_pipeline_contract().unwrap();
+    let publication = events
+        .iter()
+        .find_map(|event| match event {
+            Event::CompanyDisclosurePublished {
+                publication_id,
+                published_at,
+                ..
+            } if published_at.date() == setup.start_date
+                && published_at.second_of_day() == 37_800 =>
+            {
+                Some(*publication_id)
+            }
+            _ => None,
+        })
+        .expect("10:30 交易日必须有真实公开事件");
+    let page = session.query_public_reports(&monthly_query()).unwrap();
+    let report = page
+        .reports
+        .iter()
+        .find(|report| {
+            report.period == "2029-12-31"
+                && matches!(report.kind, crate::company::PublicReportKind::Monthly)
+        })
+        .expect("10:30 后玩家查询必须看到月报");
+    assert_eq!(
+        session
+            .public_report_by_id(report.id.clone())
+            .unwrap()
+            .period,
+        "2029-12-31"
+    );
+    let saved = session.save().unwrap();
+    let mut restored = GameSession::restore(&saved).unwrap();
+    let before = restored
+        .query_public_reports(&monthly_query())
+        .unwrap()
+        .reports
+        .iter()
+        .filter(|report| {
+            report.period == "2029-12-31"
+                && matches!(report.kind, crate::company::PublicReportKind::Monthly)
+        })
+        .count();
+    assert_eq!(before, 1);
+    let events = restored.step_pipeline_contract().unwrap();
+    assert!(!events.iter().any(|event| {
+        matches!(event, Event::CompanyDisclosurePublished { publication_id, .. } if *publication_id == publication)
+    }));
+    let after = restored
+        .query_public_reports(&monthly_query())
+        .unwrap()
+        .reports
+        .iter()
+        .filter(|report| {
+            report.period == "2029-12-31"
+                && matches!(report.kind, crate::company::PublicReportKind::Monthly)
+        })
+        .count();
+    assert_eq!(after, 1, "恢复续跑不能重复公布同一月报");
+}
+
+#[test]
+fn failed_tick_after_intraday_monthly_publication_rolls_back_library_and_information() {
+    let mut setup = monthly_intraday_setup();
+    setup.npcs.inst_count = 1;
+    let mut session = GameSession::new(setup.clone(), 42).unwrap();
+    let account = AccountId(1);
+    let code = StockId(0);
+    session
+        .state
+        .belief_participants
+        .get_mut(&account)
+        .unwrap()
+        .watchlist_mut()
+        .record_attention(&code, 0, 0)
+        .unwrap();
+    for _ in 0..29 {
+        session.step_pipeline_contract().unwrap();
+    }
+    let before_hash = session.business_state_hash().unwrap();
+    let before_library = session.state.library.clone();
+    let before_information = session.state.belief_participants[&account]
+        .information()
+        .clone();
+    let fatal = StepFatal::InvariantViolation {
+        location: "monthly.candidate_ready".into(),
+        description: "commit 前失败必须丢弃私有月报".into(),
+    };
+    session.inject_post_shadow_failure(fatal.clone());
+    assert!(matches!(
+        session.step_pipeline_contract(),
+        Err(StepFatal::InvariantViolation { ref location, .. }) if location == "monthly.candidate_ready"
+    ));
+    assert_eq!(session.state.library, before_library);
+    assert_eq!(
+        session.state.belief_participants[&account].information(),
+        &before_information
+    );
+    assert_eq!(session.business_state_hash().unwrap(), before_hash);
+
+    // 同夹具控制组证明若未注入失败，该拍确实会新增公开材料；
+    // 因而上面的零漂移不是“本来没有候选”的空断言。
+    let mut control = GameSession::new(setup, 42).unwrap();
+    for _ in 0..29 {
+        control.step_pipeline_contract().unwrap();
+    }
+    assert!(control
+        .step_pipeline_contract()
+        .unwrap()
+        .iter()
+        .any(|event| matches!(
+            event,
+            Event::CompanyDisclosurePublished { published_at, .. }
+                if published_at.second_of_day() == 37_800
+        )));
+}
+
+#[test]
+fn subscribed_institution_learns_intraday_monthly_report_at_its_publication_time() {
+    let mut setup = monthly_intraday_setup();
+    setup.npcs.inst_count = 1;
+    let mut session = GameSession::new(setup, 42).unwrap();
+    let account = AccountId(1);
+    let code = StockId(0);
+    session
+        .state
+        .belief_participants
+        .get_mut(&account)
+        .unwrap()
+        .watchlist_mut()
+        .record_attention(&code, 0, 0)
+        .unwrap();
+    for _ in 0..29 {
+        session.step_pipeline_contract().unwrap();
+    }
+    let events = session.step_pipeline_contract().unwrap();
+    let publication = events
+        .iter()
+        .find_map(|event| match event {
+            Event::CompanyDisclosurePublished {
+                publication_id,
+                published_at,
+                ..
+            } if published_at.second_of_day() == 37_800 => Some(*publication_id),
+            _ => None,
+        })
+        .expect("交易日盘中必须真实公布月报");
+    let saved = session.save().unwrap();
+    let information = saved.information_states.get(&account).unwrap();
+    let record = information
+        .records_for_company(&crate::company::CompanyId(0))
+        .iter()
+        .find(|record| record.id == publication)
+        .expect("订阅机构必须在公布时点真实获知月报");
+    assert_eq!(record.observed_at.second_of_day(), 37_800);
+    let belief = saved
+        .belief_books
+        .get(&account)
+        .unwrap()
+        .entry(&code)
+        .unwrap();
+    assert!(belief.used_report_ids.contains(&record.id));
+}
+
+#[test]
+fn default_session_step_path_publishes_intraday_monthly_report() {
+    let setup = monthly_intraday_setup();
+    let mut session = GameSession::new(setup, 42).unwrap();
+    for _ in 0..29 {
+        session.step().unwrap();
+    }
+    let events = session.step().unwrap();
+    let publication = events
+        .iter()
+        .find_map(|event| match event {
+            Event::CompanyDisclosurePublished {
+                publication_id,
+                published_at,
+                ..
+            } if published_at.second_of_day() == 37_800 => Some(*publication_id),
+            _ => None,
+        })
+        .expect("默认 Session step 必须真实公布盘中月报");
+    assert_eq!(
+        session
+            .query_public_reports(&monthly_query())
+            .unwrap()
+            .reports
+            .iter()
+            .filter(|report| {
+                report.period == "2029-12-31"
+                    && matches!(report.kind, crate::company::PublicReportKind::Monthly)
+            })
+            .count(),
+        1
+    );
+    let saved = session.save().unwrap();
+    let mut restored = GameSession::restore(&saved).unwrap();
+    let events = restored.step().unwrap();
+    assert!(!events.iter().any(|event| {
+        matches!(event, Event::CompanyDisclosurePublished { publication_id, .. } if *publication_id == publication)
+    }));
+    assert_eq!(
+        restored
+            .query_public_reports(&monthly_query())
+            .unwrap()
+            .reports
+            .iter()
+            .filter(|report| {
+                report.period == "2029-12-31"
+                    && matches!(report.kind, crate::company::PublicReportKind::Monthly)
+            })
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn monthly_report_stays_visible_after_last_market_tick_before_civil_day_end() {
+    let setup = monthly_intraday_setup();
+    let mut session = GameSession::new(setup, 42).unwrap();
+    for _ in 0..29 {
+        session.step_pipeline_contract().unwrap();
+    }
+    session.step_pipeline_contract().unwrap();
+    let report = session
+        .query_public_reports(&monthly_query())
+        .unwrap()
+        .reports
+        .into_iter()
+        .find(|report| {
+            report.period == "2029-12-31"
+                && matches!(report.kind, crate::company::PublicReportKind::Monthly)
+        })
+        .unwrap();
+    for _ in 30..120 {
+        session.step_pipeline_contract().unwrap();
+    }
+    assert_eq!(session.tick(), 120);
+    assert_eq!(session.day(), 1);
+    assert_eq!(
+        session
+            .public_report_by_id(report.id.clone())
+            .unwrap()
+            .period,
+        "2029-12-31",
+        "最后交易 tick 后、自然日日结前不得回退观察时点"
+    );
+    let restored = GameSession::restore(&session.save().unwrap()).unwrap();
+    assert_eq!(
+        restored.public_report_by_id(report.id).unwrap().period,
+        "2029-12-31"
+    );
+}
+
+#[test]
+fn save_rejects_disclosure_cursor_beyond_current_observation() {
+    let setup = monthly_intraday_setup();
+    let mut session = GameSession::new(setup, 42).unwrap();
+    for _ in 0..29 {
+        session.step_pipeline_contract().unwrap();
+    }
+    session.step_pipeline_contract().unwrap();
+    let saved = session.save().unwrap();
+    let mut value = serde_json::to_value(&saved).unwrap();
+    value["disclosures"]["published_through"] = serde_json::json!({
+        "date": "2030-01-02",
+        "second_of_day": 54_000
+    });
+    let tampered: crate::session::SaveSlot = serde_json::from_value(value).unwrap();
+    let error = match GameSession::restore(&tampered) {
+        Ok(_) => panic!("未来披露游标必须显式拒绝"),
+        Err(error) => error,
+    };
+    assert!(
+        matches!(error, crate::SessionError::InvalidSave(ref fault) if fault.code == 2106),
+        "未来披露游标必须显式拒绝：{error:?}"
+    );
+}
+
+#[test]
+fn runtime_publishes_at_1030_and_due_subscriber_learns_at_1100() {
+    let mut setup = monthly_intraday_setup();
+    setup.npcs.retail_count = 1;
+    let mut session = GameSession::new(setup, 42).unwrap();
+    let account = AccountId(1);
+    let code = StockId(0);
+    session
+        .state
+        .belief_participants
+        .get_mut(&account)
+        .unwrap()
+        .watchlist_mut()
+        .record_attention(&code, 0, 0)
+        .unwrap();
+    let today = session.civil_date();
+    let attention = session.state.npc_attention.get_mut(&account).unwrap();
+    attention.information_cadence =
+        crate::session::notices::NpcInformationCadence::EveryDays { days: 1 };
+    attention.next_information_check = crate::CivilInstant::new(today, 11 * 3600).unwrap();
+    for _ in 0..29 {
+        session.step().unwrap();
+    }
+    let events = session.step().unwrap();
+    let publication = events
+        .iter()
+        .find_map(|event| match event {
+            Event::CompanyDisclosurePublished {
+                publication_id,
+                published_at,
+                ..
+            } if published_at.second_of_day() == 37_800 => Some(*publication_id),
+            _ => None,
+        })
+        .expect("native runtime 必须在 10:30 真实公布月报");
+    assert!(
+        session.state.belief_participants[&account]
+            .information()
+            .observed_at_of(publication)
+            .is_none(),
+        "cadence 未到期前不能冒充 10:30 获知"
+    );
+    for _ in 31..=46 {
+        session.step().unwrap();
+    }
+    let saved = session.save().unwrap();
+    let record = saved
+        .information_states
+        .get(&account)
+        .unwrap()
+        .records_for_company(&crate::company::CompanyId(0))
+        .iter()
+        .find(|record| record.id == publication)
+        .expect("11:00 到期后现有 INFO 链必须真实获知月报");
+    assert_eq!(record.observed_at.second_of_day(), 11 * 3600);
+    let next = saved.npc_attention[&account].next_information_check;
+    assert_eq!(next.date(), today.next().unwrap());
+    assert_eq!(next.second_of_day(), 11 * 3600);
+}
+
+#[test]
+fn restored_intraday_monthly_report_is_learned_at_1100_without_republishing() {
+    let mut setup = monthly_intraday_setup();
+    setup.npcs.retail_count = 1;
+    let mut session = GameSession::new(setup, 42).unwrap();
+    let account = AccountId(1);
+    let code = StockId(0);
+    session
+        .state
+        .belief_participants
+        .get_mut(&account)
+        .unwrap()
+        .watchlist_mut()
+        .record_attention(&code, 0, 0)
+        .unwrap();
+    let today = session.civil_date();
+    let attention = session.state.npc_attention.get_mut(&account).unwrap();
+    attention.information_cadence =
+        crate::session::notices::NpcInformationCadence::EveryDays { days: 1 };
+    attention.next_information_check = crate::CivilInstant::new(today, 11 * 3600).unwrap();
+    for _ in 0..29 {
+        session.step().unwrap();
+    }
+    let events = session.step().unwrap();
+    let publication = events
+        .iter()
+        .find_map(|event| match event {
+            Event::CompanyDisclosurePublished {
+                publication_id,
+                published_at,
+                ..
+            } if published_at.second_of_day() == 37_800 => Some(*publication_id),
+            _ => None,
+        })
+        .expect("保存前必须在 10:30 真实公布");
+    let saved = session.save().unwrap();
+    let mut restored = GameSession::restore(&saved).unwrap();
+    for _ in 0..16 {
+        let events = restored.step().unwrap();
+        assert!(!events.iter().any(|event| {
+            matches!(event, Event::CompanyDisclosurePublished { publication_id, .. } if *publication_id == publication)
+        }));
+    }
+    let saved = restored.save().unwrap();
+    let record = saved
+        .information_states
+        .get(&account)
+        .unwrap()
+        .records_for_company(&crate::company::CompanyId(0))
+        .iter()
+        .find(|record| record.id == publication)
+        .expect("恢复后 11:00 到期仍必须真实获知");
+    assert_eq!(record.observed_at.second_of_day(), 11 * 3600);
+    let next = saved.npc_attention[&account].next_information_check;
+    assert_eq!(next.date(), today.next().unwrap());
+    assert_eq!(next.second_of_day(), 11 * 3600);
+}
+
+#[test]
+fn info_delivery_failure_after_intraday_publication_is_terminal_and_reported() {
+    let mut setup = monthly_intraday_setup();
+    setup.npcs.retail_count = 1;
+    let mut session = GameSession::new(setup, 42).unwrap();
+    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut session).unwrap();
+    for _ in 0..29 {
+        session.runtime_step_with_install(&mut driver).unwrap();
+    }
+    let before_reports = session.state.library.report_count();
+    driver.inject_info_delivery_failure_for_test();
+    let fatal = session
+        .runtime_step_with_install(&mut driver)
+        .expect_err("INFO 失败必须显式返回首错");
+    assert!(matches!(
+        &fatal,
+        StepFatal::InvariantViolation { location, description }
+            if location == "runtime_mirror::information_delivery"
+                && description.contains("INFO 投递失败注入")
+    ));
+    assert!(
+        session.state.library.report_count() > before_reports,
+        "失败发生在公开安装后的 INFO 阶段，不能伪称公开未提交"
+    );
+    assert_eq!(session.poison_reason(), Some(&fatal));
+    assert!(matches!(session.save(), Err(SessionError::Step(actual)) if actual == fatal));
+    assert_eq!(session.step().unwrap_err(), fatal);
+    assert_eq!(
+        session.state.library.report_count(),
+        before_reports + 1,
+        "terminal 后不得重试并重复发布"
+    );
+}
+
+#[test]
+fn restored_day_end_monthly_report_is_learned_at_next_day_1100() {
+    use crate::information::{MonthlyReportDelay, MonthlyReportSchedule, ReportFrequency};
+    let mut setup = monthly_intraday_setup();
+    setup.npcs.retail_count = 1;
+    setup.report_frequency = Some(ReportFrequency::Monthly {
+        schedule: MonthlyReportSchedule::Custom {
+            day: 2,
+            second_of_day: 20 * 3600,
+            delay: MonthlyReportDelay::None,
+        },
+    });
+    let mut session = GameSession::new(setup, 42).unwrap();
+    let account = AccountId(1);
+    let code = StockId(0);
+    session
+        .state
+        .belief_participants
+        .get_mut(&account)
+        .unwrap()
+        .watchlist_mut()
+        .record_attention(&code, 0, 0)
+        .unwrap();
+    let next_day = session.civil_date().next().unwrap();
+    let attention = session.state.npc_attention.get_mut(&account).unwrap();
+    attention.information_cadence =
+        crate::session::notices::NpcInformationCadence::EveryDays { days: 1 };
+    attention.next_information_check = crate::CivilInstant::new(next_day, 11 * 3600).unwrap();
+    for _ in 0..120 {
+        session.step().unwrap();
+    }
+    let report = session.end_civil_day().unwrap();
+    let publication = report
+        .events
+        .iter()
+        .find_map(|event| match event {
+            Event::CompanyDisclosurePublished {
+                publication_id,
+                published_at,
+                ..
+            } if published_at.second_of_day() == 20 * 3600 => Some(*publication_id),
+            _ => None,
+        })
+        .expect("自然日日结必须在 20:00 排期真实公开月报");
+    assert_eq!(session.civil_date(), next_day);
+    let saved = session.save().unwrap();
+    let mut restored = GameSession::restore(&saved).unwrap();
+    for _ in 0..46 {
+        let events = restored.step().unwrap();
+        assert!(!events.iter().any(|event| {
+            matches!(event, Event::CompanyDisclosurePublished { publication_id, .. } if *publication_id == publication)
+        }));
+    }
+    let saved = restored.save().unwrap();
+    let record = saved
+        .information_states
+        .get(&account)
+        .unwrap()
+        .records_for_company(&crate::company::CompanyId(0))
+        .iter()
+        .find(|record| record.id == publication)
+        .expect("日终公开后恢复，次日 11:00 到期仍必须获知");
+    assert_eq!(record.observed_at.date(), next_day);
+    assert_eq!(record.observed_at.second_of_day(), 11 * 3600);
+}
+
+#[test]
+fn non_every_tick_sync_policies_still_publish_monthly_at_1030() {
+    use crate::runtime::sync_policy::RuntimeSyncPolicy;
+    for policy in [RuntimeSyncPolicy::DayEnd, RuntimeSyncPolicy::OnDemand] {
+        let mut setup = monthly_intraday_setup();
+        setup.runtime_sync_policy = policy;
+        let mut session = GameSession::new(setup, 42).unwrap();
+        for _ in 0..29 {
+            session.step().unwrap();
+        }
+        let events = session.step().unwrap();
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                Event::CompanyDisclosurePublished { published_at, .. }
+                    if published_at.second_of_day() == 37_800
+            )),
+            "{policy:?} 下 10:30 必须真实公开"
+        );
+        assert_eq!(
+            session
+                .query_public_reports(&monthly_query())
+                .unwrap()
+                .reports
+                .iter()
+                .filter(|report| {
+                    report.period == "2029-12-31"
+                        && matches!(report.kind, crate::company::PublicReportKind::Monthly)
+                })
+                .count(),
+            1,
+            "{policy:?} 下查询必须看到已安装月报"
+        );
+    }
+}
+
+#[test]
+fn monthly_disclosure_survives_runtime_step_frame_projection() {
+    let setup = monthly_intraday_setup();
+    let mut session = GameSession::new(setup, 42).unwrap();
+    for _ in 0..29 {
+        session.step().unwrap();
+    }
+    let (frame, _) = session
+        .step_frame_and_commit_via_runtime(|projection, facts| {
+            let frame = projection.project_frame(facts)?;
+            frame
+                .validate()
+                .map_err(|error| StepFatal::InvariantViolation {
+                    location: "monthly.step_frame_validate".into(),
+                    description: error.to_string(),
+                })?;
+            Ok(frame)
+        })
+        .unwrap();
+    assert!(frame.facts.iter().any(|fact| matches!(
+        fact.event,
+        Event::CompanyDisclosurePublished { published_at, .. }
+            if published_at.second_of_day() == 37_800
+    )));
+    assert_eq!(
+        session
+            .query_public_reports(&monthly_query())
+            .unwrap()
+            .reports
+            .iter()
+            .filter(|report| {
+                report.period == "2029-12-31"
+                    && matches!(report.kind, crate::company::PublicReportKind::Monthly)
+            })
+            .count(),
+        1
+    );
+}
+
+/// 默认名册规模的新增 cadence 扫描预算：缓存命中时每拍只做 O(1) 比较；
+/// 仅在缓存缺失或跨过最早到期时点后扫描一次。显式用长验收 deadline 运行。
+#[test]
+#[ignore = "performance measurement; run explicitly under a 300s external deadline"]
+fn q23_default_roster_cadence_scan_stays_bounded() {
+    use crate::session::account_paged_map::AccountPagedMap;
+    use std::time::{Duration, Instant};
+    let start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+    let next_day = start_date.next().unwrap();
+    let now = crate::CivilInstant::new(start_date, 11 * 3600).unwrap();
+    let mut attention = AccountPagedMap::default();
+    for id in 1..=20_000u64 {
+        attention.insert(
+            AccountId(id),
+            crate::session::NpcAttentionState {
+                information_cadence: crate::session::notices::NpcInformationCadence::EveryDays {
+                    days: 1,
+                },
+                next_information_check: crate::CivilInstant::new(next_day, 11 * 3600).unwrap(),
+                base_probability: 0.5,
+                next_attention_candidate_tick: 0,
+                rng_state: 0,
+            },
+        );
+    }
+    let scan_started = Instant::now();
+    let mut floor = attention
+        .values()
+        .filter(|state| {
+            state.information_cadence != crate::session::notices::NpcInformationCadence::Immediate
+        })
+        .map(|state| state.next_information_check)
+        .min();
+    let scan_elapsed = scan_started.elapsed();
+    let cached_started = Instant::now();
+    for _ in 0..15_300 {
+        if floor.is_none_or(|value| now >= value) {
+            floor = attention
+                .values()
+                .filter(|state| {
+                    state.information_cadence
+                        != crate::session::notices::NpcInformationCadence::Immediate
+                })
+                .map(|state| state.next_information_check)
+                .min();
+        }
+        std::hint::black_box(floor);
+    }
+    let cached_elapsed = cached_started.elapsed();
+    eprintln!(
+        "Q23 default roster cadence cache: initial_scan={scan_elapsed:?}, 15300 cached ticks={cached_elapsed:?}"
+    );
+    assert!(
+        cached_elapsed < Duration::from_secs(5),
+        "default roster cached cadence gate exceeded 5s: {cached_elapsed:?}"
+    );
+}
+
+#[test]
+fn runtime_1100_acquisition_survives_immediate_save_restore() {
+    let mut setup = monthly_intraday_setup();
+    setup.npcs.retail_count = 1;
+    let mut session = GameSession::new(setup, 42).unwrap();
+    let account = AccountId(1);
+    let code = StockId(0);
+    session
+        .state
+        .belief_participants
+        .get_mut(&account)
+        .unwrap()
+        .watchlist_mut()
+        .record_attention(&code, 0, 0)
+        .unwrap();
+    let today = session.civil_date();
+    let attention = session.state.npc_attention.get_mut(&account).unwrap();
+    attention.information_cadence =
+        crate::session::notices::NpcInformationCadence::EveryDays { days: 1 };
+    attention.next_information_check = crate::CivilInstant::new(today, 11 * 3600).unwrap();
+    for _ in 0..30 {
+        session.step().unwrap();
+    }
+    for _ in 0..15 {
+        session.step().unwrap();
+    }
+    let saved = session.save().unwrap();
+    let restored = GameSession::restore(&saved).unwrap();
+    let record = restored.state.belief_participants[&account]
+        .information()
+        .records_for_company(&crate::company::CompanyId(0))
+        .iter()
+        .find(|record| record.observed_at.second_of_day() == 11 * 3600)
+        .expect("11:00 当拍 save 必须包含本次真实获知");
+    assert_eq!(record.observed_at.second_of_day(), 11 * 3600);
+}
+
+#[test]
+fn runtime_immediate_acquisition_survives_same_tick_save_restore() {
+    let mut setup = monthly_intraday_setup();
+    setup.npcs.inst_count = 1;
+    let mut session = GameSession::new(setup, 42).unwrap();
+    let account = AccountId(1);
+    let code = StockId(0);
+    session
+        .state
+        .belief_participants
+        .get_mut(&account)
+        .unwrap()
+        .watchlist_mut()
+        .record_attention(&code, 0, 0)
+        .unwrap();
+    for _ in 0..29 {
+        session.step().unwrap();
+    }
+    let events = session.step().unwrap();
+    let publication = events
+        .iter()
+        .find_map(|event| match event {
+            Event::CompanyDisclosurePublished {
+                publication_id,
+                published_at,
+                ..
+            } if published_at.second_of_day() == 37_800 => Some(*publication_id),
+            _ => None,
+        })
+        .expect("Immediate 订阅者所在拍必须公开月报");
+    let saved = session.save().unwrap();
+    let restored = GameSession::restore(&saved).unwrap();
+    let record = restored.state.belief_participants[&account]
+        .information()
+        .records_for_company(&crate::company::CompanyId(0))
+        .iter()
+        .find(|record| record.id == publication)
+        .expect("Immediate 10:30 当拍 save 必须包含获知");
+    assert_eq!(record.observed_at.second_of_day(), 37_800);
+}
+
+#[test]
+fn serial_fallback_publishes_at_1030_and_learns_at_1100() {
+    let mut setup = monthly_intraday_setup();
+    setup.npcs.retail_count = 1;
+    let mut session = GameSession::new(setup, 42).unwrap();
+    let account = AccountId(1);
+    let code = StockId(0);
+    session
+        .state
+        .belief_participants
+        .get_mut(&account)
+        .unwrap()
+        .watchlist_mut()
+        .record_attention(&code, 0, 0)
+        .unwrap();
+    let today = session.civil_date();
+    let attention = session.state.npc_attention.get_mut(&account).unwrap();
+    attention.information_cadence =
+        crate::session::notices::NpcInformationCadence::EveryDays { days: 1 };
+    attention.next_information_check = crate::CivilInstant::new(today, 11 * 3600).unwrap();
+    for _ in 0..29 {
+        session.step_pipeline_contract().unwrap();
+    }
+    let events = session.step_pipeline_contract().unwrap();
+    let publication = events
+        .iter()
+        .find_map(|event| match event {
+            Event::CompanyDisclosurePublished {
+                publication_id,
+                published_at,
+                ..
+            } if published_at.second_of_day() == 37_800 => Some(*publication_id),
+            _ => None,
+        })
+        .expect("串行 fallback 必须在 10:30 公开月报");
+    let floor_after_publish = session.information_check_floor();
+    assert_eq!(
+        floor_after_publish,
+        Some(crate::CivilInstant::new(today, 11 * 3600).unwrap()),
+        "首次公开必须清掉无 baseline 哨兵并装回真实 cadence floor"
+    );
+    session.step_pipeline_contract().unwrap();
+    assert_eq!(
+        session.information_check_floor(),
+        floor_after_publish,
+        "成功串行 commit 必须移动 candidate floor，后续拍保持缓存"
+    );
+    for _ in 0..14 {
+        session.step_pipeline_contract().unwrap();
+    }
+    let saved = session.save().unwrap();
+    let restored = GameSession::restore(&saved).unwrap();
+    let record = restored.state.belief_participants[&account]
+        .information()
+        .records_for_company(&crate::company::CompanyId(0))
+        .iter()
+        .find(|record| record.id == publication)
+        .expect("串行 fallback 必须在 11:00 真实获知");
+    assert_eq!(record.observed_at.second_of_day(), 11 * 3600);
+}
+
+#[test]
+fn non_every_tick_info_uses_group_cadence_and_keeps_group_rng() {
+    let mut setup = monthly_intraday_setup();
+    setup.npcs.retail_count = 1;
+    setup.runtime_sync_policy = crate::runtime::sync_policy::RuntimeSyncPolicy::DayEnd;
+    let mut session = GameSession::new(setup, 42).unwrap();
+    let today = session.civil_date();
+    let mut driver = crate::runtime::drive::RuntimeDriver::from_session(&mut session).unwrap();
+    session.runtime_step_with_install(&mut driver).unwrap();
+    let cached = driver.collect_belief().unwrap();
+    let mut patched = cached[0].1[1].as_ref().unwrap().clone();
+    patched.attention.information_cadence =
+        crate::session::notices::NpcInformationCadence::EveryDays { days: 1 };
+    patched.attention.next_information_check = crate::CivilInstant::new(today, 11 * 3600).unwrap();
+    patched.attention.rng_state = 0x1234_5678;
+    patched.attention.next_attention_candidate_tick = 777;
+    patched
+        .watchlist
+        .record_attention(&StockId(0), 0, 0)
+        .unwrap();
+    driver.install_personal_for_test(1, patched);
+    session.runtime_step_with_install(&mut driver).unwrap();
+    let group = driver.collect_belief_authority_for_test().unwrap();
+    let authority = group[0]
+        .1
+        .iter()
+        .find(|(local, _)| *local == 1)
+        .map(|(_, snapshot)| snapshot)
+        .unwrap();
+    assert_eq!(authority.attention.rng_state, 0x1234_5678);
+    assert_eq!(authority.attention.next_attention_candidate_tick, 777);
+    let mut events = Vec::new();
+    for _ in 0..28 {
+        events = session.runtime_step_with_install(&mut driver).unwrap();
+    }
+    let publication = events
+        .iter()
+        .find_map(|event| match event {
+            Event::CompanyDisclosurePublished {
+                publication_id,
+                published_at,
+                ..
+            } if published_at.second_of_day() == 37_800 => Some(*publication_id),
+            _ => None,
+        })
+        .expect("10:30 必须公开月报");
+    let account = AccountId(1);
+    assert!(
+        session.state.belief_participants[&account]
+            .information()
+            .observed_at_of(publication)
+            .is_none(),
+        "组内 cadence 已推进到 11:00，10:30 投递不得提前获知"
+    );
+    assert_eq!(
+        session.information_check_floor(),
+        Some(crate::CivilInstant::new(today, 11 * 3600).unwrap()),
+        "INFO 回执必须把组权威 floor 写回 Session，避免每拍重复全量投递"
+    );
+    for _ in 0..15 {
+        session.runtime_step_with_install(&mut driver).unwrap();
+    }
+    assert_eq!(
+        session.information_check_floor(),
+        Some(crate::CivilInstant::new(today.next().unwrap(), 11 * 3600).unwrap()),
+        "有 dirty 个人态安装但没有新 cadence 变更时，已验证的未来 floor 必须保持"
+    );
+    let record = session.state.belief_participants[&account]
+        .information()
+        .records_for_company(&crate::company::CompanyId(0))
+        .iter()
+        .find(|record| record.id == publication)
+        .expect("11:00 到期仍必须获知");
+    assert_eq!(record.observed_at.second_of_day(), 11 * 3600);
+}
+
+/// 真实 GameSession floor/set/invalidate 路径的默认名册失效预算。
+#[test]
+#[ignore = "performance measurement; run explicitly under a 300s external deadline"]
+fn q23_production_floor_cache_invalidation_stays_bounded() {
+    use std::time::{Duration, Instant};
+    let mut setup = monthly_intraday_setup();
+    setup.npcs.retail_count = 20_000;
+    setup.npcs.inst_count = 0;
+    setup.npcs.hot_count = 0;
+    setup.ticks_per_day = 1;
+    let mut session = GameSession::new(setup, 42).unwrap();
+    let scan_started = Instant::now();
+    let floor = session.scan_information_check_floor();
+    let scan_elapsed = scan_started.elapsed();
+    session.set_information_check_floor(floor);
+    let cached_started = Instant::now();
+    for _ in 0..15_300 {
+        assert_eq!(session.information_check_floor(), floor);
+    }
+    let cached_elapsed = cached_started.elapsed();
+    let account = AccountId(1);
+    let mut due = session.state.npc_attention[&account].clone();
+    due.information_cadence = crate::session::notices::NpcInformationCadence::EveryDays { days: 1 };
+    due.next_information_check = session.observation_civil_instant();
+    session.set_runtime_information_checks(&[(account, due)]);
+    assert!(session.information_check_floor().is_none());
+    let invalidation_started = Instant::now();
+    let _ = session.scan_information_check_floor();
+    let invalidation_elapsed = invalidation_started.elapsed();
+    eprintln!(
+        "Q23 production floor cache: scan={scan_elapsed:?}, 15300 O(1) hits={cached_elapsed:?}, invalidate+rescan={invalidation_elapsed:?}"
+    );
+    assert!(cached_elapsed < Duration::from_secs(5));
+    assert!(scan_elapsed < Duration::from_secs(5));
+    assert!(invalidation_elapsed < Duration::from_secs(5));
+}

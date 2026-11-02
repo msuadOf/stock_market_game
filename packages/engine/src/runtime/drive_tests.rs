@@ -1527,15 +1527,20 @@ fn belief1b_delivery_advances_information_domain_only() {
     for (id, state) in session.runtime_attention_full_states() {
         candidates_before.insert(id, state.next_attention_candidate_tick);
     }
-    // 直接用公开直改面把 next_information_check 置到期（载荷即会算）。
-    for (id, state) in session.runtime_attention_full_states() {
-        let mut due = state;
-        due.next_information_check = now;
-        // 机构缺省 Immediate 节奏 next_after(now)=now 不前进——机制
-        // 验证用 Daily{checks:2}（推进可观测）。
-        due.information_cadence =
+    // 组内 attention 已是唯一权威；把个人态注入到组内并同步 Session 镜像，
+    // 置为到期 Daily{2} 以观察真实 cadence 推进。
+    let cached = driver.collect_belief().expect("driver 个人态缓存读面");
+    for (local, snapshot) in cached[0].1.iter().enumerate() {
+        let Some(snapshot) = snapshot.as_ref() else {
+            continue;
+        };
+        let mut patched = snapshot.clone();
+        patched.attention.next_information_check = now;
+        patched.attention.information_cadence =
             crate::session::notices::NpcInformationCadence::Daily { checks: 2 };
-        session.set_runtime_information_checks(&[(id, due)]);
+        let id = driver.id_map[local];
+        session.set_runtime_information_checks(&[(id, patched.attention.clone())]);
+        driver.install_personal_for_test(local as u32, patched);
     }
     let n = driver
         .deliver_information_for_test(&mut session)

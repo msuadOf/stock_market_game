@@ -105,6 +105,7 @@ mod disclosures;
 mod envelope_projection;
 pub(crate) mod exchange_calendar_model;
 mod execution;
+mod intraday_disclosures;
 pub(crate) mod market_calendar_context;
 mod market_calendar_live;
 pub(crate) use market_calendar_live::calendar_clock_input;
@@ -1940,6 +1941,9 @@ pub struct GameSession {
     runtime_mirror_install_sequence: u64,
     runtime_mirror_origin: Option<crate::RuntimeMirrorOrigin>,
     runtime_publication_generation: u64,
+    /// 非即时 INFO cadence 的最近到期时点缓存；None=需按当前 attention 重算。
+    /// 纯派生瞬时值，不进存档、业务 hash 或提交域。
+    information_check_floor: Option<crate::calendar::CivilInstant>,
     /// step_frame 接轨件 4：投影段失败后丢弃驱动器的标志（body 内设置、
     /// 驱动器共用段消费——world tick 已转正而会话已回滚，锁步断裂的
     /// 常驻实例不可复用；重试经 from_session 重建，等价旧管线"candidate
@@ -2474,6 +2478,7 @@ impl GameSession {
             runtime_mirror_install_sequence: self.runtime_mirror_install_sequence,
             runtime_mirror_origin: self.runtime_mirror_origin,
             runtime_publication_generation: self.runtime_publication_generation,
+            information_check_floor: self.information_check_floor,
             runtime_discard_driver_flag: false,
             state: self.state.clone_for_shadow()?,
         })
@@ -2483,6 +2488,7 @@ impl GameSession {
         self.market_calendar_day = shadow.market_calendar_day;
         self.serial_committed_market_close = shadow.serial_committed_market_close;
         self.ingress = shadow.ingress;
+        self.information_check_floor = shadow.information_check_floor;
         self.state.commit_from(shadow.state);
     }
     /// 构造 session。校验参数 → 建 markets/accounts → 注入 NPC 策略。
@@ -2654,6 +2660,7 @@ impl GameSession {
             runtime_mirror_install_sequence: 0,
             runtime_mirror_origin: None,
             runtime_publication_generation: 0,
+            information_check_floor: None,
             runtime_discard_driver_flag: false,
             state: CommittableSessionState {
                 #[cfg(feature = "simulation-diagnostics")]
@@ -3719,8 +3726,7 @@ impl GameSession {
         &self,
         query: &crate::company::PublicReportQuery,
     ) -> Result<crate::company::PublicReportPage, SessionError> {
-        let as_of = crate::calendar::CivilInstant::new(self.civil_date(), 0)
-            .map_err(crate::calendar::CalendarError::from)?;
+        let as_of = self.observation_civil_instant();
         self.state
             .library
             .query_public_reports(query, as_of)
@@ -3732,8 +3738,7 @@ impl GameSession {
         &self,
         id: String,
     ) -> Result<crate::company::PublicReportSummary, SessionError> {
-        let as_of = crate::calendar::CivilInstant::new(self.civil_date(), 0)
-            .map_err(crate::calendar::CalendarError::from)?;
+        let as_of = self.observation_civil_instant();
         self.state
             .library
             .public_report_by_id(id, as_of)

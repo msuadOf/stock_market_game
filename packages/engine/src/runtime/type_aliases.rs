@@ -97,8 +97,14 @@ pub(crate) type CalendarOwner = (
 /// 行情日线种子（OHLC 与成交量）。
 pub(crate) type DailyBarSeed = (i64, i64, i64, i64, u64);
 /// 按组收集的已交付注意力状态。
-pub type GroupAttentionUpdates =
-    Vec<(GroupIdx, Vec<(LocalIdx, crate::session::NpcAttentionState)>)>;
+pub type GroupAttentionUpdates = Vec<(
+    GroupIdx,
+    Vec<(
+        LocalIdx,
+        crate::session::NpcAttentionState,
+        super::world::BeliefParticipantSnapshot,
+    )>,
+)>;
 /// 个人完整读面中的账户身份与 presence。
 pub(crate) type PersonalPresenceEntry = (
     crate::AccountId,

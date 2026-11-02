@@ -237,6 +237,9 @@ pub struct RuntimeDriver {
     desk_next_serials: Vec<u64>,
     /// 事件 seq（协调者全局单调）。
     next_seq: u64,
+    /// 本拍 attention 投影已算出“非即时 cadence 到期”；安装后由此门控
+    /// INFO 补投，避免每拍再次全表扫描/克隆。
+    information_due_after_prepare: bool,
     /// P2-1a 红证计数（cfg(test)）：set_runtime_personal_state 实际安装
     /// 次数——守卫测试断言"安装数==dirty 位计数"（全量重装突变即红）。
     #[cfg(test)]
@@ -260,6 +263,9 @@ pub struct RuntimeDriver {
     /// 的 trade_stats 对照红）。批 1 桩同上。
     #[cfg(test)]
     candle_knob_drop_turnover: bool,
+    /// INFO 安装后失败注入：验证 terminal/poison 契约，不制造静默半安装。
+    #[cfg(test)]
+    info_delivery_failure_for_test: bool,
     /// P2-2a：信念全量缓存（全局名册序——稀疏上行增量合并；构造期
     /// =belief_seeds 同源投影，collect_belief 读面由它承载全量语义）。
     belief_cache: Vec<Option<crate::session::SharedRuntimePersonal>>,
@@ -808,6 +814,7 @@ impl RuntimeDriver {
             id_map: ids.clone(),
             desk_next_serials: Vec::new(),
             next_seq: 0,
+            information_due_after_prepare: false,
             #[cfg(test)]
             personal_installs: 0,
             // 首拍全量（初始镜像同步——构造后首 step 建立 session 侧
@@ -819,6 +826,8 @@ impl RuntimeDriver {
             candle_knob_tamper_active: false,
             #[cfg(test)]
             candle_knob_drop_turnover: false,
+            #[cfg(test)]
+            info_delivery_failure_for_test: false,
             belief_cache,
             drained_events: Vec::new(),
             pending_receipts: Vec::new(),
@@ -837,7 +846,11 @@ impl RuntimeDriver {
             plan_owners,
             plan_policy,
             pending_hold_inits: Vec::new(),
-            last_library_version: None,
+            // 只有本局生命周期内真实公开过，才把恢复档当前 library 版本
+            // 视作已投递基线；纯前史播种不能冒充本驱动已完成版本投递。
+            last_library_version: session
+                .has_session_lifetime_disclosure()
+                .then(|| session.runtime_library_handle().0),
             resting_echo_prev: None,
             // Sol 终审四审 A2 修正：initial 记**净预置史**（构造时长度−
             // 构造时 session.day）——restore 场景构造期长度已含已归档日
@@ -2324,15 +2337,69 @@ impl RuntimeDriver {
         session
             .require_healthy()
             .map_err(|fatal| fatal.to_string())?;
+        #[cfg(test)]
+        if self.info_delivery_failure_for_test {
+            self.info_delivery_failure_for_test = false;
+            return Err("INFO 投递失败注入".to_owned());
+        }
         let (version, library) = session.runtime_library_handle();
+        // 同版本稀疏返回也必须先验证真实 Calendar/World 来源，不能吞掉错日期。
         let (clock, anchors) = self.prepare_delivery_clock(session)?;
-        if Some(version) == self.last_library_version {
+        let now = clock.cutoff();
+        let due_non_immediate = session.has_due_non_immediate_information_check(now);
+        if Some(version) == self.last_library_version && !due_non_immediate {
             return Ok(0);
         }
-        let updates = self.collect_delivery(session, library, clock, anchors)?;
+        let version_changed = Some(version) != self.last_library_version;
+        let (updates, group_floor) = self.collect_delivery(session, library, clock, anchors)?;
         self.last_library_version = Some(version);
-        session.set_runtime_information_checks(&updates);
+        if version_changed {
+            // 新 library 版本建立投递基线时，旧的无基线哨兵缓存必须失效；
+            // 即使本拍没有 IPC 个人更新也不能把业务 floor 永久留到 2199。
+            session.set_information_check_floor(None);
+        }
+        let attention_updates: Vec<_> = updates
+            .iter()
+            .map(|(_, id, state, _)| (*id, state.clone()))
+            .collect();
+        session.set_runtime_information_checks(&attention_updates);
+        for (index, id, _, personal) in updates.iter() {
+            session.install_runtime_information(*id, personal.clone());
+            let slot = self
+                .belief_cache
+                .get_mut(*index)
+                .ok_or_else(|| format!("INFO 安装账户索引越界：{id:?}"))?;
+            *slot = Some(personal.clone());
+        }
+        session.set_information_check_floor(Some(
+            group_floor.unwrap_or_else(GameSession::no_information_check_instant),
+        ));
         Ok(updates.len())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_info_delivery_failure_for_test(&mut self) {
+        self.info_delivery_failure_for_test = true;
+    }
+
+    /// 已有一次真实版本投递后，才按非即时 cadence 在到期时补投；
+    /// 避免恢复首拍把“驱动未记版本”误当成新披露。
+    pub(crate) fn clear_information_due_after_prepare(&mut self) {
+        self.information_due_after_prepare = false;
+    }
+
+    pub(crate) fn set_information_due_after_prepare(&mut self, due: bool) {
+        self.information_due_after_prepare = due;
+    }
+
+    pub(crate) fn has_information_delivery_baseline(&self) -> bool {
+        self.last_library_version.is_some()
+    }
+
+    pub(crate) fn should_deliver_information(&self) -> bool {
+        // 新局首拍不自动补投既有 cadence；恢复档已有 library 基线，
+        // 新局首次公开则走 intraday_published 分支。
+        self.information_due_after_prepare && self.last_library_version.is_some()
     }
 
     /// 测试面：跳过版本判据强制投递（机制验证用）。
@@ -2345,9 +2412,30 @@ impl RuntimeDriver {
             .map_err(|fatal| fatal.to_string())?;
         let (version, library) = session.runtime_library_handle();
         let (clock, anchors) = self.prepare_delivery_clock(session)?;
-        let updates = self.collect_delivery(session, library, clock, anchors)?;
+        let version_changed = Some(version) != self.last_library_version;
+        let (updates, group_floor) = self.collect_delivery(session, library, clock, anchors)?;
         self.last_library_version = Some(version);
-        session.set_runtime_information_checks(&updates);
+        if version_changed {
+            // 新 library 版本建立投递基线时，旧的无基线哨兵缓存必须失效；
+            // 即使本拍没有 IPC 个人更新也不能把业务 floor 永久留到 2199。
+            session.set_information_check_floor(None);
+        }
+        let attention_updates: Vec<_> = updates
+            .iter()
+            .map(|(_, id, state, _)| (*id, state.clone()))
+            .collect();
+        session.set_runtime_information_checks(&attention_updates);
+        for (index, id, _, personal) in updates.iter() {
+            session.install_runtime_information(*id, personal.clone());
+            let slot = self
+                .belief_cache
+                .get_mut(*index)
+                .ok_or_else(|| format!("INFO 安装账户索引越界：{id:?}"))?;
+            *slot = Some(personal.clone());
+        }
+        session.set_information_check_floor(Some(
+            group_floor.unwrap_or_else(GameSession::no_information_check_instant),
+        ));
         Ok(updates.len())
     }
 
@@ -2364,7 +2452,18 @@ impl RuntimeDriver {
                 crate::observation::information_clock::InformationTradingAnchor,
             >,
         >,
-    ) -> Result<Vec<(crate::AccountId, crate::session::NpcAttentionState)>, String> {
+    ) -> Result<
+        (
+            Vec<(
+                usize,
+                crate::AccountId,
+                crate::session::NpcAttentionState,
+                crate::session::SharedRuntimePersonal,
+            )>,
+            Option<crate::calendar::CivilInstant>,
+        ),
+        String,
+    > {
         let now = clock.cutoff();
         let attentions_full = session.runtime_attention_full_states();
         let by_id: std::collections::BTreeMap<crate::AccountId, _> =
@@ -2406,20 +2505,21 @@ impl RuntimeDriver {
             library,
             attentions,
         };
-        let collected = self
+        let (collected, information_check_floor) = self
             .world
             .deliver_information(payload)
             .map_err(|e| format!("信息投递编排失败：{e:?}"))?;
         let mut updates = Vec::new();
         for (g, group_updates) in collected {
-            for (local, state) in group_updates {
+            for (local, state, personal) in group_updates {
                 let id = self.account_by_owner((g, local)).ok_or_else(|| {
                     format!("信息投递回执 owner 不在真实名册：group={g} local={local}")
                 })?;
-                updates.push((id, state));
+                let index = g as usize * self.accounts_per_group + local as usize;
+                updates.push((index, id, state, personal.into()));
             }
         }
-        Ok(updates)
+        Ok((updates, information_check_floor))
     }
 
     /// P2-1a 红证读面（cfg(test)）：个人态实际安装计数。
@@ -2446,6 +2546,46 @@ impl RuntimeDriver {
     #[cfg(test)]
     pub fn candle_knob_drop_turnover_for_test(&mut self) {
         self.candle_knob_drop_turnover = true;
+    }
+
+    /// 非 EveryTick 路径：把组内本拍 dirty/pending 个人态安装到 Session，
+    /// 保证组 Observe 已推进的获知不延迟到下一 Start。
+    pub(crate) fn install_dirty_personal_into_session(
+        &mut self,
+        session: &mut GameSession,
+    ) -> Result<usize, String> {
+        let collected = self
+            .world
+            .collect_group_belief()
+            .map_err(|error| format!("组个人态收集失败：{error:?}"))?;
+        let mut installed = 0usize;
+        for (group, rows) in collected {
+            for (local, snapshot) in rows {
+                let index = group as usize * self.accounts_per_group + local as usize;
+                let id = *self
+                    .id_map
+                    .get(index)
+                    .ok_or_else(|| format!("组个人态全局下标越界：group={group} local={local}"))?;
+                let personal: crate::session::SharedRuntimePersonal = snapshot.into();
+                session.install_runtime_information(id, personal.clone());
+                let slot = self
+                    .belief_cache
+                    .get_mut(index)
+                    .ok_or_else(|| format!("组个人态缓存越界：{id:?}"))?;
+                *slot = Some(personal);
+                installed += 1;
+            }
+        }
+        Ok(installed)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn collect_belief_authority_for_test(
+        &mut self,
+    ) -> Result<super::type_aliases::GroupBeliefSnapshots, String> {
+        self.world
+            .collect_group_belief()
+            .map_err(|error| format!("组权威信念收集失败：{error:?}"))
     }
 
     /// 信念个人态收集（D3a-2b：同源校验/后续驱动读面——**全量语义**

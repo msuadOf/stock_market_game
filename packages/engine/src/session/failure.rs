@@ -850,6 +850,7 @@ impl GameSession {
                     self.poison_runtime_step(super::shared_ingress::ingress_fatal(error))
                 })?;
         }
+        let intraday_published = prepared.has_intraday_publication();
         self.install_runtime_publication(driver, prepared);
         if let Some(ack) = ack {
             driver.ack_prepared_mirror(ack);
@@ -860,6 +861,24 @@ impl GameSession {
         crate::verification_evidence::mark_committed(tick);
         #[cfg(test)]
         crate::runtime::drive::RuntimeDriver::record_root_handover(self, tick, has_events);
+        if intraday_published || driver.should_deliver_information() {
+            driver.deliver_information(self).map_err(|description| {
+                self.poison_runtime_step(StepFatal::InvariantViolation {
+                    location: "runtime_mirror::information_delivery".to_owned(),
+                    description,
+                })
+            })?;
+            if !self.state.setup.runtime_sync_policy.needs_tick_flush() {
+                driver
+                    .install_dirty_personal_into_session(self)
+                    .map_err(|description| {
+                        self.poison_runtime_step(StepFatal::InvariantViolation {
+                            location: "runtime_mirror::information_delivery".to_owned(),
+                            description,
+                        })
+                    })?;
+            }
+        }
         self.runtime_clear_account_undo();
         Ok(value)
     }
@@ -1399,6 +1418,9 @@ impl GameSession {
                 state.information_cadence = updated.information_cadence;
                 state.next_information_check = updated.next_information_check;
             }
+        }
+        if !updates.is_empty() {
+            self.information_check_floor = None;
         }
     }
 

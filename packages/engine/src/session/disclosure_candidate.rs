@@ -128,6 +128,60 @@ pub(in crate::session) enum DisclosurePrepareError {
     },
 }
 
+/// 盘中月报的轻量预过滤：不克隆公开库，只检查是否存在到期且尚未公开的
+/// Monthly Original。完整候选仍由 [`prepare_disclosures`] 生成。
+pub(in crate::session) fn has_due_monthly_report(
+    source: DisclosureSourceRef<'_>,
+    frequency: ReportFrequency,
+    library: &PublicLibrary,
+    seed: u64,
+    after: Option<CivilInstant>,
+    through: CivilInstant,
+) -> Result<bool, DisclosurePrepareError> {
+    if !matches!(frequency, ReportFrequency::Monthly { .. }) {
+        return Ok(false);
+    }
+    let source = source.selected();
+    let mut latest =
+        BTreeMap::<ReportKey, (&crate::accounting::reports::ReportSet, CompanyId)>::new();
+    for (company, _closing, set) in source.registered_reports()? {
+        if !matches!(set.version.kind, VersionKind::Original) {
+            continue;
+        }
+        if scheduled_kind(set.kind, set.period, frequency).is_none() {
+            continue;
+        }
+        let key = report_key(company, set);
+        if latest
+            .get(&key)
+            .is_none_or(|(previous, _)| previous.version.sequence < set.version.sequence)
+        {
+            latest.insert(key, (set, company));
+        }
+    }
+    for (key, (set, company)) in latest {
+        let Some(ScheduledReportKind::Monthly { month }) =
+            scheduled_kind(set.kind, set.period, frequency)
+        else {
+            continue;
+        };
+        let code = source.spec(company)?.code.as_str();
+        let published_at = frequency.scheduled_instant(
+            ScheduledReportKind::Monthly { month },
+            set.period.year(),
+            seed,
+            code,
+        )?;
+        if !in_window(after, through, published_at) {
+            continue;
+        }
+        if !library.has_report_identity(key.0, &key.1, key.2, key.3) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 pub(in crate::session) fn prepare_disclosures(
     ctx: DisclosurePrepareCtx<'_>,
 ) -> Result<DisclosureCandidate, DisclosurePrepareError> {

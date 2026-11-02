@@ -17,6 +17,9 @@ pub(crate) struct PreparedRuntimeProgress {
     receipts: BTreeMap<AccountId, crate::experience::AppendOnlyHistory<PersonalTradeConfirmation>>,
     receipt_watermark: u64,
     retail: super::retail_lifecycle::Candidate,
+    intraday_library: Option<std::sync::Arc<crate::information::PublicLibrary>>,
+    intraday_dispatches: Option<super::disclosures::DisclosureDispatch>,
+    information_check_floor: Option<crate::calendar::CivilInstant>,
     #[cfg(feature = "simulation-diagnostics")]
     traces: crate::diagnostics::decision_trace::NpcDecisionTraceCollector,
 }
@@ -39,6 +42,12 @@ impl PreparedRuntimeCommit {
         match self {
             Self::Mirror(value) => std::mem::take(&mut value.events),
             Self::Progress(value) => std::mem::take(&mut value.events),
+        }
+    }
+    pub(crate) fn has_intraday_publication(&self) -> bool {
+        match self {
+            Self::Mirror(value) => value.has_intraday_publication(),
+            Self::Progress(value) => value.intraday_library.is_some(),
         }
     }
     #[cfg(feature = "simulation-diagnostics")]
@@ -229,6 +238,61 @@ impl GameSession {
                 }
             }
         }
+        let intraday_now = match &input.calendar {
+            crate::runtime::drive::PreparedDriverCalendar::MarketTick(tick) => {
+                Some(tick.observation_instant_after())
+            }
+            _ => None,
+        };
+        let previous_floor = self.information_check_floor();
+        let (information_due, information_check_floor) =
+            match intraday_now.filter(|now| previous_floor.is_none_or(|floor| *now >= floor)) {
+                Some(now) => {
+                    let due = self.has_due_non_immediate_information_check(now);
+                    let floor = if due && !driver.has_information_delivery_baseline() {
+                        GameSession::no_information_check_instant()
+                    } else {
+                        self.scan_information_check_floor()
+                            .unwrap_or_else(GameSession::no_information_check_instant)
+                    };
+                    (due, Some(floor))
+                }
+                None => (false, previous_floor),
+            };
+        driver.set_information_due_after_prepare(information_due);
+        let intraday_candidate = intraday_now
+            .map(|now| self.prepare_intraday_disclosure_candidate(now))
+            .transpose()
+            .map_err(|error| format!("盘中月报候选准备失败：{error}"))?
+            .flatten();
+        let (intraday_library, intraday_dispatches) = if let Some(candidate) = intraday_candidate {
+            let mut publications = candidate.publications;
+            publications.sort_by_key(|publication| (publication.published_at, publication.id));
+            for publication in publications {
+                let super::disclosures::candidate::DisclosurePublicationKind::Report {
+                    version,
+                    ..
+                } = publication.kind
+                else {
+                    return Err("盘中月报候选不得包含公告".to_owned());
+                };
+                events.push(Event::CompanyDisclosurePublished {
+                    seq: driver.take_event_seq(),
+                    publication_id: publication.id,
+                    company: publication.company,
+                    published_at: publication.published_at,
+                    kind: CompanyDisclosureKind::Report {
+                        report_revision: version.sequence,
+                    },
+                });
+            }
+            (
+                Some(std::sync::Arc::new(candidate.library)),
+                Some(candidate.dispatch),
+            )
+        } else {
+            (None, None)
+        };
         let seq = driver.next_seq();
         let mut snapshot = self.runtime_snapshot();
         snapshot.tick = tick;
@@ -270,6 +334,9 @@ impl GameSession {
                 receipts,
                 receipt_watermark,
                 retail,
+                intraday_library,
+                intraday_dispatches,
+                information_check_floor,
                 #[cfg(feature = "simulation-diagnostics")]
                 traces,
             },
@@ -366,6 +433,13 @@ impl GameSession {
                         .insert(account, history);
                 }
                 self.state.receipt_watermark = value.receipt_watermark;
+                if let Some(library) = value.intraday_library {
+                    self.state.library = library;
+                }
+                if let Some(dispatches) = value.intraday_dispatches {
+                    self.state.disclosures = dispatches;
+                }
+                self.set_information_check_floor(value.information_check_floor);
                 self.publish_runtime_retail(value.retail);
                 #[cfg(feature = "simulation-diagnostics")]
                 {

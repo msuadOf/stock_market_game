@@ -107,6 +107,7 @@ impl GameSession {
             runtime_mirror_install_sequence: _,
             runtime_mirror_origin: _,
             runtime_publication_generation: _,
+            information_check_floor: _,
             runtime_discard_driver_flag: _,
             revision: _,
             report_correction_epoch: _,

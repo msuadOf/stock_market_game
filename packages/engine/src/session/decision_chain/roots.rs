@@ -419,6 +419,7 @@ impl InstitutionDecisionRoot {
                             crate::accounting::reports::ReportKind::Annual
                                 | crate::accounting::reports::ReportKind::Quarter
                                 | crate::accounting::reports::ReportKind::HalfYear
+                                | crate::accounting::reports::ReportKind::Monthly
                         )
                     })
                     .unwrap_or(false);

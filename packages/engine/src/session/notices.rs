@@ -341,6 +341,45 @@ pub(super) fn credit_default_cause(
 }
 
 impl GameSession {
+    /// 不克隆全 attention 表的 cadence 到期判据；供恢复/稀疏路径使用。
+    pub(crate) fn has_due_non_immediate_information_check(&self, now: CivilInstant) -> bool {
+        self.state.npc_attention.values().any(|attention| {
+            attention.information_cadence != NpcInformationCadence::Immediate
+                && attention.information_check_due(now)
+        })
+    }
+
+    pub(crate) fn information_check_floor(&self) -> Option<CivilInstant> {
+        self.information_check_floor
+    }
+
+    pub(crate) fn set_information_check_floor(&mut self, floor: Option<CivilInstant>) {
+        self.information_check_floor = floor;
+    }
+
+    /// 没有非即时 cadence 账户时使用的远期哨兵，避免每拍重复扫描。
+    pub(crate) fn no_information_check_instant() -> CivilInstant {
+        CivilInstant::new(
+            crate::calendar::CivilDate::from_ymd(2199, 12, 31).unwrap(),
+            86_399,
+        )
+        .unwrap()
+    }
+
+    /// 重算非即时 cadence 的最近到期时点；只在缓存缺失或已跨过时点后调用。
+    pub(crate) fn scan_information_check_floor(&self) -> Option<CivilInstant> {
+        Some(
+            self.state
+                .npc_attention
+                .values()
+                .filter(|attention| {
+                    attention.information_cadence != NpcInformationCadence::Immediate
+                })
+                .map(|attention| attention.next_information_check)
+                .min()
+                .unwrap_or_else(Self::no_information_check_instant),
+        )
+    }
     #[cfg(test)]
     pub(super) fn deliver_public_information(
         &mut self,
@@ -416,7 +455,9 @@ impl GameSession {
                 .into_iter()
                 .collect::<Result<Vec<_>, _>>()
         })?;
+        let mut updated = false;
         for result in results.into_iter().flatten() {
+            updated = true;
             let (id, information, belief, attention) = result;
             #[cfg(feature = "simulation-diagnostics")]
             {
@@ -471,6 +512,9 @@ impl GameSession {
                 .npc_attention
                 .get_mut(&id)
                 .expect("本人注意力仍存在") = attention;
+        }
+        if updated {
+            self.information_check_floor = None;
         }
         Ok(())
     }

@@ -7,8 +7,23 @@ use super::*;
 pub(crate) use super::exchange_calendar_model::intraday_observation_second;
 
 impl GameSession {
-    pub(super) fn observation_civil_instant(&self) -> CivilInstant {
+    pub(crate) fn observation_civil_instant(&self) -> CivilInstant {
         let day_tick = self.state.tick - u64::from(self.state.day) * self.state.setup.ticks_per_day;
+        if day_tick == 0
+            && self.state.tick > 0
+            && self.state.civil_clock.phase() == super::civil_clock::CivilPhase::IntradayTrading
+        {
+            let completed_market_days = self.state.tick / self.state.setup.ticks_per_day;
+            let expected_sessions = self
+                .state
+                .civil_clock
+                .completed_trading_sessions_expected()
+                .expect("validated civil clock session projection");
+            if completed_market_days == u64::from(expected_sessions) {
+                return CivilInstant::new(self.civil_date(), 15 * 3600)
+                    .expect("validated civil session date");
+            }
+        }
         let second = intraday_observation_second(
             day_tick,
             self.state.setup.ticks_per_day,

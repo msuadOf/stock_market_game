@@ -211,12 +211,21 @@ pub(crate) struct PreparedRuntimeMirror {
     retail_decisions: Vec<RetailDecisionTrace>,
     retail_order_events: Vec<RetailOrderDiagnosticEvent>,
     npc_order_lifecycles: Vec<NpcOrderLifecycle>,
+    intraday_library: Option<std::sync::Arc<crate::information::PublicLibrary>>,
+    intraday_dispatches: Option<super::disclosures::DisclosureDispatch>,
+    information_check_floor: Option<crate::calendar::CivilInstant>,
 }
 
 #[cfg(feature = "simulation-diagnostics")]
 impl PreparedRuntimeMirror {
     pub(crate) fn causal_plans(&self) -> &crate::plans::PlanBook {
         &self.plans
+    }
+}
+
+impl PreparedRuntimeMirror {
+    pub(crate) fn has_intraday_publication(&self) -> bool {
+        self.intraday_library.is_some()
     }
 }
 
@@ -368,6 +377,23 @@ impl GameSession {
         #[cfg(feature = "simulation-diagnostics")]
         let causal_calendar = input.calendar.clone();
         let is_static = input.static_read.is_some();
+        let information_now = match &input.calendar {
+            crate::runtime::drive::PreparedDriverCalendar::MarketTick(tick) => {
+                Some(tick.observation_instant_after())
+            }
+            _ => None,
+        };
+        let intraday_now = match &input.calendar {
+            crate::runtime::drive::PreparedDriverCalendar::MarketTick(tick) if !is_static => {
+                Some(tick.observation_instant_after())
+            }
+            _ => None,
+        };
+        let intraday_candidate = intraday_now
+            .map(|now| self.prepare_intraday_disclosure_candidate(now))
+            .transpose()
+            .map_err(|error| format!("盘中月报候选准备失败：{error}"))?
+            .flatten();
         let refresh_market = input
             .static_read
             .as_ref()
@@ -879,6 +905,34 @@ impl GameSession {
                 });
             }
         }
+        let (intraday_library, intraday_dispatches) = if let Some(candidate) = intraday_candidate {
+            let mut publications = candidate.publications;
+            publications.sort_by_key(|publication| (publication.published_at, publication.id));
+            for publication in publications {
+                let super::disclosures::candidate::DisclosurePublicationKind::Report {
+                    version,
+                    ..
+                } = publication.kind
+                else {
+                    return Err("盘中月报候选不得包含公告".to_owned());
+                };
+                events.push(Event::CompanyDisclosurePublished {
+                    seq: driver.take_event_seq(),
+                    publication_id: publication.id,
+                    company: publication.company,
+                    published_at: publication.published_at,
+                    kind: CompanyDisclosureKind::Report {
+                        report_revision: version.sequence,
+                    },
+                });
+            }
+            (
+                Some(std::sync::Arc::new(candidate.library)),
+                Some(candidate.dispatch),
+            )
+        } else {
+            (None, None)
+        };
         if let Some(data) = day_end {
             events.extend(data.closing_events);
             if data.emit_boundary {
@@ -1084,6 +1138,34 @@ impl GameSession {
                 state.rng_state = seed;
             }
         }
+        let previous_floor = self.information_check_floor();
+        let (information_due, information_check_floor) =
+            match information_now.filter(|now| previous_floor.is_none_or(|floor| *now >= floor)) {
+                Some(now) => {
+                    let mut floor = None;
+                    let mut due = false;
+                    for (_, state) in npc_attention.iter() {
+                        if state.information_cadence
+                            == crate::session::notices::NpcInformationCadence::Immediate
+                        {
+                            continue;
+                        }
+                        let check = state.next_information_check;
+                        if floor.is_none_or(|prior| check < prior) {
+                            floor = Some(check);
+                        }
+                        due |= check <= now;
+                    }
+                    let floor = if due && !driver.has_information_delivery_baseline() {
+                        GameSession::no_information_check_instant()
+                    } else {
+                        floor.unwrap_or_else(GameSession::no_information_check_instant)
+                    };
+                    (due, Some(floor))
+                }
+                None => (false, previous_floor),
+            };
+        driver.set_information_due_after_prepare(information_due);
         #[cfg(test)]
         if self.runtime_install_failure {
             return Err("安装失败注入（私有镜像 candidate 校验失败）".to_owned());
@@ -1134,7 +1216,33 @@ impl GameSession {
             } else {
                 Vec::new()
             },
+            intraday_library,
+            intraday_dispatches,
+            information_check_floor,
         })
+    }
+
+    /// INFO 投递同拍回写信息/信念域；保持 driver 已完成一次版本投递的语义。
+    pub(crate) fn install_runtime_information(
+        &mut self,
+        id: AccountId,
+        personal: SharedRuntimePersonal,
+    ) {
+        self.state
+            .belief_participants
+            .insert_arc(id, Arc::clone(&personal.participant));
+        self.state
+            .history_reads
+            .insert_arc(id, Arc::clone(&personal.history_reads));
+        if let Some(retail) = &personal.retail_experience {
+            self.state
+                .retail_experience
+                .insert_arc(id, Arc::clone(retail));
+        }
+        self.state.runtime_heap_dirty = true;
+        // floor 由确切 cadence 变更点（set_runtime_information_checks /
+        // 公共日终 / INFO 授权回执）维护；仅安装个人 information/belief
+        // 不能清掉已验证的未来 floor。
     }
 
     pub(crate) fn install_runtime_mirror(
@@ -1200,6 +1308,13 @@ impl GameSession {
         }
         self.state.receipt_watermark = prepared.receipt_watermark;
         self.state.npc_order_lifecycles = prepared.npc_order_lifecycles;
+        if let Some(library) = prepared.intraday_library {
+            self.state.library = library;
+        }
+        if let Some(dispatches) = prepared.intraday_dispatches {
+            self.state.disclosures = dispatches;
+        }
+        self.set_information_check_floor(prepared.information_check_floor);
         self.state.last_retail_decisions = prepared.retail_decisions;
         self.state.last_retail_order_events = prepared.retail_order_events;
         #[cfg(feature = "simulation-diagnostics")]

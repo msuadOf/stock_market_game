@@ -1543,8 +1543,15 @@ pub(crate) enum UpMsg {
     GroupDeliveryDone {
         /// 组索引。
         group: GroupIdx,
-        /// 逐组内下标的更新后注意力态。
-        updates: Vec<(LocalIdx, crate::session::NpcAttentionState)>,
+        /// 逐组内下标的更新后注意力态与完整个人态；驱动在同一 tick
+        /// 安装到 Session，避免 11:00 获知等到下一 Start 才可见。
+        updates: Vec<(
+            LocalIdx,
+            crate::session::NpcAttentionState,
+            super::world::BeliefParticipantSnapshot,
+        )>,
+        /// 组权威非即时 cadence 的最近到期时点；None=无非即时账户。
+        information_check_floor: Option<crate::calendar::CivilInstant>,
     },
     GroupPersonalFull {
         group: GroupIdx,
@@ -1785,7 +1792,7 @@ impl std::fmt::Debug for UpMsg {
             UpMsg::GroupInformationHandoverInstalled { group, .. } => {
                 write!(f, "GroupInformationHandoverInstalled(group={group})")
             }
-            UpMsg::GroupDeliveryDone { group, updates } => {
+            UpMsg::GroupDeliveryDone { group, updates, .. } => {
                 write!(f, "GroupDeliveryDone(group={group}, n={})", updates.len())
             }
             UpMsg::GroupRepurchase { group, .. } => write!(f, "GroupRepurchase(group={group})"),

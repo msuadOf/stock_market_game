@@ -303,10 +303,18 @@ pub fn event_facts_with_stable_keys(
     events
         .into_iter()
         .map(|event| {
-            let bucket = identity_bucket(&event);
-            let index = counters.entry(bucket).or_insert(0);
-            let idx = *index;
-            *index += 1;
+            // Session 发出流跨拍共享同一稳定身份域；已分配的全局 seq 天然单调，
+            // 不能每拍从 0 重新编号而与上一拍日结事实冲突。
+            let idx = match &event {
+                Event::CompanyDisclosurePublished { seq, .. } => *seq,
+                _ => {
+                    let bucket = identity_bucket(&event);
+                    let index = counters.entry(bucket).or_insert(0);
+                    let idx = *index;
+                    *index += 1;
+                    idx
+                }
+            };
             crate::session::protocol::EventFact {
                 key: EventStableKey::for_event(&event, idx),
                 event,
@@ -331,5 +339,44 @@ fn identity_bucket(event: &Event) -> String {
         | Event::IntentRejected { account, .. }
         | Event::SettlementError { account, .. } => format!("account_sealed:{account:?}"),
         other => format!("other:{other:?}"),
+    }
+}
+
+#[cfg(test)]
+mod disclosure_identity_tests {
+    use super::*;
+    use crate::calendar::CivilInstant;
+    use crate::company::CompanyId;
+    use crate::information::PublicationId;
+    use crate::session::protocol::SessionFactCursor;
+    use crate::session::CompanyDisclosureKind;
+
+    fn disclosure(seq: u64, id: u32) -> Event {
+        Event::CompanyDisclosurePublished {
+            seq,
+            publication_id: PublicationId::new(id),
+            company: CompanyId(0),
+            published_at: CivilInstant::from_hms(
+                crate::calendar::CivilDate::from_iso("2030-01-02").unwrap(),
+                10,
+                30,
+                0,
+            )
+            .unwrap(),
+            kind: CompanyDisclosureKind::Report { report_revision: 1 },
+        }
+    }
+
+    #[test]
+    fn disclosure_session_keys_use_global_seq_and_survive_consecutive_batches() {
+        let first = event_facts_with_stable_keys(vec![disclosure(5, 1)]);
+        let second = event_facts_with_stable_keys(vec![disclosure(6, 2)]);
+        assert_eq!(first[0].key.local_event_index(), 5);
+        assert_eq!(second[0].key.local_event_index(), 6);
+        let mut cursor = SessionFactCursor::default();
+        cursor.begin_tick(1);
+        cursor.record_committed_facts(&first).unwrap();
+        cursor.begin_tick(2);
+        cursor.record_committed_facts(&second).unwrap();
     }
 }

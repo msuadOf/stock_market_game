@@ -134,6 +134,33 @@ const CONTENT_DIGEST_SEED: u64 = 0xcbf29ce484222325;
 const CONTENT_DIGEST_PRIME: u64 = 0x100000001b3;
 
 impl PublicLibrary {
+    /// 轻量判断某报告身份（公司/范围/期间/种类）已有任何公开版本；
+    /// 不克隆完整公开库，供盘中月报 tick 预过滤使用。
+    pub fn has_report_identity(
+        &self,
+        company: CompanyId,
+        scope: &crate::accounting::consolidation::ScopeId,
+        period: crate::accounting::AccountingPeriod,
+        kind: crate::accounting::reports::ReportKind,
+    ) -> bool {
+        self.reports.values().any(|report| {
+            report.company == company
+                && report.reports.scope == *scope
+                && report.reports.period == period
+                && report.reports.kind == kind
+        })
+    }
+    /// 是否存在本局生命周期内（published_at 日期 >= start）的真实公开材料。
+    pub fn has_publication_since(&self, start: crate::calendar::CivilDate) -> bool {
+        self.reports
+            .values()
+            .any(|report| report.published_at.date() >= start)
+            || self
+                .announcements
+                .values()
+                .any(|announcement| announcement.published_at.date() >= start)
+    }
+
     /// 内容版本（next_seq——Belief-1b·下 驱动器稀疏刷新判据）。
     pub fn version(&self) -> u32 {
         self.next_seq

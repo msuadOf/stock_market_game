@@ -1,5 +1,6 @@
 //! 为完整计算的 tick candidate 准备单点 CommitTick 提交。
 
+use crate::session::protocol::EventFact;
 #[cfg(test)]
 use crate::session::StateHash;
 use crate::GameSession;
@@ -142,7 +143,7 @@ pub(super) fn prepare_tick_shadow_plan_commit_with_evidence<'authority>(
     // applied_receipts 一次性派生（不再持久双存）；owner 一次解构消费。
     let TickShadowPlan {
         session,
-        event_outbox: facts,
+        event_outbox: mut facts,
         applied_receipts,
         auction_finalizers,
         expiry,
@@ -153,7 +154,6 @@ pub(super) fn prepare_tick_shadow_plan_commit_with_evidence<'authority>(
         .map(|receipt| receipt.local_key.clone())
         .collect();
     validate_receipt_keys(&receipt_keys)?;
-    validate_event_facts(&facts, expiry.releases.len())?;
     let mut candidate = session.ok_or_else(TickShadowPlan::consumed_shadow_public)?;
     let memory_accounts: BTreeSet<_> = applied_receipts
         .iter()
@@ -169,6 +169,23 @@ pub(super) fn prepare_tick_shadow_plan_commit_with_evidence<'authority>(
         &applied_receipts,
         &receipt_keys,
     )?;
+    let now = if candidate.state.day > authority.state.day {
+        crate::calendar::CivilInstant::new(candidate.civil_date(), 15 * 3600)
+            .map_err(|error| invariant(error.to_string()))?
+    } else {
+        candidate.observation_civil_instant()
+    };
+    let published = candidate
+        .publish_intraday_reports(now)
+        .map_err(|error| invariant(format!("交易日盘中月报公布失败：{error}")))?;
+    candidate
+        .deliver_due_information(now)
+        .map_err(|error| invariant(format!("交易日盘中个人获知失败：{error}")))?;
+    for event in published {
+        let key = super::EventStableKey::for_event(&event, event.seq());
+        facts.push(EventFact { key, event });
+    }
+    validate_event_facts(&facts, expiry.releases.len())?;
     let evidence = if capture_commit_evidence {
         Some(TickCommitEvidence::capture(
             &candidate.state.envelope_ledger,

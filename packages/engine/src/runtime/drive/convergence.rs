@@ -451,6 +451,7 @@ impl RuntimeDriver {
         automatic_day_end: bool,
     ) -> Result<PreparedDriverStep, String> {
         self.ensure_session_authority(session)?;
+        self.clear_information_due_after_prepare();
         let next_tick = self
             .world_committed_tick()
             .checked_add(1)

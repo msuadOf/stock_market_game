@@ -1674,40 +1674,59 @@ fn validate_company_domain(save: &SaveSlot) -> Result<(), SessionError> {
 }
 
 /// 披露派发游标自洽：恰好一次语义在存档时点的投影。
+///
+/// 月末模式允许盘中真实公开后保存，游标可停在自然日日结终点之前的当前观察时点；
+/// 仍须不晚于存档 tick 的真实观察时点，且不能回退到上一已日结日终。
 fn validate_disclosure_cursors(save: &SaveSlot) -> Result<(), SessionError> {
     let current = save.civil_clock.current_date;
-    match (
+    let settled = match (
         save.civil_clock.settled_through,
         save.disclosures.announced_through(),
     ) {
-        (None, None) => {}
-        (Some(settled), Some(announced)) if settled == announced => {
-            // 每个已日结自然日的披露相位都是 18:00；游标必须精确落在其上。
-            // fault2105：settled 日 18:00 相位构造失败；ctx[0] 待 C 批数值化（原文本 "{error}" CalendarError）。
-            let phase = if save.company_state.system().is_some()
-                && matches!(
-                    save.setup.report_frequency,
-                    Some(crate::information::ReportFrequency::Monthly { .. })
-                ) {
-                crate::calendar::CivilInstant::new(settled, 86_399)
-            } else {
-                crate::calendar::CivilInstant::from_hms(settled, 18, 0, 0)
-            }
-            .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2105, vec![0])))?;
-            if save.disclosures.published_through() != Some(phase) {
-                // fault2106：披露游标未落在 settled 日 18:00 相位；
-                // ctx[0] 待 C 批数值化（原文本 "{:?}" published_through CivilInstant），ctx[1]=settled yyyymmdd。
-                let (year, month, day) = settled.ymd();
-                return Err(SessionError::InvalidSave(ValidationFault::new(
-                    2106,
-                    vec![0, crate::error::ymd_context(year, month, day)],
-                )));
-            }
-        }
+        (None, None) => None,
+        (Some(settled), Some(announced)) if settled == announced => Some(settled),
         _ => {
             // fault2107：披露游标与已日结日期不匹配。
             return Err(SessionError::InvalidSave(ValidationFault::bare(2107)));
         }
+    };
+    let monthly_simple = save.company_state.system().is_some()
+        && matches!(
+            save.setup.report_frequency,
+            Some(crate::information::ReportFrequency::Monthly { .. })
+        );
+    let day_end_phase = |date: crate::CivilDate| {
+        let second = if monthly_simple { 86_399 } else { 18 * 3600 };
+        crate::calendar::CivilInstant::new(date, second)
+    };
+    let cursor = save.disclosures.published_through();
+    let cursor_ok = match settled {
+        Some(settled) => {
+            let expected = day_end_phase(settled)
+                .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2105, vec![0])))?;
+            if settled == current || !monthly_simple {
+                cursor == Some(expected)
+            } else {
+                // 已日结日之后、当前自然日的新盘中公开：不得早于上一日终，
+                // 也不得晚于存档 tick 的真实观察时点。
+                let observed = disclosure_cursor_observation_instant(save)?;
+                cursor.is_some_and(|actual| actual >= expected && actual <= observed)
+            }
+        }
+        None if monthly_simple => {
+            let observed = disclosure_cursor_observation_instant(save)?;
+            cursor.is_none_or(|actual| actual <= observed)
+        }
+        None => true,
+    };
+    if !cursor_ok {
+        // fault2106：披露游标不在允许的日终或当前盘中观察时点内；
+        // ctx[0] 待 C 批数值化，ctx[1]=settled yyyymmdd。
+        let (year, month, day) = settled.unwrap_or(current).ymd();
+        return Err(SessionError::InvalidSave(ValidationFault::new(
+            2106,
+            vec![0, crate::error::ymd_context(year, month, day)],
+        )));
     }
     // 无未来公布：库内最晚发表时点不得晚于已派发游标。
     if let (Some(latest), Some(through)) = (
@@ -1728,6 +1747,42 @@ fn validate_disclosure_cursors(save: &SaveSlot) -> Result<(), SessionError> {
         return Err(SessionError::InvalidSave(ValidationFault::bare(2109)));
     }
     Ok(())
+}
+
+/// 存档 tick 对应的真实观察时点；已完成当日市场会话时保持 15:00。
+fn disclosure_cursor_observation_instant(
+    save: &SaveSlot,
+) -> Result<crate::calendar::CivilInstant, SessionError> {
+    let clock = crate::session::civil_clock::CivilClock::from_parts_for_exchanges(
+        save.setup.start_date,
+        &save.civil_clock,
+        save.setup
+            .stocks
+            .iter()
+            .map(|stock| session_calendar_exchange(stock.exchange)),
+    )?;
+    let saved_day = save.snapshot.tick / save.setup.ticks_per_day;
+    let day_tick = save.snapshot.tick % save.setup.ticks_per_day;
+    let second = if day_tick == 0
+        && saved_day
+            == u64::from(
+                clock
+                    .completed_trading_sessions_expected()
+                    .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2106, vec![0])))?,
+            )
+        && clock.phase() == crate::session::civil_clock::CivilPhase::IntradayTrading
+    {
+        15 * 3600
+    } else {
+        crate::session::exchange_calendar_model::intraday_observation_second(
+            day_tick,
+            save.setup.ticks_per_day,
+            save.setup.auction_ticks,
+            save.setup.closing_auction_ticks,
+        )
+    };
+    crate::calendar::CivilInstant::new(clock.current_date(), second)
+        .map_err(|_| SessionError::InvalidSave(ValidationFault::new(2106, vec![0])))
 }
 
 /// 个体决策链状态校验：三图同键、报告引用存在、无前视/未来观察。

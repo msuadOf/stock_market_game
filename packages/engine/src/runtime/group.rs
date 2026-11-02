@@ -6558,7 +6558,7 @@ pub(crate) fn group_main(
                 let mut updates = Vec::new();
                 if let Some(snapshot) = state.snapshot.clone() {
                     let market = super::decision::build_market_view(&snapshot);
-                    for (local, account_id, attention) in attentions {
+                    for (local, account_id, _attention) in attentions {
                         let li = local as usize;
                         let snap = state.belief_states[li]
                             .as_mut()
@@ -6590,7 +6590,9 @@ pub(crate) fn group_main(
                                 market: &market,
                             },
                             crate::session::notices::InformationDeliveryState {
-                                attention: &attention,
+                                // 组内 attention 才是可更新的权威；payload 来自
+                                // Session 镜像，非 EveryTick 下可能滞后。
+                                attention: &snap.attention,
                                 information: &snap.information,
                                 belief: &snap.belief,
                             },
@@ -6598,12 +6600,25 @@ pub(crate) fn group_main(
                             Ok(Some((_, information, belief, attention))) => {
                                 snap.information = information;
                                 snap.belief = belief;
+                                // 只推进信息 cadence 两字段；payload 来自 Session
+                                // 镜像，DayEnd/OnDemand 可能滞后，不能覆盖组权威
+                                // 的 rng_state/next_attention_candidate_tick。
+                                snap.attention.information_cadence = attention.information_cadence;
+                                snap.attention.next_information_check =
+                                    attention.next_information_check;
+                                let mut group_attention = snap.attention.clone();
+                                group_attention.information_cadence = attention.information_cadence;
+                                group_attention.next_information_check =
+                                    attention.next_information_check;
                                 // P2-1a：投递演进=dirty（EchoBelief 掩码+
-                                // 驱动器重装面）。
+                                // 驱动器重装面）。INFO 投递发生在两个 Start 之间，
+                                // 下一 Start 会清 tick 内 dirty，因此同时登记跨 Start
+                                // pending，保证更新随下一拍 Seal 分片上送 Session。
                                 if let Some(flag) = state.belief_dirty.get_mut(li) {
                                     *flag = true;
                                 }
-                                updates.push((local, attention));
+                                state.belief_pending_dirty.push(local);
+                                updates.push((local, group_attention, snap.clone()));
                             }
                             Ok(None) => {}
                             Err(e) => {
@@ -6621,10 +6636,21 @@ pub(crate) fn group_main(
                         }
                     }
                 }
+                let information_check_floor = state
+                    .belief_states
+                    .iter()
+                    .filter_map(Option::as_ref)
+                    .filter(|personal| {
+                        personal.attention.information_cadence
+                            != crate::session::notices::NpcInformationCadence::Immediate
+                    })
+                    .map(|personal| personal.attention.next_information_check)
+                    .min();
                 if up_tx
                     .send(UpMsg::GroupDeliveryDone {
                         group: state.group,
                         updates,
+                        information_check_floor,
                     })
                     .is_err()
                 {

@@ -835,3 +835,18 @@ native 日终 restore 以公司 book／finance／binding／canonical Plan／curs
 独立 Sol 审查亦未完成；不据此登记全链验收通过。
 
 2026-11-01 核对沪市[《交易规则（2026年修订）》4.3.2](https://www.sse.com.cn/lawandrules/sselawsrules2025/stocks/exchange/c/c_20260424_10816482.shtml)与深市[《交易规则（2026年修订）》4.4.2](https://docs.static.szse.cn/www/lawrules/rule/trade/current/W020260424690713155663.pdf)，分别使用流通股份变动比例与股份变动比例。本实现仅支持全部股份流通的受限配股路径；银行家舍入仍为游戏简化。
+
+## 游戏额外月报与盘中排期（2026-11-03，Q23）
+
+本节登记的是**游戏内额外报告**，不是中国大陆 A 股法定定期报告制度。现行规则要求上市公司披露年度报告、半年度报告和季度报告；本项目没有、也不会把月报描述为法定披露义务。`ReportFrequency::Monthly` 只决定游戏公司是否额外生成月报及其游戏时钟排期，不影响法定年报／半年报／季报窗口，也不改变年度所得税核算。
+
+月报排期由用户在开局设置中显式选择：
+
+- 预设 `FirstDayEvening`：报告期次月 1 日 18:00；
+- 预设 `TenthDayEvening`：报告期次月 10 日 18:00；
+- `Custom { day, second_of_day, delay }`：次月 1–28 日的指定秒，避免对不存在的日期静默钳位；
+- `MonthlyReportDelay::None` 无延迟；`Uniform { max_days }` 在 0 至给定上限的自然日上，由本局 seed、公司身份与会计期间确定性地抽取一次，重试和存档恢复不重新抽取。
+
+交易日排期到达时，Simple 公司源在私有 tick candidate 中真实公开月报并生成 `CompanyDisclosurePublished`；完整提交后才进入权威公开库。NPC 本人获知走既有订阅/cadence 链，按 `next_information_check` 真实到期时点登记，不因玩家查询或日终提前获知。休市日、收盘后的月报由自然日日结在同一次 civil 事务内送达；该事务使用报告日终 `disclosure_instant`（Monthly 为当日 23:59:59）作为本人观察边界，`published_at` 仍记录材料实际排期时点，两者不合并或互相冒充；不制造市场 tick。月报材料在同报告范围内使用单月同比修订增长预测，并使用本人已获知的年度基准，不把单月利润直接年化，也不混用单体与合并范围。
+
+当前实现只覆盖 Simple 公司源；前史封账、集团月报成员封账检查、公开/更正/事件/存档游标原子性与恢复不重复属于 Q23 限定范围。完整回归、真实 WASM 三宿主验收与发布 fixture 仍由 root 统一收口，本登记不宣称完整产品验收。
