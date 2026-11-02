@@ -20,9 +20,13 @@
   把同一批 `ReceiptBearingIntent`（含原 account/stock ordinal）回灌到
   `pending_player` 队首；同时 `poison_failed_step` 只设置
   `GameSession.poison` 并向 ingress 发布 terminal 并关闭它，
-  **不置死 `World.is_terminal`**。注入失败点位于 World 该拍已提交之后
-  （`runtime_progress.rs` 的 candidate 准备校验），因此事实是：World 该拍
-  已提交，Session 与 ingress 封存首错、禁止经 Session 重放。
+  **不置死 `World.is_terminal`**。注入失败点位于 World 该拍已提交之后：
+  本 fixture 用默认 `EveryTick`，由 `session/runtime_progress.rs` 的
+  `prepare_runtime_publication` 分派到 `prepare_flush_candidate`，实际在
+  `session/runtime_mirror.rs` 的私有镜像 candidate 校验处触发（
+  `runtime_progress.rs` 内的同款注入属于另一条非 EveryTick 分支）。因此
+  事实是：World 该拍已提交，Session 与 ingress 封存首错、禁止经 Session
+  重放。
 
 ## 新增测试（`packages/engine/src/session/shared_ingress.rs`）
 
