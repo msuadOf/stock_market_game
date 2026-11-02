@@ -419,14 +419,6 @@ fn roster_lifecycle_revision_consumes_own_pending_equity() {
     let after = world.snapshot_accounts().expect("撤单返股后的真实账户");
     assert_eq!(after[1].1[0].shares[0], 1_000, "旧卖子单撤销后返股300");
     assert_eq!(after[1].1[0].pending_sell_qty[0], 0, "在途卖余量清零");
-    let records = world
-        .collect_open_derivations()
-        .expect("生产 root 观察读面");
-    assert_eq!(
-        records[1].3[0].personal_in.belief.experience().peak_equity,
-        Some(Money::from_cents(2_000_000)),
-        "独立读面须证明权益含在途300股；漏算只剩1_700_000"
-    );
     world.shutdown().expect("清理线程");
 }
 

@@ -10236,6 +10236,39 @@ mod pending_sell_risk_tests {
         );
     }
 
+    /// 复审目标差额与当前权益必须分别证明含在途：本用例若同时漏算
+    /// pending（shares=700/权益1_700_000），Buy 差额仍会碰巧得到1_000，
+    /// 因而须直接断言当前权益与风险观察持仓各为2_000_000/1_000。
+    #[test]
+    fn review_equity_and_held_basis_independently_include_pending_sell() {
+        let mut state = chain_harness(Side::Sell);
+        {
+            let acct = std::sync::Arc::make_mut(&mut state.accounts[0]);
+            acct.cash = 1_000_000;
+            acct.shares[0] = 700;
+            acct.pending_sell_qty[0] = 300;
+        }
+        let market = market_at(&[(0, PRICE)]);
+        assert_eq!(
+            equity_cents_with_pending(&state.accounts[0], &market),
+            crate::money::Money::from_cents(2_000_000),
+            "当前权益须含在途300股；漏算只剩1_700_000"
+        );
+        assert_eq!(
+            account_held_qty(&state.accounts[0], 0),
+            1_000,
+            "经济持仓须为在手700+在途300；漏算只剩700"
+        );
+        let belief = belief_with_peak(Some(2_000_000));
+        let observed = observe(&state, &belief, &market);
+        assert_eq!(
+            observed.equity,
+            crate::money::Money::from_cents(2_000_000),
+            "当前风险观察权益须含在途300股"
+        );
+        assert_eq!(qty(&observed, 0, PRICE), 1_000, "风险观察持仓含在途");
+    }
+
     /// 多股：股 0 在途 200×1000、股 1 在手 100×2000、现金 100_000。
     /// 权益=500_000，两股权重各 0.4。旧口径股 0 缺失 ⇒ 权益 300_000、
     /// 股 1 权重 2/3、回撤 4000bp。
