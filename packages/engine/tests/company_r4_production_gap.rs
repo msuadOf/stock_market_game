@@ -1,16 +1,15 @@
 //! R4 生产入口缺口的最小代表覆盖：三组尾组名册、空个人组的 Simple 日结、
 //! 晚间 Monthly 窗口与季度 18:00 扫描端点。
 //!
-//! **未覆盖声明**：历史 `319bcfac` 的 r4_07 要求交易日 10:30 即时公开、
-//! 11:00 本人获知并在下一 step 保留。现行 main 没有盘中披露入口：
-//! `DisclosureDispatch::run_day_end` 只在 `end_civil_day` 公布，个人检查也在
-//! 同一日终相位执行（ADR-0016、ADR-0035、`q11-notice-cadence`、
-//! `docs/simulation-calendar.md`）。`319bcfac` 的盘中多 hook 是未批准的
-//! 候选方案，r4_07 因此保持未核销；本文件不把它当作已恢复。
+//! **r4_07 未覆盖声明**：历史 `319bcfac` 的 r4_07 要求交易日 10:30 即时公开、
+//! 11:00 本人获知并在下一 step 保留。Q23（`agents/remaining-questions-and-features/q23-report-frequency.md`）已由用户批准“交易日月报在私有 tick candidate 中公布、
+//! 玩家查询使用当前观察时刻”，因此该语义是**已批准但 main 尚未实现的缺口**，
+//! 不是未批准方案。r4_07 保持未核销，由单独的 Q23 实现任务处理。
 //!
-//! 这里固定的是现行日终契约里仍然有价值的部分：Monthly 的公开排期秒值保留
-//! 在 `published_at`，实际可见与本人获知却发生在当日 23:59:59 的披露相位；
-//! 该断言不能替代 r4_07。
+//! 本文件只固定现行实现与已批准契约都成立的事实：休市日按自然日日结公布/获知、
+//! Monthly 排期秒值保留在 `published_at`、日终派发端点为 23:59:59、季度保持 18:00、
+//! 三组尾组名册与空个人组推进。任何“交易日盘中不可见/只能在日终获知”的断言都不属于
+//! 本文件，以免把 Q23 缺口锁成期望行为。
 
 #[path = "publications/session_fixture.rs"]
 mod session_fixture;
@@ -21,7 +20,7 @@ use engine::company::{CompanyId, PublicReportQuery};
 use engine::information::{
     MonthlyReportDelay, MonthlyReportSchedule, PublicationSource, PublishedReport, ReportFrequency,
 };
-use engine::session::{CompanyDisclosureKind, Event, NpcInformationCadence};
+use engine::session::NpcInformationCadence;
 use engine::strategy::StrategyProfile;
 use engine::{AccountId, CivilDate, CivilInstant, GameSession, SaveSlot, SessionSetup};
 
@@ -251,10 +250,9 @@ fn empty_personal_groups_settle_simple_company_and_keep_the_late_monthly_window(
 }
 
 #[test]
-fn custom_monthly_schedule_is_visible_only_after_day_end_and_read_at_the_disclosure_instant() {
+fn trading_day_monthly_keeps_schedule_second_and_retains_acquired_material() {
     let start = date("2031-04-01");
     let schedule_second = 10 * 3600 + 30 * 60;
-    let personal_check_second = 11 * 3600;
     let mut session = GameSession::new_with_runtime_groups(
         trading_setup("2031-04-01", monthly(schedule_second)),
         SEED,
@@ -264,14 +262,13 @@ fn custom_monthly_schedule_is_visible_only_after_day_end_and_read_at_the_disclos
     let initial = session.save().expect("可读初始事实");
     let owners: Vec<AccountId> = initial.information_states.keys().copied().collect();
     assert!(!owners.is_empty(), "只使用初始化 producer 实际生成的个人行");
-
-    // 把到期检查排到盘中 11:00；现行 main 只在日结相位读取公开材料。
+    // 把本人检查排到 11:00；不断言盘中是否已公开，避免锁死 Q23 缺口。
     let updates: Vec<_> = owners
         .iter()
         .map(|owner| {
             let mut attention = initial.npc_attention[owner].clone();
             attention.information_cadence = NpcInformationCadence::Daily { checks: 1 };
-            attention.next_information_check = instant(start, personal_check_second);
+            attention.next_information_check = instant(start, 11 * 3600);
             (*owner, attention)
         })
         .collect();
@@ -280,42 +277,12 @@ fn custom_monthly_schedule_is_visible_only_after_day_end_and_read_at_the_disclos
     for _ in 0..8 {
         session.step().expect("完整真实交易日可推进");
     }
-    let before_end = session.save().expect("可读盘中事实");
-    assert!(
-        before_end
-            .public_library
-            .latest_report(
-                &CompanyId(0),
-                ReportKind::Monthly,
-                AccountingPeriod::from_ymd(2031, 3).expect("月份合法"),
-                instant(start, schedule_second),
-            )
-            .is_none(),
-        "10:30 排期秒值不是盘中即时公开时点"
-    );
-
     let report = session.end_civil_day().expect("交易日完成真实日结");
     assert_eq!(report.settled_date, start);
-    assert_eq!(
-        report.disclosure_instant,
-        instant(start, 86_399),
-        "Monthly 的频率窗口以当日 23:59:59 为终点"
-    );
-    let published_id = report
-        .events
-        .iter()
-        .find_map(|event| match event {
-            Event::CompanyDisclosurePublished {
-                publication_id,
-                kind: CompanyDisclosureKind::Report { .. },
-                ..
-            } => Some(*publication_id),
-            _ => None,
-        })
-        .expect("日结必须公布当期 Monthly");
+    // 从公开库按期间取报告，不以日结事件为唯一来源：Q23 接通盘中公布后，
+    // 同一月报不应在日结重复派发，`report.events` 不能成为该例前提。
     let saved = session.save().expect("可读日结事实");
     let published = report_for_month(&saved, 2031, 3, instant(start, 86_399));
-    assert_eq!(published.id, published_id);
     assert_eq!(
         published.published_at,
         instant(start, schedule_second),
@@ -326,37 +293,31 @@ fn custom_monthly_schedule_is_visible_only_after_day_end_and_read_at_the_disclos
     let readers: Vec<AccountId> = owners
         .iter()
         .filter(|owner| {
-            saved.information_states[owner].observed_at_of(published.id)
-                == Some(report.disclosure_instant)
+            saved.information_states[owner]
+                .observed_at_of(published.id)
+                .is_some()
         })
         .copied()
         .collect();
-    assert!(
-        !readers.is_empty(),
-        "到期检查的真实参与者须在日结获知当期材料"
-    );
+    assert!(!readers.is_empty(), "到期检查的真实参与者须获知当期材料");
     for owner in &owners {
         if let Some(observed) = saved.information_states[owner].observed_at_of(published.id) {
-            assert_eq!(
-                observed, report.disclosure_instant,
-                "本人获知时点只能是真实披露瞬间"
+            assert!(
+                observed >= published.published_at && observed <= report.disclosure_instant,
+                "获知不得早于公开排期，也不得晚于本次日结披露相位"
             );
         }
     }
-
-    let queried = session
-        .public_report_by_id(published.id.value().to_string())
-        .expect("日结后玩家能查询同一公开报告");
-    assert_eq!(queried.published_second_of_day, schedule_second);
 
     session
         .step()
         .expect("下一次真实 decision step 必须保留本人材料");
     let after_next = session.save().expect("可读后续事实");
     for owner in &readers {
-        assert_eq!(
-            after_next.information_states[owner].observed_at_of(published.id),
-            Some(report.disclosure_instant),
+        assert!(
+            after_next.information_states[owner]
+                .observed_at_of(published.id)
+                .is_some(),
             "已获知材料不得在下一 step 丢失"
         );
     }
@@ -366,7 +327,7 @@ fn custom_monthly_schedule_is_visible_only_after_day_end_and_read_at_the_disclos
             cursor: None,
             page_size: Some(100),
         })
-        .expect("盘中查询使用已提交可见时点");
+        .expect("查询使用已提交可见时点");
     assert!(page
         .reports
         .iter()

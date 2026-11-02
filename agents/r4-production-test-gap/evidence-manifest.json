@@ -1,16 +1,14 @@
 {
   "branch": "codex/r4-production-test-gap-20261102",
-  "head_commit": "0f40ffbc2dfd11db3e8ac72faa23ac3643b699b9",
-  "worktree_status": [
-    "?? packages/engine/tests/company_r4_production_gap.rs"
-  ],
-  "source_manifest_sha256": "a92d7956599000788139c71406d9fa191a3f6355f267f97626e6b924e33cded7",
+  "base_commit": "0f40ffbc2dfd11db3e8ac72faa23ac3643b699b9",
+  "source_manifest_sha256": "e13c8f22163b902981c439975e6883bd6a822e0cea1c2ee960ff862c47edacd6",
   "source_manifest_files": 803,
-  "test_file_sha256": "0a3a03776a7d45c99de05d6a3bd0ba65b4854f7e3c048e20a6e4cdc39d1d39e4",
+  "test_file_sha256": "ea15d574309474721b51228b408566c026d2d529b2bb24f3f830fd0444ef146d",
+  "mapping_file_sha256": "9c2fe3d57d4d39e023b2da47d1c3f16b9c4459a735a224587def19ce1694d4d6",
   "binary_path": ".tmp/r4-gap-target/debug/deps/company_r4_production_gap-1f4c0505452c76bb",
-  "binary_sha256": "7234966983179ad886d8cbafe9fc346285a94af91f23bc4aa6fe89ae7d16dc30",
-  "binary_bytes": 55715280,
-  "target_dir": ".tmp/r4-gap-target (worktree-isolated)",
+  "binary_sha256": "4223b75272e72bf5876318f22216ba55748b974521131f0b996703827fd991ea",
+  "binary_bytes": 55706888,
+  "target_dir": ".tmp/r4-gap-target (worktree-isolated; 未使用根工作树 target)",
   "build_command": "CARGO_TARGET_DIR=$PWD/.tmp/r4-gap-target CARGO_BUILD_JOBS=64 node scripts/run-long-validation.mjs 300000 -- cargo test -p engine --test company_r4_production_gap --no-run",
   "build_deadline_ms": 300000,
   "build_jobs": 64,
@@ -20,5 +18,5 @@
   "cases_per_process": 1,
   "cpu_count": 128,
   "rustc": "rustc 1.96.1 (31fca3adb 2026-06-26)",
-  "generated_at": "2026-11-02T17:07:35.056733+00:00"
+  "generated_at": "2026-11-02T17:16:45.831313+00:00"
 }

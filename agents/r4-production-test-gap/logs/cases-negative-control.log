@@ -5,7 +5,7 @@ test quarterly_closed_day_keeps_the_18_for_scan_endpoint ... ok
 
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.16s
 
-rc=0 wall_ms=305
+rc=0 wall_ms=277
 ### deadline=10000ms test_threads=1 exact=empty_personal_groups_settle_simple_company_at_month_end
 
 running 1 test
@@ -15,7 +15,7 @@ failures:
 
 ---- empty_personal_groups_settle_simple_company_at_month_end stdout ----
 
-thread 'empty_personal_groups_settle_simple_company_at_month_end' (4064927) panicked at packages/engine/tests/company_r4_production_gap.rs:115:42:
+thread 'empty_personal_groups_settle_simple_company_at_month_end' (301329) panicked at packages/engine/tests/company_r4_production_gap.rs:114:42:
 周日月末完成真实日结: Step(InvariantViolation { description: "Simple 披露准备失败：inconsistent public library: 完整 civil 公告阶段必须使用真实频率 endpoint，日期不得回退", location: "GameSession::prepare_civil_day_disclosures" })
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 
@@ -23,10 +23,10 @@ note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 failures:
     empty_personal_groups_settle_simple_company_at_month_end
 
-test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.51s
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.45s
 
 bounded command exited with 101
-rc=1 wall_ms=982
+rc=1 wall_ms=808
 ### deadline=10000ms test_threads=1 exact=closed_day_monthly_is_published_at_schedule_second_but_observed_only_at_day_end
 
 running 1 test
@@ -36,7 +36,7 @@ failures:
 
 ---- closed_day_monthly_is_published_at_schedule_second_but_observed_only_at_day_end stdout ----
 
-thread 'closed_day_monthly_is_published_at_schedule_second_but_observed_only_at_day_end' (4079944) panicked at packages/engine/tests/company_r4_production_gap.rs:142:42:
+thread 'closed_day_monthly_is_published_at_schedule_second_but_observed_only_at_day_end' (303401) panicked at packages/engine/tests/company_r4_production_gap.rs:141:42:
 周六月报日完成真实日结: Step(InvariantViolation { description: "Simple 披露准备失败：inconsistent public library: 完整 civil 公告阶段必须使用真实频率 endpoint，日期不得回退", location: "GameSession::prepare_civil_day_disclosures" })
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 
@@ -47,7 +47,7 @@ failures:
 test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.42s
 
 bounded command exited with 101
-rc=1 wall_ms=791
+rc=1 wall_ms=738
 ### deadline=10000ms test_threads=1 exact=three_runtime_groups_keep_the_real_roster_and_tail_group_personal_rows
 
 running 1 test
@@ -55,7 +55,7 @@ test three_runtime_groups_keep_the_real_roster_and_tail_group_personal_rows ... 
 
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.42s
 
-rc=0 wall_ms=580
+rc=0 wall_ms=561
 ### deadline=10000ms test_threads=1 exact=empty_personal_groups_settle_simple_company_and_keep_the_late_monthly_window
 
 running 1 test
@@ -65,7 +65,7 @@ failures:
 
 ---- empty_personal_groups_settle_simple_company_and_keep_the_late_monthly_window stdout ----
 
-thread 'empty_personal_groups_settle_simple_company_and_keep_the_late_monthly_window' (4101709) panicked at packages/engine/tests/company_r4_production_gap.rs:235:42:
+thread 'empty_personal_groups_settle_simple_company_and_keep_the_late_monthly_window' (303998) panicked at packages/engine/tests/company_r4_production_gap.rs:234:42:
 休市日仍须完成真实日结: Step(InvariantViolation { description: "Simple 披露准备失败：inconsistent public library: 完整 civil 公告阶段必须使用真实频率 endpoint，日期不得回退", location: "GameSession::prepare_civil_day_disclosures" })
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 
@@ -73,28 +73,28 @@ note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 failures:
     empty_personal_groups_settle_simple_company_and_keep_the_late_monthly_window
 
-test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.43s
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.41s
 
 bounded command exited with 101
-rc=1 wall_ms=849
-### deadline=10000ms test_threads=1 exact=custom_monthly_schedule_is_visible_only_after_day_end_and_read_at_the_disclosure_instant
+rc=1 wall_ms=763
+### deadline=10000ms test_threads=1 exact=trading_day_monthly_keeps_schedule_second_and_retains_acquired_material
 
 running 1 test
-test custom_monthly_schedule_is_visible_only_after_day_end_and_read_at_the_disclosure_instant ... FAILED
+test trading_day_monthly_keeps_schedule_second_and_retains_acquired_material ... FAILED
 
 failures:
 
----- custom_monthly_schedule_is_visible_only_after_day_end_and_read_at_the_disclosure_instant stdout ----
+---- trading_day_monthly_keeps_schedule_second_and_retains_acquired_material stdout ----
 
-thread 'custom_monthly_schedule_is_visible_only_after_day_end_and_read_at_the_disclosure_instant' (4115102) panicked at packages/engine/tests/company_r4_production_gap.rs:297:42:
+thread 'trading_day_monthly_keeps_schedule_second_and_retains_acquired_material' (306273) panicked at packages/engine/tests/company_r4_production_gap.rs:280:42:
 交易日完成真实日结: Step(InvariantViolation { description: "Simple 披露准备失败：inconsistent public library: 完整 civil 公告阶段必须使用真实频率 endpoint，日期不得回退", location: "GameSession::prepare_civil_day_disclosures" })
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 
 
 failures:
-    custom_monthly_schedule_is_visible_only_after_day_end_and_read_at_the_disclosure_instant
+    trading_day_monthly_keeps_schedule_second_and_retains_acquired_material
 
-test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.48s
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.41s
 
 bounded command exited with 101
-rc=1 wall_ms=1039
+rc=1 wall_ms=790
