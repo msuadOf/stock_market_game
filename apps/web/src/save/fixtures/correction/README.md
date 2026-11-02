@@ -17,7 +17,7 @@
 当前契约使用 `packages/engine/tests/fixtures/correction/current-completed-save.json`：
 
 - 143935 bytes，SHA-256 为 `88db89bb78a2599fbb9f1caf1407d06e6d0a3b2719ea35e72dbc943a49a3176c`。
-- 由当前 main 的真实 `GameSession` producer 生成：同一更正受理与 18:00 日终完成流程，`runtime_sync_policy="every_tick"`，完成表非空；仅为缩短测试时间把 Simple 前史缩为 6 期、市场历史缩为 1，不拼装存档字段。
+- 由当前集成分支 `codex/branch-convergence-final-20261102` 的真实 `GameSession` producer 生成：同一更正受理与 18:00 日终完成流程，`runtime_sync_policy="every_tick"`，完成表非空；仅为缩短测试时间把 Simple 前史缩为 6 期、市场历史缩为 1，不拼装存档字段。
 - 该档的 `civil_clock` 携带当前默认政策的 `policy_digest="e39b4ae1f109313d"`，以及 SSE/SZSE 2026 各一条 `official_coverage`；历史原件 `rust-completed-save.json` 保持原字节不变。
 - `packages/engine/src/session/company_corrections_tests.rs::current_completed_correction_fixture_matches_producer_and_restores` 每次都重新生成并逐字节比较该 fixture，随后走 `decode_save_slot` 与 `GameSession::restore`。producer 或 schema 漂移时测试失败，必须重新生成 fixture，不能手改 JSON。显式重生成命令见下文。
 - `apps/web/src/save/schema/company/closing.test.ts` 直接读取这份 raw 字节，不再注入 `runtime_sync_policy`；历史原件另有独立测试固定 SHA 并断言当前契约拒绝缺少该字段。

@@ -53,7 +53,7 @@ node scripts/run-long-validation.mjs 300000 -- cargo test -p engine --lib --no-r
 | Rust fixture 读/恢复 | exact 用例，`run-with-deadline.mjs 10000` | 1 pass / 0 fail，0.18s | `evidence/rust-producer-readback.*`（含 `--nocapture`） |
 | Web→Rust 回读 | `agents/.../web-roundtrip.mjs` 生成 Web 输出，再以 `SMG_CURRENT_CORRECTION_WEB_ROUNDTRIP_SAVE` 执行同一 exact 用例 | 1 pass，输出 `CURRENT_CORRECTION_WEB_ROUNDTRIP_OK` | `evidence/rust-producer-readback.*` |
 | Web raw 消费 | `run-with-deadline.mjs 10000 -- node --test --test-timeout=10000 ... closing.test.ts` | 9 pass / 0 fail | `evidence/web-closing.*` |
-| 空白检查 | `git diff --check` | exit 0 | 终端结果 |
+| 空白检查 | `git diff --check 3ee968e7..HEAD` | exit 0 | 终端结果 |
 
 关键哈希：
 
