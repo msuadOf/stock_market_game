@@ -1027,14 +1027,15 @@ fn solmid_echo_open_derivation_is_read_only_and_idempotent() {
 // Sol 中点整改 2/5 红证：执行腿生命周期——成交推进（组簿 (账户,方向)
 // 聚合 filled 与 desk_trades 的 belief 腿独立源逐账户对拍——完整子单
 // 数量+部分成交）、读面幂等、Abort 回滚恢复。fixture：连续形态
-//（auction=0）+retail 对手位（有持仓，双向贴价注入——价格笼子内）。
+//（auction=0）+retail 对手位（有持仓，双向贴价注入——价格笼子内）；
+// 机构子单 200 股、玩家每拍只报 100 股整手，使同子单保留 100 股在途余量。
 #[test]
 fn solmid_execution_leg_lifecycle_matches_independent_fills() {
     use crate::orderbook::Side;
     let mut setup = setup_fixture();
     setup.npcs.retail_count = 1;
     setup.npcs.inst_count = 3;
-    setup.strategy_params.inst.order_size = 100;
+    setup.strategy_params.inst.order_size = 200;
     setup.auction_ticks = 0;
     let mut session = GameSession::new(setup, 51).expect("会话构造");
     let mut driver = RuntimeDriver::from_session(&mut session).expect("驱动器构造");
@@ -1057,7 +1058,7 @@ fn solmid_execution_leg_lifecycle_matches_independent_fills() {
                         price: crate::strategy::LimitPrice::Fixed(crate::money::Money::from_cents(
                             price,
                         )),
-                        qty: 200,
+                        qty: 100,
                     },
                     account_ordinal: 0,
                     stock_ordinal: 0,
