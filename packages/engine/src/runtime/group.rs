@@ -5798,7 +5798,7 @@ fn group_urgency_at_view(
 ) {
     use crate::plans::urgency::risk::{assess_existing_reduction_urgency, RiskUrgencyAssessment};
     use crate::plans::UrgencyInputs;
-    // 本组名册段（局部切片——helper 的 account_ids 形参语义）。
+    // 风险观察/权益读面统一使用账户级在途卖余量镜像。
     let acct = &accounts[local as usize];
     let experience = belief.experience();
     let risk = match experience.peak_equity {
