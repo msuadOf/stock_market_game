@@ -166,6 +166,39 @@ fn assert_current_projection_fields(
         }
     );
     assert_eq!(save.setup.runtime_sync_policy, RuntimeSyncPolicy::EveryTick);
+    let calendar_policy =
+        engine::calendar::CalendarPolicy::from_parts(save.civil_clock.policy.clone())
+            .expect("存档日历政策必须能重新装配");
+    assert_eq!(
+        save.civil_clock.policy_digest.as_deref(),
+        Some(calendar_policy.content_digest()),
+        "存档 policy_digest 必须绑定完整 CalendarPolicySpec"
+    );
+    assert_eq!(
+        save.civil_clock
+            .policy
+            .official_coverage
+            .iter()
+            .map(|entry| (entry.exchange, entry.year))
+            .collect::<Vec<_>>(),
+        vec![
+            (engine::calendar::CalendarExchange::Sse, 2026),
+            (engine::calendar::CalendarExchange::Szse, 2026),
+        ],
+        "2026 沪深官方休市覆盖必须按 (exchange, year) 规范顺序入档"
+    );
+    for entry in &save.civil_clock.policy.official_coverage {
+        assert!(!entry.source_citation_id.is_empty());
+        assert_eq!(entry.source_digest.len(), 64);
+        assert!(entry
+            .source_digest
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit()));
+        assert!(entry
+            .closed_ranges
+            .iter()
+            .all(|range| range.from <= range.to));
+    }
     assert!(matches!(
         &save.company_state,
         engine::session::SavedSessionCompanies::LegacyOperations { groups, .. } if groups.is_empty()
@@ -245,6 +278,13 @@ fn assert_complete_projection(auction_ticks: u64, expected: u64) {
     // 当前完整 tuple 不剔字段，新增字段另有 typed/wire 强断言。
     // 原锚、source/probe 与原字节档案见 agents/branch-completion/
     // last-integration-2026-10-30/skeleton.md；未复用失配后重算的 actual 为期望值。
+    // 2026-11-03 集成复验：main@0f40ffbc 与 965e5d84 的 60/60 拍 events、
+    // live snapshot 原字节相同；save 仅新增 CalendarPolicySpec.official_coverage
+    // （SSE/SZSE 2026）与 policy_digest。把集成 save 的该数组清空并删除
+    // policy_digest 后，三个完整投影的 FNV 摘要精确回到 main 三锚。新增字段
+    // 另有 from_parts 重算 digest、来源非空与规范顺序断言；旧锚全部保留。
+    // 依据：agents/fix-projection-regression/projection-diff.md 与
+    // agents/calendar-2026-official-20261102/evidence.md。
     assert_eq!(
         projection_digest(&complete_projection(auction_ticks, 42, 20)),
         expected
@@ -266,8 +306,10 @@ fn characterization_complete_projection_without_opening_auction() {
     // 字节形态变化）+ main 侧公司经营/披露结构接线，投影字节随之变化；
     // 事件与业务事实语义不变（域测试与 save 契约独立覆盖）。旧锚保留：
     // 16_114_484_025_310_678_034。
+    // 2026 官方覆盖 + policy_digest 表示锚（依据同上）；
+    // 旧锚保留：14_515_314_912_140_190_070。
     // 884bd5ad 原锚：16_039_080_022_122_580_669；当前锚由旧 raw 前向独立推导。
-    assert_complete_projection(0, 14_515_314_912_140_190_070);
+    assert_complete_projection(0, 7_902_364_060_655_783_278);
 }
 
 #[test]
@@ -275,8 +317,10 @@ fn characterization_complete_projection_with_three_auction_ticks() {
     // 同上重锚；旧锚保留：862_635_824_146_359_871。
     // B4a 公司域重锚（同 without 用例依据）；旧锚保留：
     // 15_244_279_962_941_296_384。
+    // 2026 官方覆盖 + policy_digest 表示锚（依据同上）；
+    // 旧锚保留：1_528_640_566_612_864_764。
     // 884bd5ad 原锚：7_734_365_835_074_963_189；当前锚由旧 raw 前向独立推导。
-    assert_complete_projection(3, 1_528_640_566_612_864_764);
+    assert_complete_projection(3, 13_359_828_032_896_992_400);
 }
 
 #[test]
@@ -284,8 +328,10 @@ fn characterization_complete_projection_with_six_auction_ticks() {
     // 同上重锚；旧锚保留：7_784_286_686_475_819_964。
     // B4a 公司域重锚（同 without 用例依据）；旧锚保留：
     // 12_603_764_770_532_460_219。
+    // 2026 官方覆盖 + policy_digest 表示锚（依据同上）；
+    // 旧锚保留：571_153_393_436_025_933。
     // 884bd5ad 原锚：6_825_886_869_182_669_854；当前锚由旧 raw 前向独立推导。
-    assert_complete_projection(6, 571_153_393_436_025_933);
+    assert_complete_projection(6, 4_756_588_382_933_877_897);
 }
 
 #[test]
