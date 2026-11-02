@@ -1,15 +1,19 @@
 //! R4 生产入口缺口的最小代表覆盖：三组尾组名册、空个人组的 Simple 日结、
 //! 晚间 Monthly 窗口与季度 18:00 扫描端点。
 //!
-//! **r4_07 未覆盖声明**：历史 `319bcfac` 的 r4_07 要求交易日 10:30 即时公开、
+//! **r4_07 覆盖归属声明**：历史 `319bcfac` 的 r4_07 要求交易日 10:30 即时公开、
 //! 11:00 本人获知并在下一 step 保留。Q23（`agents/remaining-questions-and-features/q23-report-frequency.md`）已由用户批准“交易日月报在私有 tick candidate 中公布、
-//! 玩家查询使用当前观察时刻”，因此该语义是**已批准但 main 尚未实现的缺口**，
-//! 不是未批准方案。r4_07 保持未核销，由单独的 Q23 实现任务处理。
+//! 玩家查询使用当前观察时刻”，并已在集成 HEAD `838209fc`
+//!（`agents/q23-intraday-monthly-publication/record.md`）实现。该交易日月报盘中公开与本人获知语义
+//! 由 `packages/engine/src/session/company_source_runtime_tests.rs` 的 Q23 用例
+//!（`simple_monthly_report_is_public_at_intraday_tick_and_restore_does_not_republish`、
+//! `runtime_publishes_at_1030_and_due_subscriber_learns_at_1100`）覆盖。
+//! **本文件不核销 r4_07**：本文件不含上述交易日盘中公开/获知断言。
 //!
 //! 本文件只固定现行实现与已批准契约都成立的事实：休市日按自然日日结公布/获知、
 //! Monthly 排期秒值保留在 `published_at`、日终派发端点为 23:59:59、季度保持 18:00、
 //! 三组尾组名册与空个人组推进。任何“交易日盘中不可见/只能在日终获知”的断言都不属于
-//! 本文件，以免把 Q23 缺口锁成期望行为。
+//! 本文件，以免与已落地的 Q23 交易日月报盘中语义冲突。
 
 #[path = "publications/session_fixture.rs"]
 mod session_fixture;
@@ -262,7 +266,7 @@ fn trading_day_monthly_keeps_schedule_second_and_retains_acquired_material() {
     let initial = session.save().expect("可读初始事实");
     let owners: Vec<AccountId> = initial.information_states.keys().copied().collect();
     assert!(!owners.is_empty(), "只使用初始化 producer 实际生成的个人行");
-    // 把本人检查排到 11:00；不断言盘中是否已公开，避免锁死 Q23 缺口。
+    // 把本人检查排到 11:00；不断言盘中是否已公开，与 Q23 已落地的盘中公开语义保持一致。
     let updates: Vec<_> = owners
         .iter()
         .map(|owner| {
@@ -279,7 +283,7 @@ fn trading_day_monthly_keeps_schedule_second_and_retains_acquired_material() {
     }
     let report = session.end_civil_day().expect("交易日完成真实日结");
     assert_eq!(report.settled_date, start);
-    // 从公开库按期间取报告，不以日结事件为唯一来源：Q23 接通盘中公布后，
+    // 从公开库按期间取报告，不以日结事件为唯一来源：Q23 已落地盘中公布，
     // 同一月报不应在日结重复派发，`report.events` 不能成为该例前提。
     let saved = session.save().expect("可读日结事实");
     let published = report_for_month(&saved, 2031, 3, instant(start, 86_399));

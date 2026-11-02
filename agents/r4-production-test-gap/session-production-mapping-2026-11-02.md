@@ -70,3 +70,28 @@
    由单独的 Q23 实现任务处理。当前 main 只有日终路径，属实现缺口，不是契约变更。
 2. `publish_intraday_reports` 的移除原因（`ce5b3a1c` → `87f6f7d9`）需 root 查明；
    本轮不据历史实现自行恢复盘中接线。
+
+## 集成状态（2026-11-03，集成 HEAD `838209fc`）
+
+上方“已批准契约与现行实现现状”“逐断言映射”“遗留”记录的是本主题工作在其基线
+`0f40ffbc` 时的现状，作为历史证据原样保留，不再代表集成后现状。集成 HEAD
+`838209fc`（`fix(engine): 修正交易日盘中月报公开与本人获知`）已实现 Q23 交易日月报的
+盘中公开与本人获知，详见 `agents/q23-intraday-monthly-publication/record.md` 与
+`docs/trading-rules.md` 的“游戏额外月报与盘中排期（2026-11-03，Q23）”。
+
+- **r4_07 现由 Q23 用例覆盖**：`packages/engine/src/session/company_source_runtime_tests.rs` 的
+  `simple_monthly_report_is_public_at_intraday_tick_and_restore_does_not_republish`
+  （交易日 10:30 真实公开、玩家查询可见、存档恢复不重复发布）与
+  `runtime_publishes_at_1030_and_due_subscriber_learns_at_1100`
+  （native runtime 10:30 公开、cadence 到期 11:00 本人真实获知、下一检查点保留到次日 11:00）
+  覆盖历史 r4_07 的“10:30 即时公开、11:00 本人获知、保留”语义。
+- **本文件（`company_r4_production_gap.rs`）不核销 r4_07**：它不含交易日盘中公开/获知断言，
+  顶部 r4_07 声明已同步更新为“覆盖归属声明”，指向上述 Q23 用例，并保留“本文件不含这些断言”。
+- **“遗留”第 2 条的接线问题已由集成实现回答**：`publish_intraday_reports` 的历史生产接线
+  （`ce5b3a1c`）本就是 `session/intraday_disclosures.rs` 的 `pub(super) fn`，由
+  `session/pipeline/candidate_commit.rs` 在私有 tick candidate 内调用，从未出现公共调用点；
+  该文件在 `87f6f7d9` 因未声明 `mod intraday_disclosures;`（未编译残留）被清理，集成实现沿用
+  同一私有接线形状重新落地。因此“移除原因”是未编译残留清理，“恢复方式”是无需另接线，
+  不存在“未按历史公共调用点恢复”的对比项。
+
+本轮只补充集成状态，不改动本主题既有结论、断言与证据（`logs/`、`evidence-manifest.json`）。
