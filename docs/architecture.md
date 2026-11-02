@@ -26,7 +26,7 @@
 
 **关键点：**
 - `game-engine` 是**纯逻辑**：输入"状态 + 动作"，输出"新状态 + 事件"。不碰 DOM、不碰网络、不碰定时器。
-- native 缺省启用 runtime（[ADR-0043](decisions/0043-std-thread-ownership-runtime.md)），内部自管 OS 线程与 `std::sync::mpsc` 通道（NPC 组线程 + 每股交易部线程），不碰 DOM、网络或存储；`ENGINE_STEP_RUNTIME=0` 可临时切回旧管线。Web 产品宿主缺省解析为 `runtimeOverride: true`，使用 `World`/`RuntimeDriver` 并经 thread facade 使用 Workers，`runtimeOverride: false` 会被显式拒绝。WASM engine 内部在宿主未设置 override 时仍走串行管线；WASM 会话登记与 facade arena 初始化会显式要求已启用 runtime，而 Web 产品宿主缺省启用它。
+- native 缺省启用 runtime（[ADR-0043](decisions/0043-std-thread-ownership-runtime.md)），内部自管 OS 线程与 `std::sync::mpsc` 通道（NPC 组线程 + 每股交易部线程），不碰 DOM、网络或存储；`ENGINE_STEP_RUNTIME=0` 可临时切回旧管线。Web 产品宿主缺省解析为 `runtimeOverride: true`，使用 `World`/`RuntimeDriver` 并经 thread facade 使用 Workers，`runtimeOverride: false` 会被显式拒绝。WASM engine 内部在宿主未设置 override 时仍走串行管线；WASM 会话 create/restore 入口会在登记前要求 runtime，产品宿主的 setup/restore topology 初始化入口（`facade_slot_init_for_setup` / `facade_slot_init_for_restore_json`）也显式要求 runtime；raw `facade_slot_init` 不检查 runtime，只初始化 arena 并锚定共享时钟 ORIGIN；Web 产品宿主缺省启用 runtime。
 - engine 用 **Rust** 实现（[ADR-0002](decisions/0002-engine-rust-wasm.md)）：前端经 WASM 调用，后端/Tauri 直接复用同一 crate。
 - 各"外壳"负责 I/O（渲染、存储、网络、定时器），把用户动作翻译成对 engine 的调用。
 - 同一份 engine 能在前端、后端、Tauri、测试中**分别运行**——这是"后端可选"与"多端一致"的根本。
