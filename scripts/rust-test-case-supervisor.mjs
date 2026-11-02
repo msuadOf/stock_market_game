@@ -321,23 +321,28 @@ async function supervise(input) {
     for (const active of records.values()) clearTimeout(active.executionTimer);
     const deadline = earliestCleanupDeadline(input.batchDeadline, record, records.values());
     stopping = (async () => {
+      let tokenCleanupFailure;
+      const orphaned = process.platform === "linux" && birthIdentity(domain.pid) === undefined;
+      // 失败收尾必须覆盖触发时仍登记的所有 case：另一个 case 可能已自行失败并留下 detached 孙进程。
+      // 已由 runBoundedCommand 判定超时的 case 不再重复扫描，保留进程树终止预算。
+      const failedRecords = orphaned
+        ? Array.from(records.values())
+        : Array.from(records.values()).filter((active) => !active.expired);
+      const tokenCleanup = cleanupCompletedCase.afterFailure(failedRecords, deadline)
+        .catch((error) => { tokenCleanupFailure = error; });
       try {
-        // 即使 launcher 仍存活，自行退出的失败 case 也可能留下已 detach 的孙进程；
-        // 只对该失败 case 做 token 清理；已超时 case 由 runBoundedCommand 终止进程树，不重复扫描。
-        // 其余活跃 case 继续交给 domain 终止；launcher 孤儿时才清理全部登记 case。
-        const orphaned = process.platform === "linux" && birthIdentity(domain.pid) === undefined;
-        const failedRecords = orphaned || record === undefined ? records.values() : record.expired ? [] : [record];
-        // token 清理与 domain 终止并行，避免 /proc 扫描挤占挂例终止预算；两者仍共享同一 deadline。
-        await waitForLauncherClose(Promise.all([
-          stopDomain(domain, deadline),
-          cleanupCompletedCase.afterFailure(failedRecords, deadline),
-          launcherClosed,
-        ]), deadline);
+        // token 清理与 domain 终止并行；先确认 domain，再等待 token 清理，避免扫描挤占终止确认。
+        await waitForLauncherClose(Promise.all([stopDomain(domain, deadline), launcherClosed]), deadline);
         domainCleaned = true;
         if (record) log({ phase: "rust-case-termination-confirmed", token: record.token, context: record.context,
           confirmed_ms: monotonicMs(), total_deadline_ms: record.total, event_loop_delay_max_ms: loopDelay.max / 1e6 });
       } catch (cleanupError) {
         terminal = new AggregateError([terminal, cleanupError], `${terminal.message}; process tree termination remains unconfirmed: ${cleanupError.message}`);
+      }
+      try { await withinDeadline(tokenCleanup, deadline, "failed case token cleanup"); }
+      catch (error) { tokenCleanupFailure = tokenCleanupFailure === undefined ? error : new AggregateError([tokenCleanupFailure, error], `${tokenCleanupFailure.message}; failed case token cleanup: ${error.message}`); }
+      if (tokenCleanupFailure !== undefined) {
+        terminal = new AggregateError([terminal, tokenCleanupFailure], `${terminal.message}; failed case token cleanup remains unconfirmed: ${tokenCleanupFailure.message}`);
       }
       for (const active of records.values()) clearRecord(active);
       send({ kind: "failure", domain_closed: domainCleaned, error: encodedError(terminal) });

@@ -29,7 +29,7 @@ it("导出目录清理失败必须使成功批次显式失败", { timeout: 10000
   await writeFile(launcherPath, `import fs from 'node:fs';
 process.on('message',m=>{if(m.kind==='initialize'){fs.mkdirSync(m.exportRoot,{recursive:true});process.send({kind:'result',value:{case_count:0}});}else if(m.kind==='shutdown')process.disconnect();});process.send({kind:'ready'});`);
   try {
-    await assert.rejects(executeSupervisedRustTestBinaries({ artifacts: [], policy: {}, cwd: process.cwd(), env: process.env,
+    await assert.rejects(executeSupervisedRustTestBinaries({ artifacts: [], policy: {}, cwd: process.cwd(), env: { ...process.env, TMPDIR: dir },
       remainingMs: () => 3000, launcherPath, cleanupExportRoot: async () => { throw new Error("rm fixture failed"); } }),
     /export cleanup failed.*rm fixture failed.*residual export directories may remain/);
   } finally { await rm(dir, { recursive: true, force: true }); }
