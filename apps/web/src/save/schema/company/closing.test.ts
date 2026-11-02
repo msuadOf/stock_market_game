@@ -23,7 +23,7 @@ test("历史completed SaveSlot保留原件，当前契约显式拒绝缺少runti
 
 test("当前Rust producer生成的更正日结完整SaveSlot保持raw无损消费", { timeout: 10000 }, () => {
   const bytes = readFileSync(currentCompletedSaveUrl);
-  assert.equal(createHash("sha256").update(bytes).digest("hex"), "daeee7e4de1cdc1b1ea9a192f7dc82e315a3fb383310c18451c77577a35a6de1");
+  assert.equal(createHash("sha256").update(bytes).digest("hex"), "88db89bb78a2599fbb9f1caf1407d06e6d0a3b2719ea35e72dbc943a49a3176c");
   const text = bytes.toString("utf8");
   const parsed = parseSaveJson(text);
   assert.deepEqual(parsed, JSON.parse(text));

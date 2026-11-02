@@ -1,0 +1,17 @@
+✔ 历史completed SaveSlot保留原件，当前契约显式拒绝缺少runtime_sync_policy (17.09078ms)
+✔ 当前Rust producer生成的更正日结完整SaveSlot保持raw无损消费 (30.415266ms)
+✔ restatement source只接受Rust裸数wire的安全整数，保持number类型 (0.786434ms)
+✔ restatement raw source拒绝负零小数指数与超安全域，不能先舍入 (0.400702ms)
+✔ 完整SaveSlot必须严格保留已完成报表更正操作 (12.906794ms)
+✔ 完整SaveSlot拒绝缺失更正表、未知字段与更正身份不一致 (20.258148ms)
+✔ 已完成更正操作的BusinessEventId在raw JSON中必须无损且为规范安全整数 (25.530588ms)
+✔ 更正金额codec与host一致：保留Rust可解语法并约束i128分范围 (45.134775ms)
+✔ 更正请求及完成时间的CivilDate遵守1900至2199算法窗 (68.178197ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 9
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 373.123187

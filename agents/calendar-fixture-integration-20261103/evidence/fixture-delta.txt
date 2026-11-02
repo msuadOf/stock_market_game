@@ -1,0 +1,7 @@
+旧档 SHA-256: daeee7e4de1cdc1b1ea9a192f7dc82e315a3fb383310c18451c77577a35a6de1 (142501 bytes)
+新档 SHA-256: 88db89bb78a2599fbb9f1caf1407d06e6d0a3b2719ea35e72dbc943a49a3176c (143935 bytes)
+结构差异（除下列两项外无变化）:
+  ADDED /civil_clock/policy_digest = "e39b4ae1f109313d"
+  official_coverage 长度: 0 -> 2
+    sse 2026 sse-2026-holiday-notice 3ecade6151ea19fe223b747eea08212be430f69ae7a52056f1961b2087e939bc closed_ranges= 13
+    szse 2026 szse-2026-holiday-notice 87ecf6071c1aa57eb6dc70327e7d763481976300079d622739b27766b789535f closed_ranges= 13
