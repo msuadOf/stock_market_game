@@ -2346,8 +2346,8 @@ fn dated_candles_bridge_virtual_prehistory_and_real_sessions_across_weekend() {
             // 初始接管一次、20 个市场拍与前三次 civil INFO 各安装一次。
             install_sequence: 24,
             source_tick: 20,
-            // 20 个市场拍加两个交易日的 retained 发布；周末不产生市场拍。
-            source_generation: 22,
+            // 20 个市场拍加四个自然日的 retained 发布；周末发布休市记录但不产生市场拍。
+            source_generation: 24,
             day_end_stage: engine::RuntimeMirrorDayEndStage::RetainedPublished,
             non_tick_revision: 3,
             mirror_phase: TradingPhase::Continuous,
