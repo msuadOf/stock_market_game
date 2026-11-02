@@ -500,15 +500,10 @@ fn roster_chain_params(
 /// ×最新价——对齐旧管线权益观察口径）。
 fn equity_cents_with_pending(
     group_account: &GroupAccount,
-    child_in_flight: &std::collections::BTreeMap<(crate::AccountId, crate::StockId), ChildTicket>,
-    account_ids: &[crate::AccountId],
-    local: LocalIdx,
     market: &crate::strategy::MarketView,
 ) -> crate::money::Money {
     // 账户级 `pending_sell_qty` 覆盖全部卖单（含外部/无票单），是持仓读面
-    // 的权威镜像；`ChildTicket` 只服务计划链。为保持调用点兼容，本参数面
-    // 不再参与估值。
-    let _ = (child_in_flight, account_ids, local);
+    // 的权威镜像；`ChildTicket` 只服务计划链，不参与估值。
     for_each_held_position(group_account, market, |_, _, _| {})
 }
 
@@ -3544,23 +3539,20 @@ impl GroupState {
                 .accounts
                 .get(local as usize)
                 .unwrap_or_else(|| panic!("组 {group} 复审位 {local} 账户缺失"));
+            // 复审持仓与风险观察同源：账户级 `pending_sell_qty` 覆盖全部
+            // 在途卖单，否则满仓在途卖时 held=0 会误算目标差额。
             let held_by_code: std::collections::BTreeMap<crate::StockId, u32> = group_account
                 .shares
                 .iter()
                 .enumerate()
-                .map(|(idx, &qty)| (crate::StockId(idx as u32), qty))
+                .map(|(idx, &qty)| {
+                    let total = qty
+                        .checked_add(group_account.pending_sell_qty[idx])
+                        .unwrap_or_else(|| panic!("复审持仓与在途卖余量合计溢出：stock={idx}"));
+                    (crate::StockId(idx as u32), total)
+                })
                 .collect();
-            let equity = equity_cents_with_pending(
-                group_account,
-                &self.child_in_flight,
-                roster_slice(
-                    &projection.account_ids,
-                    self.roster_offset,
-                    self.accounts.len(),
-                ),
-                local,
-                &observation.market,
-            );
+            let equity = equity_cents_with_pending(group_account, &observation.market);
             // equity<=0 不复审（session PlanLifecycleReview::capture 同式
             // 早退——权益耗尽的账户无修订面）。
             if equity.cents() > 0 {
@@ -3729,17 +3721,7 @@ impl GroupState {
                     code,
                     price,
                     held_qty,
-                    equity: equity_cents_with_pending(
-                        group_account,
-                        &self.child_in_flight,
-                        roster_slice(
-                            &projection.account_ids,
-                            self.roster_offset,
-                            self.accounts.len(),
-                        ),
-                        local,
-                        &observation.market,
-                    ),
+                    equity: equity_cents_with_pending(group_account, &observation.market),
                     score,
                     fundamental_ready,
                 },
@@ -3820,7 +3802,6 @@ impl GroupState {
                         .map(std::sync::Arc::as_ref)
                         .collect::<Vec<_>>(),
                     &out.belief,
-                    &self.child_in_flight,
                     &projection,
                     local,
                     &observation.market,
@@ -3829,7 +3810,6 @@ impl GroupState {
                     &plan,
                     crate::session::ratio_to_bp(path.thirty_minute.return_ratio),
                     crate::session::ratio_to_bp(path.one_minute.return_ratio),
-                    self.roster_offset,
                 );
                 if let crate::plans::PauseAssessment::PauseAndRequestCancel(reason) =
                     assessment.pause
@@ -5534,7 +5514,6 @@ impl<'a> crate::session::PlanReviewHost for GroupReviewHost<'a> {
                 .map(std::sync::Arc::as_ref)
                 .collect::<Vec<_>>(),
             self.belief,
-            &self.state.child_in_flight,
             self.state.root_projection.as_ref().expect("复审位投影在"),
             self.local,
             &self.market,
@@ -5546,7 +5525,6 @@ impl<'a> crate::session::PlanReviewHost for GroupReviewHost<'a> {
             plan,
             return_30min_bp,
             return_1min_bp,
-            self.state.roster_offset,
         )
     }
     fn review_facts(&self, _account: crate::AccountId, code: &crate::StockId) -> (Money, u32) {
@@ -5725,14 +5703,13 @@ fn group_institution_behavior(
 /// 组内机构账户风险观察（组权威账户 + 在途票）。
 ///
 /// 风险持仓 qty 与权益读面必须同一口径：组 shares 在下单时已实扣在途卖
-/// 单量，故持仓 qty = 在手 + `ChildTicket.remaining`（实时未成交余量）。
-/// 只加 `acct.shares` 会让同一份观察“权益含在途、持仓不含在途”，把账户
-/// 回撤放大、仓位权重压小；纯在途股（shares==0）因此同样必须入观察。
-/// 真清仓（qty==0）不构造零量 `RiskPositionInput`。
+/// 单量，故持仓 qty = 在手 + `pending_sell_qty`（账户级实时未成交余量，
+/// 覆盖计划链票与外部/无票卖单）。只读 shares 会让同一份观察“权益含在途、
+/// 持仓不含在途”，把回撤放大、仓位权重压小；纯在途股（shares==0）同样
+/// 入观察。真清仓（qty==0）不构造零量 `RiskPositionInput`。
 ///
-/// 复杂度：每股一次 `child_in_flight` 查找，与紧邻的权益读面同阶
-/// O(股票数 × log 在途票数)；在途票通常为 0~8 条，且本函数只在计划复审/
-/// 报价点调用，不进入逐 tick 全员热路径。
+/// 复杂度：每股 O(1) 读镜像，总计 O(股票数)；只在计划复审/报价点调用，
+/// 不进入逐 tick 全员热路径。
 fn account_risk_observation_at_view(
     acct: &GroupAccount,
     market: &crate::strategy::MarketView,
@@ -5784,7 +5761,6 @@ fn account_risk_observation_at_view(
 fn group_urgency_at_view(
     accounts: &[&GroupAccount],
     belief: &crate::strategy::BeliefBook,
-    child_in_flight: &std::collections::BTreeMap<(crate::AccountId, crate::StockId), ChildTicket>,
     projection: &std::sync::Arc<super::world::RootProjection>,
     local: LocalIdx,
     market: &crate::strategy::MarketView,
@@ -5793,8 +5769,6 @@ fn group_urgency_at_view(
     plan: &crate::plans::TradingPlan,
     return_30min_bp: Option<i32>,
     return_1min_bp: Option<i32>,
-    // 本组在全局名册的偏移（P0 缺陷修复——名册段切片的唯一入口）。
-    roster_offset: usize,
 ) -> (
     crate::plans::UrgencyAssessment,
     crate::plans::urgency::risk::RiskUrgencyAssessment,
@@ -10100,7 +10074,6 @@ mod pending_sell_risk_tests {
         state: &GroupState,
         belief: &crate::strategy::BeliefBook,
         market: &crate::strategy::MarketView,
-        roster_offset: usize,
     ) -> crate::plans::urgency::risk::RiskUrgencyAssessment {
         let accounts: Vec<&GroupAccount> =
             state.accounts.iter().map(std::sync::Arc::as_ref).collect();
@@ -10119,7 +10092,6 @@ mod pending_sell_risk_tests {
         let (_, risk) = group_urgency_at_view(
             &accounts,
             belief,
-            &state.child_in_flight,
             state.root_projection.as_ref().expect("根部投影在"),
             0,
             market,
@@ -10128,7 +10100,6 @@ mod pending_sell_risk_tests {
             &plan,
             None,
             None,
-            roster_offset,
         );
         risk
     }
@@ -10218,8 +10189,7 @@ mod pending_sell_risk_tests {
         );
         drawdown_close(observed.drawdown_from_peak, dd);
 
-        let (active, actual_bp, actual_urgency) =
-            assessed(&risk_at_view(&state, &belief, &market, 0));
+        let (active, actual_bp, actual_urgency) = assessed(&risk_at_view(&state, &belief, &market));
         assert_eq!(actual_bp, Some(bp));
         assert_eq!(actual_urgency, urgency);
         assert!(active, "在途卖余量仍是可减仓位");
@@ -10284,10 +10254,7 @@ mod pending_sell_risk_tests {
             );
         }
         drawdown_close(observed.drawdown_from_peak, 0.0);
-        assert_eq!(
-            assessed(&risk_at_view(&state, &belief, &market, 0)).1,
-            Some(0)
-        );
+        assert_eq!(assessed(&risk_at_view(&state, &belief, &market)).1, Some(0));
     }
 
     /// 非持仓面边界：买单 purse 是现金占用（权益=现金+占用），全成
@@ -10313,15 +10280,14 @@ mod pending_sell_risk_tests {
         let observed = observe(&sold, &belief, &market);
         assert_eq!(observed.equity, crate::money::Money::from_cents(100_000));
         assert!(observed.positions.is_empty(), "remaining=0 不得造零量条目");
-        let (active, drawdown_bp, _) = assessed(&risk_at_view(&sold, &belief, &market, 0));
+        let (active, drawdown_bp, _) = assessed(&risk_at_view(&sold, &belief, &market));
         assert_eq!(drawdown_bp, Some(0));
         assert!(!active, "已全成的卖单不再提供可减仓位");
     }
 
-    /// 非零 `roster_offset`：local 0 必须解析到全局名册位 1（本账户），
-    /// 不得把他账户的在途票算进本账户风险观察。
+    /// 账户级镜像不受他账户 `ChildTicket` 影响（无票/外票均不漏、不混）。
     #[test]
-    fn non_zero_roster_offset_keeps_in_flight_tickets_isolated() {
+    fn account_mirror_ignores_foreign_child_tickets() {
         let mut state =
             chain_harness_roster(Side::Sell, 200, 1, vec![crate::AccountId(8), ACCOUNT]);
         std::sync::Arc::make_mut(&mut state.accounts[0]).cash = 100_000;
@@ -10347,12 +10313,6 @@ mod pending_sell_risk_tests {
         // 持仓 qty 改读账户级 `pending_sell_qty` 后，风险观察不再经过
         // 名册切片；他账户票 500 股不得混入本账户。
         assert_eq!(qty(&own, 0, PRICE), 200, "他账户在途 500 不得混入");
-
-        // 真实生产调用点仍须传本组 offset（源码两处传 self.roster_offset）。
-        let (active, drawdown_bp, urgency) = assessed(&risk_at_view(&state, &belief, &market, 1));
-        assert_eq!(drawdown_bp, Some(0));
-        assert_eq!(urgency, crate::plans::Urgency::Normal);
-        assert!(active);
     }
 
     /// 无 `ChildTicket` 的卖单（外部/注入路径）：账户级
@@ -10375,6 +10335,8 @@ mod pending_sell_risk_tests {
             let observed = observe(&state, &belief, &market);
             assert_eq!(observed.equity, crate::money::Money::from_cents(equity));
             assert_eq!(qty(&observed, 0, PRICE), held, "无票卖单按镜像计入");
+            let (active, _, _) = assessed(&risk_at_view(&state, &belief, &market));
+            assert!(active, "无票卖单仍提供减仓紧迫度");
         }
     }
 
@@ -10424,7 +10386,7 @@ mod pending_sell_risk_tests {
         let state = chain_harness(Side::Sell);
         let belief = belief_with_peak(None);
         let market = market_at(&[(0, PRICE)]);
-        match risk_at_view(&state, &belief, &market, 0) {
+        match risk_at_view(&state, &belief, &market) {
             crate::plans::urgency::risk::RiskUrgencyAssessment::Unavailable { reason } => {
                 assert!(reason.contains("no own-observed institution equity peak"));
             }

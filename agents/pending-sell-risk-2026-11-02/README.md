@@ -36,11 +36,11 @@
 - `evidence/red.txt`：把生产实现临时回退到旧口径后的运行结果，
   4 passed / 3 failed（权益 100000≠300000、多股 300000≠500000、
   offset 用例缺股 panic）。
-- `evidence/green.txt`、`evidence/green-final.txt`：修复后 7/7 通过，
+- `evidence/green.txt`、`evidence/green-final.txt`：修复后 9/9 通过，
   单命令 0.02~0.10s（`run-with-deadline.mjs 10000`）。
 - 性能探针（临时，未提交）：5 股/1 在途票、debug 构建，完整风险观察
-  ~6.3µs/call，相对旧口径 ~5.6µs/call 开销 12.6%（<20%）；单次持股扫描
-  使每股在途查找从两次降为一次。探针已删除。
+  ~6.3µs/call，相对旧口径 ~5.6µs/call 开销 12.6%（<20%）；最终实现每股 O(1) 读
+  账户级镜像，不再查 `ChildTicket`。探针已删除。
 
 ## 边界
 
@@ -64,8 +64,4 @@
   全部卖单（含外部/无票单），权益与风险持仓共用；新增无票全未成交/部分
   成交红测（`red-mirror.txt`：旧票口径 2 passed / 7 failed）及成本价边界
   （净成本为正、回收超投入不可用）。
-- 未修（测试覆盖缺口）：offset 用例直接调用 `group_urgency_at_view`，
-  未经过 `run_chain_decision` / `GroupReviewHost` 生产调用点；两处源码目前
-  都传 `self.roster_offset`，属防回归缺口而非现存错误。
-- 未修（残余缺口）：串行兼容管线与 runtime 的同输入自动化对照、含在途
-  持仓的 `cost_price`/`unrealized_return` 断言未建立。
+- 未修（残余缺口）：串行兼容管线与 runtime 的同输入自动化对照未建立。
