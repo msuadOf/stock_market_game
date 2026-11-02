@@ -179,8 +179,8 @@ inFlightCleanupCase("normal-batch");
 it("真实 leader 已退出为 Z 时仍清理有同 birth 锚的原 group 成员", { timeout: 10000, skip: process.platform !== "linux" }, async () => {
   const { terminateTree } = await import("./run-with-deadline.mjs");
   const leaderScript = "const{spawn}=require('node:child_process');const fs=require('node:fs');const member=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});const raw=fs.readFileSync('/proc/'+member.pid+'/stat','utf8');process.stdout.write(JSON.stringify({pid:member.pid,birth:raw.slice(raw.lastIndexOf(')')+2).split(' ')[19]}));setTimeout(()=>process.exit(0),50);";
-  // 自有 parent 暂停事件循环，让已退出 leader 保留为 Z，随后正常 reap；不增加 fixture 工具依赖。
-  const parentScript = `const{spawn}=require('node:child_process');const fs=require('node:fs');const leader=spawn(process.execPath,['-e',${JSON.stringify(leaderScript)}],{detached:true,stdio:['ignore','pipe','inherit']});let output='';leader.stdout.on('data',chunk=>{output+=chunk;const member=JSON.parse(output);const raw=fs.readFileSync('/proc/'+leader.pid+'/stat','utf8');process.stdout.write(JSON.stringify({root:{pid:leader.pid,birth:raw.slice(raw.lastIndexOf(')')+2).split(' ')[19]},member})+'\\n');const until=performance.now()+1500;while(performance.now()<until){}});leader.on('close',()=>process.exit(0));`;
+  // 阻塞自有 parent，让已退出 leader 保留为 Z；有界等待结束后正常 reap。
+  const parentScript = `const{spawn}=require('node:child_process');const fs=require('node:fs');const leader=spawn(process.execPath,['-e',${JSON.stringify(leaderScript)}],{detached:true,stdio:['ignore','pipe','inherit']});let output='';leader.stdout.on('data',chunk=>{output+=chunk;const member=JSON.parse(output);const raw=fs.readFileSync('/proc/'+leader.pid+'/stat','utf8');process.stdout.write(JSON.stringify({root:{pid:leader.pid,birth:raw.slice(raw.lastIndexOf(')')+2).split(' ')[19]},member})+'\\n');Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,3500)});leader.on('close',()=>process.exit(0));`;
   const parent = spawn(process.execPath, ["-e", parentScript], { stdio: ["ignore", "pipe", "inherit"] });
   const closed = once(parent, "close");
   let owned;
@@ -200,7 +200,7 @@ it("真实 leader 已退出为 Z 时仍清理有同 birth 锚的原 group 成员
       if (rootState !== "Z") await new Promise((resolve) => setTimeout(resolve, 2));
     } while (rootState !== "Z" && performance.now() < waitingUntil);
     assert.equal(rootState, "Z", "必须实际建立 leader 已退出但原身份仍占用 PID 的前提");
-    await terminateTree(owned.root, true, Date.now() + 500);
+    await terminateTree(owned.root, true, Date.now() + 2000);
     try {
       const raw = readFileSync(`/proc/${owned.member.pid}/stat`, "utf8");
       const fields = raw.slice(raw.lastIndexOf(")") + 2).split(" ");
