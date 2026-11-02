@@ -1652,3 +1652,77 @@ fn correction_manual_system_state_keeps_same_first_fatal_in_terminal_drain() {
     );
     assert_eq!(driver.terminal_causal_snapshot_for_test(), Some(terminal));
 }
+
+/// 当前 Rust producer 的短档必须与 Web 共用同一原始字节；手工补字段或改档会让此测试失效。
+#[test]
+fn current_completed_correction_fixture_matches_producer_and_restores() {
+    let mut setup = correction_setup("2030-06-08", None);
+    if let Some(crate::company::config::CompanySystemConfig::Simple(mut config)) =
+        setup.company_system.take()
+    {
+        config.prehistory_periods = 6;
+        setup.company_system = Some(crate::company::config::CompanySystemConfig::Simple(config));
+    } else {
+        panic!("更正夹具必须使用 Simple 公司系统");
+    }
+    setup.history_len = 1;
+    let mut session = GameSession::new_with_runtime_groups(setup, 7181, 3).unwrap();
+    let request = correction_request(&session, CompanyId(0));
+    let operation_id = request.operation_id.clone();
+    let epoch = session.report_correction_epoch();
+    session.enqueue_report_correction(&epoch, request).unwrap();
+    session.end_civil_day().unwrap();
+    let save = session.save().unwrap();
+    let generated = serde_json::to_vec(&save).unwrap();
+    assert!(
+        generated.len() <= 160_000,
+        "代表性短档不得超过 160000 bytes，实际 {}",
+        generated.len()
+    );
+    assert_eq!(
+        save.setup.runtime_sync_policy,
+        crate::RuntimeSyncPolicy::EveryTick
+    );
+    if let Some(path) = std::env::var_os("SMG_WRITE_CURRENT_CORRECTION_FIXTURE") {
+        std::fs::write(path, &generated).expect("写出当前 producer 夹具失败");
+    }
+    let fixture = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/correction/current-completed-save.json"),
+    )
+    .expect("当前 Rust producer 夹具必须存在");
+    assert_eq!(
+        generated, fixture,
+        "当前 producer 输出漂移；必须重新生成夹具，不能手改 JSON"
+    );
+
+    let decoded = crate::decode_save_slot(&generated, &crate::SaveDecodeLimits::default())
+        .expect("当前夹具必须通过 Rust 完整 SaveSlot 读取");
+    let restored = GameSession::restore(&decoded).expect("当前夹具必须通过 Rust 正常恢复");
+    let completed = &restored.report_corrections().unwrap().completed[&operation_id];
+    assert_eq!(completed.committed_at.second_of_day(), 18 * 3_600);
+    assert!(!completed.publications.is_empty());
+    let value = serde_json::to_value(&save).unwrap();
+    assert_eq!(
+        value["company_state"]["CompanySystem"]["system"]["implementation"]["state"]["companies"]
+            ["0"]["finance"]["closing"]["restatements"][0][1][0][0],
+        serde_json::json!(900_000_001),
+        "代表性短档必须保留真实更正重述 BusinessEventId"
+    );
+    let status = restored.report_corrections().unwrap();
+    if let Some(path) = std::env::var_os("SMG_CURRENT_CORRECTION_WEB_ROUNDTRIP_SAVE") {
+        let bytes = std::fs::read(path).expect("读取当前 Web strict save 回写失败");
+        let roundtrip: SaveSlot =
+            serde_json::from_slice(&bytes).expect("Web 回写必须通过完整 SaveSlot 严格反序列化");
+        assert_eq!(
+            serde_json::to_value(&roundtrip).unwrap(),
+            serde_json::to_value(&save).unwrap()
+        );
+        let decoded = crate::decode_save_slot(&bytes, &crate::SaveDecodeLimits::default())
+            .expect("Web 回写必须通过当前 Rust 完整 SaveSlot 读取");
+        let roundtrip_session =
+            GameSession::restore(&decoded).expect("Web 回写必须通过 Rust 正常恢复");
+        assert_eq!(roundtrip_session.report_corrections().unwrap(), status);
+        println!("CURRENT_CORRECTION_WEB_ROUNDTRIP_OK");
+    }
+}

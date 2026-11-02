@@ -1,0 +1,10 @@
+✔ company schema parsers preserve populated company slices (288.255201ms)
+✔ company schema parsers reject malformed exact subdomains with paths (161.979154ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 803.687218

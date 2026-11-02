@@ -1,0 +1,125 @@
+warning: function `produce_decision_output` is never used
+   --> packages/engine/src/session/pipeline/npc_tick_preparation.rs:932:27
+    |
+932 | pub(in crate::session) fn produce_decision_output(
+    |                           ^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `can_prepare` is never used
+  --> packages/engine/src/session/pipeline/read_only_start.rs:35:15
+   |
+35 | pub(super) fn can_prepare(session: &GameSession) -> bool {
+   |               ^^^^^^^^^^^
+
+warning: function `prepare` is never used
+  --> packages/engine/src/session/pipeline/read_only_start.rs:45:15
+   |
+45 | pub(super) fn prepare(session: &GameSession) -> ReadOnlyStart {
+   |               ^^^^^^^
+
+warning: function `prepare_with_observer` is never used
+   --> packages/engine/src/session/pipeline/read_only_start.rs:134:4
+    |
+134 | fn prepare_with_observer(
+    |    ^^^^^^^^^^^^^^^^^^^^^
+
+   Compiling engine v0.1.0 (/data1/baiyifan/workplace/stock_market_game/.worktree/branch-audit-correction-20261102/packages/engine)
+warning: `engine` (lib) generated 4 warnings
+warning: constant `COMMIT_FIELD_EXPECTED` is never used
+    --> packages/engine/src/session.rs:2183:30
+     |
+2183 | pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 29] = [
+     |                              ^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `engine` (lib test) generated 1 warning
+    Finished `test` profile [unoptimized] target(s) in 1m 37s
+  Executable unittests src/lib.rs (target/debug/deps/engine-3eb2aa70a85e274e)
+  Executable tests/account.rs (target/debug/deps/account-730e58565fbcd194)
+  Executable tests/accounting/main.rs (target/debug/deps/accounting-cddf87937adda828)
+  Executable tests/analysis_profiles/main.rs (target/debug/deps/analysis_profiles-231876c018d4b3ff)
+  Executable tests/attention_discovery/main.rs (target/debug/deps/attention_discovery-6bbb4becc224a31a)
+  Executable tests/auction.rs (target/debug/deps/auction-c8e1a3960b86b3b5)
+  Executable tests/audit_restore_guards.rs (target/debug/deps/audit_restore_guards-204976c041c611f3)
+  Executable tests/bank_accounting/main.rs (target/debug/deps/bank_accounting-251f4a22b9982ed2)
+  Executable tests/behavior.rs (target/debug/deps/behavior-583eebae7992d1d1)
+  Executable tests/calendar/main.rs (target/debug/deps/calendar-fca3413a6341f7a9)
+  Executable tests/civil_clock.rs (target/debug/deps/civil_clock-22a8799547bb12d1)
+  Executable tests/company_capital_restore.rs (target/debug/deps/company_capital_restore-97edd1f32825a6a0)
+  Executable tests/company_catalog_view.rs (target/debug/deps/company_catalog_view-a55db31e965e2bcf)
+  Executable tests/company_decision_session/main.rs (target/debug/deps/company_decision_session-bf864d5bf520e2fc)
+  Executable tests/company_event_contract.rs (target/debug/deps/company_event_contract-c213271cf3d4f010)
+  Executable tests/company_history_sharing.rs (target/debug/deps/company_history_sharing-5ca5eecdc7e8f162)
+  Executable tests/company_opening/main.rs (target/debug/deps/company_opening-36b5042612b94f84)
+  Executable tests/company_operations/main.rs (target/debug/deps/company_operations-cd11ded1d49c85a3)
+  Executable tests/company_player_commands.rs (target/debug/deps/company_player_commands-a5f95eba8ce00ba2)
+  Executable tests/company_public_financials.rs (target/debug/deps/company_public_financials-d93ccf90a27b473b)
+  Executable tests/company_query_contract.rs (target/debug/deps/company_query_contract-50597ab36931babb)
+  Executable tests/company_r4_tax_production.rs (target/debug/deps/company_r4_tax_production-51f47aaa9dee72c8)
+  Executable tests/company_scenarios/main.rs (target/debug/deps/company_scenarios-ab8163dbc1b522f6)
+  Executable tests/company_source_selection.rs (target/debug/deps/company_source_selection-650166f063946c07)
+  Executable tests/company_state.rs (target/debug/deps/company_state-b5de6a6afa1b6bb2)
+  Executable tests/company_state_domain_strict.rs (target/debug/deps/company_state_domain_strict-89b187f5786248c9)
+  Executable tests/compute.rs (target/debug/deps/compute-15d9f2b7c8c3c28f)
+  Executable tests/config.rs (target/debug/deps/config-23ba76962c62bb4a)
+  Executable tests/consolidation/main.rs (target/debug/deps/consolidation-3e604676c5b922d7)
+  Executable tests/diagnostic_absence.rs (target/debug/deps/diagnostic_absence-e818ea24dae281e5)
+  Executable tests/event_mapping_contract.rs (target/debug/deps/event_mapping_contract-2091baa211f4828c)
+  Executable tests/experience.rs (target/debug/deps/experience-6d04cd324bfe997c)
+  Executable tests/experience_feedback/main.rs (target/debug/deps/experience_feedback-7c0e0a7490e41e66)
+  Executable tests/extraction_replay.rs (target/debug/deps/extraction_replay-3fddd71ff92e2ebe)
+  Executable tests/fundamental_beliefs/main.rs (target/debug/deps/fundamental_beliefs-26bdd55921dda858)
+  Executable tests/industrial_accounting/main.rs (target/debug/deps/industrial_accounting-a2ba51e42e79a9b1)
+  Executable tests/industry_reports/main.rs (target/debug/deps/industry_reports-37f273204054755b)
+  Executable tests/information_acquisition/main.rs (target/debug/deps/information_acquisition-33741b9021f08ba6)
+  Executable tests/insurance_accounting/main.rs (target/debug/deps/insurance_accounting-9ae59e07e096a9f1)
+  Executable tests/market/main.rs (target/debug/deps/market-9288761ee801d117)
+  Executable tests/mixed_calendar_c2c.rs (target/debug/deps/mixed_calendar_c2c-69970d208ad9974b)
+  Executable tests/mixed_calendar_c2c_feedback.rs (target/debug/deps/mixed_calendar_c2c_feedback-8bd3df51f2541a3d)
+  Executable tests/mixed_calendar_feedback.rs (target/debug/deps/mixed_calendar_feedback-90db0958fc47de79)
+  Executable tests/money.rs (target/debug/deps/money-5f9ec2a369cd2c50)
+  Executable tests/observations.rs (target/debug/deps/observations-d67175671c7f9dca)
+  Executable tests/orderbook.rs (target/debug/deps/orderbook-10906b1a185bda52)
+  Executable tests/personal_full_validation.rs (target/debug/deps/personal_full_validation-f4e9da9db505df51)
+  Executable tests/pipeline_contract.rs (target/debug/deps/pipeline_contract-a02c40d48bd25f87)
+  Executable tests/plan_allocation/main.rs (target/debug/deps/plan_allocation-66dad3f56f8ab836)
+  Executable tests/plan_identity.rs (target/debug/deps/plan_identity-4c6cc6b4c30fbbdd)
+  Executable tests/plan_identity_behavior.rs (target/debug/deps/plan_identity_behavior-4ba0cb78c616347d)
+  Executable tests/plans.rs (target/debug/deps/plans-45b4ddd72bf27bd9)
+  Executable tests/policy_manifest.rs (target/debug/deps/policy_manifest-73b18325427f26f0)
+  Executable tests/protocol_acceptance.rs (target/debug/deps/protocol_acceptance-a6bda31807618e7d)
+  Executable tests/protocol_civil.rs (target/debug/deps/protocol_civil-8bfeefd11643feff)
+  Executable tests/protocol_host_restore.rs (target/debug/deps/protocol_host_restore-87f25e30cebdcec4)
+  Executable tests/protocol_projection.rs (target/debug/deps/protocol_projection-07f07337d77f4819)
+  Executable tests/protocol_runtime_delta.rs (target/debug/deps/protocol_runtime_delta-97d783009d78daf5)
+  Executable tests/publications/main.rs (target/debug/deps/publications-6b4ffdd618623212)
+  Executable tests/real_estate_accounting/main.rs (target/debug/deps/real_estate_accounting-e5780126b1654bb5)
+  Executable tests/runtime_diagnostics_contract.rs (target/debug/deps/runtime_diagnostics_contract-6985f7e67297544a)
+  Executable tests/runtime_diagnostics_d1.rs (target/debug/deps/runtime_diagnostics_d1-ce954ab92064e403)
+  Executable tests/runtime_diagnostics_d2.rs (target/debug/deps/runtime_diagnostics_d2-808921694989f9b2)
+  Executable tests/runtime_flip_batch1.rs (target/debug/deps/runtime_flip_batch1-dd1262ff47b9c05d)
+  Executable tests/runtime_flip_batch2.rs (target/debug/deps/runtime_flip_batch2-1b9745c0de0805ff)
+  Executable tests/runtime_flip_batch3.rs (target/debug/deps/runtime_flip_batch3-c8946fb38dc2972b)
+  Executable tests/runtime_flip_batch4.rs (target/debug/deps/runtime_flip_batch4-678a97515e1b93b3)
+  Executable tests/runtime_flip_batch5.rs (target/debug/deps/runtime_flip_batch5-1f4c7c92acaff741)
+  Executable tests/runtime_semantics_anchor.rs (target/debug/deps/runtime_semantics_anchor-2d339bd4020cfd80)
+  Executable tests/save_contract/main.rs (target/debug/deps/save_contract-eca1eeae557b8b6d)
+  Executable tests/scale_restore_limits.rs (target/debug/deps/scale_restore_limits-667e949404408f63)
+  Executable tests/scope_boundary.rs (target/debug/deps/scope_boundary-47cd976b78c0ba88)
+  Executable tests/session.rs (target/debug/deps/session-75daef09c95d85b4)
+  Executable tests/session_company_assembly.rs (target/debug/deps/session_company_assembly-49f27ea57e0eceb5)
+  Executable tests/session_company_foundation.rs (target/debug/deps/session_company_foundation-c3d45966a29b05a7)
+  Executable tests/session_company_read_views.rs (target/debug/deps/session_company_read_views-c678e4c7f9c4b645)
+  Executable tests/step_skeleton.rs (target/debug/deps/step_skeleton-e9acd5cf5c0e9aea)
+  Executable tests/stock_identity_view.rs (target/debug/deps/stock_identity_view-35e55b0bdf8e5fd7)
+  Executable tests/strategy.rs (target/debug/deps/strategy-be9a0e4945e66015)
+  Executable tests/strategy_state.rs (target/debug/deps/strategy_state-44f4b63d4152e93f)
+  Executable tests/strategy_state_adversarial.rs (target/debug/deps/strategy_state_adversarial-fe4a7472b8ab281a)
+  Executable tests/technical_memory/main.rs (target/debug/deps/technical_memory-95e76a00a4750b4c)
+  Executable tests/tick_frame_commit.rs (target/debug/deps/tick_frame_commit-99c1aa9ba3c7ad2e)
+  Executable tests/tick_protocol.rs (target/debug/deps/tick_protocol-a459beea95bd7315)
+  Executable tests/urgency/main.rs (target/debug/deps/urgency-8e059495b1536cd1)
+  Executable tests/verification_evidence.rs (target/debug/deps/verification_evidence-7d060364f249d30a)
+  Executable tests/wasm_wait_primitives.rs (target/debug/deps/wasm_wait_primitives-5d54608a4b0dc7a8)

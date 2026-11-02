@@ -9,19 +9,25 @@ import { parseClosingRegistry } from "./closing.ts";
 
 const tuple = (source: unknown) => ({ versions: [], restatements: [[{ Standalone: 0 }, [[source, "2030-03"]]]] });
 
-const readCompletedSaveText = () => {
-  const text = readFileSync(new URL("../../fixtures/correction/rust-completed-save.json", import.meta.url), "utf8");
-  const projected = text.replace('"setup":{', '"setup":{"runtime_sync_policy":"every_tick",');
-  assert.notEqual(projected, text);
-  return projected;
-};
+const currentCompletedSaveUrl = new URL("../../../../../../packages/engine/tests/fixtures/correction/current-completed-save.json", import.meta.url);
+const historicalCompletedSaveUrl = new URL("../../fixtures/correction/rust-completed-save.json", import.meta.url);
 
-test("真实更正日结完整SaveSlot的restatement BusinessEventId数值无损消费", { timeout: 10000 }, () => {
-  const bytes = readFileSync(new URL("../../fixtures/correction/rust-completed-save.json", import.meta.url));
+const readCompletedSaveText = () => readFileSync(currentCompletedSaveUrl, "utf8");
+
+test("历史completed SaveSlot保留原件，当前契约显式拒绝缺少runtime_sync_policy", { timeout: 10000 }, () => {
+  const bytes = readFileSync(historicalCompletedSaveUrl);
   assert.equal(createHash("sha256").update(bytes).digest("hex"), "92127f8a150787c3d9ec64f44211117b1f1435027ed643bfa779d908dd35b6bd");
-  const text = readCompletedSaveText();
+  const text = bytes.toString("utf8");
+  assert.throws(() => parseSaveJson(text), /setup\.runtime_sync_policy/);
+});
+
+test("当前Rust producer生成的更正日结完整SaveSlot保持raw无损消费", { timeout: 10000 }, () => {
+  const bytes = readFileSync(currentCompletedSaveUrl);
+  assert.equal(createHash("sha256").update(bytes).digest("hex"), "daeee7e4de1cdc1b1ea9a192f7dc82e315a3fb383310c18451c77577a35a6de1");
+  const text = bytes.toString("utf8");
   const parsed = parseSaveJson(text);
   assert.deepEqual(parsed, JSON.parse(text));
+  assert.equal(parsed.setup.runtime_sync_policy, "every_tick");
   assert.ok(Object.keys(parsed.report_correction_operations).length > 0);
 });
 

@@ -1,0 +1,11 @@
+✔ 新局 Web 默认明确选择 every_tick (1.40373ms)
+✔ 当前 SaveSlot 要求并原样保留三种 runtime_sync_policy (9.836473ms)
+✔ 当前 SaveSlot 缺少或携带未知 runtime_sync_policy 时显式拒绝 (2.839992ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 191.290705

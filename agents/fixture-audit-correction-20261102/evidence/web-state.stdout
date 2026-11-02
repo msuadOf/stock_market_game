@@ -1,0 +1,22 @@
+✔ 历史Rustgenerated-company-state-registry.json的synthetic bindings投影对象/raw无损且单一权威tag (62.29154ms)
+✔ 历史Rustmanual-company-state-registry.json的synthetic bindings投影对象/raw无损且单一权威tag (19.540822ms)
+✔ 历史Rustlegacy-company-state.json的synthetic bindings投影对象/raw无损且单一权威tag (85.820665ms)
+✔ 历史Rustgenerated-company-state-registry.json原件保持未投影并独立拒绝，合成空表后缺runtime_sync_policy明确拒绝 (6.116086ms)
+✔ 历史Rustmanual-company-state-registry.json原件保持未投影并独立拒绝，合成空表后缺runtime_sync_policy明确拒绝 (4.991273ms)
+✔ 历史Rustlegacy-company-state.json原件保持未投影并独立拒绝，合成空表后缺runtime_sync_policy明确拒绝 (30.212618ms)
+✔ 历史Rustgenerated-company-state-registry.json的synthetic policy投影缺required bindings明确拒绝 (6.204978ms)
+✔ 历史Rustmanual-company-state-registry.json的synthetic policy投影缺required bindings明确拒绝 (4.89388ms)
+✔ required单tag拒绝旧双源根字段、缺失/null/双tag/未知tag (49.481431ms)
+✔ setup模式与selected公司tag必须一致，不迁移旧源 (26.625065ms)
+✔ 真实REG SettlementDayMarket.binding五字段required且unknown逐层拒绝 (30.678332ms)
+✔ 公司状态全部真实非空结构拒绝未知字段，nullable必填不被默认掩盖 (456.394181ms)
+✔ rawJSON在覆盖前拒绝重复tag、转义后同键与REG binding重复键 (22.429024ms)
+✔ canonical整数字符串拒绝前导零/负零与unsafe裸数，保真实单位 (19.792659ms)
+ℹ tests 14
+ℹ suites 0
+ℹ pass 14
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1061.435012
