@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { buildRustTestExecutionPolicy } from "./run-full-regression.mjs";
 import { executeSupervisedRustTestBinaries } from "./rust-test-case-supervisor.mjs";
+import { killRecordedProcesses } from "./rust-test-case-supervisor-test-process.mjs";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -19,7 +20,7 @@ export async function runFailingExportCase(mode, { remainingMs = 6000 } = {}) {
   const receipts = path.join(dir, "receipts");
   const marker = path.join(dir, "grandchild-survived");
   const ready = path.join(dir, "grandchild-ready");
-  const grandchild = `const fs=require('node:fs');const out=process.env.TS_RS_EXPORT_DIR;const marker=${JSON.stringify(marker)};const ready=${JSON.stringify(ready)};fs.writeFileSync(ready,String(process.pid));setInterval(()=>{fs.mkdirSync(out,{recursive:true});fs.writeFileSync(marker,'escaped');},100);`;
+  const grandchild = `const fs=require('node:fs');const out=process.env.TS_RS_EXPORT_DIR;const marker=${JSON.stringify(marker)};const ready=${JSON.stringify(ready)};const stat=fs.readFileSync('/proc/self/stat','utf8');const birth=stat.slice(stat.lastIndexOf(')')+2).split(' ')[19];fs.writeFileSync(ready,JSON.stringify({pid:process.pid,birth}));setInterval(()=>{fs.mkdirSync(out,{recursive:true});fs.writeFileSync(marker,'escaped');},100);`;
   const finish = mode === "failure" ? "process.exit(1);" : "setInterval(() => {}, 1000);";
   await writeFile(binary, `#!${process.execPath}\nimport { spawn } from 'node:child_process';\nimport fs from 'node:fs';\nconst args = process.argv.slice(2);\nif (args.includes('--list')) { if (!args.includes('--ignored')) console.log('a::export_bindings_failure: test'); } else { const out = process.env.TS_RS_EXPORT_DIR; fs.mkdirSync(out, { recursive: true }); fs.writeFileSync(out + '/type.ts', 'export {};\\n'); fs.appendFileSync(${JSON.stringify(receipts)}, out + '\\n'); spawn(process.execPath, ['-e', ${JSON.stringify(grandchild)}], { detached: true, stdio: 'ignore' }); const until = Date.now() + 1000; while (!fs.existsSync(${JSON.stringify(ready)}) && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 10)); ${finish} }\n`);
   await chmod(binary, 0o755);
@@ -39,10 +40,11 @@ export async function runFailingExportCase(mode, { remainingMs = 6000 } = {}) {
     assert.ok((await readdir(dir)).every((name) => !name.startsWith("rust-export-")));
   } finally {
     // 断言失败时也必须终止测试孙进程，不能让 detached 进程泄漏。
+    let records = [];
     try {
-      const pid = Number((await readFile(ready, "utf8")).trim());
-      if (Number.isSafeInteger(pid) && pid > 0) process.kill(pid, "SIGKILL");
-    } catch (error) { if (error.code !== "ENOENT" && error.code !== "ESRCH") throw error; }
+      records = [JSON.parse(await readFile(ready, "utf8"))];
+    } catch (error) { if (error.code !== "ENOENT") throw error; }
+    if (records.length > 0) killRecordedProcesses(records);
     await rm(dir, { recursive: true, force: true });
   }
 }

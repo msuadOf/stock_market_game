@@ -322,12 +322,9 @@ async function supervise(input) {
     const deadline = earliestCleanupDeadline(input.batchDeadline, record, records.values());
     stopping = (async () => {
       let tokenCleanupFailure;
-      const orphaned = process.platform === "linux" && birthIdentity(domain.pid) === undefined;
-      // 失败收尾必须覆盖触发时仍登记的所有 case：另一个 case 可能已自行失败并留下 detached 孙进程。
-      // 已由 runBoundedCommand 判定超时的 case 不再重复扫描，保留进程树终止预算。
-      const failedRecords = orphaned
-        ? Array.from(records.values())
-        : Array.from(records.values()).filter((active) => !active.expired);
+      // 失败收尾必须覆盖触发时仍登记的所有 case（包括已 expired 的记录）：
+      // launcher 被暂停时，子进程可能已退出并留下 detached 孙进程，不能依赖进程树终止。
+      const failedRecords = Array.from(records.values());
       const tokenCleanup = cleanupCompletedCase.afterFailure(failedRecords, deadline)
         .catch((error) => { tokenCleanupFailure = error; });
       try {
@@ -342,7 +339,7 @@ async function supervise(input) {
       try { await withinDeadline(tokenCleanup, deadline, "failed case token cleanup"); }
       catch (error) { tokenCleanupFailure = tokenCleanupFailure === undefined ? error : new AggregateError([tokenCleanupFailure, error], `${tokenCleanupFailure.message}; failed case token cleanup: ${error.message}`); }
       if (tokenCleanupFailure !== undefined) {
-        terminal = new AggregateError([terminal, tokenCleanupFailure], `${terminal.message}; failed case token cleanup remains unconfirmed: ${tokenCleanupFailure.message}`);
+        terminal = new AggregateError([terminal, tokenCleanupFailure], `${terminal.message}; failed case token cleanup failed: ${tokenCleanupFailure.message}`);
       }
       for (const active of records.values()) clearRecord(active);
       send({ kind: "failure", domain_closed: domainCleaned, error: encodedError(terminal) });
