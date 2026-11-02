@@ -505,6 +505,28 @@ fn equity_cents_with_pending(
     local: LocalIdx,
     market: &crate::strategy::MarketView,
 ) -> crate::money::Money {
+    for_each_held_position(
+        group_account,
+        child_in_flight,
+        account_ids,
+        local,
+        market,
+        |_, _, _| {},
+    )
+}
+
+/// 单次持股扫描：累计含在途权益，并对每股 qty>0 持仓回调 `visit`。
+///
+/// 权益读面与风险持仓面共用这一遍扫描：每股只查一次在途票，两边永远
+/// 同一持仓口径；只读权益的调用点传空回调，不额外分配。
+fn for_each_held_position(
+    group_account: &GroupAccount,
+    child_in_flight: &std::collections::BTreeMap<(crate::AccountId, crate::StockId), ChildTicket>,
+    account_ids: &[crate::AccountId],
+    local: LocalIdx,
+    market: &crate::strategy::MarketView,
+    mut visit: impl FnMut(crate::StockId, u32, crate::money::Money),
+) -> crate::money::Money {
     let mut equity = crate::money::Money::from_cents(cash_with_pending_at(group_account));
     for (stock, &qty_raw) in group_account.shares.iter().enumerate() {
         let qty = held_qty_with_pending_at(
@@ -527,6 +549,9 @@ fn equity_cents_with_pending(
                 panic!("组内权益持仓估值失败 {stock:?}: {error:?}");
             }))
             .unwrap_or_else(|error| panic!("组内权益累加失败：{error:?}"));
+        if qty > 0 {
+            visit(crate::StockId(stock as u32), qty, price);
+        }
     }
     equity
 }
@@ -546,7 +571,9 @@ fn held_qty_with_pending_at(
     if let Some(&account_id) = account_ids.get(local as usize) {
         if let Some(ticket) = child_in_flight.get(&(account_id, crate::StockId(stock as u32))) {
             if matches!(ticket.side, Side::Sell) {
-                qty = qty.saturating_add(ticket.remaining);
+                qty = qty.checked_add(ticket.remaining).unwrap_or_else(|| {
+                    panic!("在途卖余量与在手持仓合计溢出：shares={qty} pending={ticket:?}")
+                });
             }
         }
     }
@@ -5701,6 +5728,71 @@ fn group_institution_behavior(
     .expect("组内机构行为评估失败")
 }
 
+/// 组内机构账户风险观察（组权威账户 + 在途票）。
+///
+/// 风险持仓 qty 与权益读面必须同一口径：组 shares 在下单时已实扣在途卖
+/// 单量，故持仓 qty = 在手 + `ChildTicket.remaining`（实时未成交余量）。
+/// 只加 `acct.shares` 会让同一份观察“权益含在途、持仓不含在途”，把账户
+/// 回撤放大、仓位权重压小；纯在途股（shares==0）因此同样必须入观察。
+/// 真清仓（qty==0）不构造零量 `RiskPositionInput`。
+///
+/// 复杂度：每股一次 `child_in_flight` 查找，与紧邻的权益读面同阶
+/// O(股票数 × log 在途票数)；在途票通常为 0~8 条，且本函数只在计划复审/
+/// 报价点调用，不进入逐 tick 全员热路径。
+fn account_risk_observation_at_view(
+    acct: &GroupAccount,
+    child_in_flight: &std::collections::BTreeMap<(crate::AccountId, crate::StockId), ChildTicket>,
+    roster: &[crate::AccountId],
+    local: LocalIdx,
+    market: &crate::strategy::MarketView,
+    experience: &crate::experience::RetailExperienceState,
+    peak: crate::money::Money,
+) -> crate::observation::AccountRiskObservation {
+    // 权益与持仓共用一遍扫描：缺行情与估值溢出在权益读面显式失败，
+    // 不为持仓面另造默认价。
+    let mut positions: std::collections::BTreeMap<
+        crate::StockId,
+        crate::observation::RiskPositionInput,
+    > = std::collections::BTreeMap::new();
+    let equity = for_each_held_position(
+        acct,
+        child_in_flight,
+        roster,
+        local,
+        market,
+        |code, qty, price| {
+            let idx = code.0 as usize;
+            positions.insert(
+                code.clone(),
+                crate::observation::RiskPositionInput {
+                    qty,
+                    cost_price: crate::account::Position::from_restored_parts(
+                        qty,
+                        acct.frozen_today[idx],
+                        acct.invested_cents[idx],
+                        acct.recovered_cents[idx],
+                    )
+                    .cost_price()
+                    .filter(|cost| cost.cents() > 0),
+                    last_price: price,
+                    peak_price_since_entry: experience
+                        .stocks
+                        .get(&code)
+                        .and_then(|stock| stock.peak_price_since_entry)
+                        .map(|observed| observed.max(price)),
+                },
+            );
+        },
+    );
+    crate::observation::build_account_risk_observation(
+        crate::money::Money::from_cents(cash_with_pending_at(acct)),
+        &positions,
+        experience.reference_equity,
+        Some(peak.max(equity)),
+    )
+    .expect("组内机构风险观察构建失败")
+}
+
 /// 组内报价/复审期紧迫度+风险评估（session `plan_execution_urgency_at_
 /// view` 的组内等价——字段级显式参数：开仓后复评在簿可变借用旁调用，
 /// 经宿主委托或直接传字段）。
@@ -5734,58 +5826,27 @@ fn group_urgency_at_view(
             reason: "no own-observed institution equity peak".to_owned(),
         },
         Some(peak) => {
-            // 权益观察（含在途口径——组读面）。
-            let equity = equity_cents_with_pending(acct, child_in_flight, roster, local, market);
-            let mut positions: std::collections::BTreeMap<
-                crate::StockId,
-                crate::observation::RiskPositionInput,
-            > = std::collections::BTreeMap::new();
-            for (idx, &qty) in acct.shares.iter().enumerate() {
-                // 零量条目不入风险观察（RiskPositionInput 要求 qty>0
-                // ——组侧曾持有/清仓面在 shares 中为 0）。
-                if qty == 0 {
-                    continue;
-                }
-                let price = market
-                    .stocks
-                    .get(&crate::StockId(idx as u32))
-                    .map(|v| v.last_price)
-                    .unwrap_or(crate::money::Money::from_cents(1));
-                let code = crate::StockId(idx as u32);
-                positions.insert(
-                    code,
-                    crate::observation::RiskPositionInput {
-                        qty,
-                        cost_price: crate::account::Position::from_restored_parts(
-                            qty,
-                            acct.frozen_today[idx],
-                            acct.invested_cents[idx],
-                            acct.recovered_cents[idx],
-                        )
-                        .cost_price()
-                        .filter(|c| c.cents() > 0),
-                        last_price: price,
-                        peak_price_since_entry: experience
-                            .stocks
-                            .get(&code)
-                            .and_then(|s| s.peak_price_since_entry)
-                            .map(|observed| observed.max(price)),
-                    },
-                );
-            }
-            let observed = crate::observation::build_account_risk_observation(
-                crate::money::Money::from_cents(cash_with_pending_at(acct)),
-                &positions,
-                experience.reference_equity,
-                Some(peak.max(equity)),
-            )
-            .expect("组内机构风险观察构建失败");
+            let observed = account_risk_observation_at_view(
+                acct,
+                child_in_flight,
+                roster,
+                local,
+                market,
+                experience,
+                peak,
+            );
+            // 在途卖余量仍属可减仓位：纯在途股不得因 shares==0 被排除，
+            // 否则自有减仓计划拿不到风险回撤紧迫度。
+            let held = held_qty_with_pending_at(
+                &acct.shares,
+                child_in_flight,
+                roster,
+                local,
+                plan.code().0 as usize,
+            );
             let reducing = plan.direction() == Side::Sell
                 && plan.remaining_share_qty().is_some_and(|qty| qty > 0)
-                && acct
-                    .shares
-                    .get(plan.code().0 as usize)
-                    .is_some_and(|q| *q > 0);
+                && held > 0;
             assess_existing_reduction_urgency(reducing, &observed, &projection.urgency_policy)
                 .expect("组内计划风险紧迫度失败")
         }
@@ -7860,16 +7921,33 @@ mod sol_recheck3_tests {
 
     /// 最小组态：单账户单股，手工置入计划+执行腿+已受理在途票
     /// （身份=order_id_of((0, 5))——serial 5 为本票，他单用其他 serial）。
-    fn chain_harness(side: Side) -> GroupState {
+    pub(super) fn chain_harness(side: Side) -> GroupState {
         chain_harness_target(side, 200)
     }
 
     /// 同 chain_harness，但计划目标/执行腿/子单量可变（terminal fixture
     /// 用小目标 100——全额成交即 Completed，不依赖巨量成交）。
     fn chain_harness_target(side: Side, target: u32) -> GroupState {
+        chain_harness_stocks(side, target, 1)
+    }
+
+    /// 多股变体（风险观察多股/权重断言）：只把股票数与目录扩到
+    /// `n_stocks`，计划与在途票仍在 StockId(0)。
+    pub(super) fn chain_harness_stocks(side: Side, target: u32, n_stocks: usize) -> GroupState {
+        chain_harness_roster(side, target, n_stocks, vec![crate::AccountId(9)])
+    }
+
+    /// 名册可替换变体（非零 roster_offset / 多账户隔离断言）。
+    pub(super) fn chain_harness_roster(
+        side: Side,
+        target: u32,
+        n_stocks: usize,
+        account_ids: Vec<crate::AccountId>,
+    ) -> GroupState {
+        assert!(n_stocks >= 1, "至少一股");
         let mut state = GroupState::new(GroupSetup {
             group: 0,
-            accounts: vec![GroupAccount::new(10_000_000, 1)],
+            accounts: vec![GroupAccount::new(10_000_000, n_stocks)],
             chunk: 8,
             lot: 100,
             config: std::sync::Arc::new(crate::config::GameConfig::proposed_defaults()),
@@ -7879,19 +7957,26 @@ mod sol_recheck3_tests {
             script: Box::new(|_t, _r| TickPlan::default()),
         });
         state.root_projection = Some(std::sync::Arc::new(crate::runtime::world::RootProjection {
-            catalog: crate::stock::StockCatalog::from_metas(vec![crate::stock::StockMeta::new(
-                "600000",
-            )])
+            catalog: crate::stock::StockCatalog::from_metas(
+                (0..n_stocks)
+                    .map(|id| crate::stock::StockMeta::new(format!("{:06}", 600_000 + id)))
+                    .collect(),
+            )
             .expect("目录构造"),
             initial_company_facts: Arc::new(
                 crate::company::CompanyReadFacts::new(
-                    (0..1)
-                        .map(|id| (crate::StockId(id), crate::company::CompanyId(id)))
-                        .collect(),
-                    (0..1)
+                    (0..n_stocks)
                         .map(|id| {
                             (
-                                crate::company::CompanyId(id),
+                                crate::StockId(id as u32),
+                                crate::company::CompanyId(id as u32),
+                            )
+                        })
+                        .collect(),
+                    (0..n_stocks)
+                        .map(|id| {
+                            (
+                                crate::company::CompanyId(id as u32),
                                 (crate::company::CompanyKind::Industrial, 1_000_000),
                             )
                         })
@@ -7899,10 +7984,10 @@ mod sol_recheck3_tests {
                 )
                 .expect("fixture 发行人事实合法"),
             ),
-            account_ids: vec![crate::AccountId(9)],
+            chain_params: account_ids.iter().map(|_| None).collect(),
+            account_ids,
             auction_ticks: 0,
             closing_auction_ticks: 3,
-            chain_params: vec![None],
             session_seed: 1,
             urgency_policy: crate::plans::UrgencyPolicy::default(),
             max_order_qty_limit: Default::default(),
@@ -9948,3 +10033,385 @@ mod admin_repurchase_funds;
 mod repurchase_consumer;
 
 mod repurchase_sender;
+
+/// 在途卖单/买单的风险观察口径红证。
+///
+/// 组所有权模型（ADR-0043）下卖单挂出时就把 qty 股从组账户实际扣出，权益
+/// 读面 `equity_cents_with_pending` 与持仓读面 `held_qty_with_pending_at`
+/// 都按“在手 + 在途卖单实时余量”加回；但 `group_urgency_at_view` 传给
+/// `build_account_risk_observation` 的 `RiskPositionInput::qty` 曾直接取
+/// `acct.shares`（已扣值），且 `shares == 0` 的纯在途股整条被跳过。后果是
+/// 同一份观察权益含在途、持仓不含在途：回撤被放大、仓位权重被压小、
+/// `reducing` 被误判为无可减仓位。
+///
+/// 判据=口径等价：组内风险观察的持仓面必须等于“在手 + 在途卖单实时余量”。
+/// 未启用 runtime 的串行兼容管线（WASM 宿主；Web 原生默认走
+/// World/RuntimeDriver 多线程）在 `plan_execution_urgency_at_view` 直接读
+/// `Account::positions()`，下单尚未实扣，天然含在途卖单——同一语义的 oracle。
+#[cfg(test)]
+mod pending_sell_risk_tests {
+    use super::sol_recheck3_tests::{chain_harness, chain_harness_roster, chain_harness_stocks};
+    use super::*;
+
+    const ACCOUNT: crate::AccountId = crate::AccountId(9);
+    const PRICE: i64 = 1_000;
+
+    fn belief_with_peak(peak_cents: Option<i64>) -> crate::strategy::BeliefBook {
+        let profile = crate::strategy::StrategyProfile::Institution(
+            crate::strategy::InstitutionStyle::DeepValue,
+        );
+        let mut rng = crate::session::SplitMix64::new(42);
+        let analysis = crate::strategy::derive_analysis_profile(&profile, ACCOUNT, &mut rng)
+            .expect("分析档案");
+        let mut book = crate::strategy::BeliefBook::new(ACCOUNT, profile, analysis, &mut rng);
+        book.experience_mut().peak_equity = peak_cents.map(crate::money::Money::from_cents);
+        book
+    }
+
+    fn market_at(prices: &[(u32, i64)]) -> crate::strategy::MarketView {
+        let stocks = prices
+            .iter()
+            .map(|&(stock, cents)| {
+                let last_price = crate::money::Money::from_cents(cents);
+                (
+                    crate::StockId(stock),
+                    crate::strategy::StockView {
+                        best_bid: None,
+                        best_ask: None,
+                        last_price,
+                        max_buy_price: last_price,
+                        daily_upper_limit: last_price,
+                        min_sell_price: last_price,
+                        recent_prices: Vec::new(),
+                        recent_market_minute_prices: Vec::new(),
+                        relative_volume: 1.0,
+                        order_book_imbalance: 0.0,
+                    },
+                )
+            })
+            .collect();
+        crate::strategy::MarketView {
+            stocks,
+            tick: 1,
+            market_minute: 0,
+        }
+    }
+
+    /// `group_urgency_at_view` 内部的生产风险观察组装（同一函数、同组权威
+    /// 账户与在途票）。
+    fn observe(
+        state: &GroupState,
+        belief: &crate::strategy::BeliefBook,
+        market: &crate::strategy::MarketView,
+        roster_offset: usize,
+    ) -> crate::observation::AccountRiskObservation {
+        let projection = state.root_projection.as_ref().expect("根部投影在");
+        let roster = roster_slice(&projection.account_ids, roster_offset, state.accounts.len());
+        account_risk_observation_at_view(
+            state.accounts[0].as_ref(),
+            &state.child_in_flight,
+            roster,
+            0,
+            market,
+            belief.experience(),
+            belief
+                .experience()
+                .peak_equity
+                .expect("口径测试需要个人峰值"),
+        )
+    }
+
+    /// 生产调用点级复评（`run_chain_decision` / 宿主复审的同一函数）。
+    fn risk_at_view(
+        state: &GroupState,
+        belief: &crate::strategy::BeliefBook,
+        market: &crate::strategy::MarketView,
+        roster_offset: usize,
+    ) -> crate::plans::urgency::risk::RiskUrgencyAssessment {
+        let accounts: Vec<&GroupAccount> =
+            state.accounts.iter().map(std::sync::Arc::as_ref).collect();
+        let plan_id = state
+            .plan_book
+            .active_plan_ids_for_account(ACCOUNT)
+            .into_iter()
+            .next()
+            .expect("红证前置：计划在簿");
+        let plan = state.plan_book.plan(plan_id).expect("计划可读").clone();
+        let moment = crate::experience::ExperienceMoment {
+            civil_date: crate::CivilDate::from_iso("2026-01-05").expect("日期合法"),
+            market_minute: 0,
+            trading_day: 0,
+        };
+        let (_, risk) = group_urgency_at_view(
+            &accounts,
+            belief,
+            &state.child_in_flight,
+            state.root_projection.as_ref().expect("根部投影在"),
+            0,
+            market,
+            &moment,
+            0,
+            &plan,
+            None,
+            None,
+            roster_offset,
+        );
+        risk
+    }
+
+    fn assessed(
+        risk: &crate::plans::urgency::risk::RiskUrgencyAssessment,
+    ) -> (bool, Option<u32>, crate::plans::Urgency) {
+        match risk {
+            crate::plans::urgency::risk::RiskUrgencyAssessment::Assessed {
+                risk_reduction_active,
+                account_drawdown_bp,
+                urgency,
+                ..
+            } => (*risk_reduction_active, *account_drawdown_bp, *urgency),
+            crate::plans::urgency::risk::RiskUrgencyAssessment::Unavailable { reason } => {
+                panic!("风险观察须可评估：{reason}")
+            }
+        }
+    }
+
+    /// 观察值不含 qty 字段：由市值 / 最新价反推。
+    fn qty(
+        observed: &crate::observation::AccountRiskObservation,
+        stock: u32,
+        price_cents: i64,
+    ) -> u32 {
+        let value = observed
+            .positions
+            .get(&crate::StockId(stock))
+            .unwrap_or_else(|| panic!("风险观察缺股 {stock}"));
+        u32::try_from(value.market_value.cents() / price_cents).expect("qty 必为正")
+    }
+
+    /// 生产状态同时维护在途票余量与账户级 `pending_sell_qty` 镜像。
+    fn set_sell_remaining(state: &mut GroupState, remaining: u32) {
+        state
+            .child_in_flight
+            .get_mut(&(ACCOUNT, crate::StockId(0)))
+            .expect("在途票在")
+            .remaining = remaining;
+        std::sync::Arc::make_mut(&mut state.accounts[0]).pending_sell_qty[0] = remaining;
+    }
+
+    fn drawdown_close(value: Option<f64>, expected: f64) {
+        let value = value.expect("回撤须可计算");
+        assert!(
+            (value - expected).abs() < 1e-12,
+            "回撤应为 {expected}，实际 {value}"
+        );
+    }
+
+    /// 卖单三态（全未成交、部分成交、在手+在途并存）共用同一权益/权重/
+    /// drawdown/urgency 口径：
+    /// - 全未成交：现金 100_000 + 200×1000 = 300_000 = 峰值 ⇒ 0bp/Normal；
+    ///   旧口径只算现金 ⇒ 6667bp/Urgent，`reducing` 也因 shares==0 归零。
+    /// - 部分成交（挂 200 成 140）：现金 140_000 + 60×1000 = 200_000，
+    ///   峰值 400_000 ⇒ 5000bp；旧口径 6500bp，按原挂出量重算则 1500bp。
+    /// - 并存：在手 60 + 在途 140 = 200 股、现金 0 ⇒ 同一权益/回撤。
+    fn assert_sell_case(
+        shares: u32,
+        remaining: u32,
+        cash: i64,
+        peak: i64,
+        expected: (i64, u32, f64, u32, crate::plans::Urgency),
+    ) {
+        let (equity, held, dd, bp, urgency) = expected;
+        let mut state = chain_harness(Side::Sell);
+        {
+            let acct = std::sync::Arc::make_mut(&mut state.accounts[0]);
+            acct.cash = cash;
+            acct.shares[0] = shares;
+        }
+        set_sell_remaining(&mut state, remaining);
+        let belief = belief_with_peak(Some(peak));
+        let market = market_at(&[(0, PRICE)]);
+
+        let observed = observe(&state, &belief, &market, 0);
+        assert_eq!(observed.equity, crate::money::Money::from_cents(equity));
+        assert_eq!(qty(&observed, 0, PRICE), held, "在手 + 在途余量");
+        let weight = observed.positions[&crate::StockId(0)]
+            .equity_weight
+            .unwrap();
+        let expected_weight = (i64::from(held) * PRICE) as f64 / equity as f64;
+        assert!(
+            (weight - expected_weight).abs() < 1e-12,
+            "仓位权重应为 {expected_weight}，实际 {weight}"
+        );
+        drawdown_close(observed.drawdown_from_peak, dd);
+
+        let (active, actual_bp, actual_urgency) =
+            assessed(&risk_at_view(&state, &belief, &market, 0));
+        assert_eq!(actual_bp, Some(bp));
+        assert_eq!(actual_urgency, urgency);
+        assert!(active, "在途卖余量仍是可减仓位");
+    }
+
+    #[test]
+    fn sell_pending_states_share_one_equity_and_drawdown_basis() {
+        // 全未成交：现金 100_000 + 200×1000 = 峰值 300_000 ⇒ 0bp/Normal；
+        // 旧口径只算现金 ⇒ 6667bp/Urgent 且 reducing 归零。
+        assert_sell_case(
+            0,
+            200,
+            100_000,
+            300_000,
+            (300_000, 200, 0.0, 0, crate::plans::Urgency::Normal),
+        );
+        // 部分成交（挂 200 成 140）：140_000 + 60×1000 = 200_000，峰值
+        // 400_000 ⇒ 5000bp；旧口径 6500bp，按原挂出量重算则 1500bp。
+        assert_sell_case(
+            0,
+            60,
+            140_000,
+            400_000,
+            (200_000, 60, -0.5, 5_000, crate::plans::Urgency::Urgent),
+        );
+        // 在手 60 + 在途 140 = 200 股、现金 0 ⇒ 同一权益/回撤。
+        assert_sell_case(
+            60,
+            140,
+            0,
+            400_000,
+            (200_000, 200, -0.5, 5_000, crate::plans::Urgency::Urgent),
+        );
+    }
+
+    /// 多股：股 0 在途 200×1000、股 1 在手 100×2000、现金 100_000。
+    /// 权益=500_000，两股权重各 0.4。旧口径股 0 缺失 ⇒ 权益 300_000、
+    /// 股 1 权重 2/3、回撤 4000bp。
+    #[test]
+    fn multi_stock_weights_include_in_flight_sell_positions() {
+        let mut state = chain_harness_stocks(Side::Sell, 200, 2);
+        {
+            let acct = std::sync::Arc::make_mut(&mut state.accounts[0]);
+            acct.cash = 100_000;
+            acct.shares[1] = 100;
+        }
+        let belief = belief_with_peak(Some(500_000));
+        let market = market_at(&[(0, PRICE), (1, 2_000)]);
+
+        let observed = observe(&state, &belief, &market, 0);
+        assert_eq!(observed.equity, crate::money::Money::from_cents(500_000));
+        assert_eq!(qty(&observed, 0, PRICE), 200);
+        assert_eq!(qty(&observed, 1, 2_000), 100);
+        for stock in [0u32, 1] {
+            let weight = observed.positions[&crate::StockId(stock)]
+                .equity_weight
+                .unwrap();
+            assert!(
+                (weight - 0.4).abs() < 1e-12,
+                "股 {stock} 权重应为 0.4：{weight}"
+            );
+        }
+        drawdown_close(observed.drawdown_from_peak, 0.0);
+        assert_eq!(
+            assessed(&risk_at_view(&state, &belief, &market, 0)).1,
+            Some(0)
+        );
+    }
+
+    /// 非持仓面边界：买单 purse 是现金占用（权益=现金+占用），全成
+    /// （remaining=0）不造零量持仓。
+    #[test]
+    fn buy_purse_is_cash_and_zero_remaining_is_no_position() {
+        let mut buy = chain_harness(Side::Buy);
+        {
+            let acct = std::sync::Arc::make_mut(&mut buy.accounts[0]);
+            acct.cash = 100_000;
+            acct.buy_purse_held_cents = 200_000;
+        }
+        let belief = belief_with_peak(Some(300_000));
+        let market = market_at(&[(0, PRICE)]);
+        let observed = observe(&buy, &belief, &market, 0);
+        assert_eq!(observed.equity, crate::money::Money::from_cents(300_000));
+        assert!(observed.positions.is_empty(), "买单 purse 不得变成持仓");
+
+        let mut sold = chain_harness(Side::Sell);
+        std::sync::Arc::make_mut(&mut sold.accounts[0]).cash = 100_000;
+        set_sell_remaining(&mut sold, 0);
+        let belief = belief_with_peak(Some(100_000));
+        let observed = observe(&sold, &belief, &market, 0);
+        assert_eq!(observed.equity, crate::money::Money::from_cents(100_000));
+        assert!(observed.positions.is_empty(), "remaining=0 不得造零量条目");
+        let (active, drawdown_bp, _) = assessed(&risk_at_view(&sold, &belief, &market, 0));
+        assert_eq!(drawdown_bp, Some(0));
+        assert!(!active, "已全成的卖单不再提供可减仓位");
+    }
+
+    /// 非零 `roster_offset`：local 0 必须解析到全局名册位 1（本账户），
+    /// 不得把他账户的在途票算进本账户风险观察。
+    #[test]
+    fn non_zero_roster_offset_keeps_in_flight_tickets_isolated() {
+        let mut state =
+            chain_harness_roster(Side::Sell, 200, 1, vec![crate::AccountId(8), ACCOUNT]);
+        std::sync::Arc::make_mut(&mut state.accounts[0]).cash = 100_000;
+        state.child_in_flight.insert(
+            (crate::AccountId(8), crate::StockId(0)),
+            ChildTicket {
+                qty: 500,
+                side: Side::Sell,
+                price: PRICE,
+                order_id: Some(order_id_of(&(0, 7))),
+                remaining: 500,
+                charged_cents: 0,
+                repurchase: None,
+            },
+        );
+        let belief = belief_with_peak(Some(300_000));
+        let market = market_at(&[(0, PRICE)]);
+
+        let own = observe(&state, &belief, &market, 1);
+        assert_eq!(qty(&own, 0, PRICE), 200, "offset=1 → local 0 是本账户");
+        assert_eq!(own.equity, crate::money::Money::from_cents(300_000));
+
+        // 反面锚：offset=0 时 local 0 是他账户，读到的必须是 500 股——
+        // 证明切片真的切换了账户身份。
+        let foreign = observe(&state, &belief, &market, 0);
+        assert_eq!(qty(&foreign, 0, PRICE), 500);
+        assert_eq!(foreign.equity, crate::money::Money::from_cents(600_000));
+
+        // 真实生产调用点也须按同一名册段切片：offset=1 时风险回撤只看
+        // 本账户在途 200 股（与峰值 300_000 相等 ⇒ 0bp），而不是他账户。
+        let (active, drawdown_bp, urgency) = assessed(&risk_at_view(&state, &belief, &market, 1));
+        assert_eq!(drawdown_bp, Some(0));
+        assert_eq!(urgency, crate::plans::Urgency::Normal);
+        assert!(active);
+    }
+
+    /// 无个人峰值：显式 Unavailable，不 panic、不伪造回撤。
+    #[test]
+    fn missing_personal_peak_keeps_risk_unavailable() {
+        let state = chain_harness(Side::Sell);
+        let belief = belief_with_peak(None);
+        let market = market_at(&[(0, PRICE)]);
+        match risk_at_view(&state, &belief, &market, 0) {
+            crate::plans::urgency::risk::RiskUrgencyAssessment::Unavailable { reason } => {
+                assert!(reason.contains("no own-observed institution equity peak"));
+            }
+            other => panic!("无峰值须显式 Unavailable：{other:?}"),
+        }
+    }
+
+    /// 缺行情：在途持仓估值不得回退到 1 分默认价，必须显式失败。
+    #[test]
+    #[should_panic(expected = "组内权益计算缺股")]
+    fn missing_market_view_fails_explicitly() {
+        let state = chain_harness(Side::Sell);
+        let belief = belief_with_peak(Some(300_000));
+        observe(&state, &belief, &market_at(&[]), 0);
+    }
+
+    /// 估值溢出：价格×数量超出 i64 分域必须显式失败（不得饱和/回退）。
+    #[test]
+    #[should_panic(expected = "组内权益持仓估值失败")]
+    fn valuation_overflow_fails_explicitly() {
+        let state = chain_harness(Side::Sell);
+        let belief = belief_with_peak(Some(300_000));
+        observe(&state, &belief, &market_at(&[(0, i64::MAX / 2)]), 0);
+    }
+}

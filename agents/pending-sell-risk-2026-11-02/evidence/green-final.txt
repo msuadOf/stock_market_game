@@ -1,0 +1,11 @@
+
+running 7 tests
+test runtime::group::pending_sell_risk_tests::multi_stock_weights_include_in_flight_sell_positions ... ok
+test runtime::group::pending_sell_risk_tests::valuation_overflow_fails_explicitly - should panic ... ok
+test runtime::group::pending_sell_risk_tests::non_zero_roster_offset_keeps_in_flight_tickets_isolated ... ok
+test runtime::group::pending_sell_risk_tests::missing_market_view_fails_explicitly - should panic ... ok
+test runtime::group::pending_sell_risk_tests::missing_personal_peak_keeps_risk_unavailable ... ok
+test runtime::group::pending_sell_risk_tests::buy_purse_is_cash_and_zero_remaining_is_no_position ... ok
+test runtime::group::pending_sell_risk_tests::sell_pending_states_share_one_equity_and_drawdown_basis ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 3489 filtered out; finished in 0.01s
