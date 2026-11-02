@@ -426,6 +426,162 @@ mod tests {
         );
     }
 
+    /// 原生生产入口（`step_via_runtime`）多输入/多拍严格一次：
+    /// 每拍经 shared ingress 入队两笔可区分的玩家输入（不同股票 + 不同限价，
+    /// 各笔跨拍唯一），逐拍走真实 runtime 路径。
+    /// 每拍受理多重集必须与当拍入队多重集逐笔相等（不丢不重、不跨拍串位），
+    /// 订单 id 全局不重复，结束时无滞留未消费输入。
+    #[test]
+    fn runtime_step_delivers_each_external_input_exactly_once_across_ticks() {
+        let mut game = game();
+        game.fixture_account_mut(&AccountId(0))
+            .unwrap()
+            .fixture_set_cash(Money::from_cents(100_000_000));
+        let source = game.shared_ingress();
+        let mut accepted_ids: Vec<u64> = Vec::new();
+        for tick in 0..3u32 {
+            // 每笔输入 (股票, 限价) 在全测试内唯一——丢失/重复/跨拍串位
+            // 都会破坏当拍多重集，而不是被总数抵消。
+            let mut expected = [
+                (
+                    crate::StockId(0),
+                    Money::from_cents(990 + 2 * i64::from(tick)),
+                ),
+                (crate::StockId(1), Money::from_cents(1000 + i64::from(tick))),
+            ];
+            for (code, price) in expected {
+                source
+                    .enqueue_player_intent(
+                        AccountId(0),
+                        Intent::PlaceLimit {
+                            code,
+                            side: Side::Buy,
+                            price: LimitPrice::Fixed(price),
+                            qty: 100,
+                        },
+                    )
+                    .unwrap();
+            }
+            let events = game.step_via_runtime().expect("真实 runtime 生产拍");
+            let mut accepted: Vec<(crate::StockId, Money)> = Vec::new();
+            for event in &events {
+                match event {
+                    crate::Event::OrderAccepted {
+                        account,
+                        code,
+                        id,
+                        price,
+                        ..
+                    } if *account == AccountId(0) => {
+                        accepted_ids.push(id.0);
+                        accepted.push((*code, *price));
+                    }
+                    crate::Event::IntentRejected { account, .. } if *account == AccountId(0) => {
+                        panic!("外部输入不应被拒绝（第 {tick} 拍）");
+                    }
+                    _ => {}
+                }
+            }
+            accepted.sort();
+            expected.sort();
+            assert_eq!(
+                accepted,
+                expected.to_vec(),
+                "第 {tick} 拍受理多重集必须与当拍入队多重集逐笔相等"
+            );
+        }
+        let distinct: std::collections::BTreeSet<_> = accepted_ids.iter().collect();
+        assert_eq!(
+            distinct.len(),
+            accepted_ids.len(),
+            "订单 id 不得重复（重复受理）"
+        );
+        assert!(
+            game.state.pending_player.is_empty(),
+            "全部输入已被消费，无滞留"
+        );
+        assert!(
+            game.save().unwrap().pending_player.is_empty(),
+            "存档投影同样无滞留输入"
+        );
+    }
+
+    /// 失败回灌契约（原生 runtime 入口）：冻结与路由已完成、安装段失败时，
+    /// World 该拍已提交，会话侧 `pending_player` 保全部输入（回执 ordinal
+    /// 不重算）。`poison_failed_step`（failure.rs）只封存 `GameSession.poison`
+    /// 与 ingress terminal，不置死 `World.is_terminal`；因此经 Session 的
+    /// 重试与再次入队都被显式拒绝——不伪造可重试。
+    #[test]
+    fn runtime_step_failure_preserves_pending_player_and_poisons_ingress() {
+        let mut game = game();
+        game.fixture_account_mut(&AccountId(0))
+            .unwrap()
+            .fixture_set_cash(Money::from_cents(100_000_000));
+        let source = game.shared_ingress();
+        source
+            .enqueue_player_intent(AccountId(0), buy(&game, 1))
+            .unwrap();
+        game.step_via_runtime().expect("首拍建立常驻驱动器");
+        // 第二拍：冻结+路由已完成，安装段失败（World 该拍已提交，会话安装中止）。
+        source
+            .enqueue_player_intent(AccountId(0), buy(&game, 1))
+            .unwrap();
+        game.inject_runtime_install_failure();
+        let fatal = game
+            .step_via_runtime()
+            .expect_err("安装失败必须显式返回错误");
+        assert!(
+            fatal.to_string().contains("安装失败注入"),
+            "失败可辨识为注入的安装失败：{fatal}"
+        );
+        assert_eq!(
+            game.state.pending_player.len(),
+            1,
+            "失败后会话 pending_player 保全（回灌，不丢输入）"
+        );
+        let pending = &game.state.pending_player[0];
+        assert_eq!(pending.owner, AccountId(0), "回灌输入归属账户不变");
+        assert_eq!(
+            pending.account_ordinal, 1,
+            "回灌保留原账户受理 ordinal（不重算回执）"
+        );
+        assert_eq!(
+            pending.stock_ordinal, 1,
+            "回灌保留原股票受理 ordinal（不重算回执）"
+        );
+        match &pending.intent {
+            Intent::PlaceLimit {
+                code,
+                side,
+                price,
+                qty,
+            } => {
+                assert_eq!(*code, crate::StockId(1), "回灌输入目标股不变");
+                assert_eq!(*side, Side::Buy);
+                assert_eq!(*price, LimitPrice::Fixed(Money::from_cents(990)));
+                assert_eq!(*qty, 100);
+            }
+            other => panic!("回灌输入种类不符：{other:?}"),
+        }
+        // poison 封口：GameSession 与 ingress 封存首错，经 Session 的重试与
+        // 入队都被显式拒绝（本测试不断言 World 终态）。
+        assert_eq!(game.poison_reason(), Some(&fatal), "失败必须 poison 会话");
+        assert_eq!(
+            game.step_via_runtime().unwrap_err(),
+            fatal,
+            "poison 后重试返回首错（不静默重放）"
+        );
+        assert_eq!(
+            game.state.pending_player.len(),
+            1,
+            "被拒绝的重试不得再次消费 pending"
+        );
+        assert!(matches!(
+            source.enqueue_player_intent(AccountId(0), buy(&game, 0)),
+            Err(SessionError::Step(actual)) if actual == fatal
+        ));
+    }
+
     #[test]
     fn concurrent_external_receive_precedes_private_npc_completion() {
         let mut game = game();
