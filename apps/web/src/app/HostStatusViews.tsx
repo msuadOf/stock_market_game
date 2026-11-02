@@ -12,7 +12,7 @@ export interface FatalHostErrorProps {
   readonly description?: string;
 }
 
-function FeedbackCopyButton({ onCopy }: { onCopy: (report: (status: FeedbackCopyStatus) => void) => Promise<void> }) {
+export function FeedbackCopyButton({ onCopy }: { onCopy: (report: (status: FeedbackCopyStatus) => void) => Promise<void> }) {
   const [status, setStatus] = useState<FeedbackCopyStatus | null>(null);
   return <div>
     <Button onClick={() => void onCopy(setStatus)} disabled={status?.kind === "copying"}>复制错误反馈</Button>

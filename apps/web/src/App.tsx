@@ -26,6 +26,7 @@ import { FloatAllocationInput } from "./components/FloatAllocationInput.tsx";
 import { InitialAllocationSummary } from "./components/InitialAllocationSummary.tsx";
 import type { InitialAllocation } from "./host/initial-allocation.ts";
 import { FatalHostError, HostSpawnFailureReport, SpeedMetricsAlert } from "./app/HostStatusViews.tsx";
+import { isWasmMemoryTerminalFailure, WasmMemoryTerminalError } from "./app/WasmMemoryTerminalError.tsx";
 import { StartupScreen } from "./app/StartupScreen.tsx";
 import type { DesktopView } from "./app/DesktopTerminal.tsx";
 import { WorkspaceGrid } from "./app/WorkspaceGrid.tsx";
@@ -485,6 +486,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
 
   const selectHost = () => { void onSelectHost(stopStartupRef.current); };
 
+  if (isWasmMemoryTerminalFailure(error)) return <WasmMemoryTerminalError error={error} />;
   if (returningToStartup) {
     return <div className="app-loading"><p role="status" aria-live="polite">正在结束当前启动，等待已提交的日终存档写入完成；完成前不会启动另一局…</p></div>;
   }
