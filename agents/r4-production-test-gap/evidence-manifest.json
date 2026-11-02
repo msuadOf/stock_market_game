@@ -3,8 +3,18 @@
   "base_commit": "0f40ffbc2dfd11db3e8ac72faa23ac3643b699b9",
   "source_manifest_sha256": "e13c8f22163b902981c439975e6883bd6a822e0cea1c2ee960ff862c47edacd6",
   "source_manifest_files": 803,
+  "source_manifest_spec": {
+    "scope": [
+      "packages/engine/src",
+      "packages/engine/tests/company_r4_production_gap.rs",
+      "packages/engine/tests/publications/session_fixture.rs",
+      "packages/engine/test-support/simple_company.rs"
+    ],
+    "algorithm": "对每条 (相对于仓库根的路径, 该文件 sha256) 排序后，逐条追加 UTF-8 字符串 \"<相对路径>\\0<sha256>\\n\" 到聚合 SHA-256 输入；聚合值不含时间戳或环境信息。",
+    "file_count_check": "src/ 下全部文件 800 + 测试文件 1 + session_fixture.rs 1 + simple_company.rs 1 = 803"
+  },
   "test_file_sha256": "ea15d574309474721b51228b408566c026d2d529b2bb24f3f830fd0444ef146d",
-  "mapping_file_sha256": "9c2fe3d57d4d39e023b2da47d1c3f16b9c4459a735a224587def19ce1694d4d6",
+  "mapping_file_sha256": "bd38abfa7b9501077eed57d64b55ffc05fea1b56571e0ef7b7353867c2e3805b",
   "binary_path": ".tmp/r4-gap-target/debug/deps/company_r4_production_gap-1f4c0505452c76bb",
   "binary_sha256": "4223b75272e72bf5876318f22216ba55748b974521131f0b996703827fd991ea",
   "binary_bytes": 55706888,
@@ -18,5 +28,5 @@
   "cases_per_process": 1,
   "cpu_count": 128,
   "rustc": "rustc 1.96.1 (31fca3adb 2026-06-26)",
-  "generated_at": "2026-11-02T17:16:45.831313+00:00"
+  "generated_at": "2026-11-02T17:22:03.658419+00:00"
 }

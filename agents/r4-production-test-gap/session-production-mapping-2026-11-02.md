@@ -30,12 +30,12 @@
 |---|---|---|---|
 | r4_01 | Simple 前史只含 `SimpleGenerated` | `packages/engine/tests/company_source_selection.rs::selected_simple_initial_public_history_comes_from_simple_generated_reports` | 已覆盖 |
 | r4_02 | Legacy 前史保留 `SimulationAccounting` | 同文件 `selected_legacy_save_contains_only_legacy_company_state_and_original_public_source` | 已覆盖 |
-| r4_03 | 闭市月末日结推进所选 Simple、无 tick | `packages/engine/src/session/company_source_runtime_tests.rs::selected_simple_constructs_real_history_without_any_legacy_call_and_finalizes_once`（单组）；新增 `empty_personal_groups_settle_simple_company_at_month_end`（三组） | 已覆盖（新增补三组） |
+| r4_03 | 闭市月末日结推进所选 Simple、无 tick | `packages/engine/src/session/company_source_runtime_tests.rs::selected_simple_constructs_real_history_without_any_legacy_call_and_finalizes_once`（单组，真实 finalize 计数与 `advanced_through`）；新增 `empty_personal_groups_settle_simple_company_at_month_end`（三组，只验证日结成功、`advanced_through` 与无 tick，不单独观测 finalize） | 已覆盖（新增补三组；finalize 由既有例覆盖） |
 | r4_04 | 季度闭市日披露终点 18:00、无 tick | 新增 `quarterly_closed_day_keeps_the_18_for_scan_endpoint` | 已覆盖（新增） |
 | r4_05 | 闭市日晚间 Monthly 到 23:59:59 可见、无 tick | `company_source_runtime_tests::selected_simple_new_publication_failure_preserves_library_cursor_and_rng_then_retries`（20:00、单组）；新增 `empty_personal_groups_settle_simple_company_and_keep_the_late_monthly_window`（23:30、三组空个人） | 已覆盖（新增补三组与 23:30） |
 | r4_06 | 闭市日不制造 10:30 本人观察 | `packages/engine/src/runtime/group/admin_transaction/information_tests.rs::info_12_closed_day_evening_monthly_is_acquired_at_real_end_without_market_tick`（Admin 层）；新增 `closed_day_monthly_is_published_at_schedule_second_but_observed_only_at_day_end`（Session 层、Simple、三组、休市日） | 已覆盖（新增补 Session 入口） |
 | r4_07 | 交易日 10:30 即时公开、11:00 本人获知、下一 step 保留 | **Q23 已要求但 main 未实现**：无盘中 tick candidate 公布调用点，个人检查也不在盘中执行 | **未覆盖 / 未核销**（由单独 Q23 实现任务处理） |
-| r4_08 | 空个人组仍推进 Simple | `company_source_runtime_tests`（单组）；新增 `empty_personal_groups_settle_simple_company_at_month_end`（三组、6/30 月末） | 已覆盖（新增补三组） |
+| r4_08 | 空个人组仍推进 Simple | `company_source_runtime_tests`（单组）；新增 `empty_personal_groups_settle_simple_company_at_month_end`（三组、6/30 月末推进） | 已覆盖（新增补三组） |
 | r4_09 | 空个人组不丢晚间 Monthly 窗口 | 同 r4_05 的既有单组例；新增三组 23:30 例 | 已覆盖（新增补三组） |
 | r4_10 | 三组保留真实名册与尾组个人行 | 新增 `three_runtime_groups_keep_the_real_roster_and_tail_group_personal_rows` | 已覆盖（新增） |
 
@@ -44,7 +44,7 @@
 `packages/engine/tests/company_r4_production_gap.rs`，6 个短例：
 
 1. `quarterly_closed_day_keeps_the_18_for_scan_endpoint` — 非 Monthly 的日终终点（Q23 保留季度 18:00）。
-2. `empty_personal_groups_settle_simple_company_at_month_end` — 三组空个人、6/30 月末 finalize、无 tick。
+2. `empty_personal_groups_settle_simple_company_at_month_end` — 三组空个人、6/30 月末日结推进到 `2030-06-30`、无 tick。该例不单独观测月末 finalize；finalize 由既有 `selected_simple_constructs_real_history_without_any_legacy_call_and_finalizes_once` 的 `simple_finalize` 计数覆盖。
 3. `closed_day_monthly_is_published_at_schedule_second_but_observed_only_at_day_end` — 休市 6/1，
    `published_at` = 排期 10:30，本人获知在 23:59:59；与 Q23“休市日按自然日日结送达”一致。
 4. `three_runtime_groups_keep_the_real_roster_and_tail_group_personal_rows` — 8 个真实账户分 3 组，
