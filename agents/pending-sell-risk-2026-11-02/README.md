@@ -61,4 +61,7 @@
   全部卖单（含外部/无票单），权益与风险持仓共用；新增无票全未成交/部分
   成交红测（`red-mirror.txt`：旧票口径 2 passed / 7 failed）及成本价边界
   （净成本为正、回收超投入不可用）。
-- 未修（残余缺口）：串行兼容管线与 runtime 的同输入自动化对照未建立。
+- 未修（残余缺口）：串行兼容管线与 runtime 的同输入自动化对照未建立；
+  `build_root_read_context`/`observe_personal` 端到端链路与
+  `inject_player_intents` 外部卖单路由尚无自动用例，当前只覆盖
+  `projected_positions` 与单账户 root 投影。

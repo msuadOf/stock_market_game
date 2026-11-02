@@ -10366,7 +10366,8 @@ mod pending_sell_risk_tests {
     }
 
     /// 外部（无 ChildTicket）在途卖单必须进入持仓投影（`build_root_read_context`
-    /// 消费的同一函数）；完整 root/observe_personal 链路由端到端用例另行覆盖。
+    /// 消费的同一函数）。本用例只覆盖投影函数；完整 root/observe_personal
+    /// 端到端链路尚无自动用例，已登记为测试缺口。
     #[test]
     fn external_pending_without_ticket_survives_projected_positions() {
         let mut state = chain_harness(Side::Sell);
