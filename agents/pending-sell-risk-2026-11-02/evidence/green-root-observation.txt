@@ -2,8 +2,8 @@
 running 10 tests
 test runtime::group::pending_sell_risk_tests::external_pending_without_ticket_survives_projected_positions ... ok
 test runtime::group::pending_sell_risk_tests::account_mirror_ignores_foreign_child_tickets ... ok
-test runtime::group::pending_sell_risk_tests::multi_stock_weights_include_in_flight_sell_positions ... ok
 test runtime::group::pending_sell_risk_tests::missing_personal_peak_keeps_risk_unavailable ... ok
+test runtime::group::pending_sell_risk_tests::multi_stock_weights_include_in_flight_sell_positions ... ok
 test runtime::group::pending_sell_risk_tests::missing_market_view_fails_explicitly - should panic ... ok
 test runtime::group::pending_sell_risk_tests::buy_purse_is_cash_and_zero_remaining_is_no_position ... ok
 test runtime::group::pending_sell_risk_tests::pending_cost_basis_matches_full_position ... ok

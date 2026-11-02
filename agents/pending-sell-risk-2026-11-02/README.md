@@ -36,7 +36,7 @@
 - `evidence/red.txt`：把生产实现临时回退到旧口径后的运行结果，
   4 passed / 3 failed（权益 100000≠300000、多股 300000≠500000、
   offset 用例缺股 panic）。
-- `evidence/green.txt`：历史 7/7；`evidence/green-final.txt`：9/9；`evidence/green-root-observation.txt`：最终 10/10，
+- `evidence/green.txt`：历史 7/7；`evidence/green-final.txt`：9/9；`evidence/green-root-observation.txt`：最终 10/10；`evidence/root-context.txt`：root 投影 1/1，
   单命令 0.02~0.10s（`run-with-deadline.mjs 10000`）。
 - 性能探针（临时，未提交）：5 股/1 在途票、debug 构建，完整风险观察
   ~6.3µs/call，相对旧口径 ~5.6µs/call 开销 12.6%（<20%）；最终实现每股 O(1) 读

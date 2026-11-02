@@ -545,7 +545,7 @@ fn projected_positions(
 
 /// 单次持股扫描：累计含在途权益，并对每股 qty>0 持仓回调 `visit`。
 ///
-/// 权益读面与风险持仓面共用这一遍扫描：每股只查一次在途票，两边永远
+/// 权益读面与风险持仓面共用这一遍扫描：每股一次读取账户级在途镜像，两边永远
 /// 同一持仓口径；只读权益的调用点传空回调，不额外分配。
 fn for_each_held_position(
     group_account: &GroupAccount,
