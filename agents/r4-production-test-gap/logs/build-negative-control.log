@@ -1,0 +1,30 @@
+   Compiling engine v0.1.0 (/data1/baiyifan/workplace/stock_market_game/.worktree/r4-production-test-gap-20261102/packages/engine)
+warning: function `produce_decision_output` is never used
+   --> packages/engine/src/session/pipeline/npc_tick_preparation.rs:932:27
+    |
+932 | pub(in crate::session) fn produce_decision_output(
+    |                           ^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `can_prepare` is never used
+  --> packages/engine/src/session/pipeline/read_only_start.rs:35:15
+   |
+35 | pub(super) fn can_prepare(session: &GameSession) -> bool {
+   |               ^^^^^^^^^^^
+
+warning: function `prepare` is never used
+  --> packages/engine/src/session/pipeline/read_only_start.rs:45:15
+   |
+45 | pub(super) fn prepare(session: &GameSession) -> ReadOnlyStart {
+   |               ^^^^^^^
+
+warning: function `prepare_with_observer` is never used
+   --> packages/engine/src/session/pipeline/read_only_start.rs:134:4
+    |
+134 | fn prepare_with_observer(
+    |    ^^^^^^^^^^^^^^^^^^^^^
+
+warning: `engine` (lib) generated 4 warnings
+    Finished `test` profile [unoptimized] target(s) in 1m 18s
+  Executable tests/company_r4_production_gap.rs (/home/baiyifan/data1/stock_market_game/.worktree/r4-production-test-gap-20261102/.tmp/r4-gap-target/debug/deps/company_r4_production_gap-1f4c0505452c76bb)

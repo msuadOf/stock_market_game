@@ -1,0 +1,49 @@
+# final source tree: 0f40ffbc2dfd11db3e8ac72faa23ac3643b699b9 (worktree ?? packages/engine/tests/company_r4_production_gap.rs;)
+### node scripts/run-with-deadline.mjs 10000 -- /home/baiyifan/data1/stock_market_game/.worktree/r4-production-test-gap-20261102/.tmp/r4-gap-target/debug/deps/company_r4_production_gap-1f4c0505452c76bb --exact quarterly_closed_day_keeps_the_18_for_scan_endpoint --test-threads=1
+
+running 1 test
+test quarterly_closed_day_keeps_the_18_for_scan_endpoint ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.15s
+
+rc=0 wall_ms=275
+### node scripts/run-with-deadline.mjs 10000 -- /home/baiyifan/data1/stock_market_game/.worktree/r4-production-test-gap-20261102/.tmp/r4-gap-target/debug/deps/company_r4_production_gap-1f4c0505452c76bb --exact empty_personal_groups_settle_simple_company_at_month_end --test-threads=1
+
+running 1 test
+test empty_personal_groups_settle_simple_company_at_month_end ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.44s
+
+rc=0 wall_ms=561
+### node scripts/run-with-deadline.mjs 10000 -- /home/baiyifan/data1/stock_market_game/.worktree/r4-production-test-gap-20261102/.tmp/r4-gap-target/debug/deps/company_r4_production_gap-1f4c0505452c76bb --exact closed_day_monthly_is_published_at_schedule_second_but_observed_only_at_day_end --test-threads=1
+
+running 1 test
+test closed_day_monthly_is_published_at_schedule_second_but_observed_only_at_day_end ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.41s
+
+rc=0 wall_ms=531
+### node scripts/run-with-deadline.mjs 10000 -- /home/baiyifan/data1/stock_market_game/.worktree/r4-production-test-gap-20261102/.tmp/r4-gap-target/debug/deps/company_r4_production_gap-1f4c0505452c76bb --exact three_runtime_groups_keep_the_real_roster_and_tail_group_personal_rows --test-threads=1
+
+running 1 test
+test three_runtime_groups_keep_the_real_roster_and_tail_group_personal_rows ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.43s
+
+rc=0 wall_ms=551
+### node scripts/run-with-deadline.mjs 10000 -- /home/baiyifan/data1/stock_market_game/.worktree/r4-production-test-gap-20261102/.tmp/r4-gap-target/debug/deps/company_r4_production_gap-1f4c0505452c76bb --exact empty_personal_groups_settle_simple_company_and_keep_the_late_monthly_window --test-threads=1
+
+running 1 test
+test empty_personal_groups_settle_simple_company_and_keep_the_late_monthly_window ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.44s
+
+rc=0 wall_ms=561
+### node scripts/run-with-deadline.mjs 10000 -- /home/baiyifan/data1/stock_market_game/.worktree/r4-production-test-gap-20261102/.tmp/r4-gap-target/debug/deps/company_r4_production_gap-1f4c0505452c76bb --exact custom_monthly_schedule_is_visible_only_after_day_end_and_read_at_the_disclosure_instant --test-threads=1
+
+running 1 test
+test custom_monthly_schedule_is_visible_only_after_day_end_and_read_at_the_disclosure_instant ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.43s
+
+rc=0 wall_ms=549

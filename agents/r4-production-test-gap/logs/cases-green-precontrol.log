@@ -1,0 +1,48 @@
+### deadline=10000ms test_threads=1 exact=quarterly_closed_day_keeps_the_18_for_scan_endpoint
+
+running 1 test
+test quarterly_closed_day_keeps_the_18_for_scan_endpoint ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.16s
+
+rc=0 wall_ms=285
+### deadline=10000ms test_threads=1 exact=empty_personal_groups_settle_simple_company_at_month_end
+
+running 1 test
+test empty_personal_groups_settle_simple_company_at_month_end ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.44s
+
+rc=0 wall_ms=566
+### deadline=10000ms test_threads=1 exact=closed_day_monthly_is_published_at_schedule_second_but_observed_only_at_day_end
+
+running 1 test
+test closed_day_monthly_is_published_at_schedule_second_but_observed_only_at_day_end ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.42s
+
+rc=0 wall_ms=548
+### deadline=10000ms test_threads=1 exact=three_runtime_groups_keep_the_real_roster_and_tail_group_personal_rows
+
+running 1 test
+test three_runtime_groups_keep_the_real_roster_and_tail_group_personal_rows ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.41s
+
+rc=0 wall_ms=549
+### deadline=10000ms test_threads=1 exact=empty_personal_groups_settle_simple_company_and_keep_the_late_monthly_window
+
+running 1 test
+test empty_personal_groups_settle_simple_company_and_keep_the_late_monthly_window ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.44s
+
+rc=0 wall_ms=568
+### deadline=10000ms test_threads=1 exact=custom_monthly_schedule_is_visible_only_after_day_end_and_read_at_the_disclosure_instant
+
+running 1 test
+test custom_monthly_schedule_is_visible_only_after_day_end_and_read_at_the_disclosure_instant ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.43s
+
+rc=0 wall_ms=551
