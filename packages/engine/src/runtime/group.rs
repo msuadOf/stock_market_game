@@ -507,6 +507,16 @@ fn equity_cents_with_pending(
     for_each_held_position(group_account, market, |_, _, _| {})
 }
 
+/// 账户级总持仓 = 在手 + 在途卖单实时余量（覆盖计划票与外部/无票单）。
+fn account_held_qty(acct: &GroupAccount, stock: usize) -> u32 {
+    acct.shares
+        .get(stock)
+        .copied()
+        .unwrap_or(0)
+        .checked_add(acct.pending_sell_qty.get(stock).copied().unwrap_or(0))
+        .unwrap_or_else(|| panic!("持股与在途卖余量合计溢出：stock={stock}"))
+}
+
 /// 单次持股扫描：累计含在途权益，并对每股 qty>0 持仓回调 `visit`。
 ///
 /// 权益读面与风险持仓面共用这一遍扫描：每股只查一次在途票，两边永远
@@ -520,11 +530,8 @@ fn for_each_held_position(
     for (stock, &qty_raw) in group_account.shares.iter().enumerate() {
         // 组 shares 已扣在途卖单，`pending_sell_qty` 是全部卖单的实时未成交
         // 余量镜像（计划链票 + 外部/无票单）；两者相加=账户总持仓。
-        let qty = qty_raw
-            .checked_add(group_account.pending_sell_qty[stock])
-            .unwrap_or_else(|| {
-                panic!("组内持股与在途卖余量合计溢出：stock={stock} shares={qty_raw}")
-            });
+        let _ = qty_raw;
+        let qty = account_held_qty(group_account, stock);
         if qty == 0 {
             continue;
         }
@@ -3774,7 +3781,7 @@ impl GroupState {
                     crate::plans::ReviewResources {
                         cash: crate::money::Money::from_cents(acct.cash),
                         frozen_cash: crate::money::Money::ZERO,
-                        held_qty: acct.shares.get(idx).copied().unwrap_or(0),
+                        held_qty: account_held_qty(acct, idx),
                         t1_locked: acct.frozen_today.get(idx).copied().unwrap_or(0),
                     }
                 };
@@ -4000,7 +4007,7 @@ impl GroupState {
                     // 组内所有权模型：现金已扣在途（chain_quote_children
                     // frozen=ZERO 同式——保守预算，登记差异）。
                     frozen_cash: crate::money::Money::ZERO,
-                    held_qty: acct.shares.get(idx).copied().unwrap_or(0),
+                    held_qty: account_held_qty(acct, idx),
                     t1_locked: acct.frozen_today.get(idx).copied().unwrap_or(0),
                 }
             };
@@ -5556,7 +5563,7 @@ impl<'a> crate::session::PlanReviewHost for GroupReviewHost<'a> {
         crate::plans::ReviewResources {
             cash: Money::from_cents(acct.cash),
             frozen_cash: crate::money::Money::ZERO,
-            held_qty: acct.shares.get(idx).copied().unwrap_or(0),
+            held_qty: account_held_qty(acct, idx),
             t1_locked: acct.frozen_today.get(idx).copied().unwrap_or(0),
         }
     }
@@ -5786,18 +5793,7 @@ fn group_urgency_at_view(
             let observed = account_risk_observation_at_view(acct, market, experience, peak);
             // 在途卖余量仍属可减仓位：纯在途股不得因 shares==0 被排除，
             // 否则自有减仓计划拿不到风险回撤紧迫度。
-            let held = acct
-                .shares
-                .get(plan.code().0 as usize)
-                .copied()
-                .unwrap_or(0)
-                .checked_add(
-                    acct.pending_sell_qty
-                        .get(plan.code().0 as usize)
-                        .copied()
-                        .unwrap_or(0),
-                )
-                .unwrap_or_else(|| panic!("组内持股与在途卖余量合计溢出（reducing）"));
+            let held = account_held_qty(acct, plan.code().0 as usize);
             let reducing = plan.direction() == Side::Sell
                 && plan.remaining_share_qty().is_some_and(|qty| qty > 0)
                 && held > 0;
@@ -10337,6 +10333,11 @@ mod pending_sell_risk_tests {
             assert_eq!(qty(&observed, 0, PRICE), held, "无票卖单按镜像计入");
             let (active, _, _) = assessed(&risk_at_view(&state, &belief, &market));
             assert!(active, "无票卖单仍提供减仓紧迫度");
+            assert_eq!(
+                account_held_qty(&state.accounts[0], 0),
+                pending,
+                "复审资源 held_qty 同源"
+            );
         }
     }
 

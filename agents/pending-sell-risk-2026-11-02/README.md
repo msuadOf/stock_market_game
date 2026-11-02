@@ -14,7 +14,7 @@
 ## 修复
 
 - 新增 `for_each_held_position` 单次扫描：同时累计含在途权益并按每股
-  qty>0 回调持仓（权益读面与风险持仓面共用一遍扫描，每股只查一次在途票）。
+  qty>0 回调持仓（权益/风险持仓/复审资源共用账户级总持仓，每股 O(1)）。
 - `account_risk_observation_at_view`：风险持仓 qty 改为含在途实时余量；
   纯在途股入观察；`qty==0` 才跳过。
 - `reducing` 改用同一含在途持仓量。
@@ -48,9 +48,6 @@
   “实扣在途”状态，只能以同一语义输入（持仓含在途）分别调用生产函数；
   现有 `institution_existing_reduction_uses_its_own_observed_drawdown`
   覆盖串行路径的回撤紧迫度。此项作为残余验证缺口如实登记。
-- 相邻发现（未在本次修复）：`run_chain_decision` 组装
-  `PlanLifecycleReview.held_by_code` 仍用 `acct.shares`，与串行路径的
-  `positions()` 口径存在同类差异，需另立任务评估。
 
 ## 独立复核处理（2026-11-03）
 
