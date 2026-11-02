@@ -11,4 +11,3 @@ test runtime::group::pending_sell_risk_tests::valuation_overflow_fails_explicitl
 test runtime::group::pending_sell_risk_tests::sell_pending_states_share_one_equity_and_drawdown_basis ... ok
 
 test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 3489 filtered out; finished in 0.01s
-

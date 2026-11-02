@@ -517,6 +517,32 @@ fn account_held_qty(acct: &GroupAccount, stock: usize) -> u32 {
         .unwrap_or_else(|| panic!("持股与在途卖余量合计溢出：stock={stock}"))
 }
 
+/// 组账户 → 只读持仓投影（root read context / observe_personal 的面）。
+///
+/// qty 用账户级总持仓（含外部/无票在途卖单）；曾持有但真清仓的股保留
+/// 零量条目（held 集语义），与修复前条目集合一致。
+fn projected_positions(
+    acct: &GroupAccount,
+) -> std::collections::BTreeMap<crate::StockId, crate::account::Position> {
+    let mut positions = std::collections::BTreeMap::new();
+    for (stock, &qty_raw) in acct.shares.iter().enumerate() {
+        let qty = account_held_qty(acct, stock);
+        if qty == 0 && qty_raw == 0 && !acct.ever_held[stock] {
+            continue;
+        }
+        positions.insert(
+            crate::StockId(stock as u32),
+            crate::account::Position::from_restored_parts(
+                qty,
+                acct.frozen_today[stock],
+                acct.invested_cents[stock],
+                acct.recovered_cents[stock],
+            ),
+        );
+    }
+    positions
+}
+
 /// 单次持股扫描：累计含在途权益，并对每股 qty>0 持仓回调 `visit`。
 ///
 /// 权益读面与风险持仓面共用这一遍扫描：每股只查一次在途票，两边永远
@@ -556,6 +582,7 @@ fn for_each_held_position(
 /// shares 已扣在途；本 (账户,股) 唯一在途票为卖时加回其量）。
 /// Sol 二审修复集 2：加回**实时未成交余量**（此前按原挂出量——挂 200
 /// 成 100 后组加回 200、session 镜像只见 100，两口径分叉）。
+#[cfg(test)]
 fn held_qty_with_pending_at(
     shares: &[u32],
     child_in_flight: &std::collections::BTreeMap<(crate::AccountId, crate::StockId), ChildTicket>,
@@ -3429,15 +3456,12 @@ impl GroupState {
             &self.accounts,
             local as usize,
             account,
-            &projection,
             &company_facts,
             &self.library,
             &self.plan_book,
-            &self.child_in_flight,
             snapshot.tick,
             self.ticks_per_day,
             &snapshot,
-            self.roster_offset,
             information_anchors,
         );
         let observation = build_chain_observation(
@@ -3693,17 +3717,7 @@ impl GroupState {
             };
             // Sol 整改 3：开仓消费的持仓/权益读面含在途（挂单期间目标
             // 量与权益观察不因所有权转移缩水——qty 口径差收口）。
-            let held_qty = held_qty_with_pending_at(
-                &group_account.shares,
-                &self.child_in_flight,
-                roster_slice(
-                    &projection.account_ids,
-                    self.roster_offset,
-                    self.accounts.len(),
-                ),
-                local,
-                code.0 as usize,
-            );
+            let held_qty = account_held_qty(group_account, code.0 as usize);
             let price = observation
                 .market
                 .stocks
@@ -5677,8 +5691,10 @@ fn group_institution_behavior(
     let experience = belief.experience();
     let acct = &accounts[local as usize];
     let idx = code.0 as usize;
+    // 成本信号与持仓同源：含账户级在途卖余量，否则纯在途/部分在途时
+    // 分母缩水会放大成本收益信号。
     let cost = crate::account::Position::from_restored_parts(
-        acct.shares.get(idx).copied().unwrap_or(0),
+        account_held_qty(acct, idx),
         acct.frozen_today.get(idx).copied().unwrap_or(0),
         acct.invested_cents.get(idx).copied().unwrap_or(0),
         acct.recovered_cents.get(idx).copied().unwrap_or(0),
@@ -5935,16 +5951,12 @@ fn build_root_read_context(
     accounts: &[std::sync::Arc<GroupAccount>],
     local: usize,
     account_id: crate::AccountId,
-    projection: &std::sync::Arc<crate::runtime::world::RootProjection>,
     company_facts: &Arc<crate::company::CompanyReadFacts>,
     library: &std::sync::Arc<crate::information::PublicLibrary>,
     plans: &crate::plans::PlanBook,
-    child_in_flight: &std::collections::BTreeMap<(crate::AccountId, crate::StockId), ChildTicket>,
     _tick: u64,
     _ticks_per_day: u64,
     snapshot: &TickSnapshot,
-    // 本组在全局名册的偏移；`roster_slice` 按此截取本组段，供在途委托匹配。
-    roster_offset: usize,
     information_anchors: Arc<
         std::collections::BTreeMap<
             crate::StockId,
@@ -5952,8 +5964,6 @@ fn build_root_read_context(
         >,
     >,
 ) -> crate::session::RootReadContext {
-    // 在途卖股仍按本组名册匹配，现金占用直接由资源实体聚合。
-    let roster = roster_slice(&projection.account_ids, roster_offset, accounts.len());
     let group_account = &accounts[local];
     let mut book = crate::session::AccountBook::default();
     // Sol 整改 3：含在途现金（买 purse 加回——挂单期间权益观察不
@@ -5963,32 +5973,8 @@ fn build_root_read_context(
         crate::account::AccountKind::Inst,
         crate::money::Money::from_cents(cash_with_pending_at(group_account)),
     );
-    let mut positions = std::collections::BTreeMap::new();
-    for (stock, &qty_raw) in group_account.shares.iter().enumerate() {
-        // Sol 整改 3：持仓含在途卖单余量（旧管线口径=在手+在途——
-        // 组 shares 已扣；qty 口径差收口）。零持仓仅在曾持有或在途
-        // 卖时建条目（held 集成员参与发现采样）。
-        let qty = held_qty_with_pending_at(
-            &group_account.shares,
-            child_in_flight,
-            roster,
-            local as LocalIdx,
-            stock,
-        );
-        if qty == 0 && qty_raw == 0 && !group_account.ever_held[stock] {
-            continue;
-        }
-        positions.insert(
-            crate::StockId(stock as u32),
-            crate::account::Position::from_restored_parts(
-                qty,
-                group_account.frozen_today[stock],
-                group_account.invested_cents[stock],
-                group_account.recovered_cents[stock],
-            ),
-        );
-    }
-    account.fixture_set_positions(positions);
+    // 持仓含账户级在途卖余量（外部/无票单同口径）。
+    account.fixture_set_positions(projected_positions(group_account));
     book.insert(account_id, account);
     let day = u32::try_from(
         snapshot
@@ -9875,6 +9861,7 @@ mod roster_offset_tests {
         selected.cash = 20_000;
         selected.buy_purse_held_cents = 1_250;
         selected.shares[0] = 140;
+        selected.pending_sell_qty[0] = 25;
         selected.frozen_today[0] = 40;
         selected.invested_cents[0] = 98_000;
         selected.recovered_cents[0] = 21_000;
@@ -9912,15 +9899,12 @@ mod roster_offset_tests {
             &accounts,
             selected_local,
             selected_id,
-            &projection,
             &company_facts,
             &Arc::new(crate::information::PublicLibrary::default()),
             &crate::plans::PlanBook::default(),
-            &child_in_flight,
             snapshot.tick,
             240,
             &snapshot,
-            roster_offset,
             Arc::new(std::collections::BTreeMap::new()),
         );
 
@@ -10378,6 +10362,45 @@ mod pending_sell_risk_tests {
             observed.positions[&crate::StockId(0)].unrealized_return,
             None,
             "回收超过投入 ⇒ 净成本非正，收益率不可用"
+        );
+    }
+
+    /// 外部（无 ChildTicket）在途卖单必须进入持仓投影（`build_root_read_context`
+    /// 消费的同一函数）；完整 root/observe_personal 链路由端到端用例另行覆盖。
+    #[test]
+    fn external_pending_without_ticket_survives_projected_positions() {
+        let mut state = chain_harness(Side::Sell);
+        state.child_in_flight.clear();
+        {
+            let acct = std::sync::Arc::make_mut(&mut state.accounts[0]);
+            acct.shares[0] = 60;
+            acct.pending_sell_qty[0] = 140;
+            acct.ever_held[0] = true;
+        }
+        let positions = projected_positions(&state.accounts[0]);
+        assert_eq!(
+            positions[&crate::StockId(0)].qty(),
+            200,
+            "在手 60 + 外部在途 140"
+        );
+        assert_eq!(positions[&crate::StockId(0)].sellable(), 200);
+
+        {
+            let acct = std::sync::Arc::make_mut(&mut state.accounts[0]);
+            acct.shares[0] = 0;
+            acct.pending_sell_qty[0] = 200;
+            acct.invested_cents[0] = 300_000;
+        }
+        let positions = projected_positions(&state.accounts[0]);
+        assert_eq!(
+            positions[&crate::StockId(0)].qty(),
+            200,
+            "纯外部在途不得漏记"
+        );
+        assert_eq!(
+            positions[&crate::StockId(0)].cost_price(),
+            Some(crate::money::Money::from_cents(1_500)),
+            "成本分母=总持仓（300_000/200），不是 shares=0"
         );
     }
 

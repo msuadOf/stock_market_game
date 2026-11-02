@@ -1,0 +1,30 @@
+
+running 10 tests
+test runtime::group::pending_sell_risk_tests::external_pending_without_ticket_survives_root_read_context ... FAILED
+test runtime::group::pending_sell_risk_tests::account_mirror_ignores_foreign_child_tickets ... ok
+test runtime::group::pending_sell_risk_tests::missing_market_view_fails_explicitly - should panic ... ok
+test runtime::group::pending_sell_risk_tests::missing_personal_peak_keeps_risk_unavailable ... ok
+test runtime::group::pending_sell_risk_tests::multi_stock_weights_include_in_flight_sell_positions ... ok
+test runtime::group::pending_sell_risk_tests::buy_purse_is_cash_and_zero_remaining_is_no_position ... ok
+test runtime::group::pending_sell_risk_tests::pending_cost_basis_matches_full_position ... ok
+test runtime::group::pending_sell_risk_tests::mirror_covers_sells_without_child_ticket ... ok
+test runtime::group::pending_sell_risk_tests::valuation_overflow_fails_explicitly - should panic ... ok
+test runtime::group::pending_sell_risk_tests::sell_pending_states_share_one_equity_and_drawdown_basis ... ok
+
+failures:
+
+---- runtime::group::pending_sell_risk_tests::external_pending_without_ticket_survives_root_read_context stdout ----
+
+thread 'runtime::group::pending_sell_risk_tests::external_pending_without_ticket_survives_root_read_context' (1475542) panicked at packages/engine/src/runtime/group.rs:10390:9:
+assertion `left == right` failed: 在手 60 + 外部在途 140
+  left: 60
+ right: 200
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    runtime::group::pending_sell_risk_tests::external_pending_without_ticket_survives_root_read_context
+
+test result: FAILED. 9 passed; 1 failed; 0 ignored; 0 measured; 3489 filtered out; finished in 0.02s
+
+bounded command exited with 101
