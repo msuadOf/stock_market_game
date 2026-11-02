@@ -1,10 +1,12 @@
 import { fork, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { readdir, readFile } from "node:fs/promises";
+import { lstat, readdir, readFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
-import { runBoundedCommand, terminateTree } from "./run-with-deadline.mjs";
+import { COMMAND_CLEANUP_RESERVE_MAX_MS, runBoundedCommand, terminateTree } from "./run-with-deadline.mjs";
 
 const SELF = fileURLToPath(import.meta.url);
 const monotonicMs = () => Number(process.hrtime.bigint()) / 1e6;
@@ -44,6 +46,68 @@ export async function waitForLauncherClose(closed, deadline) {
     })]);
     if (monotonicMs() >= deadline) throw new Error("launcher close remains unconfirmed within total deadline");
   } finally { clearTimeout(timer); }
+}
+
+const EXPORT_CLEANUP_SCRIPT = "import { rm } from 'node:fs/promises'; await rm(process.argv[1], { recursive: true, force: true, maxRetries: 3, retryDelay: 20 });";
+
+export function createExportRoot(env = process.env) {
+  const temporaryRoot = env.TMPDIR ?? env.TMP ?? env.TEMP ?? os.tmpdir();
+  if (typeof temporaryRoot !== "string" || temporaryRoot.length === 0) throw new Error("Rust export isolation requires a process temporary directory");
+  return path.join(path.resolve(temporaryRoot), `rust-export-${process.pid}-${randomUUID()}`);
+}
+
+function assertExportRoot(root) {
+  if (typeof root !== "string" || !path.isAbsolute(root) || path.dirname(root) === root || !path.basename(root).startsWith("rust-export-")) {
+    throw new Error(`refusing to clean an unrecognized export root: ${root}`);
+  }
+}
+
+function exportCleanupFailure(root, cause) {
+  const detail = cause instanceof Error ? `${cause.message}${cause.code === undefined ? "" : ` (${cause.code})`}` : String(cause);
+  return new Error(`export cleanup failed for ${root}: ${detail}; residual export directories may remain: ${root}`, { cause });
+}
+
+export async function withinDeadline(promise, deadline, context, now = monotonicMs) {
+  const pending = Promise.resolve(promise);
+  const remaining = Math.floor(deadline - now());
+  if (remaining <= 0) {
+    pending.catch(() => undefined);
+    throw new Error(`${context} deadline exhausted`);
+  }
+  let timer;
+  try {
+    return await Promise.race([pending, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${context} exceeded the cleanup deadline`)), remaining);
+    })]);
+  } finally { clearTimeout(timer); }
+}
+
+export async function removeExportRootWithinDeadline({ root, deadline, run = runBoundedCommand, now = monotonicMs }) {
+  assertExportRoot(root);
+  const timeoutMs = Math.floor(Math.min(COMMAND_CLEANUP_RESERVE_MAX_MS, deadline - now()));
+  if (timeoutMs < 2) throw exportCleanupFailure(root, new Error("deadline exhausted before cleanup"));
+  try {
+    const pending = Promise.resolve(run({
+      command: process.execPath,
+      args: ["--input-type=module", "-e", EXPORT_CLEANUP_SCRIPT, root],
+      timeoutMs,
+      cleanupReserveMs: Math.max(1, Math.min(100, timeoutMs - 1)),
+    }));
+    await withinDeadline(pending, deadline, `export cleanup for ${root}`, now);
+  } catch (error) {
+    throw exportCleanupFailure(root, error);
+  }
+}
+
+export async function exportRootExistsWithinDeadline({ root, deadline, inspect = lstat, now = monotonicMs }) {
+  assertExportRoot(root);
+  try {
+    await withinDeadline(Promise.resolve(inspect(root)), deadline, `export root check for ${root}`, now);
+    return true;
+  } catch (error) {
+    if (error.code === "ENOENT") return false;
+    throw exportCleanupFailure(root, error);
+  }
 }
 
 async function stopDomain(domain, deadline) {
@@ -189,9 +253,10 @@ export function createCompletionCleanup(launcherPid, {
   return cleanup;
 }
 
-export async function executeSupervisedRustTestBinaries({ artifacts, policy, cwd, env, remainingMs, log = () => undefined, launcherPath = SELF, terminateDomain = stopDomain, signal }) {
+export async function executeSupervisedRustTestBinaries({ artifacts, policy, cwd, env, remainingMs, log = () => undefined, launcherPath = SELF, terminateDomain = stopDomain, cleanupExportRoot = removeExportRootWithinDeadline, signal }) {
   const timeoutMs = Math.floor(remainingMs("Rust supervisor preparation"));
   const batchDeadline = monotonicMs() + timeoutMs;
+  const exportRoot = createExportRoot(env);
   let response;
   let domain;
   let supervisor;
@@ -206,7 +271,7 @@ export async function executeSupervisedRustTestBinaries({ artifacts, policy, cwd
           else if (message.kind === "log") log(JSON.stringify(message.value));
           else if (message.kind === "result" || message.kind === "failure") response = message;
         });
-        supervisor.once("spawn", () => supervisor.send({ kind: "initialize", artifacts, policy, cwd, batchDeadline, launcherPath }));
+        supervisor.once("spawn", () => supervisor.send({ kind: "initialize", artifacts, policy, cwd, batchDeadline, launcherPath, exportRoot }));
         return supervisor;
       },
     });
@@ -218,6 +283,17 @@ export async function executeSupervisedRustTestBinaries({ artifacts, policy, cwd
   if (failure === undefined && response?.kind !== "result") failure = new Error("Rust independent supervisor exited without a confirmed result");
   try { if (response?.domain_closed !== true) await waitForLauncherClose(terminateDomain(domain, batchDeadline), batchDeadline); }
   catch (error) { failure = failure === undefined ? error : new AggregateError([failure, error], `${failure.message}; supervisor cleanup failed: ${error.message}`); }
+  const cleanupDeadline = Math.min(batchDeadline, monotonicMs() + COMMAND_CLEANUP_RESERVE_MAX_MS);
+  try {
+    if (await exportRootExistsWithinDeadline({ root: exportRoot, deadline: cleanupDeadline })) {
+      await withinDeadline(Promise.resolve(cleanupExportRoot({ root: exportRoot, deadline: cleanupDeadline })), cleanupDeadline, `export cleanup for ${exportRoot}`);
+    }
+  } catch (error) {
+    const message = error.message.includes("residual export directories may remain")
+      ? error.message
+      : `export cleanup failed for ${exportRoot}: ${error.message}; residual export directories may remain: ${exportRoot}`;
+    failure = failure === undefined ? new Error(message, { cause: error }) : new AggregateError([failure, error], `${failure.message}; ${message}`);
+  }
   if (failure !== undefined) throw failure;
   return response.value;
 }
@@ -246,10 +322,17 @@ async function supervise(input) {
     const deadline = earliestCleanupDeadline(input.batchDeadline, record, records.values());
     stopping = (async () => {
       try {
-        // launcher 在 spawned 回报前退出时，只能凭既有 case token 找回子链，不能用裸 PGID 重认领。
+        // 即使 launcher 仍存活，自行退出的失败 case 也可能留下已 detach 的孙进程；
+        // 只对该失败 case 做 token 清理；已超时 case 由 runBoundedCommand 终止进程树，不重复扫描。
+        // 其余活跃 case 继续交给 domain 终止；launcher 孤儿时才清理全部登记 case。
         const orphaned = process.platform === "linux" && birthIdentity(domain.pid) === undefined;
-        await cleanupCompletedCase.afterFailure(orphaned ? records.values() : [], deadline);
-        await waitForLauncherClose(Promise.all([stopDomain(domain, deadline), launcherClosed]), deadline);
+        const failedRecords = orphaned || record === undefined ? records.values() : record.expired ? [] : [record];
+        // token 清理与 domain 终止并行，避免 /proc 扫描挤占挂例终止预算；两者仍共享同一 deadline。
+        await waitForLauncherClose(Promise.all([
+          stopDomain(domain, deadline),
+          cleanupCompletedCase.afterFailure(failedRecords, deadline),
+          launcherClosed,
+        ]), deadline);
         domainCleaned = true;
         if (record) log({ phase: "rust-case-termination-confirmed", token: record.token, context: record.context,
           confirmed_ms: monotonicMs(), total_deadline_ms: record.total, event_loop_delay_max_ms: loopDelay.max / 1e6 });
@@ -310,7 +393,7 @@ async function supervise(input) {
   launcher.on("message", (message) => {
     if (terminal !== undefined) return;
     if (message.kind === "ready") {
-      launcher.send({ kind: "initialize", artifacts: input.artifacts, policy: input.policy, cwd: input.cwd, batchDeadline: input.batchDeadline });
+      launcher.send({ kind: "initialize", artifacts: input.artifacts, policy: input.policy, cwd: input.cwd, batchDeadline: input.batchDeadline, exportRoot: input.exportRoot });
     } else if (message.kind === "arm") {
       if (typeof message.token !== "string" || !message.token.startsWith(`${launcher.pid}:`) || records.has(message.token) ||
           ![message.started, message.execution, message.total, message.timeoutMs].every(Number.isFinite) ||
@@ -379,7 +462,7 @@ async function launch() {
       process.send({ kind: "log", value: { phase: "rust-launcher-ready", memory: process.memoryUsage() } });
       const { executeRustTestBinaries } = await import("./run-full-regression.mjs");
       const labels = new Map(message.artifacts.map((artifact) => [artifact.executable, artifact.label]));
-      const value = await executeRustTestBinaries({ artifacts: message.artifacts, policy: message.policy, cwd: message.cwd,
+      const value = await executeRustTestBinaries({ artifacts: message.artifacts, policy: message.policy, cwd: message.cwd, exportRoot: message.exportRoot,
         env: process.env, now: monotonicMs, remainingMs: () => Math.floor(message.batchDeadline - monotonicMs()),
         log: (line) => process.send({ kind: "log", value: JSON.parse(line) }),
         run: async (options) => {

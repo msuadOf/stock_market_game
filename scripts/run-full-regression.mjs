@@ -391,8 +391,8 @@ export function parseRustTestCases(stdout) {
   return [...names];
 }
 
-export async function executeRustTestBinaries({ artifacts, policy, run = runBoundedCommand, cwd, env, remainingMs, now, log = () => undefined, signal }) {
-  if (run === runBoundedCommand) return executeSupervisedRustTestBinaries({ artifacts, policy, cwd, env, remainingMs, log, signal });
+export async function executeRustTestBinaries({ artifacts, policy, run = runBoundedCommand, cwd, env, exportRoot, remainingMs, now, log = () => undefined, signal }) {
+  if (run === runBoundedCommand) return executeSupervisedRustTestBinaries({ artifacts, policy, cwd, env, exportRoot, remainingMs, log, signal });
   let nextIndex = 0;
   let stop = false;
   const failures = [];
@@ -434,6 +434,10 @@ export async function executeRustTestBinaries({ artifacts, policy, run = runBoun
   if (signal?.aborted && failures.length === 0) throw signal.reason;
   if (failures.length > 0) throw new AggregateError(failures, `${failures.length} prebuilt Rust test binaries failed:\n${failures.map((failure) => failure.message).join("\n")}`);
   const cases = results.flat();
+  const isExportCase = (testCase) => /(?:^|::)export_bindings_/.test(testCase.name);
+  if (cases.some(isExportCase) && (typeof exportRoot !== "string" || !path.isAbsolute(exportRoot) || !path.basename(exportRoot).startsWith("rust-export-"))) {
+    throw new Error("Rust export cases require an isolated output root");
+  }
   const concurrency = Math.min(cases.length, Math.max(1, Math.min(32, Math.floor(policy.available_cpu_count / 2))));
   const casePolicy = { case_count: cases.length, max_concurrent_cases: concurrency, test_threads: 1, ordinary_case_timeout_ms: ORDINARY_TEST_MAX_MS };
   log(JSON.stringify({ phase: "rust-ordinary-cases-start", ...casePolicy }));
@@ -446,16 +450,20 @@ export async function executeRustTestBinaries({ artifacts, policy, run = runBoun
     || /^session::pipeline::authoritative_tick_tests::extreme_phase_geometry_(?:single_tick_day|no_closing_auction|closing_auction)$/.test(testCase.name);
   const calendarCases = remainingCases.filter(isCalendarCase);
   const ordinaryCases = remainingCases.filter((testCase) => !isCalendarCase(testCase));
+  let exportIndex = 0;
   async function caseWorker(queue) {
     while (!stop && !combinedSignal.aborted) {
       const testCase = queue.shift();
       if (testCase === undefined) return;
       try {
         const timeoutMs = Math.min(ORDINARY_TEST_MAX_MS, remainingMs(`Rust test case ${testCase.label} ${testCase.name}`));
+        const caseEnv = isExportCase(testCase)
+          ? { ...env, TS_RS_EXPORT_DIR: path.join(exportRoot, String(exportIndex++)) }
+          : { ...env };
         await run({
           command: testCase.executable,
           args: [testCase.name, "--exact", "--test-threads=1"],
-          env: { ...env },
+          env: caseEnv,
           cwd, timeoutMs,
           cleanupReserveMs: Math.min(COMMAND_CLEANUP_RESERVE_MAX_MS, timeoutMs - 1),
           signal: combinedSignal,

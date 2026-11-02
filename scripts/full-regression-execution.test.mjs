@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import os from "node:os";
 
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { it } from "node:test";
@@ -14,6 +15,46 @@ import * as regression from "./run-full-regression.mjs";
 import { discoverScriptTestFiles } from "./run-script-tests.mjs";
 
 import { createSealedFixture, resealInventory, createExternalTargetFixture } from "./full-regression-test-support.mjs";
+
+it("并发类型导出使用独立目录", { timeout: 10000 }, async () => {
+  const calls = [];
+  const exportRoot = path.join(os.tmpdir(), "rust-export-fixture");
+  await regression.executeRustTestBinaries({
+    artifacts: [{ executable: "fixture", label: "fixture" }],
+    policy: { max_concurrent_binaries: 1, available_cpu_count: 8, worker_budgets: [{}] },
+    cwd: process.cwd(), env: {}, exportRoot, now: () => 0,
+    remainingMs: () => 300_000,
+    run: async (options) => {
+      if (options.args.includes("--list")) {
+        return { stdout: options.args.includes("--ignored") ? "" : "a::export_bindings_one: test\nb::export_bindings_two: test\nc::ordinary: test\n" };
+      }
+      calls.push(options);
+      return {};
+    },
+  });
+  assert.equal(calls.length, 3);
+  const exportCalls = calls.filter((call) => call.args[0].includes("export_bindings_"));
+  assert.deepEqual(exportCalls.map((call) => call.env.TS_RS_EXPORT_DIR).sort(), [
+    path.join(exportRoot, "0"),
+    path.join(exportRoot, "1"),
+  ]);
+  assert.equal(calls.find((call) => call.args[0] === "c::ordinary").env.TS_RS_EXPORT_DIR, undefined);
+  assert.ok(calls.every((call) => call.timeoutMs === 10_000));
+});
+
+it("导出用例缺少隔离根目录时拒绝启动", { timeout: 10000 }, async () => {
+  let executions = 0;
+  await assert.rejects(regression.executeRustTestBinaries({
+    artifacts: [{ executable: "fixture", label: "fixture" }],
+    policy: { max_concurrent_binaries: 1, available_cpu_count: 8, worker_budgets: [{}] },
+    cwd: process.cwd(), env: {}, now: () => 0, remainingMs: () => 300_000,
+    run: async (options) => {
+      if (!options.args.includes("--list")) executions += 1;
+      return { stdout: options.args.includes("--ignored") ? "" : "a::export_bindings_one: test\n" };
+    },
+  }), /export.*isolated output root/i);
+  assert.equal(executions, 0);
+});
 
 it("executes sealed prebuilt test binaries, then preserves doctests and 10-second web coverage", async () => {
   let nowMs = 0;

@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { it } from "node:test";
-import { earliestCleanupDeadline, executeSupervisedRustTestBinaries, waitForLauncherClose } from "./rust-test-case-supervisor.mjs";
+import { earliestCleanupDeadline, executeSupervisedRustTestBinaries, exportRootExistsWithinDeadline, removeExportRootWithinDeadline, waitForLauncherClose } from "./rust-test-case-supervisor.mjs";
 
 async function setup(topic) {
   const root = path.resolve(".tmp/deadline-hardgate-tests");
@@ -21,6 +22,34 @@ it("成功批次确认 launcher 退出后不再 taskkill 已释放 PID，保持 
       remainingMs: () => 3000, launcherPath, terminateDomain: async () => { kills += 1; throw new Error("taskkill exit 128: released PID"); } });
     assert.equal(result.case_count, 0); assert.equal(kills, 0);
   } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+it("导出目录清理失败必须使成功批次显式失败", { timeout: 10000 }, async () => {
+  const { dir, launcherPath } = await setup("export-cleanup-failure");
+  await writeFile(launcherPath, `import fs from 'node:fs';
+process.on('message',m=>{if(m.kind==='initialize'){fs.mkdirSync(m.exportRoot,{recursive:true});process.send({kind:'result',value:{case_count:0}});}else if(m.kind==='shutdown')process.disconnect();});process.send({kind:'ready'});`);
+  try {
+    await assert.rejects(executeSupervisedRustTestBinaries({ artifacts: [], policy: {}, cwd: process.cwd(), env: process.env,
+      remainingMs: () => 3000, launcherPath, cleanupExportRoot: async () => { throw new Error("rm fixture failed"); } }),
+    /export cleanup failed.*rm fixture failed.*residual export directories may remain/);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+it("导出目录清理超过剩余期限时立即失败", { timeout: 10000 }, async () => {
+  const started = Number(process.hrtime.bigint()) / 1e6;
+  await assert.rejects(removeExportRootWithinDeadline({
+    root: path.join(os.tmpdir(), "rust-export-deadline-fixture"), deadline: started + 100,
+    run: () => new Promise(() => {}),
+  }), /export cleanup.*deadline/i);
+  assert.ok(Number(process.hrtime.bigint()) / 1e6 - started < 1000);
+});
+
+it("导出目录检查只把 ENOENT 视为无需清理", { timeout: 10000 }, async () => {
+  const root = path.join(os.tmpdir(), "rust-export-inspect-fixture");
+  const deadline = Number(process.hrtime.bigint()) / 1e6 + 1000;
+  assert.equal(await exportRootExistsWithinDeadline({ root, deadline, inspect: async () => { throw Object.assign(new Error("missing"), { code: "ENOENT" }); } }), false);
+  await assert.rejects(exportRootExistsWithinDeadline({ root, deadline, inspect: async () => { throw Object.assign(new Error("permission denied"), { code: "EACCES" }); } }),
+    /export cleanup failed.*EACCES.*residual export directories may remain/);
 });
 
 it("launcher close 不确认必须在当前 total 截止报错", { timeout: 10000 }, async () => {
