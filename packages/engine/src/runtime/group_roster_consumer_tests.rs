@@ -379,6 +379,19 @@ fn roster_open_held_survives_real_partial_fill_and_plan_termination() {
 #[test]
 fn roster_lifecycle_revision_consumes_own_pending_equity() {
     let mut world = pending_world();
+    let accounts = world.snapshot_accounts().expect("复审前真实账户");
+    assert_eq!(accounts[1].1[0].shares[0], 700, "在手700");
+    assert_eq!(accounts[1].1[0].pending_sell_qty[0], 300, "在途卖余量300");
+    assert_eq!(accounts[1].1[0].cash, 1_000_000, "现金100万分");
+    let old_id = world.collect_plans().expect("复审前计划簿")[1]
+        .1
+        .active_investor_plan(OWNERS[1], &StockId(0))
+        .expect("尾组在途卖计划")
+        .plan_id();
+    // 经济持仓 = 在手700 + 在途卖余量300 = 1_000；含在途权益 =
+    // 现金1_000_000 + 1_000×1_000 = 2_000_000；目标总仓2_000 股。
+    // 反向 Buy 的差额 = 2_000 - 1_000 = 1_000。旧卖子单撤销后会返股300，
+    // 若按仅在手700算出1_300，后续买入将把总持仓推到2_300。
     prepare_tick(&mut world, 2, Some(10_000));
     world.run_ticks(1).expect("真实 Start 反向复审并撤销旧子单");
     let books = world.collect_plans().expect("实际复审结果");
@@ -389,10 +402,31 @@ fn roster_lifecycle_revision_consumes_own_pending_equity() {
     assert_eq!(tail.direction(), Side::Buy);
     assert_eq!(
         tail.target(),
-        PlanTarget::ShareCount(1_300),
-        "复审原有在手700、权益2_000_000，目标2_000；权益漏掉在途300股会错误修订为1_000"
+        PlanTarget::ShareCount(1_000),
+        concat!(
+            "总持仓1_000、含在途权益2_000_000、目标总仓2_000，应买1_000；",
+            "权益漏掉在途300会误得700，",
+            "仅按在手700计算会放大为1_300并在撤单返股后超买到2_300"
+        )
     );
     assert!(tail.last_revision().is_some(), "必须走既有计划修订");
+    assert_eq!(tail.plan_id(), old_id, "反向修订沿用原计划，不另开计划");
+    assert_eq!(tail.filled_qty(), 0, "旧卖单零成交，反向重开执行进度");
+    assert_eq!(tail.active_child_order_id(), None, "旧卖子单引用已释放");
+    assert_eq!(tail.active_child_remaining_qty(), None, "旧执行腿已结束");
+    let (resting, _) = world.collect_desk_resting().expect("撤单后真实在途单");
+    assert!(resting[0].is_empty(), "旧卖子单已从 desk 撤销");
+    let after = world.snapshot_accounts().expect("撤单返股后的真实账户");
+    assert_eq!(after[1].1[0].shares[0], 1_000, "旧卖子单撤销后返股300");
+    assert_eq!(after[1].1[0].pending_sell_qty[0], 0, "在途卖余量清零");
+    let records = world
+        .collect_open_derivations()
+        .expect("生产 root 观察读面");
+    assert_eq!(
+        records[1].3[0].personal_in.belief.experience().peak_equity,
+        Some(Money::from_cents(2_000_000)),
+        "独立读面须证明权益含在途300股；漏算只剩1_700_000"
+    );
     world.shutdown().expect("清理线程");
 }
 
