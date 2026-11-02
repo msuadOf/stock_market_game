@@ -1,12 +1,13 @@
-//! std-thread 所有权转移模型的运行时原语（批 1：类型先行，不接线）。
+//! std-thread 所有权转移模型的运行时入口。
 //!
 //! 模型一句话：NPC 分组线程持有账户，交易部线程一股一个持有订单簿；下单时现金/股票
 //! 实体从组账户**实际扣出**随消息转移给交易部（所有权转移，非 escrow 预留），成交时
 //! 实体互换、终结时原路退回。数据面（订单/实体）组↔交易部直发，不经协调者。
 //!
-//! 本模块当前只落地协议**类型**（身份标识 / DeskIn / Entity / FillFact / DeskReceipt /
-//! DeskBatch），主循环（组线程、交易部、协调者）由后续批次接入。设计蓝本：迁移设计
-//! F 收敛架构 §1 实体类型表 + 原型 `packages/std-thread-proto/src/oworker.rs`。
+//! 本模块导出协议类型（身份标识 / DeskIn / Entity / FillFact / DeskReceipt /
+//! DeskBatch）并接入组线程、交易部与协调者主循环；native 缺省启用，WASM 由宿主在
+//! 首次读取前设置 override。设计蓝本：迁移设计 F 收敛架构 §1 实体类型表 + 原型
+//! `packages/std-thread-proto/src/oworker.rs`。
 //!
 //! 零 String 纪律：身份全部数值化（组内名册下标、股数值索引、复合挂单号），字符串只
 //! 留边界层。

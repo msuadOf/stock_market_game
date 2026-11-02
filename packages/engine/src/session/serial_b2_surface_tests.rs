@@ -1,10 +1,11 @@
-//! B2 串行数据面（wasm 旧管线）出数测试。
+//! B2 串行数据面（旧管线）出数测试。
 //!
-//! W3 接线实证缺陷 1 红证：`step_runtime_enabled()` 在 wasm32 恒 false
-//! ⇒ web 产品走串行管线（旧管线），但 B2 三安装面（market_minute_bars
+//! W3 接线实证缺陷 1 红证（历史）：早期 `step_runtime_enabled()` 在 wasm32
+//! 恒 false ⇒ web 产品走串行管线（旧管线），但 B2 三安装面（market_minute_bars
 //! 安装 / receipts 入账 / retained_market_days 冻结）全在 runtime 路径
 //! （step_via_runtime 安装链），串行侧 `finalize_continuous_tick` 不装
-//! ⇒ wasm 四查询面恒空数据。
+//! ⇒ wasm 四查询面恒空数据。当前 Web 产品宿主缺省启用 runtime；本测试仍覆盖
+//! 旧管线及未启用 runtime 的 engine 内部串行等价合同。
 //!
 //! 修复合同：串行 finalize 复用 B2 **同一套**纯函数与 session 镜像面做
 //! 等价安装（单一事实源——分钟桶聚合/键推导与 desk 同函数；receipts

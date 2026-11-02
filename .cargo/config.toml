@@ -1,11 +1,8 @@
-# 批 9 A10（W 收尾）：wasm-bindgen-rayon 多核随 rayon 退役（ADR-0043）——
-# +atomics/build-std 链接链与共享内存（SharedArrayBuffer）隔离门一并退役；
-# wasm32 走稳定工具链串行管线（本期 wasm 语义，登记为简化——
-# docs/trading-rules 与 memory/project_std_thread_migration）。
-# 注意：Cargo 的 rustflags 跨目录链**合并**（非替换）——本文件的空
-# rustflags 不能屏蔽主仓 checkout 上级 .cargo/config.toml 的历史原子
-# 参数；本 worktree 内 wasm 查询需 RUSTFLAGS="" 覆盖（已实测全绿）。
-# 合并 main 后主仓配置更新为同形即自然消（环境待合并项，非代码缺陷）。
+# 根配置保留空 rustflags；wasm32 的 +atomics/build-std 链接链由
+# apps/web-wasm/.cargo/config.toml 提供（R4a 阶段 1 恢复），本文件不重复声明。
+# Cargo 的 rustflags 跨目录链**合并**（非替换）；从仓库根查询 wasm32 目标不会
+# 加载成员 crate 的 target 配置。线程产物验收应在 apps/web-wasm 目录构建，或经
+# scripts/verify-wasm-thread-combo.mjs 统一构建。
 [target.wasm32-unknown-unknown]
 rustflags = []
 

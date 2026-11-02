@@ -3771,9 +3771,9 @@ impl GameSession {
         if self.uses_runtime_civil_authority() {
             self.freeze_closed_retained_day_if_needed(report.settled_date)?;
         } else {
-            // B2 串行等价（W3 缺陷 1 修复）：wasm 串行无驱动器——休市/
-            // 未冻结自然日按每股日历补保留条目（交易日已由 finalize 的
-            // ends_day 段冻结，末条==settled 跳过）。
+            // B2 串行等价（W3 缺陷 1 修复）：无 runtime 驱动器（旧管线或
+            // 未启用 runtime）——休市/未冻结自然日按每股日历补保留条目
+            // （交易日已由 finalize 的 ends_day 段冻结，末条==settled 跳过）。
             self.freeze_serial_closed_retained_day_if_needed(report.settled_date)?;
         }
         Ok(report)
@@ -7335,7 +7335,8 @@ mod npc_working_quote_tests {
     // 进入 runtime World，后继真实买单应能与它撮合；首步只出现受理事件
     // 不足以证明旧挂单已经成为 World 的撮合输入。
     // 此前首构造不迁入旧挂单：seed 只写 session 旧簿，runtime 世界不可见。
-    // 仅 runtime 翻转模式有意义（缺省走旧管线，seed 本就在旧簿生效）。
+    // 仅 runtime 模式有意义（native 缺省启用 runtime；`ENGINE_STEP_RUNTIME=0`
+    // 回旧管线时 seed 本就在旧簿生效）。
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn sol5_seed_before_first_step_reaches_runtime_world() {

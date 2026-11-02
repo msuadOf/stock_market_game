@@ -269,7 +269,7 @@ NPC 开局的性能验收。
   250/500/1000 三档配对不敏感，依据见
   `agents/view-campaign/plans/seal-spread-wakeup-design.md` §4；
   **显式设置但非法值（非数字/溢出）启动即显式 panic，不静默回落**）。
-  WASM 串行路径无 OS 线程，不受影响（编译期恒禁用）。
+  WASM 路径不读取 `ENGINE_SPIN_*`；其组/交易部等待参数由 `init_wasm_wait` 显式设置。
   CI/容器注意：cgroup 限核环境自旋空转占比被放大，限核跑测试可用
   `ENGINE_SPIN_DISABLE=1`。
 

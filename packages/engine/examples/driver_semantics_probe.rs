@@ -14,7 +14,8 @@
 //! 3000 tick=112，摊薄关系成立）。
 //!
 //! 用法：driver_semantics_probe <setup.json> <ticks> <runtime_groups>
-//!（ENGINE_STEP_RUNTIME=1 运行；批 9 A6 起 threads 参数退役——CPU 约束
+//!（native 缺省启用 runtime；`ENGINE_STEP_RUNTIME=0` 时本探针拒绝运行；批 9 A6 起
+//! threads 参数退役——CPU 约束
 //! 走 OS 级 cgroup/taskset）。
 use engine::{GameSession, SessionSetup};
 use std::{collections::BTreeMap, env, fs, time::Instant};
@@ -31,7 +32,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("ticks/runtime_groups 必须大于零".into());
     }
     if !engine::runtime::step_runtime_enabled() {
-        return Err("本探针测 std-thread runtime 路径：需 ENGINE_STEP_RUNTIME=1".into());
+        return Err(
+            "本探针测 std-thread runtime 路径：需启用 runtime（不要设置 ENGINE_STEP_RUNTIME=0）"
+                .into(),
+        );
     }
     (|| -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // 守恒基线：构造后全账户现金+费用桶与股份总量（初始事实）。

@@ -10,10 +10,9 @@
 //! - **wasm32**：阶段 2 槽协议接线（设计 §12-14）——spawn/join 经
 //!   `crate::facade_slot` 协议核心 + `WasmFacadePlatform`（env import 面）。
 //!   运行时前置：宿主 bootstrap 先调 `facade_slot_init`（容量 2×(G+N+2)）
-//!   划拨 arena；未初始化的 spawn = 显式 Unsupported。当前 wasm 运行时
-//!   仍为串行管线（step_runtime_enabled=false），本路径只在真实 substrate
-//!   解封后可达；available_parallelism（§1.1 T3）维持显式 Unsupported 至
-//!   substrate 解封批（阶段边界登记于 agents/wasm-thread-r4a/）。
+//!   划拨 arena；未初始化的 spawn = 显式 Unsupported。Web 产品宿主缺省启用
+//!   runtime override；engine 内部未设置 override 时仍走串行回退。
+//!   available_parallelism（§1.1 T3）维持显式 Unsupported。
 //!
 //! **为什么 mpsc/Mutex/Condvar 不进门面**（§0 推论 + §1.3 结论）：std 同步
 //! 原语在「+atomics + build-std + 共享线性内存」产物里由 std 原生提供
@@ -99,9 +98,9 @@ mod wasm_impl {
             self
         }
 
-        /// 槽协议 spawn（§12.1.2 H1-H5 + §13.1 谓词等待）。当前 wasm 运行
-        /// 时仍为串行管线（step_runtime_enabled=false），本路径只在真实
-        /// substrate 解封后可达；未初始化/池耗尽/超时均显式 io::Error。
+        /// 槽协议 spawn（§12.1.2 H1-H5 + §13.1 谓词等待）。Web 产品宿主在
+        /// runtime override 启用后经 facade 调用本路径；未初始化/池耗尽/超时
+        /// 均显式 io::Error。
         pub fn spawn<F, T>(self, f: F) -> io::Result<JoinHandle<T>>
         where
             F: FnOnce() -> T + Send + 'static,

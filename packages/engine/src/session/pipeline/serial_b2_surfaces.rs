@@ -1,9 +1,10 @@
-//! B2 串行数据面安装（wasm/旧管线 finalize 的 runtime 等价安装）。
+//! B2 串行数据面安装（旧管线 finalize 的 runtime 等价安装）。
 //!
-//! W3 接线实证缺陷 1：`step_runtime_enabled()` 在 wasm32 恒 false ⇒ web
-//! 产品走串行管线（旧管线），但 B2 三安装面（`market_minute_bars` /
+//! W3 接线实证缺陷 1（历史）：早期 `step_runtime_enabled()` 在 wasm32 恒 false，
+//! Web 产品走串行管线（旧管线），但 B2 三安装面（`market_minute_bars` /
 //! receipts 入账 / `retained_market_days` 冻结）全在 runtime 路径
-//! （`step_via_runtime` 安装链）⇒ wasm 四查询面恒空。
+//! （`step_via_runtime` 安装链）⇒ wasm 四查询面恒空。当前 native 与 Web 产品
+//! 宿主缺省启用 runtime；本模块只服务旧管线及未启用 runtime 的 engine 内部路径。
 //!
 //! 等价合同（单一事实源，不为 wasm 写第二套聚合逻辑）：
 //! - **分钟桶聚合/键推导**＝`runtime::protocol::minute_bar_apply` /
@@ -25,7 +26,8 @@
 //!   镜像（runtime 侧为 world 日结 Drain 捎带——同值同拍）。
 //!
 //! 接线点＝`finalize_continuous_tick`（旧管线唯一提交路径——native
-//! `step_with_commit_evidence`/wasm `step()` 串行分叉同走此处）。
+//! `step_with_commit_evidence` 等旧管线入口同走此处；Web 产品宿主启用 runtime
+//! 时走 `step_via_runtime` 安装链）。
 
 use super::fill_fact::{FillFact, ReceiptBatch};
 use super::StepFatal;

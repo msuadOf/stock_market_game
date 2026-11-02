@@ -235,8 +235,8 @@ impl ProtocolSession {
     }
 
     pub fn restore(slot: &crate::SaveSlot) -> Result<Self, SessionError> {
-        // 批 9 A5（with_compute 注入面退役）：wasm 串行与生产统一走
-        // shared_default 内部构造（C 桶保留面——wasm 恒旧管线串行）。
+        // 批 9 A5（with_compute 注入面退役）：wasm 与生产统一走
+        // shared_default 内部构造。
         let game =
             GameSession::restore_with_compute(slot, crate::ComputeContext::shared_default()?)?;
         let sessions_through_current_date =

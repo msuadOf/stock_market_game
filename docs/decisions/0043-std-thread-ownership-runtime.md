@@ -1,6 +1,8 @@
 # ADR-0043: std::thread 所有权转移运行时（NPC 组线程 + 每股交易部线程）
 
-- **状态 (Status):** draft（实现已落地、缺省未翻转；批 11 全量回归 + s5 正式基准 +
+- **状态 (Status):** draft（实现已落地；native 与 Web 产品宿主缺省启用 runtime，
+  `ENGINE_STEP_RUNTIME=0` 仅作为 native 生产 `step` 的临时回退口；旧管线仍服务
+  Escrow evidence 等验证面。批 11 全量回归 + s5 正式基准 +
   独立复核通过后改 accepted，并如实更新「后果」第 6 条）
 - **日期 (Date):** 2026-10-17（决策链 2026-10-11 ~ 2026-10-16）
 - **决策者 (Deciders):** 用户拍板（两阶段模型判定 2026-10-11；std::thread 内联方案

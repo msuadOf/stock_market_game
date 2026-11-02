@@ -1,11 +1,12 @@
 //! engine → WASM 绑定（ADR-0007 §4）。
 //!
-//! native 直接使用 std::thread 运行时（ADR-0043）；WASM 的 `World` 也保留，
-//! worker 创建经 `thread_facade` 接入；宿主可在首次读取前显式设置一次
-//! `step runtime override` 进入该路径。缺省仍走串行管线，尚未翻转为 runtime；
-//! WASM 多 worker 所需的 `atomics`、`build-std` 与 COOP/COEP 隔离链仍是相关条件，
-//! 不代表已删除或本片已验证。WASM 默认串行属于简化（见 docs/trading-rules 与
-//! memory/project_std_thread_migration）；本片未实跑 WASM cfg、ABI、`World` 或 Browser。
+//! native 缺省使用 std::thread 运行时（ADR-0043）；WASM 的 `World` 也保留，
+//! worker 创建经 `thread_facade` 接入。WASM engine 内部在宿主未设置 override 时
+//! 缺省走串行管线；Web 产品宿主在首次读取前显式设置 `runtimeOverride: true` 并
+//! 传入 `waitSettings`，`runtimeOverride: false` 会被拒绝。WASM 多 worker 产物由
+//! wasm32 nightly build 配置（`+atomics`、`build-std`）构建，宿主以 COOP/COEP 与
+//! 共享内存门禁提供运行环境。本注释描述当前接线；完整 WASM cfg、ABI、`World` 与
+//! Browser 验收仍以对应验收记录为准，不在此宣称通过。
 //!
 //! GameSession 不可序列化（含 `Box<dyn Strategy + Send + Sync>`），故存于 thread_local
 //! 句柄注册表；仅 `Snapshot`/`Event`/`Intent`/`SessionSetup` 经 serde-wasm-bindgen 跨界。
@@ -1125,10 +1126,11 @@ pub fn clear_prepared_restore() {
 // ---------------------------------------------------------------------------
 // R4a 阶段 2：wasm 线程门面槽协议导出面（设计 §12-14）。
 //
-// 仅 wasm32 编译（native 上 facade 运行时不存在；宿主 bootstrap 在 substrate
-// 就绪后调 facade_slot_init，子 Worker bootstrap 调 facade_child_trampoline）。
-// 当前宿主尚未装配 supervisor/子 Worker/bootstrap，spawn 不可达，本导出面
-// 是宿主装配的接口锚，不改变既有运行时行为（阶段边界见 agents 台账）。
+// 仅 wasm32 编译（native 上 facade 运行时不存在）。宿主以共享 memory 实例化模块后，
+// 调用 facade_slot_init_for_setup/for_restore_json，由它们按拓扑或存档前缀调用
+// facade_slot_init；supervisor 收到 `facadeSpawn` 后创建子 Worker，子 Worker
+// bootstrap 调 facade_child_trampoline。该导出面是生产宿主装配的接口锚；
+// 真实浏览器验收边界仍按 agents 台账登记。
 // ---------------------------------------------------------------------------
 
 /// facade 运行时初始化：容量 = 2×(G+N+2)（宿主按实际并行参数传入，不写死）。
@@ -1362,9 +1364,10 @@ pub fn wasm_wait_abort_layout() -> Result<JsValue, JsValue> {
 // ---------------------------------------------------------------------------
 // 验证专用入口（feature = verification-harness；正式产物零暴露）。
 //
-// 正式产品里没人调用 `thread_facade::Builder::spawn`（wasm 运行时仍是串行
-// 管线），整条请求者链路会被 LTO 消除。真实双 Worker 闭环验证需要它存活，
-// 故只在验证 feature 下导出。构建方式见 agents/wasm-thread-r4a/phase2-ledger.md。
+// 正式产品通过 `World` 的组/交易部构造调用 `thread_facade::Builder::spawn`；
+// 验证入口另行导出，便于在 `verification-harness` 下保持请求者链路存活并做
+// 双 Worker 闭环。构建这些验证入口时须显式启用 `verification-harness` feature；
+// 正式产物不包含它们。
 // ---------------------------------------------------------------------------
 
 /// 验证：保持旧入口可重复 spawn/join 的常量闭包合同。

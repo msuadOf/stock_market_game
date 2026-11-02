@@ -289,7 +289,7 @@ fn sol5_set_runtime_attention_syncs_scheduler_heap() {
 #[test]
 fn runtime_attention_heap_mirror_does_not_grow_across_ticks() {
     if !crate::runtime::step_runtime_enabled() {
-        // 缺省旧管线不走 runtime 安装链——本红证由 env=1 批次承载。
+        // runtime 未启用时不走 runtime 安装链——本红证只在 runtime 启用时执行。
         return;
     }
     let mut game = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();

@@ -26,7 +26,7 @@
 
 **关键点：**
 - `game-engine` 是**纯逻辑**：输入"状态 + 动作"，输出"新状态 + 事件"。不碰 DOM、不碰网络、不碰定时器。
-- native 运行时（[ADR-0043](decisions/0043-std-thread-ownership-runtime.md)）内部自管 OS 线程与 `std::sync::mpsc` 通道（NPC 组线程 + 每股交易部线程），不碰 DOM、网络或存储；Web 默认显式使用 `World`/`RuntimeDriver`，经 thread facade 使用 Workers。WASM 的 engine 内部未设置 runtime override 时仍走串行管线。
+- native 缺省启用 runtime（[ADR-0043](decisions/0043-std-thread-ownership-runtime.md)），内部自管 OS 线程与 `std::sync::mpsc` 通道（NPC 组线程 + 每股交易部线程），不碰 DOM、网络或存储；`ENGINE_STEP_RUNTIME=0` 可临时切回旧管线。Web 产品宿主缺省解析为 `runtimeOverride: true`，使用 `World`/`RuntimeDriver` 并经 thread facade 使用 Workers，`runtimeOverride: false` 会被显式拒绝。WASM engine 内部在宿主未设置 override 时仍走串行管线；WASM 会话登记与 facade arena 初始化会显式要求已启用 runtime，而 Web 产品宿主缺省启用它。
 - engine 用 **Rust** 实现（[ADR-0002](decisions/0002-engine-rust-wasm.md)）：前端经 WASM 调用，后端/Tauri 直接复用同一 crate。
 - 各"外壳"负责 I/O（渲染、存储、网络、定时器），把用户动作翻译成对 engine 的调用。
 - 同一份 engine 能在前端、后端、Tauri、测试中**分别运行**——这是"后端可选"与"多端一致"的根本。
@@ -135,7 +135,7 @@ engine 是被依赖的叶子，不依赖任何 app。
 ## Escrow tick 与验证边界（ADR-0017）
 
 本节描述候选实现的契约；完整语料、性能和最终宿主验收仍以独立证据为准，不由文档宣告通过。
-市场 tick 的 native 生产路径是 std-thread 运行时（[ADR-0043](decisions/0043-std-thread-ownership-runtime.md)）消息协议：协调者 `broadcast_start` 广播 `Arc<TickSnapshot>` → NPC 组线程决策∥+实体扣除+分段 flush，与每股交易部线程 `begin_tick`（隐式转正→行情快照→开盘清算→到期撤销）边收边撮∥ → `converge_round` 收齐 G+N 报告（commit 前唯一同步）→ `TickEvidence` 过校验后单点安装，或广播 Abort 逆序回放三层 working overlay（组账户/交易部簿/协调者 candidate）。等价语义保持：失败原子性、现金/股份守恒、事件 seq 单调、同拍交付（`apply_same_tick_fill_projection`）。账户/股票可并行，同股票受理先后不变。Web 默认显式使用 `World`/`RuntimeDriver` 和 facade Workers；WASM 的 engine 内部未设置 runtime override 时仍走串行管线。该路径描述不代表完整宿主验收已通过。
+市场 tick 的 native 与 Web WASM 产品宿主生产路径共用 std-thread 运行时（[ADR-0043](decisions/0043-std-thread-ownership-runtime.md)）消息协议：协调者 `broadcast_start` 广播 `Arc<TickSnapshot>` → NPC 组线程决策∥+实体扣除+分段 flush，与每股交易部线程 `begin_tick`（隐式转正→行情快照→开盘清算→到期撤销）边收边撮∥ → `converge_round` 收齐 G+N 报告（commit 前唯一同步）→ `TickEvidence` 过校验后单点安装，或广播 Abort 逆序回放三层 working overlay（组账户/交易部簿/协调者 candidate）。等价语义保持：失败原子性、现金/股份守恒、事件 seq 单调、同拍交付（`apply_same_tick_fill_projection`）。账户/股票可并行，同股票受理先后不变。Web 产品宿主缺省解析为 `runtimeOverride: true`，使用 `World`/`RuntimeDriver` 和 facade Workers；WASM engine 内部在宿主未设置 override 时仍走串行管线，但 Web 产品宿主已显式启用 runtime。该路径描述不代表完整宿主验收已通过。
 
 `engine::StrategyState` 保存策略权威状态；展示 profile 不另立权威。
 `engine::ResVec` 的 cash（分）与 shares（股）分别守恒，聚合方程就是逐 envelope 方程之和。
@@ -144,7 +144,7 @@ ExpiryShadow 报价过期释放在 SealAllocationSnapshot 前可见；密封批�
 
 `engine::StepFatal` 与业务 IntentRejected 不同。失败丢弃私有影子与 outbox，
 `engine::business_state_hash` 不变；`engine::session_state_hash` 允许已声明的 poison/错误元数据差异。
-panic 是进程级故障，不使用 catch_unwind 冒充可恢复 tick——串行管线保持该语义。native runtime 的 worker panic 走显式运输协议（ADR-0043 决策 9）：单 tick 执行体 `catch_unwind` 捕获，payload 经 `UpMsg::TaskDied` 上行，协调者广播 Abort+Shutdown，收齐 `GroupFinal`/`DeskFinal` 并 join 后 `resume_unwind` 原 payload 重抛——tick 仍判死、已收敛权威未被触碰，是显式失败运输，不是冒充可恢复 tick。
+panic 是进程级故障，不使用 catch_unwind 冒充可恢复 tick——串行回退管线保持该语义。native runtime 的 worker panic 走显式运输协议（ADR-0043 决策 9）：单 tick 执行体 `catch_unwind` 捕获，payload 经 `UpMsg::TaskDied` 上行，协调者广播 Abort+Shutdown，收齐 `GroupFinal`/`DeskFinal` 并 join 后 `resume_unwind` 原 payload 重抛——tick 仍判死、已收敛权威未被触碰，是显式失败运输，不是冒充可恢复 tick。
 `engine::CivilUpdate` 是独立事务，不推进市场 tick；它与所有 `engine::TickFrame` 共同覆盖连续 seq。
 事件来源/实体/局部序号的完整映射见 ADR-0017 §3；数组位置与 seq 不表示跨实体因果。
 

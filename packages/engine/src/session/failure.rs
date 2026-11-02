@@ -499,17 +499,9 @@ impl GameSession {
         Ok(())
     }
 
-    /// runtime 驱动翻转入口（翻转批）：环境变量 ENGINE_STEP_RUNTIME=1
-    /// 时 `step()` 走 RuntimeDriver（常驻 World+安装面），否则旧管线
-    /// （缺省 0=旧管线，见 `runtime::step_runtime_enabled`）。
-    /// `step_frame_and_commit`（candidate 投影契约/Escrow 验证）恒走
-    /// 旧管线为 fallback——翻转范围=生产便捷入口。
-    /// Sol 二审修复集 3：前置校验**真正共用** `check_step_start`
-    /// （健康→注入失败→缺策略，与旧管线同判同序——此前 runtime 路径
-    /// 自带一份缺策略检查且先于注入失败执行，两路径不同判）。
-    /// runtime 驱动翻转入口（翻转批）：环境变量 ENGINE_STEP_RUNTIME=1
-    /// 时 `step()` 走 RuntimeDriver（常驻 World+安装面），否则旧管线
-    /// （缺省 0=旧管线，见 `runtime::step_runtime_enabled`）。
+    /// runtime 驱动入口：native 缺省启用 runtime 时 `step()` 走 RuntimeDriver
+    /// （常驻 World+安装面）；`ENGINE_STEP_RUNTIME=0` 可临时切回旧管线
+    /// （见 `runtime::step_runtime_enabled`）。
     /// step_frame 接轨件 4 起 `step_frame_and_commit`（生产便捷入口，
     /// capture=false）同走 runtime 分叉；Escrow 验证面
     /// （capture_commit_evidence=true）恒走旧管线。
@@ -908,9 +900,9 @@ impl GameSession {
     /// 返回的事件数组是从已提交事实记录批次投影出的交付视图（架构项 #6）：
     /// 会话内部不保留第二份事件权威，身份仍只存在于 `EventFact` 记录中。
     pub fn step(&mut self) -> Result<Vec<Event>, StepFatal> {
-        // 翻转批：opt-in 翻转（ENGINE_STEP_RUNTIME=1 显式走 runtime；
-        // 缺省 0=旧管线——106 失败实测后回退，见 runtime/mod.rs 开关
-        // 注释；全局域迁移完成后才改缺省）。
+        // native 缺省启用 runtime；`ENGINE_STEP_RUNTIME=0` 可临时切回旧管线，
+        // 首次读取后本进程不可切换（见 runtime/mod.rs 与 ADR-0043「翻转现状」）。
+        // WASM 由宿主在首次读取前设置一次 override；未设置时回退串行管线。
         if crate::runtime::step_runtime_enabled() {
             return self.step_via_runtime();
         }
