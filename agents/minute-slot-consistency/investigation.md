@@ -33,25 +33,33 @@
 
 - `TradingTimeline` 用 `currentMinuteOfDay(tick)` 替换 `currentMinuteSlot`，
   直接复刻 engine `continuous_minute_of_day` 的整数比例映射；开盘窗口、
-  收盘竞价窗口、日界和 tick 0 返回 `null`。
+  收盘竞价窗口和 tick 0 返回 `null`。默认含收盘竞价窗口的局，次一自然日
+  开盘 tick 返回 `null`；无收盘窗口时，当日末 tick 仍是连续窗最后一拍
+  （`tradeTime` 为 15:00），返回该拍覆盖区间的首分钟，不能把“日界返回
+  null”无差别套用到所有 timing。
 - `MinuteKlinePanel` 的 prop 改名为 `currentMinuteOfDay`，明确与
   `MinuteBarFact.minute_of_day` 同口径；桌面与移动两个调用点同步改名。
 - `docs/trading-rules.md` 登记展示单位约束与现行交易时段依据。
 
 ## TDD 与验证
 
-红测：
+红测（区分接口红与行为红，不把接口缺失冒充行为证据）：
 
-- `trading-timeline.test.ts` 因 `currentMinuteOfDay` 不存在失败；
-- `minute-kline-panel.test.ts` 在传入墙钟分钟 570 与 570 分钟 bar 后，
-  未出现“观察时刻 09:30”，证明旧单元不匹配。
+- **接口红**：`trading-timeline.test.ts` 引用尚不存在的
+  `currentMinuteOfDay`，失败信息是 `TypeError: ... is not a function`。
+  这只证明新接口尚未实现，单独不足以证明旧单位错误。
+- **行为红**：`minute-kline-panel.test.ts` 给旧组件传入墙钟分钟 570 和
+  570 分钟 bar 后，渲染结果没有“观察时刻 09:30”，形成中标记也未出现；
+  这直接证明旧的消费单位不匹配。
+- 实现后另用时间轴断言固定 570/583/781/899 等墙钟分钟，并用面板测试
+  固定 09:30 观察时刻和 active 桶；行为证据不由接口红替代。
 
 绿测（worktree 内执行，整条命令 10 秒 deadline）：
 
 ```text
 node --test --test-timeout=10000 --test-concurrency=1 --test-isolation=none --test-force-exit \
   src/components/trading-timeline.test.ts src/components/minute-kline-panel.test.ts
-# 13 pass, 0 fail, duration_ms 638.349784
+# 14 pass, 0 fail, duration_ms 633.899996
 ```
 
 类型与 lint：

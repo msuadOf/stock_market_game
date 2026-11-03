@@ -52,7 +52,9 @@ export class TradingTimeline {
   /** 当前连续竞价成交的墙钟分钟（570..=690 / 780..=900），与 engine
    *  `MinuteBarFact.minute_of_day` 及 `protocol::continuous_minute_of_day`
    *  同一整数比例映射（tick 覆盖区间的首分钟）。
-   *  开盘竞价窗口、收盘竞价窗口、日界及 tick 0 没有连续成交分钟，返回 null。
+   *  开盘竞价窗口、收盘竞价窗口及 tick 0 返回 null。默认含收盘竞价窗口的
+   *  局，下一日开盘 tick 也返回 null；无收盘窗口时，当日末 tick 仍是连续窗
+   *  最后一拍（tradeTime 为 15:00），返回该拍覆盖区间的首分钟，不是 null。
    *  调用方不得把 0..239 的游戏桶索引当作该值——分钟面板会用它匹配真实
    *  分钟键并在 09:30 显示观察时刻。 */
   currentMinuteOfDay(tick: number): number | null {

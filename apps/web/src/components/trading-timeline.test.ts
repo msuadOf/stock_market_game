@@ -77,6 +77,16 @@ test("形成中观察分钟与 engine MinuteBarFact.minute_of_day 同为墙钟�
   assert.throws(() => shortDay.minuteSlot(15301), /开盘窗口/);
 });
 
+test("无收盘窗的日末 tick 仍属连续窗，跨日才没有当前分钟", { timeout: 10000 }, () => {
+  // 无收盘竞价时没有“收盘窗口挡在日界前”的简化：末 tick 是连续窗最后
+  // 一拍，tradeTime 为 15:00；分钟K键仍是该拍覆盖区间的首分钟 14:59。
+  const noClosing = new TradingTimeline({ ticks_per_day: 15300, auction_ticks: 900, closing_auction_ticks: 0 });
+  assert.equal(noClosing.tradeTime(15300), "15:00:00");
+  assert.equal(noClosing.currentMinuteOfDay(15300), 899);
+  // 下一日第一拍回到开盘窗口，连续竞价尚未开始。
+  assert.equal(noClosing.currentMinuteOfDay(15301), null);
+});
+
 test("非法 timing 与事件不能被静默修补到零分钟", { timeout: 10000 }, () => {
   for (const timing of [
     { ticks_per_day: 0, auction_ticks: 0, closing_auction_ticks: 0 },
