@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { it } from "node:test";
@@ -134,6 +134,7 @@ it("活进程短暂拒绝读取后同 birth 重试并清理匹配 token", { time
     listProcesses: async () => ["330"],
     readEnvironment: async () => { if (++reads === 1) throw denied; return Buffer.from("STOCK_GAME_RUST_CASE_TOKEN=active\0"); },
     readProcessStat: async (pid) => frozenStat(pid),
+    readProcessStatm: async () => "6073 2960 1743 793 0 1553 0\n",
     terminate: async ({ pid }) => { killed.push(pid); },
   });
   await cleanup({ token: "active", pid: 330, total: monotonicMs() + 1000 });
@@ -160,6 +161,7 @@ it("重试等待受共享 deadline 限制", { timeout: 10000, skip: process.plat
     listProcesses: async () => ["333"],
     readEnvironment: async () => { throw Object.assign(new Error("denied"), { code: "EACCES" }); },
     readProcessStat: async (pid) => frozenStat(pid),
+    readProcessStatm: async () => "6073 2960 1743 793 0 1553 0\n",
   });
   await assert.rejects(cleanup({ token: "active", pid: 333, total: monotonicMs() + 4 }), /deadline/);
 });
@@ -172,6 +174,7 @@ it("重试期间 PID birth 改变必须拒绝且不得清理", { timeout: 10000,
     listProcesses: async () => ["331"],
     readEnvironment: async () => { throw denied; },
     readProcessStat: async (pid) => frozenStat(pid, { birth: ++stats === 1 ? "100" : "200" }),
+    readProcessStatm: async () => "6073 2960 1743 793 0 1553 0\n",
     terminate: async () => { kills += 1; },
   });
   await assert.rejects(cleanup({ token: "active", pid: 331, total: monotonicMs() + 1000 }), /identity changed/);
@@ -262,4 +265,98 @@ it("整机 /proc 扫描并发有上限，不得一次性发起全部读取", { t
   await cleanup({ token: "active", pid: 1000, total: monotonicMs() + 5000 });
   assert.equal(examined.length, listing.length, "列举中的每个 PID 都必须被检查，不能按出生时间跳过");
   assert.ok(peak <= PROCESS_SCAN_CONCURRENCY, `扫描并发峰值 ${peak} 超过上限 ${PROCESS_SCAN_CONCURRENCY}`);
+});
+
+it("environ EACCES 且地址空间已释放时必须等待同 birth 的终态，不得直接报活 owned", { timeout: 10000, skip: process.platform !== "linux" }, async () => {
+  // 进程退出时 exit_mm 先释放地址空间，task 状态可能仍是 R；单次 statm=0 不是终态证明，
+  // 必须按同 birth 等到 Z/X/消失。这里第 7 次 stat 起进入 Z。
+  let stats = 0;
+  let kills = 0;
+  const cleanup = createCompletionCleanup(777, {
+    listProcesses: async () => ["308"],
+    readEnvironment: async () => { throw Object.assign(new Error("exiting"), { code: "EACCES" }); },
+    readProcessStat: async (pid) => frozenStat(pid, { state: ++stats >= 7 ? "Z" : "R" }),
+    readProcessStatm: async () => "0 0 0 0 0 0 0\n",
+    terminate: async () => { kills += 1; },
+  });
+  await assert.doesNotReject(cleanup({ token: "active", pid: 308, total: monotonicMs() + 1000 }));
+  assert.equal(kills, 0);
+  assert.ok(stats >= 7, "必须实际等待到 Z 终态，而不是凭单次快照放行");
+});
+
+it("退出窗口等待受共享 deadline 限制", { timeout: 10000, skip: process.platform !== "linux" }, async () => {
+  const cleanup = createCompletionCleanup(777, {
+    listProcesses: async () => ["310"],
+    readEnvironment: async () => { throw Object.assign(new Error("exiting"), { code: "EACCES" }); },
+    readProcessStat: async (pid) => frozenStat(pid, { state: "R" }),
+    readProcessStatm: async () => "0 0 0 0 0 0 0\n",
+  });
+  await assert.rejects(cleanup({ token: "active", pid: 310, total: monotonicMs() + 60 }), /deadline/);
+});
+
+it("地址空间仍存在的 owned non-dumpable 进程必须继续显式失败", { timeout: 10000, skip: process.platform !== "linux" }, async () => {
+  const cleanup = createCompletionCleanup(777, {
+    listProcesses: async () => ["309"],
+    readEnvironment: async () => { throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" }); },
+    readProcessStat: async (pid) => frozenStat(pid, { state: "S" }),
+    readProcessStatm: async () => "6073 2960 1743 793 0 1553 0\n",
+  });
+  await assert.rejects(cleanup({ token: "active", pid: 309, total: monotonicMs() + 1000 }),
+    /cannot confirm owned process 309.*EACCES/);
+});
+
+async function processInExitWindow() {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+    const closed = once(child, "close");
+    await new Promise((resolve) => setTimeout(resolve, 5 + (attempt % 6) * 5));
+    child.kill("SIGKILL");
+    for (let poll = 0; poll < 400; poll += 1) {
+      let environ;
+      try { await readFile(`/proc/${child.pid}/environ`); } catch (error) { environ = error.code; }
+      if (environ === "EACCES") {
+        try {
+          const stat = await readFile(`/proc/${child.pid}/stat`, "utf8");
+          const statm = await readFile(`/proc/${child.pid}/statm`, "utf8");
+          if (stat.slice(stat.lastIndexOf(")") + 2).split(" ")[0] === "R" && statm.trim() === "0 0 0 0 0 0 0") {
+            return { pid: child.pid, closed, state: "R", statm };
+          }
+        } catch { /* 进程已消失，换下一个样本 */ }
+      }
+      if (environ === "ENOENT") break;
+    }
+    await closed;
+  }
+  throw new Error("无法在 60 次内捕获“state=R 且地址空间已释放”的真实退出窗口");
+}
+
+it("地址空间从全 0 恢复且 environ 仍 EACCES 时必须显式失败且不得清理", { timeout: 10000, skip: process.platform !== "linux" }, async () => {
+  // 单次 statm=0 只代表“此刻没有 mm”。若 mm 恢复而 environ 仍拒绝访问，必须回到 fail-closed，
+  // 不能把等待当成放行。
+  let statmReads = 0;
+  let kills = 0;
+  const cleanup = createCompletionCleanup(777, {
+    listProcesses: async () => ["311"],
+    readEnvironment: async () => { throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" }); },
+    readProcessStat: async (pid) => frozenStat(pid, { state: "R" }),
+    readProcessStatm: async () => (++statmReads <= 2 ? "0 0 0 0 0 0 0\n" : "100 10 10 1 0 10 0\n"),
+    terminate: async () => { kills += 1; },
+  });
+  await assert.rejects(cleanup({ token: "active", pid: 311, total: monotonicMs() + 1000 }),
+    /cannot confirm owned process 311.*EACCES/);
+  assert.equal(kills, 0);
+  assert.ok(statmReads >= 3, "必须先观察到全 0，再观察到 mm 恢复");
+});
+
+it("真实退出中的子进程（environ EACCES）必须等到 Z/X/消失后正常结束清理", { timeout: 10000, skip: process.platform !== "linux" }, async () => {
+  const { pid, closed, state, statm } = await processInExitWindow();
+  try {
+    assert.equal(state, "R", "捕获时必须仍是 R（地址空间已释放但尚未进入 Z）");
+    assert.equal(statm.trim(), "0 0 0 0 0 0 0", "捕获时地址空间已释放");
+    const cleanup = createCompletionCleanup(process.pid, { listProcesses: async () => [String(pid)] });
+    await assert.doesNotReject(cleanup({ token: "active", pid, total: monotonicMs() + 1000 }));
+  } finally {
+    try { process.kill(pid, "SIGKILL"); } catch { /* 已退出 */ }
+    await closed;
+  }
 });

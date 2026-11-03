@@ -131,6 +131,7 @@ export function createCompletionCleanup(launcherPid, {
   listProcesses = () => readdir("/proc"),
   readEnvironment = (pid) => readFile(`/proc/${pid}/environ`),
   readProcessStat = (pid) => readFile(`/proc/${pid}/stat`, "utf8"),
+  readProcessStatm = (pid) => readFile(`/proc/${pid}/statm`, "utf8"),
   terminate = terminateTree,
 } = {}) {
   async function identity(pid, checkBudget) {
@@ -140,6 +141,18 @@ export function createCompletionCleanup(launcherPid, {
     const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
     if (fields.length < 20 || !/^\d+$/.test(fields[19])) throw new Error(`cannot confirm process ${pid}: malformed stat identity`);
     return { state: fields[0], ppid: Number(fields[1]), group: Number(fields[2]), birth: fields[19] };
+  }
+  // 进程退出时 exit_mm 先释放地址空间，task 状态随后才置为 Z/X；该窗口内 environ 必然 EACCES。
+  // statm 全 0 只说明“此刻没有 mm”，不是终态证据：调用方据此继续等待 Z/X/消失；
+  // 仍然活着的 non-dumpable 进程 statm 非 0，必须继续 fail-closed。
+  async function addressSpaceReleased(pid, checkBudget) {
+    checkBudget();
+    let statm;
+    try { statm = await readProcessStatm(pid); }
+    catch (error) { if (["ENOENT", "ESRCH"].includes(error.code)) return true; throw error; }
+    checkBudget();
+    const pages = statm.trim().split(/\s+/);
+    return pages.length === 7 && pages.every((value) => value === "0");
   }
   function tokenItem(environment, byToken) {
     const prefix = "STOCK_GAME_RUST_CASE_TOKEN=";
@@ -207,7 +220,11 @@ export function createCompletionCleanup(launcherPid, {
                   if (deniedBirth !== undefined && current.birth !== deniedBirth) throw new Error(`case PID identity changed during environment retry: ${entry}`);
                   if (current.state === "Z" || current.state === "X") return;
                   if (!candidate && current.ppid !== launcherPid && current.group !== launcherPid && before?.ppid !== launcherPid && before?.group !== launcherPid) return;
-                  if (attempt < 2) {
+                  // 尚未确认 token 的候选若已释放地址空间，只能说明“此刻没有 mm”，不能据此断言终态：
+                  // 继续按同 birth 等待 Z/X/消失；若 mm 恢复（例如 exec 完成）则回到 fail-closed。
+                  // 已匹配过 token 的 candidate 不进入该等待，仍走原 fail-closed 路径，不静默吞掉 owned EACCES。
+                  const released = !candidate && await addressSpaceReleased(Number(entry), checkBudget);
+                  if (attempt < 2 || released) {
                     deniedBirth = current.birth;
                     if (deadline() - monotonicMs() <= 5) throw new Error("case token cleanup deadline was exhausted before process tree confirmation");
                     await new Promise((resolve) => setTimeout(resolve, 5));
