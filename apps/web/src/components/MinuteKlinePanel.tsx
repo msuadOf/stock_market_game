@@ -16,9 +16,10 @@ export interface MinuteKlinePanelProps {
   readonly period: MinuteKlinePeriod;
   readonly queryCurrentMinuteHistory?: (request: { readonly code: string }) => Promise<CurrentMinuteHistoryResponse>;
   readonly tickRefreshKey?: string | number;
-  /** 游戏时钟墙钟分钟（tick→分钟，调用方换算）——"形成中"桶标记用；
+  /** 当前连续竞价墙钟分钟（570..=690 / 780..=900），与 engine
+   *  `MinuteBarFact.minute_of_day` 同口径——"形成中"桶标记与观察时刻用；
    *  B2 wire 不再下发 observed_at，缺省 null 不标记（不伪造观察时刻）。 */
-  readonly currentMinute?: number | null;
+  readonly currentMinuteOfDay?: number | null;
 }
 
 const phases = { OpenAuction: "开盘集合竞价", Continuous: "连续竞价", ClosingAuction: "收盘集合竞价" };
@@ -75,7 +76,7 @@ export function MinuteKlineDay({ date, bars, period, activeMinute = null }: { da
   </section>;
 }
 
-export function MinuteKlinePanel({ query, scopeKey, code, currentDate, period, queryCurrentMinuteHistory, tickRefreshKey, currentMinute = null }: MinuteKlinePanelProps) {
+export function MinuteKlinePanel({ query, scopeKey, code, currentDate, period, queryCurrentMinuteHistory, tickRefreshKey, currentMinuteOfDay = null }: MinuteKlinePanelProps) {
   const initialFrom = currentDate === null ? "" : shiftDate(currentDate, -30);
   const initialTo = currentDate === null ? "" : shiftDate(currentDate, -1);
   const [from, setFrom] = useState(initialFrom);
@@ -124,10 +125,10 @@ export function MinuteKlinePanel({ query, scopeKey, code, currentDate, period, q
   const bars = useMemo(() => page === undefined ? [] : aggregateMinuteKlines(page.entries, period), [page, period]);
   const liveBars = useMemo(() => liveHistory === null ? [] : aggregateMinuteBars(liveHistory.date, liveHistory.bars, period), [liveHistory, period]);
   const visibleLiveHistory = currentDate !== null && liveHistory?.date === currentDate ? liveHistory : null;
-  // B2 wire 不再随响应下发 observed_at 观察时刻——"形成中"桶由调用方以游戏
-  // 时钟（tick→墙钟分钟）提供；缺省 null 表示不标记形成中桶（诚实降级，
-  // 不从 bar 伪造观察时刻）。
-  const liveActiveMinute = visibleLiveHistory?.phase === "Continuous" && currentMinute !== null ? activeMinuteKlineBucketMinute(currentMinute, period) : null;
+  // B2 wire 不再随响应下发 observed_at 观察时刻——"形成中"桶由调用方以
+  // engine 同口径的墙钟分钟（MinuteBarFact.minute_of_day，570..690/780..900）
+  // 提供；缺省 null 表示不标记形成中桶（诚实降级，不从 bar 伪造观察时刻）。
+  const liveActiveMinute = visibleLiveHistory?.phase === "Continuous" && currentMinuteOfDay !== null ? activeMinuteKlineBucketMinute(currentMinuteOfDay, period) : null;
   const invalidate = () => { owner.current.sequence += 1; setPages([]); setIndex(0); setLoading(false); setError(null); };
   const load = async (request: MarketHistoryRequest, previous: readonly MarketHistoryPage[]) => {
     const sequence = ++owner.current.sequence;
@@ -177,7 +178,7 @@ export function MinuteKlinePanel({ query, scopeKey, code, currentDate, period, q
       {liveLoading && <p role="status">正在读取当前真实分钟成交…</p>}
       {liveError !== null && <p role="alert">{liveError}</p>}
       {currentDate === null && <p>当前自然日尚未同步，暂不能查询活动分钟。</p>}
-      {visibleLiveHistory !== null && <><p>{visibleLiveHistory.date}　{currentPhases[visibleLiveHistory.phase]}{currentMinute !== null ? `　观察时刻 ${String(Math.floor(currentMinute / 60)).padStart(2, "0")}:${String(currentMinute % 60).padStart(2, "0")}` : ""}。柱仅来自已经发生的真实成交；{liveActiveMinute === null ? "当前没有形成中的连续竞价桶。" : "当前连续竞价桶标记为形成中。"}</p>{liveBars.length === 0 ? <p>当前尚无真实分钟成交，不生成K线柱。</p> : <MinuteKlineDay date={`${visibleLiveHistory.date}（实时）`} bars={liveBars} period={period} activeMinute={liveActiveMinute} />}</>}
+      {visibleLiveHistory !== null && <><p>{visibleLiveHistory.date}　{currentPhases[visibleLiveHistory.phase]}{currentMinuteOfDay !== null ? `　观察时刻 ${String(Math.floor(currentMinuteOfDay / 60)).padStart(2, "0")}:${String(currentMinuteOfDay % 60).padStart(2, "0")}` : ""}。柱仅来自已经发生的真实成交；{liveActiveMinute === null ? "当前没有形成中的连续竞价桶。" : "当前连续竞价桶标记为形成中。"}</p>{liveBars.length === 0 ? <p>当前尚无真实分钟成交，不生成K线柱。</p> : <MinuteKlineDay date={`${visibleLiveHistory.date}（实时）`} bars={liveBars} period={period} activeMinute={liveActiveMinute} />}</>}
     </section>
   </section>;
 }

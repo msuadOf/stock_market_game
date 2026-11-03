@@ -41,7 +41,7 @@ type LiveResponse = { code: string; date: string; live: true; trading: boolean; 
 function liveResponse(date: string, bars: LiveResponse["bars"] = []): LiveResponse {
   return { code: "600001", date, live: true, trading: true, phase: "Continuous", bars };
 }
-function mountLive() {
+function mountLive(currentMinuteOfDay: number | null = null) {
   const slots: { value: unknown; deps?: readonly unknown[] }[] = [];
   const effects: (() => void)[] = [];
   const cleanups = new Map<number, () => void>();
@@ -59,7 +59,7 @@ function mountLive() {
   function render() {
     const previous = internal.ReactCurrentDispatcher.current;
     cursor = 0; internal.ReactCurrentDispatcher.current = dispatcher;
-    try { tree = Panel({ query: historyQuery, queryCurrentMinuteHistory, tickRefreshKey, scopeKey: "market:1", code: "600001", currentDate, period: 5 }); } finally { internal.ReactCurrentDispatcher.current = previous; }
+    try { tree = Panel({ query: historyQuery, queryCurrentMinuteHistory, tickRefreshKey, scopeKey: "market:1", code: "600001", currentDate, period: 5, currentMinuteOfDay }); } finally { internal.ReactCurrentDispatcher.current = previous; }
     while (effects.length) effects.shift()!();
   }
   render(); render();
@@ -90,6 +90,21 @@ test("当前分钟查询返回空成交列表时不生成分时或K线柱", { ti
     await settleLive(); ui.render();
     assert.match(ui.content(), /当前尚无真实分钟成交，不生成K线柱/);
     assert.doesNotMatch(ui.content(), /<svg/);
+  } finally { ui.dispose(); }
+});
+
+test("形成中分钟桶按 engine 墙钟分钟匹配并显示09:30而非00:00", { timeout: 10000 }, async () => {
+  const ui = mountLive(570);
+  try {
+    ui.requests[0].resolve(liveResponse("2030-01-02", [{
+      minute_of_day: 570, phase: "Continuous", open: "100", high: "110", low: "90", close: "105",
+      volume_shares: "100", turnover_cents: "10250", trade_count: "2",
+    }]));
+    await settleLive(); ui.render();
+    const content = ui.content();
+    assert.match(content, /观察时刻 09:30/);
+    assert.match(content, /09:30 连续竞价（形成中）/);
+    assert.doesNotMatch(content, /观察时刻 00:00/);
   } finally { ui.dispose(); }
 });
 

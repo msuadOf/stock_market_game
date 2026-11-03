@@ -3,6 +3,9 @@ import type { SessionSetup } from "../types/engine.ts";
 
 export type TradingTiming = Pick<SessionSetup, "ticks_per_day" | "auction_ticks" | "closing_auction_ticks">;
 
+/** 与 engine `observation::GAME_INTRADAY_MINUTES_PER_DAY` 同一游戏盘中分钟轴。 */
+const GAME_INTRADAY_MINUTES_PER_DAY = 240;
+
 /** 仅换算展示坐标；交易阶段、撮合及存档中的 tick 仍由 engine 决定。 */
 export class TradingTimeline {
   readonly ticksPerDay: number;
@@ -46,15 +49,23 @@ export class TradingTimeline {
     return Math.floor(this.tradingSecond(offset) / 60);
   }
 
-  /** 形成中分钟槽：开盘集合竞价窗口内（含 tick 0）连续竞价尚未开始，返回 null。
-   *  供分钟面板以游戏时钟提供"形成中桶"观察时刻；调用方不得直接用
-   *  minuteSlot（其对开盘窗口 tick 按契约抛 RangeError）。 */
-  currentMinuteSlot(tick: number): number | null {
-    if (tick > this.openingTicks) {
-      const dayOffset = this.eventOffset(tick) % this.ticksPerDay;
-      return dayOffset >= this.openingTicks ? this.minuteSlot(tick) : null;
-    }
-    return null;
+  /** 当前连续竞价成交的墙钟分钟（570..=690 / 780..=900），与 engine
+   *  `MinuteBarFact.minute_of_day` 及 `protocol::continuous_minute_of_day`
+   *  同一整数比例映射（tick 覆盖区间的首分钟）。
+   *  开盘竞价窗口、收盘竞价窗口、日界及 tick 0 没有连续成交分钟，返回 null。
+   *  调用方不得把 0..239 的游戏桶索引当作该值——分钟面板会用它匹配真实
+   *  分钟键并在 09:30 显示观察时刻。 */
+  currentMinuteOfDay(tick: number): number | null {
+    if (!Number.isSafeInteger(tick) || tick < 0) throw new RangeError(`游戏 tick 必须是非负安全整数，收到 ${tick}`);
+    if (tick === 0) return null;
+    const dayOffset = this.eventOffset(tick) % this.ticksPerDay;
+    const continuousTicks = this.ticksPerDay - this.openingTicks - this.closingTicks;
+    const continuousTick = dayOffset - this.openingTicks;
+    if (continuousTick < 0 || continuousTick >= continuousTicks) return null;
+    const slot = Number(BigInt(continuousTick) * BigInt(GAME_INTRADAY_MINUTES_PER_DAY) / BigInt(continuousTicks));
+    return slot < GAME_INTRADAY_MINUTES_PER_DAY / 2
+      ? 570 + slot
+      : 780 + (slot - GAME_INTRADAY_MINUTES_PER_DAY / 2);
   }
 
   clock(tick: number): string {
