@@ -46,3 +46,13 @@
 - 首轮：**需修改**。(1) 非 Linux 的 `createExportRoot(env)` 与测试期望不一致；(2) 集成测试未证明两个 case 共用同一批次 root、也未证明批次 root 删除；(3) 唯一红态是 import 缺失，不满足 TDD 的红灯要求。
 - 已修复：统一 `exportRootParent({ env })` 实现与测试；补齐同批 root、root 删除断言（成功、双失败、launcher 停顿超时路径）；补基线 `createExportRoot()` 行为红/绿证据（共享 TMPDIR → `/tmp/shared-workspace`，当前 → `/dev/shm`）。
 - 复审：**可合并，未发现其他必须修复项**。审核者未运行 `all`，未修改文件。
+
+## 复审追加：lifecycle 故障注入 fixture 的 export root 泄漏
+
+复审发现 `scripts/rust-test-case-supervisor-lifecycle.test.mjs` 的“导出目录清理失败必须使成功批次显式失败”用例只 `rm(dir)`，注入 `cleanupExportRoot` 抛错后，launcher 实际创建的 `/dev/shm/rust-export-*` 不会被删除。
+
+现场身份确认（清理前）：`/dev/shm` 下 5 个空目录 `rust-export-1257572-*`、`-1266487-*`、`-1277202-*`、`-1282355-*`、`-1336116-*`，uid 1005（本用户），mtime 分别为 17:51 / 17:53 / 17:56 / 17:58 / 18:04，对应本轮反复运行该测试的时间；对应 pid 均已退出，无进程或打开句柄引用；该前缀只由本 worktree 的新实现产生。确认归属后以 `rmdir`（只删空目录）逐个清理，未删除任何其他路径。
+
+修复：launcher 在 `initialize` 时**先**把 `m.exportRoot` 写入 fixture 目录内的 `export-root.txt`，**再**创建 tmpfs root；这样 receipt 写入失败时尚未创建 root，而 mkdir 或后续失败时 finally 已能拿到准确路径。测试仍保留原抛错断言，并新增“清理故障后批次 root 仍存在”断言；finally 读取实际 root，先断言其 parent 等于 `exportRootParent({ env: { ...process.env, TMPDIR: dir } })` 且 basename 为 `rust-export-*`，再删除 root 和 fixture 目录。读取/删除失败会直接抛出，不吞错。
+
+验证：修复后 lifecycle 10/10 通过，运行前后 `/dev/shm/rust-export-*` 均为 0；相关 8 个测试文件逐文件进程外 10 秒 deadline 共 50/50 通过，结束后仍为 0 泄漏。

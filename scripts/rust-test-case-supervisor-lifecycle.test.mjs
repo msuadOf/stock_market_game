@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { it } from "node:test";
-import { earliestCleanupDeadline, executeSupervisedRustTestBinaries, exportRootExistsWithinDeadline, removeExportRootWithinDeadline, waitForLauncherClose } from "./rust-test-case-supervisor.mjs";
+import { earliestCleanupDeadline, executeSupervisedRustTestBinaries, exportRootExistsWithinDeadline, exportRootParent, removeExportRootWithinDeadline, waitForLauncherClose } from "./rust-test-case-supervisor.mjs";
 
 async function setup(topic) {
   const root = path.resolve(".tmp/deadline-hardgate-tests");
@@ -26,13 +26,27 @@ it("成功批次确认 launcher 退出后不再 taskkill 已释放 PID，保持 
 
 it("导出目录清理失败必须使成功批次显式失败", { timeout: 10000 }, async () => {
   const { dir, launcherPath } = await setup("export-cleanup-failure");
+  const exportRootReceipt = path.join(dir, "export-root.txt");
   await writeFile(launcherPath, `import fs from 'node:fs';
-process.on('message',m=>{if(m.kind==='initialize'){fs.mkdirSync(m.exportRoot,{recursive:true});process.send({kind:'result',value:{case_count:0}});}else if(m.kind==='shutdown')process.disconnect();});process.send({kind:'ready'});`);
+process.on('message',m=>{if(m.kind==='initialize'){fs.writeFileSync(${JSON.stringify(exportRootReceipt)},m.exportRoot);fs.mkdirSync(m.exportRoot,{recursive:true});process.send({kind:'result',value:{case_count:0}});}else if(m.kind==='shutdown')process.disconnect();});process.send({kind:'ready'});`);
+  let exportRoot;
   try {
     await assert.rejects(executeSupervisedRustTestBinaries({ artifacts: [], policy: {}, cwd: process.cwd(), env: { ...process.env, TMPDIR: dir },
       remainingMs: () => 3000, launcherPath, cleanupExportRoot: async () => { throw new Error("rm fixture failed"); } }),
     /export cleanup failed.*rm fixture failed.*residual export directories may remain/);
-  } finally { await rm(dir, { recursive: true, force: true }); }
+    exportRoot = (await readFile(exportRootReceipt, "utf8")).trim();
+    assert.equal(existsSync(exportRoot), true, "清理故障注入后批次 export root 必须仍然存在");
+  } finally {
+    if (exportRoot === undefined && existsSync(exportRootReceipt)) {
+      exportRoot = (await readFile(exportRootReceipt, "utf8")).trim();
+    }
+    if (exportRoot !== undefined) {
+      assert.equal(path.dirname(exportRoot), exportRootParent({ env: { ...process.env, TMPDIR: dir } }), "只清理本批次的 export root");
+      assert.match(path.basename(exportRoot), /^rust-export-/);
+      await rm(exportRoot, { recursive: true, force: true });
+    }
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 it("导出目录清理超过剩余期限时立即失败", { timeout: 10000 }, async () => {
