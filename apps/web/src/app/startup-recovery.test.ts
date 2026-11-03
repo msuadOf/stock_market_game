@@ -7,11 +7,11 @@ import { DayEndPersistence } from "../save/day-end-persistence.ts";
 import type { SessionSetup } from "../types/engine.ts";
 
 let vite: ViteDevServer;
-let App: typeof import("../App.tsx").default;
+let AppRoot: typeof import("./AppRoot.tsx").AppRoot;
 
 before(async () => {
   vite = await createServer({ configFile: false, appType: "custom", mode: "production", server: { middlewareMode: true, ws: false }, optimizeDeps: { noDiscovery: true }, define: { "import.meta.env.DEV": "false" } });
-  App = (await vite.ssrLoadModule("/src/App.tsx") as typeof import("../App.tsx")).default;
+  AppRoot = (await vite.ssrLoadModule("/src/app/AppRoot.tsx") as typeof import("./AppRoot.tsx")).AppRoot;
 });
 
 after(async () => { if (vite) await vite.close(); });
@@ -47,7 +47,7 @@ function memoryApp() {
     internals.ReactCurrentDispatcher.current = dispatcher;
     cursor = 0;
     try {
-      root = App();
+      root = AppRoot({ renderShell: (props) => React.createElement("div", props) });
       return Array.isArray(root.props.failures) ? root.props.children : root;
     } finally { internals.ReactCurrentDispatcher.current = previous; }
   }
@@ -62,7 +62,7 @@ function memoryApp() {
       if (original === undefined) Reflect.deleteProperty(globalThis, "window");
       else Object.defineProperty(globalThis, "window", original);
     }
-    return render().props.children;
+    return render();
   }
   return { render, startRemote, report: () => root };
 }
@@ -87,8 +87,8 @@ test("重选等待已提交的原子 rename/close，下一局不能越过旧写�
   const selecting = shell.props.onSelectHost(() => { stopped = true; });
   assert.equal(stopped, true);
   await Promise.resolve();
-  assert.ok(app.render().props.children, "旧提交尚未完成时不能卸载到选择页");
-  assert.equal(app.render().props.children.props.returningToStartup, true);
+  assert.equal(app.render().props.startupTarget.kind, "remote", "旧提交尚未完成时不能卸载到选择页");
+  assert.equal(app.render().props.returningToStartup, true);
   await shell.props.onSelectHost(() => { assert.fail("重选进行中不能再次停止或开启另一转换"); });
   committed.resolve();
   await selecting;
@@ -106,7 +106,7 @@ test("停止失败明确留在原启动，不开始下一局，并允许再次�
   const app = memoryApp();
   const shell = app.startRemote();
   await shell.props.onSelectHost(() => { throw new Error("原宿主停止失败"); });
-  const current = app.render().props.children;
+  const current = app.render();
   assert.match(current.props.startupReturnError, /返回启动选择失败.*原宿主停止失败/);
   assert.equal(current.props.returningToStartup, false);
   assert.equal(current.props.startupTarget.kind, "remote");
@@ -127,7 +127,7 @@ test("自定义新局日期和价格笼子在取消或失败重挂后保留，�
   shell.props.setSessionSetup(custom);
   let reads = 0;
   for (const reason of ["取消", "初始化失败"]) {
-    shell = app.render().props.children;
+    shell = app.render();
     assert.equal(shell.props.sessionSetup, custom, reason);
     await shell.props.onSelectHost(() => {});
     shell = app.startRemote();

@@ -1,10 +1,11 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { matureSave, mutate } from "./complete-save-test-helper.ts"
+import { boundarySave, mutateBoundary } from "./complete-save-test-helper.ts"
 import { parseSaveSlot } from "./save-schema.ts"
 
 test("strict save boundary rejects malformed nested company and personal-state branches", () => {
-  const save = matureSave()
+  assert.doesNotThrow(() => parseSaveSlot(boundarySave()), "compact fixture 本身必须是当前 schema 的合法正例，否则负例可能因基线错误而空转")
+  const save = boundarySave()
   assert.ok(typeof save === "object" && save !== null)
   const operations = Reflect.get(Reflect.get(Reflect.get(save, "company_state"), "LegacyOperations"), "operations")
   assert.ok(typeof operations === "object" && operations !== null)
@@ -78,5 +79,5 @@ test("strict save boundary rejects malformed nested company and personal-state b
     // 旧待应用事实队列字段（架构项 8 已删除）同样必须被拒绝。
     [["pending_plan_events"], [{ Rejected: {} }], /pending_plan_events/],
   ]
-  for (const [path, value, expected] of cases) assert.throws(() => parseSaveSlot(mutate(path, value)), expected)
+  for (const [path, value, expected] of cases) assert.throws(() => parseSaveSlot(mutateBoundary(path, value)), expected)
 })

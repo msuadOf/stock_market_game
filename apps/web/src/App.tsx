@@ -9,7 +9,7 @@ import { applyBaselineEffects } from "./app/baseline-effects.ts";
  * - 自动单/条件单（客户端侧）。
  * - 亮/暗主题切换。
  */
-import { useEffect, useRef, useState, useCallback, lazy, Suspense, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
+import { useEffect, useRef, useState, useCallback, lazy, Suspense } from "react";
 import { Button, Card, HTMLSelect, Switch } from "@blueprintjs/core";
 import { useSelector } from "react-redux";
 import type { DeliveryMode, EngineHost, SpeedMetrics } from "./host/engine-host";
@@ -17,17 +17,14 @@ import type { HostFailure, HostUpdate } from "./host/host-update.ts";
 import { CompanyQueryCoordinator } from "./host/company-query-coordinator.ts";
 import { ProtocolCoordinator } from "./host/protocol-coordinator.ts";
 import { SpeedMetricsRequestGate, speedMetricsMatchesUiState } from "./host/speed";
-import { browserWasmEnvironment, initialStartupTarget, resolveStartupTarget, type StartupMode, type StartupTarget } from "./host/startup-policy";
-import { DEFAULT_SETUP } from "./config/defaults";
 import { SessionControlCommands } from "./app/session-control-commands.ts";
 import { StartDateInput } from "./components/StartDateInput.tsx";
 import { PriceCageInput } from "./components/PriceCageInput.tsx";
 import { FloatAllocationInput } from "./components/FloatAllocationInput.tsx";
 import { InitialAllocationSummary } from "./components/InitialAllocationSummary.tsx";
 import type { InitialAllocation } from "./host/initial-allocation.ts";
-import { FatalHostError, HostSpawnFailureReport, SpeedMetricsAlert } from "./app/HostStatusViews.tsx";
+import { FatalHostError, SpeedMetricsAlert } from "./app/HostStatusViews.tsx";
 import { isWasmMemoryTerminalFailure, WasmMemoryTerminalError } from "./app/WasmMemoryTerminalError.tsx";
-import { StartupScreen } from "./app/StartupScreen.tsx";
 import type { DesktopView } from "./app/DesktopTerminal.tsx";
 import { WorkspaceGrid } from "./app/WorkspaceGrid.tsx";
 import type { SessionSetup } from "./types/engine";
@@ -42,7 +39,6 @@ import {
   toggleAutoOrder,
   markTriggered,
   clearTriggeredOrders,
-  clearAutoOrders,
   type RootState,
 } from "./store/store";
 import { useSessionHostLifecycle } from "./app/useSessionHostLifecycle.ts";
@@ -53,19 +49,20 @@ import { useSpeedMetricsPolling } from "./app/useSpeedMetricsPolling.ts";
 import { useSecurityBrowser } from "./app/useSecurityBrowser.ts";
 import type { MobilePrimaryTab } from "./mobile/mobile-ui-state";
 import { usePausePreferences } from "./app/usePausePreferences.ts";
+import { AppRoot, type AppRootShellProps } from "./app/AppRoot.tsx";
+import { ReturnToStartupControl } from "./app/ReturnToStartupControl.tsx";
+import { TRADING_E2E_MODE } from "./app/runtime-mode.ts";
 import "./App.css";
 import "./app/desktop-terminal.css";
 import "ag-grid-community/styles/ag-grid.css";
 import "ag-grid-community/styles/ag-theme-alpine.css";
-import { AutoOrderManager, AUTO_ORDER_LABELS, type AutoOrderType } from "./components/auto-order-manager";
+import { AUTO_ORDER_LABELS, type AutoOrderType } from "./components/auto-order-manager";
 import { useOrientation } from "./hooks/useOrientation";
 import { selectDayEndFileTarget, loadFromFile, type DayEndFileTarget } from "./save/save-file";
-import { DayEndPersistence } from "./save/day-end-persistence.ts";
 import { captureCivilDayEndCandidate } from "./save/civil-day-end-capture.ts";
 import { validateDayEndCandidate } from "./save/day-end-candidate.ts";
-import type { StrictSaveEnvelope } from "./save/schema/root.ts";
 import { writeDayEndTargets } from "./save/day-end-targets.ts";
-import { InitialSaveSource, SessionReplacementGate } from "./save/session-replacement.ts";
+import { SessionReplacementGate } from "./save/session-replacement.ts";
 import { CompressedIndexedDbSaveRepository } from "./save/indexed-db-save-repository";
 import { PlayerOrderRefreshGate, playerOrderFactsRequireRefresh } from "./components/player-orders.ts";
 import { MobileSpeedSelect } from "./mobile/MobileSpeedSelect";
@@ -96,18 +93,6 @@ import {
 const PLAYER_ACCOUNT_KEY = "0";
 const DevNpcInspector = import.meta.env.DEV ? lazy(() => import("./dev/NpcDecisionInspector.tsx").then((module) => ({ default: module.NpcDecisionInspector }))) : null;
 const MAX_DAILY_CANDLES = 360;
-const TRADING_E2E_MODE = import.meta.env.MODE === "e2e"
-  && new URLSearchParams(window.location.search).get("tradingE2E") === "1";
-const INITIAL_SESSION_SETUP: SessionSetup = TRADING_E2E_MODE
-  ? {
-      ...DEFAULT_SETUP,
-      npcs: { ...DEFAULT_SETUP.npcs, retail_count: 0, inst_count: 0, hot_count: 0 },
-      float_allocation: { between_kinds: "Random", within_kind: "Random" },
-      ticks_per_day: 30,
-      auction_ticks: 9,
-      closing_auction_ticks: 3,
-    }
-  : DEFAULT_SETUP;
 const DELIVERY_MODE_LABELS: Record<DeliveryMode, string> = {
   push: "服务端推送 60Hz",
   pull: "客户端拉取 60Hz",
@@ -132,30 +117,9 @@ function getBrowserSaveRepository(): CompressedIndexedDbSaveRepository {
   return browserSaveRepository;
 }
 
-interface AppShellProps {
-  startupTarget: StartupTarget;
-  initialSaveSourceRef: MutableRefObject<InitialSaveSource<StrictSaveEnvelope>>;
-  dayEndPersistenceRef: MutableRefObject<DayEndPersistence>;
-  sessionSetup: SessionSetup;
-  setSessionSetup: Dispatch<SetStateAction<SessionSetup>>;
-  returningToStartup: boolean;
-  returningToStartupRef: MutableRefObject<boolean>;
-  startupReturnError: string | null;
-  onSpawnFailure: (failure: HostFailure) => void;
-  onSelectHost: (stopSession: () => Promise<void>) => Promise<void>;
-  autoOrderMgrRef: MutableRefObject<AutoOrderManager | null>;
-  hostRef: MutableRefObject<EngineHost | null>;
-  notice: string | null;
-  setNotice: Dispatch<SetStateAction<string | null>>;
-}
+type AppShellProps = AppRootShellProps;
 
-export function ReturnToStartupControl({ onSelectHost, stopSession, error }: { onSelectHost: (stopSession: () => Promise<void>) => Promise<void>; stopSession: () => Promise<void>; error: string | null }) {
-  return <section aria-label="返回启动选择">
-    <p>返回启动选择将结束当前内存会话，未保存的日内进度会丢失；不会重读快速槽，也不会无缝迁移。</p>
-    <Button onClick={() => { void onSelectHost(stopSession); }}>返回启动选择</Button>
-    {error !== null && <p role="alert">{error}</p>}
-  </section>;
-}
+export { ReturnToStartupControl };
 
 function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, sessionSetup, setSessionSetup, returningToStartup, returningToStartupRef, startupReturnError, onSpawnFailure, onSelectHost, autoOrderMgrRef, hostRef, notice, setNotice }: AppShellProps) {
   const hasSnapshot = useSelector((s: RootState) => s.snapshot.snapshot !== null);
@@ -746,69 +710,11 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
 }
 
 function App() {
-  const [spawnFailures, setSpawnFailures] = useState<readonly HostFailure[]>([]);
-  const onSpawnFailure = useCallback((failure: HostFailure) => {
-    setSpawnFailures((visible) => [...visible, failure]);
-  }, []);
-  const dismissSpawnFailures = useCallback(() => setSpawnFailures([]), []);
-  const initialSaveSourceRef = useRef(new InitialSaveSource<StrictSaveEnvelope>());
-  const dayEndPersistenceRef = useRef(new DayEndPersistence());
-  const [sessionSetup, setSessionSetup] = useState<SessionSetup>(INITIAL_SESSION_SETUP);
-  const returningToStartupRef = useRef(false);
-  const [returningToStartup, setReturningToStartup] = useState(false);
-  const [startupReturnError, setStartupReturnError] = useState<string | null>(null);
-  const [startupTarget, setStartupTarget] = useState<StartupTarget | null>(() => initialStartupTarget(import.meta.env.MODE));
-  const [startupMode, setStartupMode] = useState<StartupMode>(import.meta.env.DEV && import.meta.env.VITE_ENGINE_HOST === "remote" ? "remote" : "local");
-  const [remoteAddress, setRemoteAddress] = useState(import.meta.env.DEV ? import.meta.env.VITE_REMOTE_BASE_URL ?? "" : "");
-  const [startupError, setStartupError] = useState<string | null>(null);
-  const autoOrderMgrRef = useRef<AutoOrderManager | null>(null);
-  const hostRef = useRef<EngineHost | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const returnToStartup = useCallback(async (stopSession: () => Promise<void>) => {
-    if (returningToStartupRef.current) return;
-    returningToStartupRef.current = true;
-    setReturningToStartup(true);
-    setStartupReturnError(null);
-    try {
-      await stopSession();
-      store.dispatch(setRunning(false));
-      dayEndPersistenceRef.current.invalidate();
-      await dayEndPersistenceRef.current.idle();
-      store.dispatch(clearAutoOrders());
-      setNotice(null);
-      setStartupTarget(null);
-    } catch (failure) {
-      setStartupReturnError(`返回启动选择失败：${failure instanceof Error ? failure.message : String(failure)}；尚未开始下一局，请反馈此错误或重新打开应用。`);
-    } finally {
-      returningToStartupRef.current = false;
-      setReturningToStartup(false);
-    }
-  }, []);
-  if (startupTarget === null) {
-    return <HostSpawnFailureReport failures={spawnFailures} onDismiss={dismissSpawnFailures}><StartupScreen mode={startupMode} remoteAddress={remoteAddress} error={startupError}
-      developmentHint={import.meta.env.DEV && (import.meta.env.VITE_ENGINE_HOST !== undefined || import.meta.env.VITE_REMOTE_BASE_URL !== undefined)}
-      onModeChange={(mode) => { setStartupMode(mode); setStartupError(null); }}
-      onAddressChange={(address) => { setRemoteAddress(address); setStartupError(null); }}
-      onStart={() => {
-        try {
-          const target = resolveStartupTarget(startupMode, remoteAddress, "__TAURI_INTERNALS__" in window, browserWasmEnvironment);
-          setStartupError(null);
-          setStartupTarget(target);
-        } catch (startupFailure) {
-          setStartupError(startupFailure instanceof Error ? startupFailure.message : String(startupFailure));
-        }
-      }} /></HostSpawnFailureReport>;
-  }
-  return (
-    <HostSpawnFailureReport failures={spawnFailures} onDismiss={dismissSpawnFailures}>
-    <MarketRuntimeProvider autoOrderManagerRef={autoOrderMgrRef} setNotice={setNotice} hostRef={hostRef}>
-      <AppShell onSpawnFailure={onSpawnFailure} startupTarget={startupTarget} initialSaveSourceRef={initialSaveSourceRef} onSelectHost={returnToStartup}
-        dayEndPersistenceRef={dayEndPersistenceRef} sessionSetup={sessionSetup} setSessionSetup={setSessionSetup}
-        returningToStartup={returningToStartup} returningToStartupRef={returningToStartupRef} startupReturnError={startupReturnError}
-        autoOrderMgrRef={autoOrderMgrRef} hostRef={hostRef} notice={notice} setNotice={setNotice} />
+  return <AppRoot renderShell={(props) => (
+    <MarketRuntimeProvider autoOrderManagerRef={props.autoOrderMgrRef} setNotice={props.setNotice} hostRef={props.hostRef}>
+      <AppShell {...props} />
     </MarketRuntimeProvider>
-    </HostSpawnFailureReport>
-  );
+  )} />;
 }
 
 export default App;

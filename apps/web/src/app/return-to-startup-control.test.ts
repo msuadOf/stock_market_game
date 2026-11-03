@@ -1,13 +1,12 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
-import React from "react";
 import { createServer, type ViteDevServer } from "vite";
 
 let vite: ViteDevServer;
-let App: typeof import("../App.tsx");
+let ReturnCandidate: typeof import("./ReturnToStartupControl.tsx");
 before(async () => {
   vite = await createServer({ root: new URL("../..", import.meta.url).pathname, configFile: false, appType: "custom", server: { middlewareMode: true, ws: false }, optimizeDeps: { noDiscovery: true } });
-  App = await vite.ssrLoadModule("/src/App.tsx") as typeof import("../App.tsx");
+  ReturnCandidate = await vite.ssrLoadModule("/src/app/ReturnToStartupControl.tsx") as typeof import("./ReturnToStartupControl.tsx");
 });
 after(async () => { if (vite) await vite.close(); });
 
@@ -20,7 +19,7 @@ test("ready 游戏与存档区域的返回控件等待旧局结束，清楚显�
   let selection: Promise<void> | null = null;
   const stopSession = async () => { stopped = true; };
   const returnError = "返回启动选择失败：原宿主停止失败；尚未开始下一局，请反馈此错误或重新打开应用。";
-  const ReturnControl = (App as typeof App & { ReturnToStartupControl?: (props: { onReturn: () => void }) => React.ReactElement }).ReturnToStartupControl;
+  const ReturnControl = ReturnCandidate.ReturnToStartupControl;
   assert.equal(typeof ReturnControl, "function", "ready settings 区域必须提供真实返回控件");
   const section = ReturnControl!({ onSelectHost: (stop) => {
     selection = (async () => {

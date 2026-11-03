@@ -5,6 +5,7 @@ import test from "node:test";
 const source = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
 const lifecycle = readFileSync(new URL("./useSessionHostLifecycle.ts", import.meta.url), "utf8");
 const controls = readFileSync(new URL("./session-control-commands.ts", import.meta.url), "utf8");
+const root = readFileSync(new URL("./AppRoot.tsx", import.meta.url), "utf8");
 
 test("受控浏览器验收保留受控单步；WASM 线程池参数已随 rayon 退役移除", { timeout: 10000 }, () => {
   assert.match(lifecycle, /enableE2EStepping: tradingE2EMode/);
@@ -12,13 +13,18 @@ test("受控浏览器验收保留受控单步；WASM 线程池参数已随 rayon
 });
 
 test("外层 App 先选择，再挂载游戏；一次读档源在外层生命周期共享", () => {
-  const app = source.slice(source.indexOf("function App()"));
+  const app = root.slice(root.indexOf("export function AppRoot"));
   const shell = source.slice(source.indexOf("function AppShell("), source.indexOf("function App()"));
   assert.ok(app.includes("new InitialSaveSource<StrictSaveEnvelope>()"));
   assert.equal(shell.includes("new InitialSaveSource"), false);
-  assert.ok(app.indexOf("<StartupScreen") < app.indexOf("<MarketRuntimeProvider"));
-  assert.ok(app.includes("initialSaveSourceRef={initialSaveSourceRef}"));
-  assert.ok(app.includes("startupTarget={startupTarget}"));
+  assert.ok(app.indexOf("<StartupScreen") < app.indexOf("renderShell("));
+  const appWrapper = source.slice(source.indexOf("<AppRoot renderShell="), source.indexOf("export default App;"));
+  assert.match(appWrapper, /<MarketRuntimeProvider autoOrderManagerRef=\{props\.autoOrderMgrRef\} setNotice=\{props\.setNotice\} hostRef=\{props\.hostRef\}>/);
+  assert.match(appWrapper, /<AppShell \{\.\.\.props\} \/>/);
+  assert.ok(appWrapper.indexOf("<MarketRuntimeProvider") < appWrapper.indexOf("<AppShell {...props} />"));
+  assert.ok(appWrapper.indexOf("</MarketRuntimeProvider>") > appWrapper.indexOf("<AppShell {...props} />"), "Provider 必须包住 AppShell，不能成为其同级节点");
+  assert.match(app, /initialSaveSourceRef,/);
+  assert.match(app, /startupTarget,/);
 });
 
 test("WASM 校验在快速槽读取和 Worker 创建前，远程地址显式传入宿主", () => {
@@ -42,12 +48,12 @@ test("加载和失败可以结束当前启动并重选，普通设置不重建�
 });
 
 test("重选先关闭当前实例并等待外层日终屏障，显式新局配置跨 Shell 共享", () => {
-  const app = source.slice(source.indexOf("function App()"));
+  const app = root.slice(root.indexOf("export function AppRoot"));
   const shell = source.slice(source.indexOf("function AppShell("), source.indexOf("function App()"));
   assert.ok(app.includes("new DayEndPersistence()"));
   assert.equal(shell.includes("new DayEndPersistence()"), false);
-  assert.ok(app.includes("dayEndPersistenceRef={dayEndPersistenceRef}"));
-  assert.ok(app.includes("sessionSetup={sessionSetup} setSessionSetup={setSessionSetup}"));
+  assert.match(app, /dayEndPersistenceRef,/);
+  assert.match(app, /sessionSetup, setSessionSetup,/);
   const returning = app.slice(app.indexOf("const returnToStartup"), app.indexOf("if (startupTarget === null)"));
   assert.ok(returning.indexOf("stopSession()") < returning.indexOf("dayEndPersistenceRef.current.invalidate()"));
   assert.ok(returning.indexOf("await dayEndPersistenceRef.current.idle()") < returning.indexOf("setStartupTarget(null)"));
