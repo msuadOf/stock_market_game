@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { it } from "node:test";
 import { buildRustTestExecutionPolicy } from "./run-full-regression.mjs";
-import { executeSupervisedRustTestBinaries } from "./rust-test-case-supervisor.mjs";
+import { executeSupervisedRustTestBinaries, exportRootParent } from "./rust-test-case-supervisor.mjs";
 import { killRecordedProcesses } from "./rust-test-case-supervisor-test-process.mjs";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -43,10 +43,11 @@ it("launcher 停顿且 case 超时后仍清理 detached 孙进程", {
     }), /stopped launcher case.*deadline/);
     const outputs = (await readFile(receipts, "utf8")).trim().split("\n");
     assert.equal(outputs.length, 1);
-    assert.ok(outputs[0].startsWith(path.join(dir, "rust-export-")));
+    assert.ok(outputs[0].startsWith(path.join(exportRootParent({ env: { ...process.env, TMPDIR: dir } }), "rust-export-")));
     await rm(marker, { force: true });
     await sleep(500);
     assert.equal(existsSync(outputs[0]), false, "超时后必须删除导出根目录");
+    assert.equal(existsSync(path.dirname(outputs[0])), false, "超时后必须删除批次 export root");
     assert.equal(existsSync(marker), false, "launcher 停顿遗留的孙进程不得重建目录");
   } finally {
     const records = (await Promise.all([launcherIdentity, childIdentity, grandchildIdentity].map(readIdentity))).filter((record) => record !== undefined);

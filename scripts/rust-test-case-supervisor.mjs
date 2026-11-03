@@ -1,6 +1,6 @@
 import { fork, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 import { lstat, readdir, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -53,10 +53,32 @@ export async function waitForLauncherClose(closed, deadline) {
 
 const EXPORT_CLEANUP_SCRIPT = "import { rm } from 'node:fs/promises'; await rm(process.argv[1], { recursive: true, force: true, maxRetries: 3, retryDelay: 20 });";
 
-export function createExportRoot(env = process.env) {
+function isDirectoryPath(candidate) {
+  try { return lstatSync(candidate).isDirectory(); }
+  catch (error) {
+    if (error.code === "ENOENT" || error.code === "ENOTDIR") return false;
+    throw error;
+  }
+}
+
+/// export 用例会为每个生成文件执行 `sync_all`；共享满载磁盘的 fsync 尖峰会把
+/// 普通 10 秒 case 推过期限。Linux 使用 tmpfs 隔离这些生成物；其他平台沿用
+/// 调用方环境中的系统临时目录。Linux tmpfs 不可用时显式失败，不静默回退到
+/// 共享工作区磁盘。返回的父目录与实际创建 export root 的选择必须一致。
+export function exportRootParent({ env = process.env, platform = process.platform, sharedMemoryRoot = "/dev/shm", isDirectory = isDirectoryPath } = {}) {
+  if (platform === "linux") {
+    if (!isDirectory(sharedMemoryRoot)) {
+      throw new Error(`Rust export isolation requires Linux tmpfs ${sharedMemoryRoot}；当前路径不存在或不是目录，不会静默回退到共享工作区磁盘`);
+    }
+    return path.resolve(sharedMemoryRoot);
+  }
   const temporaryRoot = env.TMPDIR ?? env.TMP ?? env.TEMP ?? os.tmpdir();
   if (typeof temporaryRoot !== "string" || temporaryRoot.length === 0) throw new Error("Rust export isolation requires a process temporary directory");
-  return path.join(path.resolve(temporaryRoot), `rust-export-${process.pid}-${randomUUID()}`);
+  return path.resolve(temporaryRoot);
+}
+
+export function createExportRoot(env = process.env) {
+  return path.join(exportRootParent({ env }), `rust-export-${process.pid}-${randomUUID()}`);
 }
 
 function assertExportRoot(root) {

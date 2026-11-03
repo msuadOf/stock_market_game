@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { it } from "node:test";
 import { buildRustTestExecutionPolicy } from "./run-full-regression.mjs";
-import { executeSupervisedRustTestBinaries, removeExportRootWithinDeadline } from "./rust-test-case-supervisor.mjs";
+import { executeSupervisedRustTestBinaries, exportRootParent, removeExportRootWithinDeadline } from "./rust-test-case-supervisor.mjs";
 
 async function fixtureDirectory(topic) {
   const root = path.resolve(".tmp/deadline-hardgate-tests");
@@ -30,8 +30,14 @@ it("真实 watchdog 为导出用例隔离输出并清理临时目录", {
     assert.equal(result.case_count, 2);
     const outputs = (await readFile(receipts, "utf8")).trim().split("\n");
     assert.equal(new Set(outputs).size, 2);
-    assert.ok(outputs.every((output) => output.startsWith(path.join(dir, "rust-export-"))));
+    const expectedExportRoot = exportRootParent({ env: { ...process.env, TMPDIR: dir } });
+    if (process.platform === "linux") assert.notEqual(expectedExportRoot, path.resolve(dir), "导出根不得落在共享 TMPDIR");
+    assert.ok(outputs.every((output) => output.startsWith(path.join(expectedExportRoot, "rust-export-"))));
+    const batchRoots = new Set(outputs.map((output) => path.dirname(output)));
+    assert.equal(batchRoots.size, 1, "两个 case 必须共用同一批次 export root");
+    assert.equal(path.dirname([...batchRoots][0]), expectedExportRoot);
     assert.ok(outputs.every((output) => !existsSync(output)));
+    assert.equal(existsSync([...batchRoots][0]), false, "批次 export root 必须删除");
     assert.ok((await readdir(dir)).every((name) => !name.startsWith("rust-export-")));
   } finally { await rm(dir, { recursive: true, force: true }); }
 });

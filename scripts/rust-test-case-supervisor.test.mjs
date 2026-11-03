@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { it } from "node:test";
 import { runBoundedCommand } from "./run-with-deadline.mjs";
 import { buildRustTestExecutionPolicy } from "./run-full-regression.mjs";
-import { executeSupervisedRustTestBinaries } from "./rust-test-case-supervisor.mjs";
+import { createExportRoot, executeSupervisedRustTestBinaries, exportRootParent } from "./rust-test-case-supervisor.mjs";
 
 async function fixtureDirectory(topic) {
   const root = path.resolve(".tmp/deadline-hardgate-tests");
@@ -59,3 +60,36 @@ process.on('message',(message)=>{
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
+
+it("Linux export 隔离根使用 tmpfs，不落在共享工作区磁盘", { timeout: 10000 }, () => {
+  assert.equal(
+    exportRootParent({ env: { TMPDIR: "/tmp/shared-workspace" }, platform: "linux", sharedMemoryRoot: "/dev/shm", isDirectory: () => true }),
+    path.resolve("/dev/shm"),
+  );
+});
+
+it("Linux tmpfs 不可用时 export 隔离根显式失败", { timeout: 10000 }, () => {
+  assert.throws(
+    () => exportRootParent({ env: {}, platform: "linux", sharedMemoryRoot: "/dev/shm", isDirectory: () => false }),
+    /\/dev\/shm.*不存在或不是目录|不会静默回退/,
+  );
+});
+
+it("非 Linux 平台 export 隔离根沿用环境临时目录", { timeout: 10000 }, () => {
+  for (const platform of ["darwin", "win32"]) {
+    assert.equal(
+      exportRootParent({ env: { TMPDIR: "/var/tmp/rust-export" }, platform }),
+      path.resolve("/var/tmp/rust-export"),
+    );
+    assert.equal(exportRootParent({ env: {}, platform }), path.resolve(os.tmpdir()));
+  }
+});
+
+it("每批 export root 唯一且位于隔离根下", { timeout: 10000 }, () => {
+  const env = { TMPDIR: "/tmp/shared-workspace" };
+  const first = createExportRoot(env);
+  const second = createExportRoot(env);
+  assert.notEqual(first, second);
+  assert.equal(path.dirname(first), exportRootParent({ env }));
+  assert.match(path.basename(first), /^rust-export-\d+-[0-9a-f-]+$/);
+});

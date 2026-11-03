@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { it } from "node:test";
 import { buildRustTestExecutionPolicy } from "./run-full-regression.mjs";
-import { executeSupervisedRustTestBinaries } from "./rust-test-case-supervisor.mjs";
+import { executeSupervisedRustTestBinaries, exportRootParent } from "./rust-test-case-supervisor.mjs";
 import { killRecordedProcesses } from "./rust-test-case-supervisor-test-process.mjs";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -50,10 +50,12 @@ it("两个导出 case 同时失败时清理全部已登记孙进程", {
     const outputs = (await readFile(receipts, "utf8")).trim().split("\n");
     assert.equal(outputs.length, 2);
     assert.equal(new Set(outputs).size, 2);
-    assert.ok(outputs.every((output) => output.startsWith(path.join(dir, "rust-export-"))));
+    assert.ok(outputs.every((output) => output.startsWith(path.join(exportRootParent({ env: { ...process.env, TMPDIR: dir } }), "rust-export-"))));
     for (const marker of Object.values(markers)) await rm(marker, { force: true });
     await sleep(500);
+    assert.equal(new Set(outputs.map((output) => path.dirname(output))).size, 1, "两个 case 必须共用同一批次 export root");
     assert.ok(outputs.every((output) => !existsSync(output)), "两个导出根目录都必须删除");
+    assert.equal(existsSync(path.dirname(outputs[0])), false, "批次 export root 必须删除");
     assert.ok(Object.values(markers).every((marker) => !existsSync(marker)), "两个孙进程都不得重建目录");
     assert.ok((await readdir(dir)).every((name) => !name.startsWith("rust-export-")));
   } finally {

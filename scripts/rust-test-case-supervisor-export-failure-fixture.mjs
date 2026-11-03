@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { buildRustTestExecutionPolicy } from "./run-full-regression.mjs";
-import { executeSupervisedRustTestBinaries } from "./rust-test-case-supervisor.mjs";
+import { executeSupervisedRustTestBinaries, exportRootParent } from "./rust-test-case-supervisor.mjs";
 import { killRecordedProcesses } from "./rust-test-case-supervisor-test-process.mjs";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -31,7 +31,7 @@ export async function runFailingExportCase(mode, { remainingMs = 6000 } = {}) {
     }), mode === "failure" ? /export_bindings_failure.*failed|failed.*export_bindings_failure/s : /deadline/);
     const outputs = (await readFile(receipts, "utf8")).trim().split("\n");
     assert.equal(outputs.length, 1);
-    assert.ok(outputs[0].startsWith(path.join(dir, "rust-export-")));
+    assert.ok(outputs[0].startsWith(path.join(exportRootParent({ env: { ...process.env, TMPDIR: dir } }), "rust-export-")));
     assert.equal(existsSync(outputs[0]), false, "失败或超时后必须删除导出根目录");
     await rm(marker, { force: true });
     await sleep(500);
