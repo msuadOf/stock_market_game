@@ -3,7 +3,7 @@ import { EventEmitter } from "node:events";
 import { it } from "node:test";
 import { readFileSync } from "node:fs";
 
-import { ORDINARY_TEST_MAX_MS, parseArgs, runBoundedCommand, runWithDeadline } from "./run-with-deadline.mjs";
+import { ORDINARY_TEST_MAX_MS, cleanupReservePhases, parseArgs, runBoundedCommand, runWithDeadline } from "./run-with-deadline.mjs";
 
 it("嵌套 supervisor 不创建逃离外部 deadline 的进程组", async () => {
   let spawnOptions;
@@ -326,4 +326,43 @@ it("自定义 terminateProcessTree 保持第三参 Date 绝对截止与原三参
   await assert.rejects(result, /exited with 17/);
   assert.equal(received.length, 3);
   assert.ok(received[2] >= wallStarted + 200 && received[2] <= wallStarted + 275, String(received[2]));
+});
+
+it("cleanup 窗口先安排 final owned-handle signal，再保留 hard rejection 返回缓冲", () => {
+  assert.deepEqual(cleanupReservePhases(300), { finalSignalReserve: 200, finalReturnReserve: 150 });
+  assert.deepEqual(cleanupReservePhases(320), { finalSignalReserve: 200, finalReturnReserve: 150 });
+  assert.deepEqual(cleanupReservePhases(10), { finalSignalReserve: 7, finalReturnReserve: 5 });
+  assert.deepEqual(cleanupReservePhases(1), { finalSignalReserve: 1, finalReturnReserve: 0 });
+  assert.deepEqual(cleanupReservePhases(2), { finalSignalReserve: 2, finalReturnReserve: 0 });
+  for (const reserve of [3, 10, 50, 300, 1000]) {
+    const phases = cleanupReservePhases(reserve);
+    assert.ok(phases.finalSignalReserve > phases.finalReturnReserve, `reserve=${reserve} 时 final signal 必须先于 hard rejection`);
+    assert.ok(phases.finalSignalReserve <= reserve, `reserve=${reserve} 时 final signal 不得越过 cleanup 窗口`);
+    assert.ok(phases.finalReturnReserve >= 1);
+  }
+});
+
+it("hard rejection 不取消已排期的 final owned-handle kill", { timeout: 10000 }, async () => {
+  let childPid;
+  const started = performance.now();
+  await assert.rejects(runBoundedCommand({
+    command: process.execPath,
+    args: ["-e", "process.stdout.write(String(process.pid)+'\\n'); setInterval(() => {}, 1000)"],
+    timeoutMs: 600,
+    cleanupReserveMs: 300,
+    captureOutput: true,
+    onStdout: (chunk) => { childPid ??= Number(chunk.toString().trim()); },
+    terminateProcessTree: () => new Promise(() => {}),
+  }), /total 600ms deadline.*termination remains unconfirmed/i);
+  const elapsedMs = performance.now() - started;
+  assert.ok(Number.isInteger(childPid) && childPid > 0, "必须先运行真实 child");
+  assert.ok(elapsedMs >= 400 && elapsedMs < 1_000, `hard rejection wall 异常：${elapsedMs}ms`);
+  let state;
+  try {
+    const stat = readFileSync(`/proc/${childPid}/stat`, "utf8");
+    state = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[0];
+  } catch (error) {
+    if (error.code !== "ENOENT" && error.code !== "ESRCH") throw error;
+  }
+  assert.ok(state === undefined || state === "Z" || state === "X", `hard rejection 时 final owned-handle kill 尚未生效：${childPid} state=${state}`);
 });

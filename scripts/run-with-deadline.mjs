@@ -9,6 +9,22 @@ export const ORDINARY_TEST_MAX_MS = 10_000;
 export const LONG_VALIDATION_MAX_MS = 300_000;
 export const COMMAND_CLEANUP_RESERVE_MAX_MS = 1_000;
 
+// 在 cleanup reserve 内先安排 final owned-handle signal，再留出 hard rejection 的返回缓冲；
+// 两者都来自原 reserve，不扩大外部 deadline。
+export function cleanupReservePhases(cleanupReserveMs) {
+  if (!Number.isInteger(cleanupReserveMs) || cleanupReserveMs < 1) {
+    throw new Error(`cleanup reserve phases require a positive integer; got ${cleanupReserveMs}`);
+  }
+  // 极短 reserve 无法再分出独立返回缓冲；只安排 final signal，hard rejection 落在原 deadline。
+  if (cleanupReserveMs < 3) return { finalSignalReserve: cleanupReserveMs, finalReturnReserve: 0 };
+  const finalReturnReserve = Math.max(1, Math.min(150, Math.floor(cleanupReserveMs / 2)));
+  const finalSignalReserve = Math.max(finalReturnReserve + 1, Math.min(200, Math.floor((cleanupReserveMs * 3) / 4)));
+  if (finalSignalReserve >= cleanupReserveMs) {
+    throw new Error(`cleanup reserve phases must leave final signal before the cleanup deadline; got ${cleanupReserveMs}ms`);
+  }
+  return { finalSignalReserve, finalReturnReserve };
+}
+
 function cleanupDeadline(deadline) {
   return typeof deadline === "function" ? deadline() : deadline;
 }
@@ -299,8 +315,7 @@ class BoundedCommandRun {
         this.#timedOut = true;
         this.#terminate();
       }, Math.max(0, this.#executionDeadline - performance.now()));
-      const finalSignalReserve = Math.max(1, Math.min(100, Math.floor(cleanupReserveMs / 2)));
-      const finalReturnReserve = Math.max(1, Math.min(50, Math.floor(cleanupReserveMs / 4)));
+      const { finalSignalReserve, finalReturnReserve } = cleanupReservePhases(cleanupReserveMs);
       this.#finalSignalTimer = setTimeout(() => {
         if (performance.now() >= this.#deadline) {
           this.#recordTerminationError(new Error("final root signal was not started after its cleanup deadline"));
