@@ -305,6 +305,12 @@ it("地址空间仍存在的 owned non-dumpable 进程必须继续显式失败",
     /cannot confirm owned process 309.*EACCES/);
 });
 
+// 退出窗口采样只忽略 /proc 竞态确有依据的错误码；其它错误必须原样重抛，不能静默吞掉。
+function procRaceCode(error, codes) {
+  if (codes.includes(error.code)) return error.code;
+  throw error;
+}
+
 async function processInExitWindow() {
   for (let attempt = 0; attempt < 60; attempt += 1) {
     const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
@@ -313,7 +319,8 @@ async function processInExitWindow() {
     child.kill("SIGKILL");
     for (let poll = 0; poll < 400; poll += 1) {
       let environ;
-      try { await readFile(`/proc/${child.pid}/environ`); } catch (error) { environ = error.code; }
+      try { await readFile(`/proc/${child.pid}/environ`); }
+      catch (error) { environ = procRaceCode(error, ["EACCES", "EPERM", "ENOENT", "ESRCH"]); }
       if (environ === "EACCES") {
         try {
           const stat = await readFile(`/proc/${child.pid}/stat`, "utf8");
@@ -321,7 +328,7 @@ async function processInExitWindow() {
           if (stat.slice(stat.lastIndexOf(")") + 2).split(" ")[0] === "R" && statm.trim() === "0 0 0 0 0 0 0") {
             return { pid: child.pid, closed, state: "R", statm };
           }
-        } catch { /* 进程已消失，换下一个样本 */ }
+        } catch (error) { procRaceCode(error, ["ENOENT", "ESRCH"]); }
       }
       if (environ === "ENOENT") break;
     }
@@ -348,6 +355,21 @@ it("地址空间从全 0 恢复且 environ 仍 EACCES 时必须显式失败且�
   assert.ok(statmReads >= 3, "必须先观察到全 0，再观察到 mm 恢复");
 });
 
+it("退出窗口采样只忽略有依据的 /proc 竞态错误，未知错误必须重抛", () => {
+  for (const [codes, code] of [
+    [["EACCES", "EPERM", "ENOENT", "ESRCH"], "EACCES"],
+    [["EACCES", "EPERM", "ENOENT", "ESRCH"], "EPERM"],
+    [["EACCES", "EPERM", "ENOENT", "ESRCH"], "ENOENT"],
+    [["ENOENT", "ESRCH"], "ESRCH"],
+  ]) {
+    assert.equal(procRaceCode(Object.assign(new Error(code), { code }), codes), code);
+  }
+  const io = Object.assign(new Error("I/O failure"), { code: "EIO" });
+  assert.throws(() => procRaceCode(io, ["ENOENT", "ESRCH"]), (error) => error === io, "未知 errno 必须原样重抛");
+  const noCode = new Error("unknown failure without code");
+  assert.throws(() => procRaceCode(noCode, ["ENOENT"]), (error) => error === noCode, "无 errno 的错误也必须重抛");
+});
+
 it("真实退出中的子进程（environ EACCES）必须等到 Z/X/消失后正常结束清理", { timeout: 10000, skip: process.platform !== "linux" }, async () => {
   const { pid, closed, state, statm } = await processInExitWindow();
   try {
@@ -356,7 +378,7 @@ it("真实退出中的子进程（environ EACCES）必须等到 Z/X/消失后正
     const cleanup = createCompletionCleanup(process.pid, { listProcesses: async () => [String(pid)] });
     await assert.doesNotReject(cleanup({ token: "active", pid, total: monotonicMs() + 1000 }));
   } finally {
-    try { process.kill(pid, "SIGKILL"); } catch { /* 已退出 */ }
+    try { process.kill(pid, "SIGKILL"); } catch (error) { procRaceCode(error, ["ESRCH"]); }
     await closed;
   }
 });
