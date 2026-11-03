@@ -175,3 +175,15 @@ run-with-deadline-cleanup 16/16、run-long-validation-process 2/2（均 10 秒�
 - 未能重放失败批次；结论基于“真实进程可复现竞态 + 现场 PID 与 spawn/birth 精确吻合”；
   未把 PID 复用当作事实，也未把单次 statm=0 当作终态。
 - 若进程在共享期限耗尽前始终停留在该窗口，仍会按期限报错（如实失败），不静默放行。
+
+### 复审后续：退出窗口采样不吞未知错误
+
+`processInExitWindow` 原先用空 catch 处理 environ / stat+statm / kill 采样，违反 AGENTS「不静默吞错」。
+现在只忽略确有依据的 `/proc` 竞态 errno：
+
+- environ：`EACCES`、`EPERM`（权限拒绝/退出窗口）、`ENOENT`、`ESRCH`（进程已消失）；
+- stat / statm：`ENOENT`、`ESRCH`；
+- `process.kill` 兜底：`ESRCH`。
+
+其余 errno 与无 errno 的错误原样重抛；新增单测「退出窗口采样只忽略有依据的 /proc 竞态错误，未知错误必须重抛」。
+复验：proc 文件 **20/20** 单跑 5/5、4 路并发 4/4。
