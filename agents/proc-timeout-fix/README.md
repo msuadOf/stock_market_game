@@ -67,7 +67,8 @@ stat.birth=`1999`、`launcherBirth=2000`、environ 精确含 active token 时，
 1. 两个真实 fixture 只列举**本 fixture 的 PID**（真实 `/proc` environ 与 stat 不变）：
    该用例验证的是 EACCES 归属语义，不再把整机 2100+ 进程数塞进 1000ms 预算。
 2. 新增「出生早于 launcher 的旧进程在 exec 后携带 token 仍必须被发现并清理」，
-   防止“按出生过滤”的回归（撤销前该用例会红）。
+   并显式注入 `launcherBirth: "2000"`：被否决的 c5992f76 实现会因此跳过 PID 401，
+   该用例实测变红；最终实现为绿。
 3. 新增「整机 /proc 扫描并发有上限」，并断言列举中的每个 PID 都被检查（无跳过）。
 
 ## 验证结果
@@ -92,3 +93,15 @@ stat.birth=`1999`、`launcherBirth=2000`、environ 精确含 active token 时，
 - 真实 fixture 收窄了列举范围；全表逐项检查由注入列举的用例覆盖，生产默认
   `listProcesses = readdir("/proc")` 未变。
 - A 股语义无变化：仅测试基础设施，未改 engine、交易规则、单位、UI 文案、存档或 API 契约。
+
+## 独立复审（Sol）
+
+由未实施该改动的独立 Sol subagent 复审 `8c5b5b22` / `242321c3`（父 `7b9f60bc`）：**批准，两个原阻断项均关闭**。
+
+- 出生过滤问题关闭：逐 PID 读 environ、EACCES/EPERM 显式失败、同 birth 双读、identity changed、Z/X 判断均保留；
+  回归用例显式注入 `launcherBirth` 后能触发被否决实现的漏清理分支。
+- 并发 fixture 问题关闭：真实 fixture 保留真实 environ/stat、原断言与 1000ms 预算，仅限定列举范围；
+  独立 256 PID 用例覆盖逐项检查与并发上限，默认 `readdir("/proc")` 由 supervisor 集成用例覆盖。
+- 分批语义可接受：未放宽或重置共享 deadline；前批失败后停止后续批次，仍显式失败。
+- 复审独立验证（均 10 秒外部硬上限）：proc 单跑 14/14、4 路并发 × 3 轮 12/12、execution 3/3、lifecycle 10/10、
+  long-validation-process 2/2；未跑全仓、`all`、Cargo、Clippy 或前端构建。
