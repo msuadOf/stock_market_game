@@ -6,7 +6,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { it } from "node:test";
-import { createCompletionCleanup } from "./rust-test-case-supervisor.mjs";
+import { PROCESS_SCAN_CONCURRENCY, createCompletionCleanup } from "./rust-test-case-supervisor.mjs";
 
 const monotonicMs = () => Number(process.hrtime.bigint()) / 1e6;
 
@@ -60,7 +60,9 @@ it("真实 Z 态 sibling 的 environ EACCES 不应误报活 owned 不可确认",
     assert.equal(fixture.record.state, "Z");
     assert.equal(fixture.record.environ_errno, 13);
     assert.equal(fixture.record.ppid, fixture.guardian.pid);
-    const cleanup = createCompletionCleanup(fixture.guardian.pid);
+    // 只列举本 fixture 的真实 PID：该用例验证 environ EACCES 的归属语义，
+    // 不把整机进程数（2100+）带进 1 秒预算；全表列举契约由下方并发用例独立覆盖。
+    const cleanup = createCompletionCleanup(fixture.guardian.pid, { listProcesses: async () => [String(fixture.record.pid), String(fixture.guardian.pid)] });
     await assert.doesNotReject(cleanup({ token: `${process.pid}:completed-peer`, pid: fixture.guardian.pid, total: monotonicMs() + 1000 }));
     const stat = readFileSync(`/proc/${fixture.record.pid}/stat`, "utf8");
     const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
@@ -73,7 +75,8 @@ it("真实活 owned 的 non-dumpable environ EACCES 仍必须显式失败", { ti
   try {
     assert.notEqual(fixture.record.state, "Z");
     assert.equal(fixture.record.environ_errno, 13);
-    const cleanup = createCompletionCleanup(fixture.guardian.pid);
+    // 同上：真实 /proc environ 与 stat，但列举范围限定为本 fixture 的 PID。
+    const cleanup = createCompletionCleanup(fixture.guardian.pid, { listProcesses: async () => [String(fixture.record.pid), String(fixture.guardian.pid)] });
     await assert.rejects(cleanup({ token: `${process.pid}:completed-peer`, pid: fixture.guardian.pid, total: monotonicMs() + 1000 }),
       new RegExp(`cannot confirm owned process ${fixture.record.pid}.*EACCES`));
     assert.ok(readFileSync(`/proc/${fixture.record.pid}/stat`, "utf8").includes(String(fixture.record.pid)));
@@ -222,4 +225,41 @@ it("二次 environ 的同 batch token 决定清理 deadline，初筛不提供权
     cleanup({ token: "active-b", pid: 308, total: deadlineB }),
   ]);
   assert.deepEqual(killed, [{ pid: 307, deadline: deadlineB }]);
+});
+
+it("出生早于 launcher 的旧进程在 exec 后携带 token 仍必须被发现并清理", { timeout: 10000, skip: process.platform !== "linux" }, async () => {
+  // execve 不改变 starttime：旧进程可以在 launcher 启动后 exec 到带精确 token 的新映像，
+  // 因此不能用出生时间跳过 environ 检查。
+  const killed = [];
+  const cleanup = createCompletionCleanup(777, {
+    // 故意注入 launcherBirth：被否决的“按出生跳过”实现会因此跳过 PID 401，必须让该回归变红。
+    launcherBirth: "2000",
+    listProcesses: async () => ["401"],
+    readProcessStat: async (pid) => frozenStat(pid, { birth: "1" }),
+    readEnvironment: async () => Buffer.from("STOCK_GAME_RUST_CASE_TOKEN=active\0"),
+    terminate: async ({ pid }) => { killed.push(pid); },
+  });
+  await cleanup({ token: "active", pid: 401, total: monotonicMs() + 1000 });
+  assert.deepEqual(killed, [401]);
+});
+
+it("整机 /proc 扫描并发有上限，不得一次性发起全部读取", { timeout: 10000, skip: process.platform !== "linux" }, async () => {
+  let active = 0;
+  let peak = 0;
+  const examined = [];
+  const listing = Array.from({ length: PROCESS_SCAN_CONCURRENCY * 8 }, (_, index) => String(1000 + index));
+  const cleanup = createCompletionCleanup(777, {
+    listProcesses: async () => listing,
+    readProcessStat: async (pid) => {
+      active += 1; peak = Math.max(peak, active); examined.push(String(pid));
+      await new Promise((resolve) => setImmediate(resolve));
+      active -= 1;
+      return frozenStat(pid, { birth: "1", ppid: 999, group: 999 });
+    },
+    readEnvironment: async () => { throw Object.assign(new Error("unrelated denial"), { code: "EACCES" }); },
+    terminate: async () => { throw new Error("没有匹配 token，不得清理"); },
+  });
+  await cleanup({ token: "active", pid: 1000, total: monotonicMs() + 5000 });
+  assert.equal(examined.length, listing.length, "列举中的每个 PID 都必须被检查，不能按出生时间跳过");
+  assert.ok(peak <= PROCESS_SCAN_CONCURRENCY, `扫描并发峰值 ${peak} 超过上限 ${PROCESS_SCAN_CONCURRENCY}`);
 });
