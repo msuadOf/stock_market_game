@@ -47,6 +47,7 @@ function shutdownErrorSnapshot(value: unknown, seen = new WeakSet<object>()): un
 export class WasmSessionSlot<TBindings extends WasmSessionBindings> {
   private handle: number | null = null;
   private generation = 0;
+  private createAttempted = false;
   private initialRestoreAttempted = false;
   private readonly bindings: () => TBindings | null;
 
@@ -75,13 +76,18 @@ export class WasmSessionSlot<TBindings extends WasmSessionBindings> {
     const wasm = this.bindings();
     if (wasm === null) throw new Error("wasm 未初始化");
     if (typeof seed !== "bigint") throw new Error("seed 必须是 bigint");
-    // 保留重复 create 直接覆盖的现状，资源缺陷须另批修复。
+    // create_session 失败时 Rust 侧可能已经构造或登记过资源；本槽无法证明可回收，
+    // 因此首次尝试前即锁存，重复或失败后的 create 都只能由新 Worker 承担。
+    if (this.createAttempted || this.initialRestoreAttempted || this.handle !== null) {
+      throw new Error("Worker 会话只能初始化一次；失败后必须重建 Worker");
+    }
+    this.createAttempted = true;
     this.handle = wasm.create_session(setup, seed);
     this.generation += 1;
   }
 
   restoreInitial(): void {
-    if (this.initialRestoreAttempted || this.handle !== null || this.generation !== 0) throw new Error("restoreInitial 仅允许首次空槽调用一次，不能替换已有会话");
+    if (this.initialRestoreAttempted || this.createAttempted || this.handle !== null || this.generation !== 0) throw new Error("restoreInitial 仅允许首次空槽调用一次，不能替换已有会话");
     const wasm = this.bindings();
     if (wasm === null) throw new Error("wasm 未初始化");
     if (typeof wasm.restore_prepared !== "function") throw new Error("WASM 缺少初始档消费接口");

@@ -22,7 +22,7 @@ async function fixture() {
   return { slot, bindings, calls, hooks, candidate: (next: number) => { candidate = next; }, fail: (next: typeof failure) => { failure = next; } };
 }
 
-test("WasmSessionSlot 维持未就绪、generation 校验与重复 create 覆盖边界", async () => {
+test("WasmSessionSlot 维持未就绪、generation 校验并显式拒绝重复 create", { timeout: 10000 }, async () => {
   const f = await fixture();
   assert.equal(f.slot.readGeneration(), 0);
   assert.throws(() => f.slot.requireHandle(), /会话尚未就绪/);
@@ -31,22 +31,48 @@ test("WasmSessionSlot 维持未就绪、generation 校验与重复 create 覆盖
   assert.deepEqual(f.slot.requireHandle(), [7, f.bindings]);
   assert.equal(f.slot.requireGeneration(1), 1);
   f.candidate(9);
-  f.slot.create({}, 2n);
-  assert.equal(f.slot.readGeneration(), 2);
-  assert.equal(f.slot.requireHandle()[0], 9);
-  assert.deepEqual(f.calls, ["create:1", "create:2"]);
-  f.fail("create");
-  assert.throws(() => f.slot.create({}, 3n), /create failed/);
-  assert.equal(f.slot.requireHandle()[0], 9);
-  assert.equal(f.slot.readGeneration(), 2);
+  assert.throws(() => f.slot.create({}, 2n), /只能初始化一次/);
+  assert.equal(f.slot.readGeneration(), 1);
+  assert.equal(f.slot.requireHandle()[0], 7);
+  assert.deepEqual(f.calls, ["create:1"]);
 });
 
-test("WasmSessionSlot create 的未初始化和 seed 校验保持原错误顺序", async () => {
+test("WasmSessionSlot 首次 create FFI 失败后保持不可复用", { timeout: 10000 }, async () => {
+  const f = await fixture();
+  f.fail("create");
+  assert.throws(() => f.slot.create({}, 1n), /create failed/);
+  f.fail(null);
+  assert.throws(() => f.slot.create({}, 2n), /只能初始化一次/);
+  assert.deepEqual(f.calls, ["create:1"]);
+  assert.throws(() => f.slot.requireHandle(), /会话尚未就绪/);
+  assert.equal(f.slot.readGeneration(), 0);
+});
+
+test("WasmSessionSlot restoreInitial 安装的会话不允许被 create 覆盖", { timeout: 10000 }, () => {
+  const calls: string[] = [];
+  const slot = new WasmSessionSlot(() => ({
+    create_session() { calls.push("create"); return 9; },
+    restore_json() { throw new Error("不可重复解码"); },
+    restore_prepared() { calls.push("restore"); return 7; },
+    snapshot: () => ({}),
+    drop_session() { calls.push("drop"); },
+  }));
+  slot.restoreInitial();
+  assert.throws(() => slot.create({}, 1n), /只能初始化一次/);
+  assert.deepEqual(calls, ["restore"]);
+  assert.equal(slot.requireHandle()[0], 7);
+  assert.equal(slot.readGeneration(), 1);
+});
+
+test("WasmSessionSlot create 的未初始化和 seed 校验保持原错误顺序", { timeout: 10000 }, async () => {
   const slot = new WasmSessionSlot(() => null);
   assert.throws(() => slot.create({}, 1), /wasm 未初始化/);
   const f = await fixture();
   assert.throws(() => f.slot.create({}, 1), /seed 必须是 bigint/);
   assert.equal(f.slot.readGeneration(), 0);
+  f.slot.create({}, 1n);
+  assert.deepEqual(f.calls, ["create:1"], "seed 参数错误不得消耗唯一 create 机会");
+  assert.equal(f.slot.readGeneration(), 1);
 });
 
 test("WasmSessionSlot restore snapshot 失败清 candidate 并恢复运行意图", async () => {

@@ -379,7 +379,8 @@ function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
         case "create": {
           const configured = engineInitializer.requireConfigured();
           if (configured.initialArchive !== null) throw new Error("初始完整 X 只能 restoreInitial，禁止先建空局");
-          if (Object.hasOwn(message, "setup")) throw new Error("create 不接受第二份 setup；必须使用首次 init 保存的同份 setup");
+          // setup 已由首次 init 的唯一配置持有；create 只携带一次性种子，未知字段显式拒绝。
+          exact({ ...message }, ["type", "seed"], "Worker create");
           slot.create(configured.setup, message.seed);
           const [, wasm] = slot.requireHandle();
           const capabilities = readWasmCapabilities(wasm);

@@ -56,7 +56,7 @@ async function createFixture(
   const timers = new Map<number, () => void>();
   let nextTimer = 0;
   let handle = 7;
-  let failing: "snapshot" | "prepare" | "drop" | "catalog" | "recoverable" | "snapshot-and-drop" | "company-read" | "company-read-typed" | "shutdown" | null = null;
+  let failing: "create" | "snapshot" | "prepare" | "drop" | "catalog" | "recoverable" | "snapshot-and-drop" | "company-read" | "company-read-typed" | "shutdown" | null = null;
   let failingPost: string | null = null;
   let writeFailure: unknown;
   let listener: ((event: { data: Message }) => void) | undefined;
@@ -73,7 +73,7 @@ async function createFixture(
     },
     facade_slot_layout: () => layout,
     ingress_token: (current: number) => current,
-    create_session: () => { calls.push(`create:${handle}`); return handle; },
+    create_session: () => { calls.push(`create:${handle}`); if (failing === "create") throw new Error("create failed"); return handle; },
     civil_date: (current: number) => current === 7 ? "2030-01-02" : "2031-02-03",
     snapshot: (current: number) => { calls.push(`snapshot:${current}`); if (failing === "snapshot" || failing === "snapshot-and-drop") throw new Error("snapshot failed"); if (failing === "recoverable") throw { code: "READ_RETRY", where: "test.read", message: "可恢复读取失败", recoverable: true }; return snapshot(0, 0); },
     stock_catalog_view: () => [{ id: 0, code: "000812" }],
@@ -170,12 +170,21 @@ async function createFixture(
   };
   business.port1.start();
   const send = (message: Message) => { business.port1.dispatchEvent(new MessageEvent("message", { data: message })); };
+  // 从 owner 端经真实 MessagePort 投递：覆盖浏览器队列与 structured clone，不手工 dispatch。
+  const sendAsync = async (message: Message, settled: () => boolean) => {
+    business.port2.postMessage(message);
+    for (let count = 0; count < 100; count++) {
+      if (settled()) return;
+      await setImmediate();
+    }
+    throw new Error(`真实 MessagePort 未在期限内处理 ${message.type}`);
+  };
   listener!({ data: { type: "bindEngineTransport", instanceId: 1, dataPort: business.port1, controlPort: control.port2 } });
   send({ type: "init", ...(missingWrites === "initial-archive" ? { initialArchive: saved, restoreCapability: { kind: "verified-package", wasmSha256: wasmHash, glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: exportNames } } : { setup: {} }) });
   await ready;
   assert.deepEqual(posted, [{ type: "initializationProgress", phase: "engine" }, { type: "ready" }]);
   posted.length = 0;
-  return { send, calls, posted: posted as Message[], globalLifecycle, timers, saved, handle: (next: number) => { handle = next; }, fail: (next: typeof failing) => { failing = next; }, failPost: (type: string | null) => { failingPost = type; }, failWrite: (error: unknown) => { writeFailure = error; } };
+  return { send, sendAsync, calls, posted: posted as Message[], globalLifecycle, timers, saved, handle: (next: number) => { handle = next; }, fail: (next: typeof failing) => { failing = next; }, failPost: (type: string | null) => { failingPost = type; }, failWrite: (error: unknown) => { writeFailure = error; } };
 }
 
 const correctionWriteRequest = { operation_id: "传输检查", company: 0, supersedes: 7, entries: [{ source: 900000001, date: "2030-01-02", kind: "CashRevenue", cash_flow: "Operating", lines: [{ account: "1002", side: "Debit", amount: "10.00" }, { account: "6001", side: "Credit", amount: "10.00" }] }], reason: "synthetic transport fixture" };
@@ -573,11 +582,94 @@ for (const outcome of ["success", "failure"] as const) {
   });
 }
 
+test("真实 MessagePort 异步重复 create 显式失败，不覆盖旧 Registry/World", { timeout: 10000 }, async () => {
+  await withWorker(async f => {
+    await f.sendAsync({ type: "create", seed: 1n }, () => f.posted.some((message) => message.type === "baseline"));
+    assert.equal(f.calls.filter((call) => call.startsWith("create:")).length, 1);
+    f.posted.length = 0;
+    await f.sendAsync({ type: "create", seed: 2n }, () => f.posted.length > 0);
+    assert.equal(f.posted.length, 1);
+    assert.equal(f.posted[0].type, "failure");
+    assert.match(String(f.posted[0].message), /只能初始化一次/);
+    assert.equal(f.calls.filter((call) => call.startsWith("create:")).length, 1, "第二次 create 不得进入 FFI 覆盖旧 handle");
+    assert.deepEqual(f.posted.filter((message) => ["ingress", "created", "baseline"].includes(message.type)), []);
+    f.posted.length = 0;
+    await f.sendAsync({ type: "civilDate", requestId: 1, generation: 1 }, () => f.posted.some((message) => message.type === "civilDate"));
+    assert.equal(f.posted.at(-1)?.type, "civilDate", "旧会话在重复 create 被拒绝后仍保持有效");
+    await f.sendAsync({ type: "drop" }, () => f.calls.includes("drop:7"));
+    assert.deepEqual(f.calls.filter((call) => call.startsWith("drop:")), ["drop:7"]);
+  });
+});
+
+test("真实 MessagePort 异步首次 create FFI 失败后禁止重试并显式传播原始错误", { timeout: 10000 }, async () => {
+  await withWorker(async f => {
+    f.fail("create");
+    f.posted.length = 0;
+    await f.sendAsync({ type: "create", seed: 1n }, () => f.posted.length > 0);
+    assert.equal(f.posted.length, 1);
+    assert.equal(f.posted[0].type, "failure");
+    assert.match(String(f.posted[0].message), /create failed/);
+    assert.equal(f.posted[0].generation, 0);
+    f.fail(null);
+    f.posted.length = 0;
+    await f.sendAsync({ type: "create", seed: 1n }, () => f.posted.length > 0);
+    assert.equal(f.posted.length, 1);
+    assert.equal(f.posted[0].type, "failure");
+    assert.match(String(f.posted[0].message), /只能初始化一次/);
+    assert.equal(f.calls.filter((call) => call.startsWith("create:")).length, 1, "失败后的重试不得再次进入 FFI");
+    assert.equal(f.posted.some((message) => ["ingress", "created", "baseline"].includes(message.type)), false);
+    f.posted.length = 0;
+    await f.sendAsync({ type: "start", requestId: 2, generation: 1 }, () => f.posted.length > 0);
+    assert.equal(f.posted.at(-1)?.type, "operationError");
+    assert.match(String(f.posted.at(-1)?.message), /已过期会话/);
+  });
+});
+
+test("真实 MessagePort 异步 create 参数合同仅允许 type 与 seed，失败请求不消耗唯一创建机会", { timeout: 10000 }, async () => {
+  await withWorker(async f => {
+    for (const row of [
+      { extra: { setup: {} }, response: "failure" },
+      { extra: { initialArchive: { second: "ignored" } }, response: "failure" },
+      { extra: { requestId: 1 }, response: "operationError" },
+    ] as const) {
+      f.posted.length = 0;
+      await f.sendAsync({ type: "create", seed: 1n, ...row.extra }, () => f.posted.length > 0);
+      assert.equal(f.posted[0].type, row.response);
+      assert.match(String(f.posted[0].message), /不是允许字段/);
+      assert.equal(f.calls.some((call) => call.startsWith("create:")), false, "参数校验失败不得进入首次 create FFI");
+    }
+    f.posted.length = 0;
+    await f.sendAsync({ type: "create", seed: 1n }, () => f.posted.some((message) => message.type === "baseline"));
+    assert.equal(f.posted.some((message) => message.type === "created" && message.generation === 1), true);
+    assert.equal(f.calls.filter((call) => call.startsWith("create:")).length, 1);
+    await f.sendAsync({ type: "drop" }, () => f.calls.includes("drop:7"));
+  });
+});
+
+test("真实 MessagePort 异步 create 的 seed 参数错误不消耗唯一创建机会", { timeout: 10000 }, async () => {
+  await withWorker(async f => {
+    for (const message of [{ type: "create" }, { type: "create", seed: 1 }] as const) {
+      f.posted.length = 0;
+      await f.sendAsync(message, () => f.posted.length > 0);
+      assert.equal(f.posted[0].type, "failure");
+      assert.match(String(f.posted[0].message), /seed|必填/);
+      assert.equal(f.calls.some((call) => call.startsWith("create:")), false);
+    }
+    f.posted.length = 0;
+    await f.sendAsync({ type: "create", seed: 1n }, () => f.posted.some((message) => message.type === "baseline"));
+    assert.equal(f.calls.filter((call) => call.startsWith("create:")).length, 1);
+    await f.sendAsync({ type: "drop" }, () => f.calls.includes("drop:7"));
+  });
+});
+
 test("生产 Worker 初始完整 X 先完成同源 topology，再一次 restoreInitial 而非空 create", { timeout: 10000 }, async () => {
   await withWorker(async f => {
     assert.equal(f.calls.filter((call) => call === "initial-topology").length, 1);
     f.send({ type: "create", seed: 42n });
     assert.equal(f.calls.some((call) => call.startsWith("create:")), false);
+    assert.equal(f.posted.length, 1);
+    assert.equal(f.posted[0].type, "failure");
+    assert.match(String(f.posted[0].message), /只能 restoreInitial/);
     f.posted.length = 0;
     f.send({ type: "restoreInitial" });
     assert.equal(f.calls.filter((call) => call === "restore:7").length, 1);
