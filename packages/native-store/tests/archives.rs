@@ -5,6 +5,30 @@ use engine::session::protocol::{ProtocolSession, SaveCandidateKey};
 use engine::CivilDate;
 use native_store::{ArchiveWriter, DayEndCandidate, NativeDatabase};
 
+/// 物理存档用例的数据库目录。
+///
+/// 这些用例验证真实文件在 close→reopen 后的存档内容、selection、文件锁与
+/// inode 别名语义，不验证掉电持久性。仓库 `.tmp` 位于共享的满载 bcache 上，
+/// 正式批次中单次 fsync 可达秒级；把物理用例的数据库放到 tmpfs 可隔离这类
+/// 共享 IO 争用，同时仍使用真实的 SQLite 文件与完整的 close→reopen 路径。
+///
+/// Linux 上 `/dev/shm` 不可用（不存在、非目录、不可写或空间不足）时不回退到
+/// 共享磁盘：目录创建或数据库写入会直接让用例失败并给出错误，避免静默掩盖
+/// 环境问题。非 Linux 平台使用系统临时目录。
+fn physical_database_directory() -> std::path::PathBuf {
+    if cfg!(target_os = "linux") {
+        let root = std::path::Path::new("/dev/shm");
+        assert!(
+            root.is_dir(),
+            "物理存档测试要求 Linux tmpfs /dev/shm 可用；当前 {} 不存在或不是目录。\
+             不会静默回退到共享磁盘，请提供可用的 /dev/shm 后重试。",
+            root.display()
+        );
+        return root.join("stock-market-game-native-store-tests");
+    }
+    std::env::temp_dir().join("stock-market-game-native-store-tests")
+}
+
 fn candidate() -> DayEndCandidate {
     let mut game = ProtocolSession::new(
         fixture::civil_setup(CivilDate::from_iso("2030-01-05").unwrap()),
@@ -43,8 +67,7 @@ fn capture_current(game: &ProtocolSession) -> DayEndCandidate {
 
 #[test]
 fn real_archive_reopens_and_restores_complete_day_end() {
-    let directory =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.tmp/native-store-tests");
+    let directory = physical_database_directory();
     std::fs::create_dir_all(&directory).unwrap();
     let path = directory.join(format!(
         "reopen-{}-{:?}.sqlite",
@@ -146,8 +169,7 @@ fn intraday_checkpoint_and_corrupt_current_structure_are_rejected() {
 
 #[test]
 fn existing_unrecognized_schema_is_not_migrated() {
-    let directory =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.tmp/native-store-tests");
+    let directory = physical_database_directory();
     std::fs::create_dir_all(&directory).unwrap();
     let path = directory.join(format!(
         "old-schema-{}-{:?}.sqlite",
@@ -233,8 +255,7 @@ fn failed_timeline_commit_keeps_previous_archive_writer_valid() {
 
 #[test]
 fn explicit_slot_selection_physically_reopens_without_changing_economic_payloads() {
-    let directory =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.tmp/native-store-tests");
+    let directory = physical_database_directory();
     std::fs::create_dir_all(&directory).unwrap();
     let path = directory.join(format!(
         "selection-{}-{:?}.sqlite",
@@ -250,10 +271,11 @@ fn explicit_slot_selection_physically_reopens_without_changing_economic_payloads
             .unwrap();
         database.copy("current", "manual", "手动档").unwrap();
         database.select("manual").unwrap();
+        let expected = serde_json::to_value(&slot).unwrap();
         for slot_id in ["current", "manual"] {
             assert_eq!(
                 serde_json::to_value(database.load(slot_id).unwrap().unwrap()).unwrap(),
-                serde_json::to_value(&slot).unwrap()
+                expected
             );
         }
     }
@@ -322,8 +344,7 @@ fn deleting_active_slot_prepares_new_target_without_selecting_an_existing_archiv
 
 #[test]
 fn independent_physical_open_and_inode_alias_cannot_create_second_writer() {
-    let directory =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.tmp/native-store-tests");
+    let directory = physical_database_directory();
     std::fs::create_dir_all(&directory).unwrap();
     let path = directory.join(format!(
         "single-writer-{}-{:?}.sqlite",

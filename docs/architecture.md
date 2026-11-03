@@ -163,6 +163,10 @@ context 校验之后传播。空 ledger、到期报价及其他交易阶段使�
 股票撮合由每股一个交易部持久线程承载（ADR-0043）：组↔交易部全互联 `std::sync::mpsc` 直发（G×N 下行 `Ops` + N×G 上行 `DeskBatch`），数据面不经协调者；无 Barrier、无 Condvar、无共享 Mutex。正确性基石是锁步不变量：交易部实体批次先于 `DeskReport` 发送、协调者收齐 G+N 报告后才广播下一 `Start`（mpsc FIFO + happens-before）；活性由相位感知看门狗（`recv_timeout` + `Phase`，`watchdog.rs`）守护，重述见 ADR-0043 关联的活性契约。rayon 随旧调度形态退役，`in_place_scope` 嵌套池已知边界不再存在。
 
 所有验证副本、进程临时目录及缓存位于工作区 `.tmp/`，worktree 位于 `.worktree/`。
+唯一例外：`native-store` 的物理文件行为测试（验证 close→reopen、selection、文件锁与 inode 别名，
+不验证掉电耐久性）使用操作系统临时存储：Linux 为 tmpfs `/dev/shm/stock-market-game-native-store-tests`，
+其他平台为系统临时目录，以隔离共享慢盘的 fsync 争用；该目录不属于验证归档，用例结束自行删除
+数据库文件，进程被强杀后的残留由运行者按对应平台的临时目录清理。
 验收绑定完整源码内容清单，包含未跟踪的必要源码；运行中哈希漂移使相关结果失效。
 性能只比较条件相同的实测 ticks/sec 与进程树 RSS，单列新路径阶段 wall。线程池注册表容量
 （历史 rayon 形态）只表示池中配置的 worker 数，不能称为实际 runnable/active worker；实际
