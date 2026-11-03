@@ -43,23 +43,32 @@
 
 ## TDD 与验证
 
-红测（区分接口红与行为红，不把接口缺失冒充行为证据）：
+红测（区分接口红与接线失败，不把接口变化冒充行为证据）：
 
 - **接口红**：`trading-timeline.test.ts` 引用尚不存在的
   `currentMinuteOfDay`，失败信息是 `TypeError: ... is not a function`。
-  这只证明新接口尚未实现，单独不足以证明旧单位错误。
-- **行为红**：`minute-kline-panel.test.ts` 给旧组件传入墙钟分钟 570 和
-  570 分钟 bar 后，渲染结果没有“观察时刻 09:30”，形成中标记也未出现；
-  这直接证明旧的消费单位不匹配。
-- 实现后另用时间轴断言固定 570/583/781/899 等墙钟分钟，并用面板测试
-  固定 09:30 观察时刻和 active 桶；行为证据不由接口红替代。
+  这只证明新接口尚未实现，不能证明旧单位错误。
+- **接线失败红**：`minute-kline-panel.test.ts` 把新 prop
+  `currentMinuteOfDay` 传给基线组件；基线组件解构的是旧 prop
+  `currentMinute`，会忽略新 prop 并以 `null` 渲染，所以没有“观察时刻
+  09:30”和形成中标记。这只证明新 prop 尚未接线，不能直接证明单位错误；
+  基线面板若通过旧 prop 收到墙钟分钟 570，本可正常显示。
+- **单位错误的追溯证据**：旧调用链是
+  `timeline.currentMinuteSlot(tick)` → `MinuteKlinePanel.currentMinute`；
+  对默认局 tick 901，旧展示槽索引为 0，而 engine 墙钟分钟为 570。
+  实现后的回归断言同时固定 `minuteSlot(901) === 0` 与
+  `currentMinuteOfDay(901) === 570`，并用面板测试固定墙钟 570 显示
+  09:30 且标记 active 桶。这是调用链追溯和契约断言，不宣称存在一个
+  独立于接口变化的原始行为红测试。
+- 实现后另用时间轴断言固定 570/583/781/899 等墙钟分钟；行为证据不由
+  接口红或未接线的渲染失败替代。
 
 绿测（worktree 内执行，整条命令 10 秒 deadline）：
 
 ```text
 node --test --test-timeout=10000 --test-concurrency=1 --test-isolation=none --test-force-exit \
   src/components/trading-timeline.test.ts src/components/minute-kline-panel.test.ts
-# 14 pass, 0 fail, duration_ms 633.899996
+# 14 pass, 0 fail, duration_ms 664.56964
 ```
 
 类型与 lint：

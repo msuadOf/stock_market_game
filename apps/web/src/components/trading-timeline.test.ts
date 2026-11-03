@@ -59,6 +59,9 @@ test("形成中观察分钟与 engine MinuteBarFact.minute_of_day 同为墙钟�
   // 不到 570..690/780..900 的真实桶。
   const timeline = new TradingTimeline();
   assert.equal(timeline.currentMinuteOfDay(900), null);
+  // 旧调用点把展示槽索引当墙钟分钟传入：默认局首拍 minuteSlot 为 0，
+  // producer 墙钟为 570；这对值固定了旧链路的单位差异。
+  assert.equal(timeline.minuteSlot(901), 0);
   assert.equal(timeline.currentMinuteOfDay(901), 570);
   assert.equal(timeline.currentMinuteOfDay(961), 571);
   // 默认连续窗 14220 tick 映射到 240 个游戏分钟；第 120 桶从 tick 8011
