@@ -105,3 +105,73 @@ stat.birth=`1999`、`launcherBirth=2000`、environ 精确含 active token 时，
 - 分批语义可接受：未放宽或重置共享 deadline；前批失败后停止后续批次，仍显式失败。
 - 复审独立验证（均 10 秒外部硬上限）：proc 单跑 14/14、4 路并发 × 3 轮 12/12、execution 3/3、lifecycle 10/10、
   long-validation-process 2/2；未跑全仓、`all`、Cargo、Clippy 或前端构建。
+
+## 177eee27 单批失败：真实子进程 proto-exit 窗口（EACCES + stat=R）
+
+### 现场事实（不做 PID 复用假设）
+
+集成记录见
+`.worktree/branch-convergence-final-20261102/agents/branch-convergence-final-validation/README.md` 末节，
+原始日志 `d3-full-regression-177eee27.log`。
+
+- 失败：`cannot confirm owned process 463293 (state=R, ppid=432775, pgid=432775, starttime=63282484): EACCES ... /proc/463293/environ`。
+- 日志 `:24552` 证明 PID 463293 是本批次真实 spawn：token `432775:2661`，
+  context `…session::company_source_runtime_tests::failed_tick_after_intraday_monthly_publication_rolls_back_library_and_information`，
+  `spawned_ms=632824849`；`starttime=63282484`（100Hz tick）与之精确吻合，ppid 正是 launcher 432775。
+  因此**不是 PID 复用**，也没有证据支持该假设。
+- 时间线：2661 于 632824849 启动；2660 在 632827045 记录 `rust-case-termination-confirmed`（+2.2s）。
+  2660 没有 `rust-case-complete`，而 `termination-confirmed` 只在 `fail()` 内写出；据此可证
+  的顺序是：2660 的完成清理扫描先读到 463293 的 environ EACCES 并使 cleanup 失败，
+  之后才触发 `fail()` 与 `stopDomain` 组终止。日志**不能**证明组 SIGKILL 制造了该退出窗口；
+  更可能是 463293 当时正在自然退出（它自己的 case 已结束），但现场没有保留它的 statm，
+  无法最终确认。
+
+### 可复现根因（真实进程实验）
+
+`/tmp/environ-race.mjs`（不改仓库）：SIGKILL 子进程后立即读 `/proc/<pid>/environ`，
+150 次中 **75 次 EACCES 且 stat 仍为 R**（另 X 2、Z 55、gone 18）；未 kill 的 200 次 spawn 均无 EACCES。
+
+`/tmp/environ-race2.mjs`：活着的 non-dumpable 子进程为 state=S、`statm=6073 2960 1743 793 0 1553 0`；
+SIGKILL 后捕获的 6/6 样本为 state=R、`statm=0 0 0 0 0 0 0`、maps 长度 0。
+
+机制：`exit_mm` 先释放地址空间，`exit_notify` 才把 task 置为 Z/X。该窗口内 environ 必然 EACCES、
+stat 仍是 R，旧代码只把 Z/X 当作“无执行实体”，于是把正在退出的本批次子进程当成
+“活 owned 不可确认”硬失败。该机制与批量现场“扫描时另一个 case 进程正在退出”的解释一致，
+但不是由现场证据直接证明；本机空载窗口中位约 0.55ms（最大 2.6ms），高负载下可跨过两次 5ms 重试。
+
+**边界（如实声明）**：批量现场没有留下该 PID 的 statm 证据，无法证明它当时处于 mm 已释放窗口；
+可复现的是同一失败路径上真实存在的竞态，且现场 PID 出生时间与 spawn 精确吻合、排除了 PID 复用解释。
+
+### 修复（单次快照不作为终态）
+
+`scripts/rust-test-case-supervisor.mjs`：
+
+- environ EACCES 且尚未确认 token（`candidate=false`）、同 birth 的进程已释放地址空间
+  （`/proc/<pid>/statm` 全 0）时，**继续按同 birth 等待**，每轮重读 stat/environ/statm：
+  - 直到 Z/X 或消失 → 正常结束；
+  - birth 改变 → identity changed；
+  - mm 恢复但 environ 仍 EACCES → 回到原有 fail-closed（owned EACCES 不吞）；
+  - 共享 deadline 耗尽 → 原有 deadline 错误。
+- 已匹配过 token 的 `candidate` 不进入该等待（保留既有 fail-closed 契约）。
+- 活着的 non-dumpable 进程（statm 非 0）不受影响，仍显式失败。
+
+测试（先红后绿）：
+
+- 单测「environ EACCES 且地址空间已释放时必须等待同 birth 的终态」：注入 state=R→Z、statm 全 0；
+  旧实现红（直接报 EACCES），新实现绿。
+- 单测「退出窗口等待受共享 deadline 限制」：statm 恒 0、state 恒 R、60ms 预算 → /deadline/。
+- 单测「地址空间仍存在的 owned non-dumpable 进程必须继续显式失败」：statm 非 0 → EACCES。
+- 单测「地址空间从全 0 恢复且 environ 仍 EACCES」：statm 前两次全 0、随后非 0 → 必须显式失败且不得清理。
+- 真实用例：捕获 `state=R + statm 全 0` 的 SIGKILL 子进程后，cleanup 必须最终正常结束。
+  它补充证明真实窗口存在，但捕获后进程可能在 cleanup 前已变为 Z/消失，**不能单独证明等待分支被执行**；
+  该分支由上面的确定性注入用例覆盖。
+
+验证：proc 文件单跑 **10/10**（每次 19/19）、4 路并发 × 3 轮 **12/12**、execution 3/3、lifecycle 10/10、
+run-with-deadline-cleanup 16/16、run-long-validation-process 2/2（均 10 秒外部硬上限）。
+未运行全仓或正式 `all`。
+
+### 限制
+
+- 未能重放失败批次；结论基于“真实进程可复现竞态 + 现场 PID 与 spawn/birth 精确吻合”；
+  未把 PID 复用当作事实，也未把单次 statm=0 当作终态。
+- 若进程在共享期限耗尽前始终停留在该窗口，仍会按期限报错（如实失败），不静默放行。
