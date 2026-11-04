@@ -33,7 +33,9 @@ const ENUMS: Partial<Record<ProposalTag, Readonly<Record<string, readonly string
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }
 
 function fail(path: string, expected: string): never {
@@ -67,19 +69,19 @@ function parseField(tag: ProposalTag, field: string, value: unknown): unknown {
 }
 
 export function parsePlayerCompanyProposal(value: unknown) {
-  if (!isRecord(value)) return fail("Proposal", "必须是单键对象");
-  const tags = Object.keys(value);
-  if (tags.length !== 1 || tags[0] === undefined || !Object.hasOwn(FIELDS, tags[0])) {
+  if (!isRecord(value)) return fail("Proposal", "必须是单键普通对象");
+  const tags = Reflect.ownKeys(value);
+  if (tags.length !== 1 || typeof tags[0] !== "string" || !Object.hasOwn(FIELDS, tags[0])) {
     return fail("Proposal", "必须只包含一个已知提案类型");
   }
 
   const tag = tags[0] as ProposalTag;
   const payload = value[tag];
-  if (!isRecord(payload)) return fail(`Proposal.${tag}`, "必须是字段对象");
+  if (!isRecord(payload)) return fail(`Proposal.${tag}`, "必须是普通对象");
 
   const allowedFields = FIELDS[tag];
-  for (const field of Object.keys(payload)) {
-    if (!allowedFields.includes(field)) fail(`Proposal.${tag}.${field}`, "不是该提案类型的字段");
+  for (const field of Reflect.ownKeys(payload)) {
+    if (typeof field !== "string" || !allowedFields.includes(field)) fail(`Proposal.${tag}.${String(field)}`, "不是该提案类型的字段");
   }
   for (const field of allowedFields) {
     if (!Object.hasOwn(payload, field)) fail(`Proposal.${tag}.${field}`, "字段缺失");

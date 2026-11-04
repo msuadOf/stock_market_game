@@ -184,3 +184,60 @@ test("所有u32身份和窗口字段拒绝负零并保留普通零", { timeout: 
     }
   }
 });
+
+
+for (const layer of ["外层", "payload"] as const) {
+  test(`${layer} 拒绝带合法自有字段的非普通对象`, { timeout: 10000 }, () => {
+    class ProposalObject {}
+    for (const input of serdeVariants) {
+      const [tag, payload] = Object.entries(input)[0];
+      for (const target of [new Date(), new Map(), new ProposalObject(), Object.create({ inherited: true })]) {
+        Object.assign(target, layer === "外层" ? input : payload);
+        const value = layer === "外层" ? target : { [tag]: target };
+        assert.throws(() => parsePlayerCompanyProposal(value), /Proposal.*普通对象/);
+      }
+    }
+  });
+
+  for (const extra of [Symbol("owner"), "owner"]) {
+    test(`${layer} 拒绝 ${String(extra)} 隐藏未知字段并保留输入`, { timeout: 10000 }, () => {
+      for (const input of serdeVariants) {
+        const value = structuredClone(input);
+        const target = layer === "外层" ? value : Object.values(value)[0];
+        Object.defineProperty(target, extra, { value: 7, enumerable: false });
+        const before = Object.getOwnPropertyDescriptors(target);
+        assert.throws(() => parsePlayerCompanyProposal(value), (error: unknown) => {
+          assert.ok(error instanceof Error);
+          assert.equal(error instanceof TypeError, false);
+          assert.match(error.message, layer === "外层" ? /Proposal/ : /Proposal\..*\.(?:Symbol\(owner\)|owner).*字段/);
+          return true;
+        });
+        assert.deepEqual(Object.getOwnPropertyDescriptors(target), before);
+      }
+    });
+  }
+}
+
+test("普通对象与 null prototype 对象仍无损通过且不修改冻结输入", { timeout: 10000 }, () => {
+  for (const input of serdeVariants) {
+    for (const prototype of [Object.prototype, null]) {
+      const [tag, payload] = Object.entries(input)[0];
+      const fields = Object.freeze(Object.assign(Object.create(prototype), payload));
+      const value = Object.freeze(Object.assign(Object.create(prototype), { [tag]: fields }));
+      assert.equal(parsePlayerCompanyProposal(value), value);
+      assert.deepEqual(Object.getOwnPropertyDescriptors(value), { [tag]: { value: fields, writable: false, enumerable: true, configurable: false } });
+      assert.deepEqual(Object.entries(fields), Object.entries(payload));
+    }
+  }
+});
+
+test("反射或字段读取异常原样传播而不静默吞错", { timeout: 10000 }, () => {
+  const failure = new Error("输入读取失败");
+  const input = { CashDividend: { company: 3, gross_per_share: "5" } };
+  const throwFailure = () => { throw failure; };
+  for (const handler of [{ getPrototypeOf: throwFailure }, { ownKeys: throwFailure }, { get: throwFailure }]) {
+    for (const value of [new Proxy(input, handler), { CashDividend: new Proxy(input.CashDividend, handler) }]) {
+      assert.throws(() => parsePlayerCompanyProposal(value), (error: unknown) => error === failure);
+    }
+  }
+});
