@@ -649,7 +649,8 @@ test("native UI 构建在 wasm-pack 修改 LICENSE 后停止，不运行 Cargo �
 
 test("正式 stageFrontend 布局通过命令显式定位同 bytes 的共享 metadata module", { timeout: 10000 }, async () => {
   const { stageFrontend, createBuildPlan, parseBuildArgs } = await api();
-  const scratch = path.join(repository, ".tmp");
+  // 该用例只验证独立 staging 布局；Linux 用 tmpfs，避免共享磁盘元数据等待挤占短测期限。
+  const scratch = process.platform === "linux" ? "/dev/shm" : tmpdir();
   await mkdir(scratch, { recursive: true });
   const root = await mkdtemp(path.join(scratch, "frontend-metadata-stage-"));
   try {

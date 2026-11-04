@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { ChildProcess, spawn, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
@@ -278,6 +280,7 @@ class BoundedCommandRun {
   #executionDeadline;
   #recordedExit;
   #rootIdentity;
+  #cleanupToken;
   #resolve;
   #reject;
 
@@ -294,9 +297,12 @@ class BoundedCommandRun {
       this.#deadline = performance.now() + timeoutMs;
       this.#executionDeadline = this.#deadline - cleanupReserveMs;
       this.#detached = process.platform !== "win32" && env.STOCK_GAME_DEADLINE_GROUP !== "owned";
+      // 每层使用独立环境项，嵌套命令仍继承外层归属；不依赖 root 存活或 PGID。
+      this.#cleanupToken = process.platform === "linux" && spawnProcess === spawn && this.#options.terminateProcessTree === terminateTree
+        ? `STOCK_GAME_COMMAND_TOKEN_${randomUUID().replaceAll("-", "")}` : undefined;
       this.#child = spawnProcess(command, args, {
         cwd,
-        env: { ...env, STOCK_GAME_DEADLINE_GROUP: "owned" },
+        env: { ...env, STOCK_GAME_DEADLINE_GROUP: "owned", ...(this.#cleanupToken === undefined ? {} : { [this.#cleanupToken]: "owned" }) },
         stdio: captureOutput ? ["ignore", "pipe", "pipe"] : "inherit",
         windowsHide: true,
         detached: this.#detached,
@@ -363,6 +369,84 @@ class BoundedCommandRun {
     if (this.#termination !== undefined) return;
     this.#termination = Promise.resolve().then(async () => {
       if (this.#options.terminateProcessTree === terminateTree) {
+        if (this.#cleanupToken !== undefined) {
+          // 复用既有 token 夹验：先确认同 birth 内两次 environ，再按身份清理并确认终态。
+          // cleanup 使用 hrtime 绝对域，不能直接传 performance.now() 的截止。
+          const { createCompletionCleanup } = await import("./rust-test-case-supervisor.mjs");
+          const total = Number(process.hrtime.bigint()) / 1e6 + Math.max(0, this.#deadline - performance.now());
+          const supervisorStat = readFileSync("/proc/self/stat", "utf8");
+          const supervisorBirth = BigInt(supervisorStat.slice(supervisorStat.lastIndexOf(")") + 2).split(" ")[19]);
+          let matchedToken = false;
+          let previousProcesses;
+          let newProcessIdentity = true;
+          const cleanup = createCompletionCleanup(this.#child.pid, {
+            environmentKey: this.#cleanupToken,
+            listProcesses: async () => {
+              const entries = await readdir("/proc");
+              const candidates = [];
+              const identities = new Set();
+              for (let index = 0; index < entries.length; index += 1) {
+                checkCleanupBudget(this.#deadline, () => performance.now());
+                const pid = entries[index];
+                if (!/^\d+$/.test(pid)) continue;
+                try {
+                  const raw = readFileSync(`/proc/${pid}/stat`, "utf8");
+                  const fields = raw.slice(raw.lastIndexOf(")") + 2).split(" ");
+                  // 新 token 只经 spawn 环境向后代继承，早于监督器出生的进程不可能属于本次命令。
+                  if (BigInt(fields[19]) >= supervisorBirth && fields[0] !== "Z" && fields[0] !== "X") {
+                    candidates.push(pid);
+                    identities.add(`${pid}:${fields[19]}`);
+                  }
+                } catch (error) { if (error.code !== "ENOENT" && error.code !== "ESRCH") throw error; }
+                if (index % 64 === 63) await new Promise((resolve) => setImmediate(resolve));
+              }
+              newProcessIdentity = previousProcesses === undefined || [...identities].some((identity) => !previousProcesses.has(identity));
+              previousProcesses = identities;
+              return candidates;
+            },
+            // 全表先排除已无可执行实体的 Z/X；既有分批器每 32 项让出事件循环。
+            // 避免对大量 zombie 先读 environ，再以权限错误重复读取 stat/statm。
+            readEnvironment: (pid) => {
+              const raw = readFileSync(`/proc/${pid}/stat`, "utf8");
+              const state = raw.slice(raw.lastIndexOf(")") + 2).split(" ")[0];
+              const environment = state === "Z" || state === "X" ? Buffer.alloc(0) : readFileSync(`/proc/${pid}/environ`);
+              if (environment.toString().split("\0").includes(`${this.#cleanupToken}=owned`)) matchedToken = true;
+              return environment;
+            },
+            readProcessStat: (pid) => readFileSync(`/proc/${pid}/stat`, "utf8"),
+            // 本轮所有同 token 候选已经各自完成归属夹验，不再为每个 PID 重扫整机。
+            terminate: async ({ pid, birth }) => {
+              const now = () => performance.now();
+              const before = await sameIdentity({ pid, birth }, this.#deadline, now);
+              if (before === undefined || before.state === "Z" || before.state === "X") return;
+              checkCleanupBudget(this.#deadline, now);
+              try { process.kill(pid, "SIGKILL"); } catch (error) { if (error.code !== "ESRCH") throw error; }
+              while (true) {
+                const current = await sameIdentity({ pid, birth }, this.#deadline, now);
+                if (current === undefined || current.state === "Z" || current.state === "X") return;
+                await new Promise((resolve) => setTimeout(resolve, 1));
+              }
+            },
+          });
+          const cleanTokens = async () => {
+            do {
+              matchedToken = false;
+              await cleanup({ token: "owned", pid: this.#child.pid, total });
+              // 快照中的父进程可能在读取 token 前 fork 并退出；新身份也必须继续扫描。
+              // 持续产生进程时仍受原共享 deadline 限制，不能假称清理完成。
+            } while (matchedToken || newProcessIdentity);
+          };
+          const cleanRoot = async () => {
+            if (this.#child.exitCode === null && this.#child.signalCode === null && this.#rootIdentity !== undefined) {
+              const observed = await this.#rootIdentity;
+              if (observed.error !== undefined) throw observed.error;
+              if (observed.identity !== undefined) {
+                await terminateTree({ pid: this.#child.pid, birth: observed.identity.birth }, this.#detached, this.#deadline, () => performance.now());
+              }
+            }
+          };
+          return Promise.all([cleanTokens(), cleanRoot()]);
+        }
         if (this.#rootIdentity !== undefined) {
           const observed = await this.#rootIdentity;
           if (observed.error !== undefined) throw observed.error;
@@ -393,7 +477,8 @@ class BoundedCommandRun {
     this.#recordedExit = { code, signal };
     // close 可能先于已经逾期的 timer 被派发；成功也必须复核真实预算。
     if (performance.now() >= this.#executionDeadline) this.#timedOut = true;
-    if (code !== 0 || this.#timedOut) this.#terminate();
+    clearTimeout(this.#executionTimer);
+    if (code !== 0 || this.#timedOut || this.#cleanupToken !== undefined) this.#terminate();
     if (this.#termination !== undefined) {
       this.#termination.then(() => this.#completeClose(code, signal));
       return;

@@ -150,6 +150,7 @@ async function stopDomain(domain, deadline) {
 
 // 同一轮完成风暴只扫描一次 /proc，避免监督 loop 被逐 case 全表扫描堵塞。
 export function createCompletionCleanup(launcherPid, {
+  environmentKey = "STOCK_GAME_RUST_CASE_TOKEN",
   listProcesses = () => readdir("/proc"),
   readEnvironment = (pid) => readFile(`/proc/${pid}/environ`),
   readProcessStat = (pid) => readFile(`/proc/${pid}/stat`, "utf8"),
@@ -177,7 +178,7 @@ export function createCompletionCleanup(launcherPid, {
     return pages.length === 7 && pages.every((value) => value === "0");
   }
   function tokenItem(environment, byToken) {
-    const prefix = "STOCK_GAME_RUST_CASE_TOKEN=";
+    const prefix = `${environmentKey}=`;
     const tokenEntry = environment.toString().split("\0").find((value) => value.startsWith(prefix));
     return tokenEntry === undefined ? undefined : byToken.get(tokenEntry.slice(prefix.length));
   }
