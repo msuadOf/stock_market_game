@@ -733,3 +733,43 @@ for (const variant of ["string", "unknown", "error", "getter"] as const) {
     f.send({ type: "drop" });
   });
 });
+
+for (const field of ["setup", "initialArchive", "seed"] as const) {
+  test(`生产 Worker restoreInitial 夹带 ${field} 失败并关闭该实例，不进入恢复 FFI`, { timeout: 10000 }, async () => {
+    await withWorker(async f => {
+      assert.deepEqual(f.calls, ["initial-topology"], "先完成唯一初始档的 topology 预检");
+      const before = [...f.calls];
+      const payload = field === "setup" ? {} : field === "initialArchive" ? f.saved : 42n;
+      await f.sendAsync({ type: "restoreInitial", [field]: payload }, () => f.posted.length > 0);
+      assert.equal(f.posted.length, 1);
+      assert.equal(f.posted[0].type, "failure");
+      assert.equal(f.posted[0].generation, 0);
+      assert.match(String(f.posted[0].message), /禁止第二份 payload/);
+      assert.deepEqual(f.calls, before, "非法 payload 不得创建或消费 Rust 会话");
+      assert.equal(f.timers.size, 0);
+      assert.equal(f.posted.some(message => ["ingress", "created", "baseline"].includes(message.type)), false);
+      for (const message of [{ type: "restoreInitial" }, { type: "create", seed: 42n }, { type: "save", requestId: 1, generation: 0 }]) {
+        f.posted.length = 0;
+        await f.sendAsync(message, () => f.posted.length > 0);
+        assert.equal(f.posted[0].type, message.type === "save" ? "operationError" : "failure");
+        assert.match(String(f.posted[0].message), /正在关闭/);
+        assert.deepEqual(f.calls, before, "关闭后的同实例不得重入 FFI");
+        assert.equal(f.posted.some(reply => ["ingress", "created", "baseline"].includes(reply.type)), false);
+      }
+    }, "initial-archive");
+  });
+}
+
+test("生产 Worker 默认新局拒绝 restoreInitial，不隐式建立或恢复会话", { timeout: 10000 }, async () => {
+  await withWorker(async f => {
+    const before = [...f.calls];
+    await f.sendAsync({ type: "restoreInitial" }, () => f.posted.length > 0);
+    assert.equal(f.posted.length, 1);
+    assert.equal(f.posted[0].type, "failure");
+    assert.equal(f.posted[0].generation, 0);
+    assert.match(String(f.posted[0].message), /需要唯一完整初始档/);
+    assert.deepEqual(f.calls, before);
+    assert.equal(f.timers.size, 0);
+    assert.equal(f.posted.some(message => ["ingress", "created", "baseline"].includes(message.type)), false);
+  });
+});

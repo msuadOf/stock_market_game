@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { drain, fixture, setup } from "./worker-host-w1.test-support.ts";
+import { commandDayEndArchiveFixture } from "../app/command-host-test-fixture.ts";
+import { WasmDocumentMemoryOwner } from "./wasm-document-memory-owner.ts";
+import { WasmMemoryStorage } from "./wasm-memory-storage.ts";
+import { fixture as storageFixture, MiB } from "./wasm-memory-storage.test-support.ts";
 import { createEngineSupervisor } from "./engine-supervisor.ts";
 
 for (const invalid of [undefined, {}, { onSpawnFailure: null }, { onSpawnFailure: 7 }]) {
@@ -117,3 +121,38 @@ test("W1 dispose 收回仍在 bootstrap 的 child 和在途 query", { timeout: 1
     assert.equal(f.clock.tasks.size, 0);
   } finally { await f.cleanup(/最终释放事实未知/); }
 });
+
+for (const initial of ["create", "restoreInitial"] as const) {
+  test(`W1 重复 ready 显式失败，${initial} 只发送一次并清理 Worker/timer`, { timeout: 10000 }, async () => {
+    const f = fixture();
+    try {
+      if (initial === "create") f.launch();
+      else {
+        const storage = storageFixture();
+        // 可信 producer 的传输 fixture，不作为真实发布包能力证据。
+        const owner = new WasmDocumentMemoryOwner({ maximumBytes: storage.options.maximumBytes, reclaimBytes: storage.options.reclaimBytes,
+          readCapacity: () => ({ kind: "enforced-capacity", initialPages: 1024, maximumPages: 4096, liveUpperBoundBytes: 256 * MiB }),
+          restoreCapabilities: { forArchive: () => ({ kind: "verified-package", wasmSha256: "a".repeat(64), glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "set_step_runtime_override", "init_wasm_wait", "wasm_wait_abort_layout", "shutdown_session"] }) },
+          createStorage: (liveUpperBoundBytes) => new WasmMemoryStorage({ ...storage.options, liveUpperBoundBytes }) });
+        const admission = owner.admit({ kind: "load", archive: commandDayEndArchiveFixture() });
+        if (admission.kind !== "admitted" || admission.intent.kind !== "load") throw new Error("需要载入票");
+        f.launch({ onSpawnFailure() {}, initialArchive: admission.intent.archive, memoryAdmissionTicket: admission.ticket });
+      }
+      await drain();
+      const engine = f.workers[0];
+      assert.deepEqual(engine.sent.filter(message => ["create", "restoreInitial"].includes(String(message.type))), initial === "create" ? [{ type: "create", seed: 42n }] : [{ type: "restoreInitial" }]);
+      assert.equal(f.outcome.status, "pending", "保持初始化中以覆盖重复 ready 的阶段拒绝");
+      engine.dataPort!.postMessage({ type: "ready" });
+      await drain();
+      assert.equal(f.outcome.status, "rejected");
+      if (f.outcome.status !== "rejected") throw new Error("重复 ready 没有拒绝初始化");
+      assert.match(String(f.outcome.error), /初始化阶段顺序无效/);
+      // restoreInitial fixture 尚无 handle，清理须经过控制层的 bounded shutdown deadline。
+      f.clock.advance(2001); await drain();
+      assert.equal(engine.sent.filter(message => message.type === initial).length, 1);
+      assert.ok(f.workers.every(worker => worker.terminations === 1));
+      assert.ok(f.workers.every(worker => worker.listenerCount() === 0));
+      assert.equal(f.clock.tasks.size, 0);
+    } finally { await f.cleanup(); }
+  });
+}
