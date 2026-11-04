@@ -1,5 +1,7 @@
-//! V7 工作草案：同一完整SaveSlot的native组/镜像与生产serial纯迁移；已注册；未编译/运行。
-//! serial使用既有step_pipeline_contract；不冒actual wasm32、serial civil或真实collector Create。
+//! 合成混合日历的八例对照：同一完整 SaveSlot 恢复后，比较 native 组权威/镜像与
+//! step_pipeline_contract 的非零计划、本股交易日、事件及存档；覆盖两所、首日/次日，
+//! 并分别验证恢复后的 native 续行与委托 FIFO。自然日推进由 native 路径执行；
+//! 不覆盖 actual wasm32、serial civil 对照或真实 collector Create，不代表真实年度日历。
 use super::*;
 use crate::calendar::CalendarExchange;
 use crate::runtime::calendar_public_restore_fixture as fixture;
