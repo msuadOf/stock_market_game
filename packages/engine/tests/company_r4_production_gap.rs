@@ -250,6 +250,11 @@ fn empty_personal_groups_settle_simple_company_and_keep_the_late_monthly_window(
     let published = report_for_month(&saved, 2030, 5, endpoint);
     assert_eq!(published.published_at, instant(date("2030-06-01"), 84_600));
     assert_eq!(published.source, PublicationSource::SimpleGenerated);
+    let public = session
+        .public_report_by_id(published.id.value().to_string())
+        .expect("日结生成的报告应可按公布 ID 查询");
+    assert_eq!(public.id, published.id.value().to_string());
+    assert_eq!(public.published_second_of_day, 84_600);
     assert!(saved.information_states.is_empty());
 }
 
