@@ -1,0 +1,201 @@
+diff --git a/packages/engine/src/session/pipeline/authoritative_tick_tests.rs b/packages/engine/src/session/pipeline/authoritative_tick_tests.rs
+index 57b868e3..a1a36011 100644
+--- a/packages/engine/src/session/pipeline/authoritative_tick_tests.rs
++++ b/packages/engine/src/session/pipeline/authoritative_tick_tests.rs
+@@ -502,11 +502,6 @@ fn public_step_routes_pre_open_rejection_and_continuous_place_cancel_lifecycle()
+     }
+     assert_eq!(session.phase(), TradingPhase::PreOpen);
+     let code = *session.state.markets.keys().next().unwrap();
+-    session.state.retail_experience.insert(
+-        AccountId(0),
+-        crate::experience::RetailExperienceState::without_equity_reference(),
+-    );
+-
+     session
+         .enqueue_player_intent(
+             AccountId(0),
+@@ -546,28 +541,10 @@ fn public_step_routes_pre_open_rejection_and_continuous_place_cancel_lifecycle()
+             ..
+         } if rejected_code == &code
+     )));
+-    assert!(session
+-        .last_retail_order_events()
+-        .iter()
+-        .any(|event| matches!(
+-            event,
+-            RetailOrderDiagnosticEvent::Rejected {
+-                account: AccountId(0),
+-                code: rejected_code,
+-                reason: RejectionReason::AuctionOrderEntryClosed,
+-            } if rejected_code == &code
+-        )));
+-    assert!(session
+-        .last_retail_order_events()
+-        .iter()
+-        .any(|event| matches!(
+-            event,
+-            RetailOrderDiagnosticEvent::Rejected {
+-                account: AccountId(0),
+-                code: rejected_code,
+-                reason: RejectionReason::AuctionOrderNotCancelable,
+-            } if rejected_code == &code
+-        )));
++    assert!(
++        session.last_retail_order_events().is_empty(),
++        "Player 拒单不属于 Retail 生命周期诊断"
++    );
+     assert_eq!(session.phase(), TradingPhase::Continuous);
+ 
+     session
+@@ -823,14 +800,79 @@ fn unified_market_closing_auction_uses_the_same_resting_order_lifecycle() {
+     session.hydrate_or_validate_envelope_ledger().unwrap();
+ }
+ 
++#[test]
++fn public_step_routes_real_retail_rejections_to_retail_diagnostics() {
++    let mut setup = crate::session::npc_working_quote_tests::retail_quote_setup();
++    setup.auction_ticks = 3;
++    setup.ticks_per_day = 8;
++    setup.closing_auction_ticks = 1;
++    setup.strategy_params.retail.arrival_rate = 0.0;
++    let mut session = GameSession::new(setup, 42).unwrap();
++    session.state.tick = 2;
++    session.fixture_sync_market_modes_for_test();
++    assert!(session.runtime_driver_for_test().is_none());
++    let owner = AccountId(1);
++    let code = StockId(0);
++    assert_eq!(
++        session.account(owner).unwrap().kind(),
++        crate::AccountKind::Retail
++    );
++
++    assert_eq!(session.phase(), TradingPhase::PreOpen);
++    let intents = [
++        Intent::PlaceLimit {
++            code,
++            side: Side::Buy,
++            price: crate::LimitPrice::Fixed(Money::from_cents(900)),
++            qty: 100,
++        },
++        Intent::Cancel {
++            code,
++            id: OrderId(77),
++        },
++    ]
++    .into_iter()
++    .map(|intent| {
++        session
++            .state
++            .ingress_receipt_cursors
++            .receive(owner, intent)
++            .unwrap()
++    })
++    .collect();
++    crate::session::pipeline::staged_decision::stage(
++        crate::session::pipeline::NpcDecisionHandover::new(
++            session.tick(),
++            vec![owner],
++            intents,
++            Vec::new(),
++        ),
++    );
++
++    let events = session.step().unwrap();
++    for reason in [
++        RejectionReason::AuctionOrderEntryClosed,
++        RejectionReason::AuctionOrderNotCancelable,
++    ] {
++        assert!(events.iter().any(|event| matches!(
++            event,
++            Event::IntentRejected { account, code: event_code, reason: event_reason, .. }
++                if *account == owner && *event_code == code && *event_reason == reason
++        )));
++        assert!(session.last_retail_order_events().contains(
++            &RetailOrderDiagnosticEvent::Rejected {
++                account: owner,
++                code,
++                reason
++            }
++        ));
++    }
++}
++
+ #[test]
+ fn public_step_reports_zero_quantity_in_event_and_retail_diagnostic() {
+     let mut session = empty_session_at(900, 10);
+     let code = *session.state.markets.keys().next().unwrap();
+-    session.state.retail_experience.insert(
+-        AccountId(0),
+-        crate::experience::RetailExperienceState::without_equity_reference(),
+-    );
+     session
+         .enqueue_player_intent(
+             AccountId(0),
+@@ -854,16 +896,57 @@ fn public_step_reports_zero_quantity_in_event_and_retail_diagnostic() {
+             ..
+         } if rejected_code == &code
+     )));
++    assert!(
++        session.last_retail_order_events().is_empty(),
++        "Player 的零股拒单不应伪造 Retail 诊断"
++    );
++    assert_eq!(session.state.markets[&code].resting_order_count(), 0);
++}
++
++#[test]
++fn public_step_reports_real_retail_zero_quantity_diagnostic() {
++    let mut setup = crate::session::npc_working_quote_tests::retail_quote_setup();
++    setup.strategy_params.retail.arrival_rate = 0.0;
++    let mut session = GameSession::new(setup, 42).unwrap();
++    let owner = AccountId(1);
++    let code = StockId(0);
++    assert_eq!(
++        session.account(owner).unwrap().kind(),
++        crate::AccountKind::Retail
++    );
++    let intent = session
++        .state
++        .ingress_receipt_cursors
++        .receive(
++            owner,
++            Intent::PlaceLimit {
++                code,
++                side: Side::Buy,
++                price: crate::LimitPrice::Fixed(Money::from_cents(900)),
++                qty: 0,
++            },
++        )
++        .unwrap();
++    crate::session::pipeline::staged_decision::stage(
++        crate::session::pipeline::NpcDecisionHandover::new(
++            session.tick(),
++            vec![owner],
++            vec![intent],
++            Vec::new(),
++        ),
++    );
++
++    let events = session.step().unwrap();
++    assert!(events.iter().any(|event| matches!(
++        event,
++        Event::IntentRejected { account, code: event_code, reason: RejectionReason::InvalidQuantity, .. }
++            if *account == owner && *event_code == code
++    )));
+     assert!(session
+         .last_retail_order_events()
+-        .iter()
+-        .any(|event| matches!(
+-            event,
+-            RetailOrderDiagnosticEvent::Rejected {
+-                account: AccountId(0),
+-                code: rejected_code,
+-                reason: RejectionReason::InvalidQuantity,
+-            } if rejected_code == &code
+-        )));
+-    assert_eq!(session.state.markets[&code].resting_order_count(), 0);
++        .contains(&RetailOrderDiagnosticEvent::Rejected {
++            account: owner,
++            code,
++            reason: RejectionReason::InvalidQuantity,
++        }));
+ }
