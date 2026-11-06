@@ -1,0 +1,1165 @@
+✖ Tauri proposePlayerCompanyAction 经实际 Host 转发当前 generation 与真实响应 (6.418294ms)
+✖ Tauri enqueueReportCorrection 经实际 Host 转发当前 generation 与真实响应 (1.429353ms)
+✖ Tauri cancelReportCorrection 经实际 Host 转发当前 generation 与真实响应 (0.675121ms)
+✖ Tauri typed四分类拒绝保公开failure/cause，普通拒绝不销毁当前Host (0.731712ms)
+✖ Tauri typed拒绝与成功同样拒错owner，畸形failure保协议错误cause (0.756632ms)
+✖ Tauri engine-failure之后三写均拒绝，旧baseline不得继续invoke (0.65967ms)
+✖ Tauri同代refresh不解除fatal写门，正常restore的新authority才可恢复三写 (0.460327ms)
+✖ Tauri迟到success在refresh后显式过期且保原cause (0.6492ms)
+✖ Tauri迟到success在restore后显式过期且保原cause (0.494658ms)
+✖ Tauri迟到success在dispose后显式过期且保原cause (0.57839ms)
+✖ Tauri迟到success在failure后显式过期且保原cause (0.323406ms)
+✖ Tauri迟到rejection在refresh后显式过期且保原cause (0.336396ms)
+✖ Tauri迟到rejection在restore后显式过期且保原cause (0.297245ms)
+✖ Tauri迟到rejection在dispose后显式过期且保原cause (0.302925ms)
+✖ Tauri迟到rejection在failure后显式过期且保原cause (0.368406ms)
+✖ Tauri真正Step对象保原结构与cause，不能改成CompanyWriteRejectedError (0.362436ms)
+✖ Tauri save pins generation for keyed and latest candidates and rejects a late response after load (6.120809ms)
+✖ Tauri enqueue 严格携带当前 generation，restore 后旧入队确认不得报告新代成功 (0.850924ms)
+✖ Tauri restore 切换 timeline 后过滤旧 event，并在新 baseline callback 后 resume (0.714991ms)
+✖ Tauri 同 generation refresh 使 orders 与 NPC 查询失效，但 save 仍只检查 generation (0.718142ms)
+✖ Tauri 股票历史查询绑定 generation，刷新后拒绝旧结果，调用参数不含账户 (1.368342ms)
+✖ Tauri restore snapshot 解析失败保留可见 generation/timeline 与旧 baseline，不 resume (0.484008ms)
+✖ Tauri baseline callback 抛错保留已安装状态，并阻止 restore 后 resume (0.415567ms)
+✖ Tauri restore 失败后保留已确认暂停，不冒充 running (0.512278ms)
+✖ Tauri dispose 后晚到 refresh 与 save 拒绝，不能复活基线 (0.591359ms)
+✖ Tauri 拒绝初始 generation 不匹配及 restore 非 nextGeneration (1.187019ms)
+✖ Tauri start 与 stop 等待 IPC 应用确认，恢复不重送旧 baseline (0.435437ms)
+✖ Tauri cached baseline 消费者拒绝时 start 不得恢复 actor 或标记已交付 (0.331135ms)
+✖ Tauri refresh baseline 被拒绝时暂停 actor，并在重启时重新交付 (0.319665ms)
+✖ Tauri restore baseline 被拒绝时不恢复 actor，并在重启时重新交付 (0.295845ms)
+✖ Tauri 未启动消费者时 refresh 与 restore 不标记 baseline 已交付 (0.422847ms)
+✖ Tauri dispose 即使 IPC 失败也释放监听并显式拒绝 (0.413036ms)
+✖ Tauri dispose 后晚到 load 拒绝且不安装 restore baseline (1.140978ms)
+✖ Tauri 恢复提交在 baseline/恢复运行前通知，恢复运行失败仍保留提交通知 (0.442228ms)
+✖ Tauri实际enqueue按restore同code改id，unknown零invoke，旧确认不得转成新代成功 (0.483348ms)
+✖ Tauri已提交restore的新timeline事件被过滤时invoke目录fault仍显式失败并禁后续enqueue (0.383926ms)
+✖ 独立review：restore成功回包缺company_catalog后禁止旧generation enqueue (0.383466ms)
+✖ 独立review：restore结构化目录Err的fault不合法后仍须禁enqueue (0.380956ms)
+✖ Tauri restore 提交前 ExistingString 拒绝仍可用旧 authority 发送 (0.366876ms)
+✖ Tauri restore 坏头部保留可见 baseline，但拒绝晚到的同代写确认、存档及委托查询 (0.365486ms)
+✖ 独立review r3：pending start确认不得在恢复authority已失效后报告成功 (0.344815ms)
+✖ Tauri pending start 遇普通提交前恢复拒绝仍可确认旧 authority 运行 (0.350765ms)
+✖ Tauri 三种 baseline 都携带对应会话的当前自然日 (1.453033ms)
+✖ Tauri 拒绝无效自然日，prepare 失败保留此前可见 authority (0.284475ms)
+✔ Tauri generation 在 Number.MAX_SAFE_INTEGER 之后仍精确递增 (0.298925ms)
+✖ Tauri 刷新解析失败保留 timeline、baseline 和 query epoch (0.262154ms)
+✖ Tauri dispose 只清 timeline/cache，保留 generation/epoch 的既有查询检查 (0.235604ms)
+ℹ tests 47
+ℹ suites 0
+ℹ pass 1
+ℹ fail 46
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 219.695822
+
+✖ failing tests:
+
+test at src/host/tauri-company-write.test.ts:56:37
+✖ Tauri proposePlayerCompanyAction 经实际 Host 转发当前 generation 与真实响应 (6.418294ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async fixture (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:46:10)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:57:13)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async fixture (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:46:10)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:57:13) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-company-write.test.ts:56:37
+✖ Tauri enqueueReportCorrection 经实际 Host 转发当前 generation 与真实响应 (1.429353ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async fixture (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:46:10)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:57:13)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async fixture (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:46:10)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:57:13) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-company-write.test.ts:56:37
+✖ Tauri cancelReportCorrection 经实际 Host 转发当前 generation 与真实响应 (0.675121ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async fixture (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:46:10)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:57:13)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async fixture (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:46:10)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:57:13) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-company-write.test.ts:62:1
+✖ Tauri typed四分类拒绝保公开failure/cause，普通拒绝不销毁当前Host (0.731712ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async fixture (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:46:10)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:63:13)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async fixture (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:46:10)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:63:13) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-company-write.test.ts:68:1
+✖ Tauri typed拒绝与成功同样拒错owner，畸形failure保协议错误cause (0.756632ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async fixture (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:46:10)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:75:13)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async fixture (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:46:10)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:75:13) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-company-write.test.ts:79:1
+✖ Tauri engine-failure之后三写均拒绝，旧baseline不得继续invoke (0.65967ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async fixture (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:46:10)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:80:13)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async fixture (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:46:10)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:80:13) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-company-write.test.ts:86:1
+✖ Tauri同代refresh不解除fatal写门，正常restore的新authority才可恢复三写 (0.460327ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async fixture (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:46:10)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:87:13)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async fixture (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:46:10)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:87:13) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-company-write.test.ts:96:135
+✖ Tauri迟到success在refresh后显式过期且保原cause (0.6492ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async fixture (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:46:10)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:99:13)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async fixture (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:46:10)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:99:13) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-company-write.test.ts:96:135
+✖ Tauri迟到success在restore后显式过期且保原cause (0.494658ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async fixture (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:46:10)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:99:13)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async fixture (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:46:10)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:99:13) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-company-write.test.ts:96:135
+✖ Tauri迟到success在dispose后显式过期且保原cause (0.57839ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async fixture (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:46:10)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:99:13)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async fixture (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:46:10)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:99:13) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-company-write.test.ts:96:135
+✖ Tauri迟到success在failure后显式过期且保原cause (0.323406ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async fixture (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:46:10)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:99:13)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async fixture (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:46:10)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:99:13) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-company-write.test.ts:96:135
+✖ Tauri迟到rejection在refresh后显式过期且保原cause (0.336396ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async fixture (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:46:10)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:99:13)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async fixture (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:46:10)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:99:13) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-company-write.test.ts:96:135
+✖ Tauri迟到rejection在restore后显式过期且保原cause (0.297245ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async fixture (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:46:10)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:99:13)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async fixture (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:46:10)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:99:13) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-company-write.test.ts:96:135
+✖ Tauri迟到rejection在dispose后显式过期且保原cause (0.302925ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async fixture (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:46:10)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:99:13)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async fixture (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:46:10)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:99:13) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-company-write.test.ts:96:135
+✖ Tauri迟到rejection在failure后显式过期且保原cause (0.368406ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async fixture (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:46:10)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:99:13)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async fixture (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:46:10)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:99:13) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-company-write.test.ts:107:1
+✖ Tauri真正Step对象保原结构与cause，不能改成CompanyWriteRejectedError (0.362436ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async fixture (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:46:10)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:109:13)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async fixture (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:46:10)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-company-write.test.ts:109:13) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-host.test.ts:11:1
+✖ Tauri save pins generation for keyed and latest candidates and rejects a late response after load (6.120809ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:29:18)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:29:18)
+        at async Test.run (node:internal/test_runner/test:1332:7) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-host.test.ts:77:1
+✖ Tauri enqueue 严格携带当前 generation，restore 后旧入队确认不得报告新代成功 (0.850924ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:80:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:80:3) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-host.test.ts:102:1
+✖ Tauri restore 切换 timeline 后过滤旧 event，并在新 baseline callback 后 resume (0.714991ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:103:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:103:3) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-host.test.ts:121:1
+✖ Tauri 同 generation refresh 使 orders 与 NPC 查询失效，但 save 仍只检查 generation (0.718142ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:125:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:125:3) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-host.test.ts:142:1
+✖ Tauri 股票历史查询绑定 generation，刷新后拒绝旧结果，调用参数不含账户 (1.368342ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:144:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:144:3) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-host.test.ts:158:1
+✖ Tauri restore snapshot 解析失败保留可见 generation/timeline 与旧 baseline，不 resume (0.484008ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:159:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:159:3) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-host.test.ts:172:1
+✖ Tauri baseline callback 抛错保留已安装状态，并阻止 restore 后 resume (0.415567ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:173:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:173:3) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-host.test.ts:183:1
+✖ Tauri restore 失败后保留已确认暂停，不冒充 running (0.512278ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:186:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:186:3) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-host.test.ts:208:1
+✖ Tauri dispose 后晚到 refresh 与 save 拒绝，不能复活基线 (0.591359ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:213:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:213:3) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-host.test.ts:231:1
+✖ Tauri 拒绝初始 generation 不匹配及 restore 非 nextGeneration (1.187019ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:234:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:234:3) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-host.test.ts:240:1
+✖ Tauri start 与 stop 等待 IPC 应用确认，恢复不重送旧 baseline (0.435437ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:242:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:242:3) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-host.test.ts:266:1
+✖ Tauri cached baseline 消费者拒绝时 start 不得恢复 actor 或标记已交付 (0.331135ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:267:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:267:3) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-host.test.ts:278:1
+✖ Tauri refresh baseline 被拒绝时暂停 actor，并在重启时重新交付 (0.319665ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:279:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:279:3) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-host.test.ts:293:1
+✖ Tauri restore baseline 被拒绝时不恢复 actor，并在重启时重新交付 (0.295845ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:294:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:294:3) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-host.test.ts:308:1
+✖ Tauri 未启动消费者时 refresh 与 restore 不标记 baseline 已交付 (0.422847ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:310:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:310:5) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-host.test.ts:321:1
+✖ Tauri dispose 即使 IPC 失败也释放监听并显式拒绝 (0.413036ms)
+  Error [AggregateError]: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约；stop_session 清理失败：stop 失败
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:190:41)
+      at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:322:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:322:3) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    },
+    [errors]: [
+      ProtocolError: baseline.snapshot 字段不符合协议契约
+          at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+          at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+          at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+          at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+          at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+          at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+          at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+          at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+          at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+          at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:322:3),
+      Error: stop_session 清理失败：stop 失败
+          at file://<WORKTREE>/apps/web/src/host/tauri-host.ts:187:10
+          at Array.flatMap (<anonymous>)
+          at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:186:35)
+          at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+          at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:322:3)
+          at async Test.run (node:internal/test_runner/test:1332:7)
+          at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+        [cause]: Error: stop 失败
+            at file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:326:63
+            at mockIPC.shouldMockEvents (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:57:22)
+            at Object.invoke (file://<VALIDATION_WORKTREE>/node_modules/.pnpm/@tauri-apps+api@2.11.1/node_modules/@tauri-apps/api/mocks.js:131:16)
+            at invoke (file://<VALIDATION_WORKTREE>/node_modules/.pnpm/@tauri-apps+api@2.11.1/node_modules/@tauri-apps/api/core.js:202:39)
+            at release (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:184:86)
+            at async Promise.allSettled (index 2)
+            at async createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:185:21)
+            at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+            at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:322:3)
+            at async Test.run (node:internal/test_runner/test:1332:7)
+      }
+    ]
+  }
+
+test at src/host/tauri-host.test.ts:329:1
+✖ Tauri dispose 后晚到 load 拒绝且不安装 restore baseline (1.140978ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:331:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:331:3) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-host.test.ts:342:1
+✖ Tauri 恢复提交在 baseline/恢复运行前通知，恢复运行失败仍保留提交通知 (0.442228ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:344:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:344:3) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-host.test.ts:363:1
+✖ Tauri实际enqueue按restore同code改id，unknown零invoke，旧确认不得转成新代成功 (0.483348ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:367:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:367:3) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-host.test.ts:392:1
+✖ Tauri已提交restore的新timeline事件被过滤时invoke目录fault仍显式失败并禁后续enqueue (0.383926ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:397:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:397:3) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-host.test.ts:415:1
+✖ 独立review：restore成功回包缺company_catalog后禁止旧generation enqueue (0.383466ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:417:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:417:3) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-host.test.ts:428:1
+✖ 独立review：restore结构化目录Err的fault不合法后仍须禁enqueue (0.380956ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:431:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:431:3) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-host.test.ts:442:1
+✖ Tauri restore 提交前 ExistingString 拒绝仍可用旧 authority 发送 (0.366876ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:444:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:444:3) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-host.test.ts:457:1
+✖ Tauri restore 坏头部保留可见 baseline，但拒绝晚到的同代写确认、存档及委托查询 (0.365486ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:462:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:462:3) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-host.test.ts:484:1
+✖ 独立review r3：pending start确认不得在恢复authority已失效后报告成功 (0.344815ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:486:2)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:486:2) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-host.test.ts:499:1
+✖ Tauri pending start 遇普通提交前恢复拒绝仍可确认旧 authority 运行 (0.350765ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:191:11)
+      at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+      at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:502:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.ts:174:14)
+        at async withTauriHost (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:67:12)
+        at async TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-host.test.ts:502:3) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/tauri-timeline-state.test.ts:8:1
+✖ Tauri 三种 baseline 都携带对应会话的当前自然日 (1.453033ms)
+  Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+      at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+      at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+      at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+      at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+      at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+      at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+      at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+      at TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.test.ts:10:28)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25) {
+    code: 'PROTOCOL_MALFORMED',
+    where: 'baseline.snapshot'
+  }
+
+test at src/host/tauri-timeline-state.test.ts:18:1
+✖ Tauri 拒绝无效自然日，prepare 失败保留此前可见 authority (0.284475ms)
+  Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+      at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+      at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+      at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+      at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+      at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+      at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+      at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+      at TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.test.ts:20:29)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25) {
+    code: 'PROTOCOL_MALFORMED',
+    where: 'baseline.snapshot'
+  }
+
+test at src/host/tauri-timeline-state.test.ts:37:1
+✖ Tauri 刷新解析失败保留 timeline、baseline 和 query epoch (0.262154ms)
+  Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+      at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+      at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+      at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+      at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+      at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+      at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+      at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+      at TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.test.ts:41:29)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25) {
+    code: 'PROTOCOL_MALFORMED',
+    where: 'baseline.snapshot'
+  }
+
+test at src/host/tauri-timeline-state.test.ts:52:1
+✖ Tauri dispose 只清 timeline/cache，保留 generation/epoch 的既有查询检查 (0.235604ms)
+  Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+      at malformed (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:6:9)
+      at exact (file://<WORKTREE>/apps/web/src/host/protocol/guards.ts:21:5)
+      at parseSnapshotRaw (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:166:3)
+      at parseProtocolSnapshot (file://<WORKTREE>/apps/web/src/host/protocol/parse.ts:184:38)
+      at prepareBaselineUpdate (file://<WORKTREE>/apps/web/src/host/host-update.ts:81:18)
+      at TauriTimelineState.installSnapshot (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:90:23)
+      at TauriTimelineState.installInitialBaseline (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.ts:69:17)
+      at TestContext.<anonymous> (file://<WORKTREE>/apps/web/src/host/tauri-timeline-state.test.ts:54:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25) {
+    code: 'PROTOCOL_MALFORMED',
+    where: 'baseline.snapshot'
+  }
