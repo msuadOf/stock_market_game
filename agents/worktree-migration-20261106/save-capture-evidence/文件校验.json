@@ -1,0 +1,236 @@
+[
+  {
+    "路径": "final-source-sha256.txt",
+    "源 SHA-256": "adba1f9ea95e8c1b54c43142ff25d80e6b6896b9494745b7b7b0f324b2795423",
+    "归档 SHA-256": "adba1f9ea95e8c1b54c43142ff25d80e6b6896b9494745b7b7b0f324b2795423",
+    "处理": "原样复制"
+  },
+  {
+    "路径": "green-app-wiring.log",
+    "源 SHA-256": "c6c7a47362e337477e83e2a8ab86f012944c110b74c83dc541fdc51705c3c33f",
+    "归档 SHA-256": "c6c7a47362e337477e83e2a8ab86f012944c110b74c83dc541fdc51705c3c33f",
+    "处理": "原样复制"
+  },
+  {
+    "路径": "green-candidate-capture.log",
+    "源 SHA-256": "e53d86df3b3d5930dffd9c13d36ac02af692ced2b557f166b191491abaf71ac7",
+    "归档 SHA-256": "e53d86df3b3d5930dffd9c13d36ac02af692ced2b557f166b191491abaf71ac7",
+    "处理": "原样复制"
+  },
+  {
+    "路径": "green-worker-host.log",
+    "源 SHA-256": "95394630530c63ccd2deab6acdb013b5d3d60250bcf10e36b23fa5f7511a6201",
+    "归档 SHA-256": "95394630530c63ccd2deab6acdb013b5d3d60250bcf10e36b23fa5f7511a6201",
+    "处理": "原样复制"
+  },
+  {
+    "路径": "implementation-report.md",
+    "源 SHA-256": "9d1176c33269243cf38136e74e287dff68bff79a7a7b30db1bc7a09cc9a36c7c",
+    "归档 SHA-256": "ea40900490aa9b6e379e0384325cbbd46d312742a9ec9bac4cce40da0abdf6bc",
+    "处理": "本机工作区绝对路径替换为 <WORKSPACE>"
+  },
+  {
+    "路径": "independent-checks.json",
+    "源 SHA-256": "b8218700e9a9731de019ddf0106852e1eb5a19b5875db9a46f4545be9180bd03",
+    "归档 SHA-256": "880ca47cca86a9b3221303716f3a40e1794bd61929583ec4b403adcdf417b04a",
+    "处理": "本机工作区绝对路径替换为 <WORKSPACE>"
+  },
+  {
+    "路径": "independent-final-short.log",
+    "源 SHA-256": "08fd251472d0b68589e0f0dc7362202a515d0c4889372ff312c3caeb5ed7ec81",
+    "归档 SHA-256": "08fd251472d0b68589e0f0dc7362202a515d0c4889372ff312c3caeb5ed7ec81",
+    "处理": "原样复制"
+  },
+  {
+    "路径": "independent-review.md",
+    "源 SHA-256": "f4c3fdd254197a629919c3db5d25f9c326055c8bd36aa15bd52f9c4b274adef9",
+    "归档 SHA-256": "f4c3fdd254197a629919c3db5d25f9c326055c8bd36aa15bd52f9c4b274adef9",
+    "处理": "原样复制"
+  },
+  {
+    "路径": "independent-save-lifecycle.test.mjs",
+    "源 SHA-256": "c54837202da93ef916b8cd93e62404e17fa2210b28aafdd91fe68a59532c61b3",
+    "归档 SHA-256": "c54837202da93ef916b8cd93e62404e17fa2210b28aafdd91fe68a59532c61b3",
+    "处理": "原样复制"
+  },
+  {
+    "路径": "independent-scope-contract-short.log",
+    "源 SHA-256": "465c1acccd18618c317c4b0ccf4f3f92b5dc637f2bcc87f3fd9f005879c4e72b",
+    "归档 SHA-256": "465c1acccd18618c317c4b0ccf4f3f92b5dc637f2bcc87f3fd9f005879c4e72b",
+    "处理": "原样复制"
+  },
+  {
+    "路径": "independent-short.log",
+    "源 SHA-256": "c33b174c628c77052c52203d7019d35dd72125b339797d436906e074cae9cfe7",
+    "归档 SHA-256": "c33b174c628c77052c52203d7019d35dd72125b339797d436906e074cae9cfe7",
+    "处理": "原样复制"
+  },
+  {
+    "路径": "independent-test-types-checks.json",
+    "源 SHA-256": "05adf6906c01da3aa6c98b8de4302003f1ed0a3b8252e778e65a57ec0db2bf5d",
+    "归档 SHA-256": "9d9b70a80972d42068e2751fb0dc5df2f8938734f6852fa829d29fad67316209",
+    "处理": "本机工作区绝对路径替换为 <WORKSPACE>"
+  },
+  {
+    "路径": "independent-test-types-review.md",
+    "源 SHA-256": "1ce2f2c0685de2a10275a7750b91b4260f731185c06bb22d1de396caaef96f0b",
+    "归档 SHA-256": "1ce2f2c0685de2a10275a7750b91b4260f731185c06bb22d1de396caaef96f0b",
+    "处理": "原样复制"
+  },
+  {
+    "路径": "red-worker-host.log",
+    "源 SHA-256": "52b09ceb5a6426ec037b39631cb43123349ba455c27498e1985a09eb02a551d3",
+    "归档 SHA-256": "8b8544f7a2a8721f64b6c0f3fb4edcc774f70b23a7b0ef0b9a1e8bbc86aec802",
+    "处理": "本机工作区绝对路径替换为 <WORKSPACE>"
+  },
+  {
+    "路径": "scope-fixture-contract-fix/current-source-sha256.txt",
+    "源 SHA-256": "16aa773cce625341b8582944591739d75a14db96c5fd713c4b2959d1814b2fdf",
+    "归档 SHA-256": "16aa773cce625341b8582944591739d75a14db96c5fd713c4b2959d1814b2fdf",
+    "处理": "原样复制"
+  },
+  {
+    "路径": "scope-fixture-contract-fix/current-tracked.diff.patch",
+    "源 SHA-256": "cd21179b1832c8a0b867645d34aaeff43008ee3d0dd7431c65bb279b2d843eb4",
+    "归档 SHA-256": "cd21179b1832c8a0b867645d34aaeff43008ee3d0dd7431c65bb279b2d843eb4",
+    "处理": "原样复制"
+  },
+  {
+    "路径": "scope-fixture-contract-fix/final-complete.patch",
+    "源 SHA-256": "40e67df0fd7a372d62d4dee9f8eae61094cbb966fe6d405621bfd8937fb672bf",
+    "归档 SHA-256": "40e67df0fd7a372d62d4dee9f8eae61094cbb966fe6d405621bfd8937fb672bf",
+    "处理": "原样复制"
+  },
+  {
+    "路径": "scope-fixture-contract-fix/fixture-change.patch",
+    "源 SHA-256": "5fbdfc49156a200d09ccb8ebf05ad3fc5418a47a0be4f274b8b8c185e376565f",
+    "归档 SHA-256": "5fbdfc49156a200d09ccb8ebf05ad3fc5418a47a0be4f274b8b8c185e376565f",
+    "处理": "原样复制"
+  },
+  {
+    "路径": "scope-fixture-contract-fix/scope-suite.log",
+    "源 SHA-256": "066216025b3c08d2b592fbebe77d50b585fe9629b04535e7d4ed8d49528f8618",
+    "归档 SHA-256": "066216025b3c08d2b592fbebe77d50b585fe9629b04535e7d4ed8d49528f8618",
+    "处理": "原样复制"
+  },
+  {
+    "路径": "scope-fixture-contract-fix/source-before.sha256",
+    "源 SHA-256": "a93645bb3d33394b8385fa33d76a1851869bca54d03ce4637192e04947dc41d0",
+    "归档 SHA-256": "a93645bb3d33394b8385fa33d76a1851869bca54d03ce4637192e04947dc41d0",
+    "处理": "原样复制"
+  },
+  {
+    "路径": "scope-fixture-contract-fix/worker-request-scope.test.ts.before",
+    "源 SHA-256": "4a4f8014e592c6b2db544109dd1d3b7739ea5dff4d750032ce92ea364e87380d",
+    "归档 SHA-256": "4a4f8014e592c6b2db544109dd1d3b7739ea5dff4d750032ce92ea364e87380d",
+    "处理": "原样复制"
+  },
+  {
+    "路径": "scope-save-queue/app-startup-green-final.log",
+    "源 SHA-256": "9e4394d285625f725ebec196333daec3db6572782a2a3b375f3fd43d4c0b93d8",
+    "归档 SHA-256": "9e4394d285625f725ebec196333daec3db6572782a2a3b375f3fd43d4c0b93d8",
+    "处理": "原样复制"
+  },
+  {
+    "路径": "scope-save-queue/civil-capture-green-final.log",
+    "源 SHA-256": "1119695196bb12d6fecd002d6c2c06248b7cfea24fb1dc3642f4987d40c12b09",
+    "归档 SHA-256": "1119695196bb12d6fecd002d6c2c06248b7cfea24fb1dc3642f4987d40c12b09",
+    "处理": "原样复制"
+  },
+  {
+    "路径": "scope-save-queue/civil-capture-green.log",
+    "源 SHA-256": "44d8c4fc828428806b42b9693c04ebb1e24473426d9aae005e6cafde9462b3b1",
+    "归档 SHA-256": "44d8c4fc828428806b42b9693c04ebb1e24473426d9aae005e6cafde9462b3b1",
+    "处理": "原样复制"
+  },
+  {
+    "路径": "scope-save-queue/frozen-review.patch",
+    "源 SHA-256": "d88c0f729c451294b889a6ba986aed36cb19c1d0191423f70ade50a61b6debc0",
+    "归档 SHA-256": "d88c0f729c451294b889a6ba986aed36cb19c1d0191423f70ade50a61b6debc0",
+    "处理": "原样复制"
+  },
+  {
+    "路径": "scope-save-queue/green-attempt1.log",
+    "源 SHA-256": "a9b3c4d5a136d50d2cdeff793d0b382cdeb94265607182d33c2d57851f6d2421",
+    "归档 SHA-256": "a9b3c4d5a136d50d2cdeff793d0b382cdeb94265607182d33c2d57851f6d2421",
+    "处理": "原样复制"
+  },
+  {
+    "路径": "scope-save-queue/green-generation.log",
+    "源 SHA-256": "fcfb4cfe10c375b056a2e3892be884bb1f517b5a836554e05099584aa8796109",
+    "归档 SHA-256": "fcfb4cfe10c375b056a2e3892be884bb1f517b5a836554e05099584aa8796109",
+    "处理": "原样复制"
+  },
+  {
+    "路径": "scope-save-queue/pre-change-source-sha256.txt",
+    "源 SHA-256": "1ba2a4b1eff3e2765a7517227ce5e6ad53d471c14c5f0dd430bd824821ce3c11",
+    "归档 SHA-256": "1ba2a4b1eff3e2765a7517227ce5e6ad53d471c14c5f0dd430bd824821ce3c11",
+    "处理": "原样复制"
+  },
+  {
+    "路径": "scope-save-queue/red-edge.log",
+    "源 SHA-256": "41973e97da87fdac645b70a102b1b3f26798619bc829a56208c41ac5842ff954",
+    "归档 SHA-256": "41973e97da87fdac645b70a102b1b3f26798619bc829a56208c41ac5842ff954",
+    "处理": "原样复制"
+  },
+  {
+    "路径": "scope-save-queue/red-generation-callback.log",
+    "源 SHA-256": "d69fa17a5ab7a64a1b6476f0635f9fe8be470e000f3caa2a76bac29eddc20527",
+    "归档 SHA-256": "822e88ded72631f8ed69954c7767e0c34a243f6ddf84d1cdd32166489de2b3cf",
+    "处理": "本机工作区绝对路径替换为 <WORKSPACE>"
+  },
+  {
+    "路径": "scope-save-queue/red.log",
+    "源 SHA-256": "e052a396f876fc52391f605187e73a86de4ae5d8d7c58780430f611862f85127",
+    "归档 SHA-256": "a21a4debb9006c1e2aadcdf0236440baa3e3ac565eeaf90824a74daffc25f454",
+    "处理": "本机工作区绝对路径替换为 <WORKSPACE>"
+  },
+  {
+    "路径": "scope-save-queue/worker-host-green-final.log",
+    "源 SHA-256": "d965ec232e1c5c75cb74d64149065def03721da946a04e290f66b0c5a45e740f",
+    "归档 SHA-256": "d965ec232e1c5c75cb74d64149065def03721da946a04e290f66b0c5a45e740f",
+    "处理": "原样复制"
+  },
+  {
+    "路径": "scope-save-queue/worker-host-green.log",
+    "源 SHA-256": "9f9e407c555e8f00b12e2ce398c5bdfa87635a26e7766a4ba898129c77bdd91d",
+    "归档 SHA-256": "9f9e407c555e8f00b12e2ce398c5bdfa87635a26e7766a4ba898129c77bdd91d",
+    "处理": "原样复制"
+  },
+  {
+    "路径": "test-types-fix/final-complete.patch",
+    "源 SHA-256": "5ab14b6429516fa3794c88c275b415b0a6665335a7273321e3848c013dc0e483",
+    "归档 SHA-256": "5ab14b6429516fa3794c88c275b415b0a6665335a7273321e3848c013dc0e483",
+    "处理": "原样复制"
+  },
+  {
+    "路径": "test-types-fix/original-state.sha256",
+    "源 SHA-256": "8a095d460502971f05246c49018dc3ffb552890a4af1f8cc18a4997f32557284",
+    "归档 SHA-256": "8a095d460502971f05246c49018dc3ffb552890a4af1f8cc18a4997f32557284",
+    "处理": "原样复制"
+  },
+  {
+    "路径": "test-types-fix/original.patch",
+    "源 SHA-256": "cd21179b1832c8a0b867645d34aaeff43008ee3d0dd7431c65bb279b2d843eb4",
+    "归档 SHA-256": "cd21179b1832c8a0b867645d34aaeff43008ee3d0dd7431c65bb279b2d843eb4",
+    "处理": "原样复制"
+  },
+  {
+    "路径": "test-types-fix/source-pass-original.patch",
+    "源 SHA-256": "40e67df0fd7a372d62d4dee9f8eae61094cbb966fe6d405621bfd8937fb672bf",
+    "归档 SHA-256": "40e67df0fd7a372d62d4dee9f8eae61094cbb966fe6d405621bfd8937fb672bf",
+    "处理": "原样复制"
+  },
+  {
+    "路径": "test-types-fix/strict-recheck.log",
+    "源 SHA-256": "d3b3056d1183b00b12139c4983a5cef4720ee1a7b849a99ec61270c440cc48f8",
+    "归档 SHA-256": "d3b3056d1183b00b12139c4983a5cef4720ee1a7b849a99ec61270c440cc48f8",
+    "处理": "原样复制"
+  },
+  {
+    "路径": "test-types-fix/worker-host.test.ts.before",
+    "源 SHA-256": "78c3d52fe2c0a6fbab66bf9e0a68b15955cf913f8c02c2918efc94d6d3e576ce",
+    "归档 SHA-256": "78c3d52fe2c0a6fbab66bf9e0a68b15955cf913f8c02c2918efc94d6d3e576ce",
+    "处理": "原样复制"
+  }
+]

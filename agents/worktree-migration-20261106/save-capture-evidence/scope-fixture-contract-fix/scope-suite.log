@@ -1,0 +1,11 @@
+✔ WorkerRequestScope 普通并发查询分配连续 ID，逆序完成只清理对应资源 (2.226088ms)
+✔ WorkerRequestScope 的 operationError 与 timeout 回收 listener 和登记 (1.391432ms)
+✔ WorkerRequestScope postMessage 同步抛错立即释放资源，晚到 timeout 不影响后续请求 (0.641989ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 149.169268

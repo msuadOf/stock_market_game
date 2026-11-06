@@ -1,0 +1,67 @@
+✔ 独审：长save在dispose/换代时立即拒绝，晚到响应不恢复 (66.927735ms)
+✔ 非共享 substrate 显式失败，不生成 intake、不通过 engine enqueue 静默降级 (33.352484ms)
+✔ Browser engine worker 忙碌时 submitIntent 由独立 intake worker 确认，dispose 同时关闭两者 (7.714522ms)
+✔ Browser ingress consumerReject 不泄漏 intake worker 或误报旧代成功 (3.696706ms)
+✔ Browser ingress initializationTimeout 不泄漏 intake worker 或误报旧代成功 (1.806626ms)
+✔ Browser ingress staleEnqueued 不泄漏 intake worker 或误报旧代成功 (2.461358ms)
+✔ Browser ingress disposedEnqueued 不泄漏 intake worker 或误报旧代成功 (3.892592ms)
+✔ Worker 股票历史请求绑定 requestId 与 generation，且不携带可指定账户 (0.752783ms)
+✔ Worker baseline baseline 被消费者拒绝时终止并显式失败 (3.346095ms)
+✔ Worker refreshBaseline baseline 被消费者拒绝时终止并显式失败 (2.018143ms)
+✔ Worker load baseline 被消费者拒绝时终止并显式失败 (9.172287ms)
+✔ 审计G53：Worker恢复必须推进generation，不能接受相同或更小代 (0.751244ms)
+✔ 审计G53：恢复代次拒绝零、负数、非安全整数和字符串 (0.543187ms)
+✔ Worker refresh 已回包但 continuation 前 dispose 不得复活 baseline (2.866899ms)
+✔ Worker save pins candidate generation and rejects an old saved response after baseline replacement (1.800456ms)
+✔ Given a generation-correlated Worker metrics response, when read, then it validates the shared speed contract (0.438704ms)
+✔ Given a generation-correlated Worker order response, when read, then it preserves Money cents (0.542917ms)
+✔ Given a typed WASM indicator input error, when returned through the Worker, then calculation rejects (0.294379ms)
+✔ Given an enriched Worker failure, when parsed, then cause and recovery actions survive (0.458125ms)
+✔ Given a restore response from the old request generation, when read, then it yields the new authority before load completes (0.234147ms)
+✔ Given a refresh request, when the worker reads its live session, then it returns that authoritative snapshot (0.293069ms)
+✔ Given local pause preferences, when sent across the Worker boundary, then the request retains both flags and generation (0.148755ms)
+✔ Given a paused Worker, the correlated single-step response exposes its committed tick (0.249428ms)
+✔ Given production or a missing injected capability, Worker E2E stepping is rejected (0.243737ms)
+✔ Worker initialization sends init without pool size and reports startup failure immediately (0.719853ms)
+✔ duplicate delivered baselines preserve pending order queries, while a new generation invalidates them (7.180585ms)
+✔ Worker 控制等待应用回执，protocolBatch 每个提交接纳后立即 ACK 且不等待 render (1.766756ms)
+✔ Worker cached baseline 拒绝不启动或 ACK，显式重试仍交付且旧 host 不干扰新 host (2.401415ms)
+✔ Worker dispose 与 fatal 立即取消在途请求，释放监听并拒绝后续请求 (2.405996ms)
+✔ Worker 真实 coordinator 拒绝批次中间提交后不消费尾部、不 ACK、立即终止并取消控制 (6.801513ms)
+✔ Worker reportError 的 error 事件将完整错误交付用户回调并终止会话 (2.154297ms)
+✔ 实际单股Worker shared ingress三variant与unknown零enqueue (1.954351ms)
+✔ Worker civilDate 已回包但 continuation 前 dispose 必须拒绝旧结果 (1.865298ms)
+✔ Worker civilDate 已回包但 continuation 前 generation 必须拒绝旧结果 (1.62272ms)
+✔ WorkerHost save remains pending through 10 seconds and accepts saved at 15.202 seconds (1.412945ms)
+✔ Worker save 超时后 scope 拒绝新请求，close 仍取消 late response (0.31433ms)
+✔ Worker save 占用期普通请求不发出也不启动 deadline，saved 后按原 10 秒 deadline 运行 (0.337851ms)
+✔ Worker save operationError 显式拒绝当前保存并按 FIFO 放行下一保存边界 (0.262448ms)
+✔ Worker save 超时会拒绝整队且 poison scope 仍允许显式 shutdown (0.298039ms)
+✔ Worker close 与 beginClosing 取消 save 和排队请求，晚到 saved 不会迟发 (0.427613ms)
+✔ Worker generation 前进取消旧 save 与队列，同代 baseline 保留在途请求 (3.457629ms)
+✔ Worker 无 save 时普通请求仍按 10 秒超时 (0.245068ms)
+✔ Worker 排队 save postMessage 同步失败显式拒绝并放行后续 FIFO 请求 (0.394642ms)
+✔ 三写 scope 严格处理 own failure 与 message-only，协议错仍清理当前请求 (4.399207ms)
+✔ 并发公司写一项业务拒绝只释放本人资源，其他在途请求仍成功 (1.952751ms)
+✔ WorkerRequestScope proposePlayerCompanyAction 匹配拒绝保完整公开 failure 与 cause (0.65641ms)
+✔ WorkerRequestScope enqueueReportCorrection 匹配拒绝保完整公开 failure 与 cause (0.492375ms)
+✔ WorkerRequestScope cancelReportCorrection 匹配拒绝保完整公开 failure 与 cause (0.336621ms)
+✖ apps/web/src/host/worker-request-scope.test.ts (8936.128496ms)
+✔ 日终候选未完成时不刷新挂单，当前候选完成后刷新一次 (2.53666ms)
+✔ 日终候选失败保留拒绝且不刷新挂单 (0.755974ms)
+✔ 等待日终候选期间宿主或 generation 变化时不刷新挂单 (0.363121ms)
+ℹ tests 52
+ℹ suites 0
+ℹ pass 51
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 8973.229147
+
+✖ failing tests:
+
+test at apps/web/src/host/worker-request-scope.test.ts:1:1
+✖ apps/web/src/host/worker-request-scope.test.ts (8936.128496ms)
+  'test failed'
+bounded command exited with 1; bounded command exhausted its execution budget within the total 10000ms deadline; process tree termination was requested and direct child close confirmed

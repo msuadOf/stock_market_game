@@ -1,0 +1,5 @@
+8d47b0e34d6b1e9c80ac2de7f65e28d90cecd4d80e820b371f6e67d0cb4638a0  apps/web/src/App.tsx
+a01052039cc5620646db63b503f0e264225b0876a6a8f9dca3e4ce4e912a3bab  apps/web/src/host/worker-host.ts
+f3d9f9e09bf2b13570e73d47d1b1745fd9399c62533792601d9b6e0b3972b53e  apps/web/src/host/worker-host.test.ts
+7cc307bccbb878dca225e82c62a8e5816b7fecdd63682e0efd736ea72f9cb3c8  apps/web/src/save/civil-day-end-capture.ts
+59c43d4863749b72811a21586fac02808ba597e3e7ad672869b29e820124286c  apps/web/src/save/civil-day-end-capture.test.ts

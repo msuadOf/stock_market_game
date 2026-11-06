@@ -1,0 +1,4 @@
+HEAD=8e058acae3ffa498714dc54d810c00ee5c315278
+branch=codex/wasm-app-save-capture-20261030
+test_sha256=78c3d52fe2c0a6fbab66bf9e0a68b15955cf913f8c02c2918efc94d6d3e576ce
+worktree_patch_sha256=cd21179b1832c8a0b867645d34aaeff43008ee3d0dd7431c65bb279b2d843eb4

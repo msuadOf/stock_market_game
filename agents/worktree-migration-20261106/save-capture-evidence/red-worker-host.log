@@ -1,0 +1,21 @@
+✖ WorkerHost save remains pending through 10 seconds and accepts saved at 15.202 seconds (30.758945ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 323.204167
+
+✖ failing tests:
+
+test at apps/web/src/host/worker-host.test.ts:807:1
+✖ WorkerHost save remains pending through 10 seconds and accepts saved at 15.202 seconds (30.758945ms)
+  Error: Worker save 操作超时（10000ms）
+      at file://<WORKSPACE>/.worktree/wasm-app-save-capture-2026-10-30/apps/web/src/host/worker-request.ts:106:25
+      at MockTimers.tick (node:internal/test_runner/mock/mock_timers:704:7)
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/wasm-app-save-capture-2026-10-30/apps/web/src/host/worker-host.test.ts:830:25)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3)
+bounded command exited with 1

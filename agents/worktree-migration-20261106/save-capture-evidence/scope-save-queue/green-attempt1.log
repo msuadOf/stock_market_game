@@ -1,0 +1,13 @@
+✔ Worker save 占用期普通请求不发出也不启动 deadline，saved 后按原 10 秒 deadline 运行 (5.349993ms)
+✔ Worker save operationError 显式拒绝当前保存并按 FIFO 放行下一保存边界 (1.009009ms)
+✔ Worker save 超时会拒绝整队且 poison scope 仍允许显式 shutdown (7.931697ms)
+✔ Worker close 与 beginClosing 取消 save 和排队请求，晚到 saved 不会迟发 (0.922286ms)
+✔ Worker generation 前进取消旧 save 与队列，同代 baseline 保留在途请求 (43.185318ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 452.510902

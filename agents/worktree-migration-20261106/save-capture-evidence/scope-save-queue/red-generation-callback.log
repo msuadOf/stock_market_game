@@ -1,0 +1,36 @@
+✖ Worker generation 前进取消旧 save 与队列，同代 baseline 保留在途请求 (57.473917ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 516.192558
+
+✖ failing tests:
+
+test at apps/web/src/host/worker-host.test.ts:967:1
+✖ Worker generation 前进取消旧 save 与队列，同代 baseline 保留在途请求 (57.473917ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+    {
+  +   generation: 2,
+  -   generation: 3,
+      requestId: 6,
+  +   type: 'save'
+  -   type: 'civilDate'
+    }
+  
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/wasm-app-save-capture-2026-10-30/apps/web/src/host/worker-host.test.ts:1020:12)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: { type: 'save', requestId: 6, generation: 2 },
+    expected: { type: 'civilDate', requestId: 6, generation: 3 },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+bounded command exited with 1

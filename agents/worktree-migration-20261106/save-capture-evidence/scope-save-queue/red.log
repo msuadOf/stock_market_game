@@ -1,0 +1,139 @@
+✖ Worker save 占用期普通请求不发出也不启动 deadline，saved 后按原 10 秒 deadline 运行 (4.084107ms)
+✖ Worker save operationError 显式拒绝当前保存并按 FIFO 放行下一保存边界 (0.514655ms)
+✖ Worker save 超时会拒绝整队且 poison scope 仍允许显式 shutdown (0.890495ms)
+✖ Worker close 与 beginClosing 取消 save 和排队请求，晚到 saved 不会迟发 (0.586496ms)
+✖ Worker generation 前进取消旧 save 与队列，同代 baseline 保留在途请求 (31.728675ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 0
+ℹ fail 5
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 8993.594532
+
+✖ failing tests:
+
+test at apps/web/src/host/worker-host.test.ts:871:1
+✖ Worker save 占用期普通请求不发出也不启动 deadline，saved 后按原 10 秒 deadline 运行 (4.084107ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+    [
+      {
+        generation: 4,
+        requestId: 1,
+        type: 'save'
+      },
+  +   {
+  +     generation: 4,
+  +     requestId: 2,
+  +     type: 'civilDate'
+  +   }
+    ]
+  
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/wasm-app-save-capture-2026-10-30/apps/web/src/host/worker-host.test.ts:881:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.start (node:internal/test_runner/test:1191:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ { type: 'save', requestId: 1, generation: 4 }, { type: 'civilDate', requestId: 2, generation: 4 } ],
+    expected: [ { type: 'save', requestId: 1, generation: 4 } ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/worker-host.test.ts:895:1
+✖ Worker save operationError 显式拒绝当前保存并按 FIFO 放行下一保存边界 (0.514655ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  4 !== 1
+  
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/wasm-app-save-capture-2026-10-30/apps/web/src/host/worker-host.test.ts:907:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+      at Test.postRun (node:internal/test_runner/test:1465:19)
+      at Test.run (node:internal/test_runner/test:1390:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 4,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/worker-host.test.ts:922:1
+✖ Worker save 超时会拒绝整队且 poison scope 仍允许显式 shutdown (0.890495ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /60000ms/. Input:
+  
+  'Error: Worker civilDate 操作超时（10000ms）'
+  
+      at async Promise.all (index 1)
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/wasm-app-save-capture-2026-10-30/apps/web/src/host/worker-host.test.ts:933:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: Worker civilDate 操作超时（10000ms）
+        at file://<WORKSPACE>/.worktree/wasm-app-save-capture-2026-10-30/apps/web/src/host/worker-request.ts:106:25
+        at MockTimers.tick (node:internal/test_runner/mock/mock_timers:704:7)
+        at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/wasm-app-save-capture-2026-10-30/apps/web/src/host/worker-host.test.ts:932:23)
+        at Test.runInAsyncScope (node:async_hooks:227:14)
+        at Test.run (node:internal/test_runner/test:1325:25)
+        at Test.processPendingSubtests (node:internal/test_runner/test:911:18)
+        at Test.postRun (node:internal/test_runner/test:1465:19)
+        at Test.run (node:internal/test_runner/test:1390:12)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:911:7),
+    expected: /60000ms/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/worker-host.test.ts:945:1
+✖ Worker close 与 beginClosing 取消 save 和排队请求，晚到 saved 不会迟发 (0.586496ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+    [
+      'save',
+  +   'civilDate'
+    ]
+  
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/wasm-app-save-capture-2026-10-30/apps/web/src/host/worker-host.test.ts:964:12)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ 'save', 'civilDate' ],
+    expected: [ 'save' ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/worker-host.test.ts:969:1
+✖ Worker generation 前进取消旧 save 与队列，同代 baseline 保留在途请求 (31.728675ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /generation/. Input:
+  
+  'Error: Worker civilDate 操作超时（10000ms）'
+  
+      at async Promise.all (index 1)
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/wasm-app-save-capture-2026-10-30/apps/web/src/host/worker-host.test.ts:995:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: Worker civilDate 操作超时（10000ms）
+        at file://<WORKSPACE>/.worktree/wasm-app-save-capture-2026-10-30/apps/web/src/host/worker-request.ts:106:25
+        at MockTimers.tick (node:internal/test_runner/mock/mock_timers:704:7)
+        at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/wasm-app-save-capture-2026-10-30/apps/web/src/host/worker-host.test.ts:994:25)
+        at async Test.run (node:internal/test_runner/test:1332:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:911:7),
+    expected: /generation/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+bounded command exited with 1; bounded command exhausted its execution budget within the total 10000ms deadline; process tree termination was requested and direct child close confirmed

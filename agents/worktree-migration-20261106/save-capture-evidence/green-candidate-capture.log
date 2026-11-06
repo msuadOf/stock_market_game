@@ -1,0 +1,11 @@
+✔ 日终候选未完成时不刷新挂单，当前候选完成后刷新一次 (1.586319ms)
+✔ 日终候选失败保留拒绝且不刷新挂单 (0.503986ms)
+✔ 等待日终候选期间宿主或 generation 变化时不刷新挂单 (0.258277ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 115.298741

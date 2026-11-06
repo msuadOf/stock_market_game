@@ -1,0 +1,97 @@
+{
+  "state": "SOURCE_PASS_WASM_APP_SAVE_CAPTURE_AND_SCOPE",
+  "base": "8e058acae3ffa498714dc54d810c00ee5c315278",
+  "patchRef": {
+    "path": "<WORKSPACE>/.worktree/wasm-app-save-capture-2026-10-30/agents/branch-completion/wasm-app-save-capture-2026-10-30/scope-fixture-contract-fix/final-complete.patch",
+    "sha256": "40e67df0fd7a372d62d4dee9f8eae61094cbb966fe6d405621bfd8937fb672bf",
+    "bytes": 38207
+  },
+  "sourceRefs": [
+    {
+      "path": "<WORKSPACE>/.worktree/wasm-app-save-capture-2026-10-30/apps/web/src/host/worker-request.ts",
+      "sha256": "b7f60df6e79aff73ec96d316e4770209e6baf937a31aacc22db1046b8a625136",
+      "bytes": 8213
+    },
+    {
+      "path": "<WORKSPACE>/.worktree/wasm-app-save-capture-2026-10-30/apps/web/src/host/worker-host.ts",
+      "sha256": "a8b902825dd4e18926acf2e3c358cb97b3a71b4dbc4f14fe10f90a9816c0ab7a",
+      "bytes": 54207
+    },
+    {
+      "path": "<WORKSPACE>/.worktree/wasm-app-save-capture-2026-10-30/apps/web/src/App.tsx",
+      "sha256": "8d47b0e34d6b1e9c80ac2de7f65e28d90cecd4d80e820b371f6e67d0cb4638a0",
+      "bytes": 48736
+    },
+    {
+      "path": "<WORKSPACE>/.worktree/wasm-app-save-capture-2026-10-30/apps/web/src/host/worker-host.test.ts",
+      "sha256": "78c3d52fe2c0a6fbab66bf9e0a68b15955cf913f8c02c2918efc94d6d3e576ce",
+      "bytes": 63469
+    },
+    {
+      "path": "<WORKSPACE>/.worktree/wasm-app-save-capture-2026-10-30/apps/web/src/save/civil-day-end-capture.ts",
+      "sha256": "7cc307bccbb878dca225e82c62a8e5816b7fecdd63682e0efd736ea72f9cb3c8",
+      "bytes": 321
+    },
+    {
+      "path": "<WORKSPACE>/.worktree/wasm-app-save-capture-2026-10-30/apps/web/src/save/civil-day-end-capture.test.ts",
+      "sha256": "59c43d4863749b72811a21586fac02808ba597e3e7ad672869b29e820124286c",
+      "bytes": 1797
+    },
+    {
+      "path": "<WORKSPACE>/.worktree/wasm-app-save-capture-2026-10-30/apps/web/src/host/worker-request-scope.test.ts",
+      "sha256": "dbcbc06ba7b4b08543fb69a7e54c34324998c72ef24b1da2b3e1805aefb7acdb",
+      "bytes": 4410
+    }
+  ],
+  "evidenceRefs": [
+    {
+      "path": "<WORKSPACE>/.worktree/wasm-app-save-capture-2026-10-30/agents/branch-completion/wasm-app-save-capture-2026-10-30/independent-save-lifecycle.test.mjs",
+      "sha256": "c54837202da93ef916b8cd93e62404e17fa2210b28aafdd91fe68a59532c61b3",
+      "bytes": 1223
+    },
+    {
+      "path": "<WORKSPACE>/.worktree/wasm-app-save-capture-2026-10-30/agents/branch-completion/wasm-app-save-capture-2026-10-30/independent-short.log",
+      "sha256": "c33b174c628c77052c52203d7019d35dd72125b339797d436906e074cae9cfe7",
+      "bytes": 4633
+    },
+    {
+      "path": "<WORKSPACE>/.worktree/wasm-app-save-capture-2026-10-30/agents/branch-completion/wasm-app-save-capture-2026-10-30/independent-final-short.log",
+      "sha256": "08fd251472d0b68589e0f0dc7362202a515d0c4889372ff312c3caeb5ed7ec81",
+      "bytes": 5785
+    },
+    {
+      "path": "<WORKSPACE>/.worktree/wasm-app-save-capture-2026-10-30/agents/branch-completion/wasm-app-save-capture-2026-10-30/independent-scope-contract-short.log",
+      "sha256": "465c1acccd18618c317c4b0ccf4f3f92b5dc637f2bcc87f3fd9f005879c4e72b",
+      "bytes": 432
+    },
+    {
+      "path": "<WORKSPACE>/.worktree/wasm-app-save-capture-2026-10-30/agents/branch-completion/wasm-app-save-capture-2026-10-30/independent-review.md",
+      "sha256": "f4c3fdd254197a629919c3db5d25f9c326055c8bd36aa15bd52f9c4b274adef9",
+      "bytes": 5416
+    }
+  ],
+  "short": {
+    "passedExistingUnchanged": 51,
+    "finalScopePassed": 3,
+    "totalPassedAcrossCommands": 54,
+    "firstCombinedExitCode": 1,
+    "finalScopeExitCode": 0,
+    "finalScopeDurationMs": 170.701515,
+    "caseTimeoutMs": 10000,
+    "processDeadlineMs": 10000,
+    "fileConcurrency": 4
+  },
+  "findings": [
+    {
+      "kind": "generation pending cancellation",
+      "fixed": true
+    },
+    {
+      "kind": "legacy generic concurrency fixture used save",
+      "fixed": true,
+      "assertionsPreserved": true
+    }
+  ],
+  "browserExecuted": false,
+  "buildExecuted": false
+}

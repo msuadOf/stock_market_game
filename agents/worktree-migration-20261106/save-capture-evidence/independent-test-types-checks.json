@@ -1,0 +1,50 @@
+{
+  "state": "SOURCE_PASS_WASM_SAVE_TEST_TYPES_NARROW_FIX",
+  "patchRef": {
+    "path": "<WORKSPACE>/.worktree/wasm-app-save-capture-2026-10-30/agents/branch-completion/wasm-app-save-capture-2026-10-30/test-types-fix/final-complete.patch",
+    "sha256": "5ab14b6429516fa3794c88c275b415b0a6665335a7273321e3848c013dc0e483",
+    "bytes": 38448
+  },
+  "testRef": {
+    "path": "<WORKSPACE>/.worktree/wasm-app-save-capture-2026-10-30/apps/web/src/host/worker-host.test.ts",
+    "sha256": "7426bd270a80d041edcc8f46e69c9266921bc9832b8e1dbdb73d3ff415f95875",
+    "bytes": 63706
+  },
+  "beforeTestRef": {
+    "path": "<WORKSPACE>/.worktree/wasm-app-save-capture-2026-10-30/agents/branch-completion/wasm-app-save-capture-2026-10-30/test-types-fix/worker-host.test.ts.before",
+    "sha256": "78c3d52fe2c0a6fbab66bf9e0a68b15955cf913f8c02c2918efc94d6d3e576ce",
+    "bytes": 63469
+  },
+  "reviewRef": {
+    "path": "<WORKSPACE>/.worktree/wasm-app-save-capture-2026-10-30/agents/branch-completion/wasm-app-save-capture-2026-10-30/independent-test-types-review.md",
+    "sha256": "1ce2f2c0685de2a10275a7750b91b4260f731185c06bb22d1de396caaef96f0b",
+    "bytes": 1718
+  },
+  "unchangedOtherSourceCount": 6,
+  "assertionsPreserved": true,
+  "sourceFindingCount": 0,
+  "prior51Repeated": false,
+  "authorFullStrictPassed": false,
+  "writerReportedSplitStrict": [
+    {
+      "scope": "App",
+      "session": 35300,
+      "waitTool": "d53d71",
+      "exitCode": 0
+    },
+    {
+      "scope": "host test",
+      "session": 18526,
+      "waitTool": "368882",
+      "exitCode": 0
+    },
+    {
+      "scope": "scope+capture",
+      "session": 67720,
+      "waitTool": "239571",
+      "exitCode": 0
+    }
+  ],
+  "reviewerExecutedStrict": false,
+  "browserExecuted": false
+}

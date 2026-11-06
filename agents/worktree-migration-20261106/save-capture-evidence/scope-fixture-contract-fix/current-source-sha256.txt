@@ -1,0 +1,7 @@
+8d47b0e34d6b1e9c80ac2de7f65e28d90cecd4d80e820b371f6e67d0cb4638a0  apps/web/src/App.tsx
+a8b902825dd4e18926acf2e3c358cb97b3a71b4dbc4f14fe10f90a9816c0ab7a  apps/web/src/host/worker-host.ts
+78c3d52fe2c0a6fbab66bf9e0a68b15955cf913f8c02c2918efc94d6d3e576ce  apps/web/src/host/worker-host.test.ts
+b7f60df6e79aff73ec96d316e4770209e6baf937a31aacc22db1046b8a625136  apps/web/src/host/worker-request.ts
+dbcbc06ba7b4b08543fb69a7e54c34324998c72ef24b1da2b3e1805aefb7acdb  apps/web/src/host/worker-request-scope.test.ts
+7cc307bccbb878dca225e82c62a8e5816b7fecdd63682e0efd736ea72f9cb3c8  apps/web/src/save/civil-day-end-capture.ts
+59c43d4863749b72811a21586fac02808ba597e3e7ad672869b29e820124286c  apps/web/src/save/civil-day-end-capture.test.ts

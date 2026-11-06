@@ -1,0 +1,5 @@
+2026-10-30
+第一次：误用 main-merge supervisor 执行完整 strict 命令，10 秒进程树 deadline 终止（exit 1）。
+第二次：改用 strict 命令提供者指定的 development-main supervisor，原样完整命令仍由 10 秒进程树 deadline 终止（exit 1）。
+两次均无 TypeScript diagnostics 输出；因此不能据此宣称完整 strict 通过。
+指定文件 worker-host.test.ts 单文件 strict tsc exit 0，约 4 秒；完整 strict 涵盖 App 与四源，未通过。
