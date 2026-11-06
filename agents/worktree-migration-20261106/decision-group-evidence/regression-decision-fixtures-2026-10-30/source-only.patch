@@ -1,0 +1,64 @@
+diff --git a/packages/engine/src/session/decision_chain.rs b/packages/engine/src/session/decision_chain.rs
+index 37c09b59..558d289e 100644
+--- a/packages/engine/src/session/decision_chain.rs
++++ b/packages/engine/src/session/decision_chain.rs
+@@ -4313,6 +4313,11 @@ mod chain_restructure_tests {
+         session.state.tick = session.state.setup.ticks_per_day;
+         session.fixture_sync_market_modes_for_test();
+         session.state.day = 1;
++        let date = session.civil_date();
++        session
++            .civil_clock_mut()
++            .end_day(date)
++            .expect("首个交易日历结后进入次一真实自然日");
+         assert!(!session.active_plan_requires_review(account));
+         session
+             .state
+@@ -5325,6 +5330,8 @@ mod chain_restructure_tests {
+         assert_eq!(partial.filled_qty(), original.filled_qty() + 100);
+         assert_eq!(partial.active_child_order_id(), Some(child));
+         let ledger_before = session.project_live_envelopes().unwrap();
++        let previous_epoch = session.runtime_authority_epoch;
++        let previous_identity = std::sync::Arc::clone(&session.runtime_authority_identity);
+         session.runtime_group_count = 3;
+         session
+             .join_market(
+@@ -5332,19 +5339,25 @@ mod chain_restructure_tests {
+                 false,
+             )
+             .unwrap();
+-        // join 已释放 native writer，静点设置下一注意力种子，隔离恢复与自然复审。
+-        assert!(session.runtime_driver.is_none());
+-        session
+-            .state
+-            .npc_attention
+-            .get_mut(&AccountId(1))
+-            .unwrap()
+-            .next_attention_candidate_tick = u64::MAX;
+-        session.state.attention_scheduler.clear();
+-        session
+-            .state
+-            .attention_scheduler
+-            .enqueue(u64::MAX, AccountId(1));
++        // join 已完整安装新 runtime authority；只推迟组权威注意力，隔离恢复与自然复审。
++        assert_eq!(
++            session.runtime_authority_epoch,
++            previous_epoch
++                .checked_add(1)
++                .expect("authority epoch 未耗尽")
++        );
++        assert!(std::sync::Arc::ptr_eq(
++            &previous_identity,
++            &session.runtime_authority_identity
++        ));
++        let mut runtime_driver = session
++            .runtime_driver_for_test()
++            .expect("join 后的新 runtime authority")
++            .lock()
++            .expect("新 runtime authority 锁未中毒");
++        assert_eq!(runtime_driver.world_committed_tick(), session.tick());
++        runtime_driver.defer_due_for_test_at(&[AccountId(1)], u64::MAX);
++        drop(runtime_driver);
+         let rebuilt_events = session.step().expect("部分成交child换组重建");
+         assert!(!rebuilt_events
+             .iter()
