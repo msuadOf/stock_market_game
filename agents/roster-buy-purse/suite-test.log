@@ -1,0 +1,14 @@
+
+running 9 tests
+test runtime::world::group_roster_consumer_tests::roster_child_quote_uses_distinct_valid_tail_chain_parameters ... ok
+test runtime::world::group_roster_consumer_tests::plan_identity_failed_tick_leaves_no_plans_cursors_children_or_publication ... ok
+test runtime::world::group_roster_consumer_tests::roster_root_equity_adds_only_own_pending_sell_across_real_start ... ok
+test runtime::world::group_roster_consumer_tests::plan_identity_owner_order_does_not_override_real_child_fifo ... ok
+test runtime::world::group_roster_consumer_tests::roster_open_equity_includes_own_other_stock_pending_sell ... ok
+test runtime::world::group_roster_consumer_tests::roster_open_equity_includes_real_other_stock_buy_purse ... ok
+test runtime::world::group_roster_consumer_tests::roster_lifecycle_revision_consumes_own_pending_equity ... ok
+test runtime::world::group_roster_consumer_tests::roster_open_held_survives_real_partial_fill_and_plan_termination ... ok
+test runtime::world::group_roster_consumer_tests::roster_urgency_after_own_observation_absorbs_missing_pending_in_peak_max ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 3514 filtered out; finished in 0.59s
+

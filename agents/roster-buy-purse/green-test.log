@@ -1,0 +1,6 @@
+
+running 1 test
+test runtime::world::group_roster_consumer_tests::roster_open_equity_includes_real_other_stock_buy_purse ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3522 filtered out; finished in 0.39s
+

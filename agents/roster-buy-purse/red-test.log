@@ -1,0 +1,17 @@
+
+running 1 test
+
+thread 'runtime::world::group_roster_consumer_tests::roster_open_equity_includes_real_other_stock_buy_purse' (6) panicked at packages/engine/src/runtime/group_roster_consumer_tests.rs:509:5:
+assertion `left == right` failed: 权益含在途 purse，2_000_000 分的 80% 为 1_600 股
+  left: ShareCount(1300)
+ right: ShareCount(1600)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test runtime::world::group_roster_consumer_tests::roster_open_equity_includes_real_other_stock_buy_purse ... FAILED
+
+failures:
+
+failures:
+    runtime::world::group_roster_consumer_tests::roster_open_equity_includes_real_other_stock_buy_purse
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3522 filtered out; finished in 0.45s
+

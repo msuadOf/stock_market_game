@@ -1,0 +1,12 @@
+   Compiling engine v0.1.0 (<工作目录>/packages/engine)
+warning: constant `COMMIT_FIELD_EXPECTED` is never used
+    --> packages/engine/src/session.rs:2187:30
+     |
+2187 | pub(in crate::session) const COMMIT_FIELD_EXPECTED: [FieldId; 29] = [
+     |                              ^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `engine` (lib test) generated 1 warning
+    Finished `test` profile [unoptimized] target(s) in 59.09s
+  Executable unittests src/lib.rs (target/debug/deps/engine-3eb2aa70a85e274e)
