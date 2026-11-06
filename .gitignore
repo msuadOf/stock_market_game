@@ -130,3 +130,6 @@ artifacts/market-ui-performance/
 /agents/**/*.json
 # 基准默认负载配置是正式基准的输入而非机器产物，必须入库保证可复现
 !/agents/engine-max-performance/default-setup.json
+
+# 本地 WebUI 服务进程记录
+/agents/macos-webui-design/*.pid
