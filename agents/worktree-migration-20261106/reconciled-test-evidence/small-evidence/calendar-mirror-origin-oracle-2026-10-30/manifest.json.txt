@@ -1,0 +1,34 @@
+{
+  "status": "SOURCE_READY_PENDING_ACTUAL",
+  "base": "3265c79fa7b6c4c4d416aaa47b2a92d95ffe024f",
+  "sources": [
+    {
+      "path": "packages/engine/src/runtime/calendar_public_restore_tests.rs",
+      "sha256": "03a98df02335d3907f7cb37c34885d18a2da1d158cca8440e0e776b3bfba16e5"
+    },
+    {
+      "path": "packages/engine/src/session/calendar_nonzero_plan_parity_tests.rs",
+      "sha256": "e84060042e5a25107885ed4934f2a6bf6ccea4ee9deec66dacb5d63dda5414e6"
+    }
+  ],
+  "patch": {
+    "path": "agents/calendar-mirror-origin-oracle-2026-10-30/origin-oracle.diff",
+    "bytes": 11266,
+    "sha256": "8be7766f8691cec9db7db9beaa2854f08be6fa6c975e8a44bc56b53504191db2"
+  },
+  "validation": {
+    "git_diff_check": "通过",
+    "cargo": "未运行，integration 唯一调度",
+    "rustc": "未运行",
+    "cases": "未运行",
+    "target_operations": "无"
+  },
+  "prior_red": "主仓 agents/branch-completion/auction-price-history-2026-10-30/joint-execution-actual/execution.json 原31项实际为27绿、4项完整 Snapshot Eq 红",
+  "independentReview": {
+    "reviewer": "/root/sol_group_consumer29",
+    "status": "SOURCE READY，无阻断",
+    "scope": "完整两 file diff，亲核 patch 与两 current source SHA；确认全部后续 lifecycle 推导、7 字段来源与完整 Snapshot Eq 和业务强尾",
+    "evidence": "独立复核简讯.md",
+    "actual": "未编译、未运行，待 integration"
+  }
+}

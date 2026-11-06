@@ -1,0 +1,81 @@
+diff --git a/packages/engine/src/session/pipeline/continuous_matching_adapter_tests.rs b/packages/engine/src/session/pipeline/continuous_matching_adapter_tests.rs
+index d7959a8a..6291990a 100644
+--- a/packages/engine/src/session/pipeline/continuous_matching_adapter_tests.rs
++++ b/packages/engine/src/session/pipeline/continuous_matching_adapter_tests.rs
+@@ -169,6 +169,8 @@ fn continuous_adapter_rejects_a_cross_stock_market_map() {
+     let first = StockId(0);
+     let second = StockId(1);
+     let first_market = game.state.markets.remove(&first).unwrap();
++    let second_market = game.state.markets.remove(&second).unwrap();
++    game.state.markets.insert(first, second_market);
+     game.state.markets.insert(second, first_market);
+ 
+     let error = prepare_incremental_continuous_inputs(&game).unwrap_err();
+@@ -176,7 +178,7 @@ fn continuous_adapter_rejects_a_cross_stock_market_map() {
+     assert!(matches!(
+         error,
+         StepFatal::InvariantViolation { description, location }
+-            if description.contains("market map key")
++            if description == "market map key disagrees with the market stock code"
+                 && location == "pipeline::continuous_matching_adapter"
+     ));
+ }
+diff --git a/packages/engine/src/session/pipeline/continuous_tick_finalizer_tests.rs b/packages/engine/src/session/pipeline/continuous_tick_finalizer_tests.rs
+index cdb7c3b4..ca9fa864 100644
+--- a/packages/engine/src/session/pipeline/continuous_tick_finalizer_tests.rs
++++ b/packages/engine/src/session/pipeline/continuous_tick_finalizer_tests.rs
+@@ -470,13 +470,21 @@ fn tick_and_day_overflow_are_typed_and_atomic() {
+                 game.session_state_hash().unwrap(),
+             ))
+         };
++        let boundary_error = super::phase::PhasePolicy::capture(&game)
++            .boundary(&game)
++            .expect_err("PhasePolicy boundary must report the exact clock overflow");
++        assert!(matches!(
++            &boundary_error,
++            super::StepFatal::InvariantViolation { location, description }
++                if location == "pipeline::PhasePolicy::boundary" && description.contains("溢出")
++        ));
++        let calendar_error = game
++            .prepare_market_calendar_tick()
++            .expect_err("calendar tick must retain the exact typed overflow");
+         let error = prepare_market_tick(&mut game)
+             .err()
+             .expect("clock overflow must fail");
+-        assert!(
+-            matches!(error.into_fatal(), super::StepFatal::InvariantViolation { location, description }
+-            if location == "pipeline::PhasePolicy::boundary" && description.contains("溢出"))
+-        );
++        assert_eq!(error.into_fatal(), calendar_error);
+         if let Some(before) = before {
+             assert_eq!(
+                 (
+diff --git a/packages/engine/src/session/pipeline/read_only_start.rs b/packages/engine/src/session/pipeline/read_only_start.rs
+index 98773984..3971e8e9 100644
+--- a/packages/engine/src/session/pipeline/read_only_start.rs
++++ b/packages/engine/src/session/pipeline/read_only_start.rs
+@@ -287,8 +287,22 @@ mod tests {
+                     ),
+                 );
+             } else {
+-                // hydration 与 Seal 都不消费 category；稍后的 context 必须仍排在资源错误之后。
+-                game.state.setup.stocks.clear();
++                // 保持 setup、StockCatalog 与 Calendar 绑定完整，只让涨停价投影在 context 阶段失败。
++                game.state
++                    .markets
++                    .get_mut(&code)
++                    .unwrap()
++                    .fixture_set_last_close(Money::ZERO);
++                let context_error =
++                    super::super::account_validation_context::build_account_validation_context(
++                        &game,
++                    )
++                    .expect_err("零昨收必须使 AccountValidation context 的涨停价计算显式失败");
++                assert!(matches!(
++                    context_error,
++                    super::super::StepFatal::InvariantViolation { location, .. }
++                        if location == "pipeline::account_validation_context"
++                ));
+             }
+             let expected = match game.validate_existing_live_envelope_projection() {
+                 Err(error) => error,

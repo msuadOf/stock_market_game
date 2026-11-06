@@ -1,0 +1,42 @@
+diff --git a/apps/web/src/components/trading-timeline.test.ts b/apps/web/src/components/trading-timeline.test.ts
+index 64b5f524..dff36085 100644
+--- a/apps/web/src/components/trading-timeline.test.ts
++++ b/apps/web/src/components/trading-timeline.test.ts
+@@ -51,6 +51,20 @@ test("开盘集合竞价窗口内不提供形成中分钟槽——起局首渲
+   assert.equal(noOpening.currentMinuteSlot(1), 0);
+ });
+ 
++test("形成中分钟槽按交易日内开盘窗口判断", { timeout: 10000 }, () => {
++  const timeline = new TradingTimeline({ ticks_per_day: 15300, auction_ticks: 900, closing_auction_ticks: 180 });
++  assert.equal(timeline.currentMinuteSlot(0), null);
++  assert.equal(timeline.currentMinuteSlot(15300), timeline.minuteSlot(15300));
++  assert.equal(timeline.currentMinuteSlot(15301), null);
++  assert.equal(timeline.currentMinuteSlot(16200), null);
++  assert.equal(timeline.currentMinuteSlot(16201), 0);
++  assert.equal(timeline.currentMinuteSlot(30601), null);
++
++  const noOpening = new TradingTimeline({ ticks_per_day: 4, auction_ticks: 0, closing_auction_ticks: 0 });
++  assert.equal(noOpening.currentMinuteSlot(5), 0);
++  assert.throws(() => timeline.minuteSlot(15301), /开盘窗口/);
++});
++
+ test("非法 timing 与事件不能被静默修补到零分钟", { timeout: 10000 }, () => {
+   for (const timing of [
+     { ticks_per_day: 0, auction_ticks: 0, closing_auction_ticks: 0 },
+diff --git a/apps/web/src/components/trading-timeline.ts b/apps/web/src/components/trading-timeline.ts
+index 5b096408..9de06c2b 100644
+--- a/apps/web/src/components/trading-timeline.ts
++++ b/apps/web/src/components/trading-timeline.ts
+@@ -50,7 +50,11 @@ export class TradingTimeline {
+    *  供分钟面板以游戏时钟提供"形成中桶"观察时刻；调用方不得直接用
+    *  minuteSlot（其对开盘窗口 tick 按契约抛 RangeError）。 */
+   currentMinuteSlot(tick: number): number | null {
+-    return tick > this.openingTicks ? this.minuteSlot(tick) : null;
++    if (tick > this.openingTicks) {
++      const dayOffset = this.eventOffset(tick) % this.ticksPerDay;
++      return dayOffset >= this.openingTicks ? this.minuteSlot(tick) : null;
++    }
++    return null;
+   }
+ 
+   clock(tick: number): string {

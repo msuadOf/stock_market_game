@@ -1,0 +1,220 @@
+diff --git a/packages/engine/src/session/pipeline/spine_v0_contract_tests.rs b/packages/engine/src/session/pipeline/spine_v0_contract_tests.rs
+index e11be5d2..7c321c77 100644
+--- a/packages/engine/src/session/pipeline/spine_v0_contract_tests.rs
++++ b/packages/engine/src/session/pipeline/spine_v0_contract_tests.rs
+@@ -2,13 +2,15 @@
+ //! `step_frame_and_commit` / `step_with_commit_evidence`）钉住两树合并后的固定契约。
+ //!
+ //! 这些断言对应审查报告 V0 批次（固定合并契约）：
+-//! 1. publication 失败不安装任何权威状态，且会话保持可步进；
++//! 1. serial publication 失败不安装权威状态，且会话保持可步进；native runtime
++//!    callback 失败则遵循已批准 DP1：World 已发布 tick 不回退，旧 session mirror
++//!    保留，首 fatal 冻结后续入口；
+ //! 2. 后轮（commit 准备段）失败完整保留 authority、RNG、ID 与 receipt/seq 游标；
+ //! 3. 报价过期释放可用于本 tick，且不为其他账户回补预算；
+ //! 4. 空 tick 也交付合法 frame。
+ //!
+-//! V1~V6 的编排重构不得弱化这里的任何断言；改动合同本身需要先改
+-//! `.tmp/spine/v0-contract.md` 并经独立复核。
++//! DP1 取代 V0 对 runtime publication 失败可重试的适用范围；serial rollback、状态
++//! 指纹与真实成交重放尾断言仍保留。V1~V6 的编排重构不得弱化这些断言。
+ 
+ use super::StepFatal;
+ use crate::{AccountId, Event, GameSession, Intent, Money, Side};
+@@ -108,46 +110,163 @@ fn assert_unchanged(session: &GameSession, before: &AuthorityFingerprint, contex
+     assert_eq!(session.state.seed, before.seed, "{context}");
+ }
+ 
+-/// 合同 1：publication（提交门前投影）失败时，整 tick 丢弃，不安装任何权威状态。
+-/// 失败发生在唯一安装入口之前；会话未被毒化，下一次同入口调用照常完成并交付 frame。
++/// 合同 1：失败合同按执行面分支。serial publication 失败仍可重试；native runtime
++/// callback 失败遵循 DP1：World 已发布拍不可撤，session mirror 保持旧值并冻结首错。
+ #[test]
+ fn v0_publication_failure_installs_nothing_and_keeps_session_steppable() {
+-    let (mut session, batch) = filled_tick_session();
+-    let before = fingerprint(&session);
++    let (mut session, _batch) = filled_tick_session();
+ 
+-    let error = session
+-        .step_frame_and_commit(false, |_, _| {
+-            Err::<crate::session::protocol::TickFrame, _>(StepFatal::InvariantViolation {
+-                description: "V0 合同注入：publication 失败".to_owned(),
+-                location: "spine_v0_contract_tests".to_owned(),
++    #[cfg(target_arch = "wasm32")]
++    {
++        let before = fingerprint(&session);
++        let fatal = StepFatal::InvariantViolation {
++            description: "V0 合同注入：publication 失败".to_owned(),
++            location: "spine_v0_contract_tests".to_owned(),
++        };
++        let error = session
++            .step_frame_and_commit(false, |_, _| {
++                Err::<crate::session::protocol::TickFrame, _>(fatal.clone())
+             })
+-        })
+-        .expect_err("publication 失败必须使整个 tick 失败");
++            .expect_err("serial publication 失败必须使整个 tick 失败");
+ 
+-    assert!(
+-        matches!(error, StepFatal::InvariantViolation { .. }),
+-        "注入的失败必须原样返回：{error:?}"
+-    );
+-    assert_unchanged(&session, &before, "publication 失败不得安装任何权威状态");
++        assert_eq!(error, fatal, "注入的失败必须原样返回");
++        assert_unchanged(
++            &session,
++            &before,
++            "serial publication 失败不得安装任何权威状态",
++        );
+ 
+-    // 批四等价改接：staged 批为 thread-local，随失败 attempt 的 produce 消费
+-    //（旧形态=authority pending 不随候选丢弃丢失）——重试前由 fixture 重放
+-    // 同批（失败不消费权威 attention/RNG ⇒ 重放批与首次生产逐位同构）。
+-    crate::session::pipeline::staged_decision::stage(batch);
++        // staged 批随失败 attempt 的 produce 消费；serial authority 未推进，重试前重放同批。
++        crate::session::pipeline::staged_decision::stage(_batch);
++        let frame = session
++            .step_frame()
++            .expect("serial publication 失败不得破坏会话可用性");
++        assert_eq!(frame.tick, before.tick + 1);
++        assert!(frame.validate().is_ok());
++        assert!(
++            frame
++                .facts
++                .iter()
++                .any(|fact| matches!(fact.event, Event::Trade { .. })),
++            "重放的成交 tick 必须重新产生真实成交事件"
++        );
++    }
+ 
+-    // 同一条生产入口的下一次调用必须照常完成：失败的尝试没有留下半安装状态。
+-    let frame = session
+-        .step_frame()
+-        .expect("publication 失败不得破坏会话可用性");
+-    assert_eq!(frame.tick, before.tick + 1);
+-    assert!(frame.validate().is_ok());
+-    assert!(
+-        frame
+-            .facts
+-            .iter()
+-            .any(|fact| matches!(fact.event, Event::Trade { .. })),
+-        "重放的成交 tick 必须重新产生真实成交事件"
+-    );
++    #[cfg(not(target_arch = "wasm32"))]
++    {
++        session
++            .construct_runtime_driver_lazy_for_test()
++            .expect("先构造 runtime driver，读取 World 初始发布版本");
++        let before = fingerprint(&session);
++        let publication_handle = session.runtime_publication().unwrap();
++        let before_publication = publication_handle.load();
++        let authority_epoch = session.runtime_authority_epoch;
++        let driver_cell = session
++            .runtime_driver_for_test()
++            .expect("runtime driver 必须在位");
++        assert_eq!(
++            driver_cell.lock().unwrap().world_committed_tick(),
++            before.tick,
++            "失败前 World 与 session 必须处于同一已提交 tick"
++        );
++
++        let fatal = StepFatal::InvariantViolation {
++            description: "V0 合同注入：publication 失败".to_owned(),
++            location: "spine_v0_contract_tests".to_owned(),
++        };
++        let error = session
++            .step_frame_and_commit(false, |projection, facts| {
++                let frame = projection.project_frame(facts)?;
++                frame
++                    .validate()
++                    .map_err(|error| StepFatal::InvariantViolation {
++                        location: "spine_v0_contract_tests::projection".to_owned(),
++                        description: error.to_string(),
++                    })?;
++                assert!(
++                    frame
++                        .facts
++                        .iter()
++                        .any(|fact| matches!(fact.event, Event::Trade { .. })),
++                    "runtime callback 必须在真实成交 frame 上失败"
++                );
++                Err::<crate::session::protocol::TickFrame, _>(fatal.clone())
++            })
++            .expect_err("runtime callback 失败必须终止当前 tick");
++
++        assert_eq!(error, fatal, "注入的首 fatal 必须原样返回");
++        assert_unchanged(
++            &session,
++            &before,
++            "runtime callback 失败不得安装 session mirror、游标或 RNG",
++        );
++        assert_eq!(
++            session.poison_reason(),
++            Some(&fatal),
++            "必须封存完整首 fatal"
++        );
++        let current_publication = session.runtime_publication().unwrap();
++        assert!(
++            std::sync::Arc::ptr_eq(&publication_handle, &current_publication),
++            "失败后必须保留原 World 发布槽"
++        );
++        assert_eq!(
++            session.runtime_authority_epoch, authority_epoch,
++            "失败后不得替换 runtime authority"
++        );
++        let after_publication = current_publication.load();
++        assert_eq!(
++            after_publication.tick,
++            before.tick + 1,
++            "callback 失败不得回退 World 已发布 tick"
++        );
++        assert!(
++            after_publication.generation > before_publication.generation,
++            "已提交 World 的公开 generation 必须前进"
++        );
++        assert!(
++            after_publication.tick > before_publication.tick,
++            "已提交 World 的公开 tick 必须前进"
++        );
++        let driver_cell = session
++            .runtime_driver_for_test()
++            .expect("失败后原 runtime driver 必须保留，不得清除或重建");
++        assert_eq!(
++            driver_cell.lock().unwrap().world_committed_tick(),
++            before.tick + 1,
++            "原 driver 必须保留已经提交的 World tick"
++        );
++
++        assert_eq!(session.step_frame().unwrap_err(), fatal);
++        assert_eq!(session.step().unwrap_err(), fatal);
++        assert!(matches!(
++            session.save(),
++            Err(crate::SessionError::Step(actual)) if actual == fatal
++        ));
++        assert_eq!(
++            session.poison_reason(),
++            Some(&fatal),
++            "后续入口不得覆盖首错"
++        );
++        assert_unchanged(
++            &session,
++            &before,
++            "首 fatal 后的拒绝入口不得继续改变 session 权威状态",
++        );
++        assert!(
++            session.runtime_driver_for_test().is_some(),
++            "terminal 后不得清除 runtime driver"
++        );
++        let final_publication = session.runtime_publication().unwrap();
++        assert!(
++            std::sync::Arc::ptr_eq(&publication_handle, &final_publication),
++            "后续拒绝不得替换原 World 发布槽"
++        );
++        assert_eq!(
++            session.runtime_authority_epoch, authority_epoch,
++            "后续拒绝不得替换 runtime authority"
++        );
++    }
+ }
+ 
+ /// 合同 2：后轮（commit 准备段，candidate_commit 注入点）失败时，authority、

@@ -1,0 +1,81 @@
+diff --git a/packages/engine/src/session/pipeline/decision_snapshot_capture_tests.rs b/packages/engine/src/session/pipeline/decision_snapshot_capture_tests.rs
+index 9320dad2..c9511bd1 100644
+--- a/packages/engine/src/session/pipeline/decision_snapshot_capture_tests.rs
++++ b/packages/engine/src/session/pipeline/decision_snapshot_capture_tests.rs
+@@ -195,6 +195,31 @@ fn due_retail_shadow(seed: u64) -> (GameSession, GameSession, AccountId) {
+ 
+ #[test]
+ fn accepted_retail_observation_dates_a_fixture_buy_and_decays_only_its_influence() {
++    fn advance_fixture_to_session(shadow: &mut GameSession, target_day: u32) {
++        while {
++            let completed = shadow
++                .civil_clock()
++                .completed_trading_sessions_expected()
++                .unwrap();
++            let current_day = match shadow.civil_clock().phase() {
++                crate::session::CivilPhase::IntradayTrading => completed - 1,
++                crate::session::CivilPhase::ClosedDay => completed,
++            };
++            current_day < target_day
++        } {
++            let date = shadow.civil_date();
++            shadow.civil_clock_mut().end_day(date).unwrap();
++        }
++        assert_eq!(
++            shadow.civil_clock().phase(),
++            crate::session::CivilPhase::IntradayTrading
++        );
++        shadow.market_calendar_day = None;
++        shadow.state.day = target_day;
++        shadow.state.tick = u64::from(target_day) * shadow.state.setup.ticks_per_day;
++        shadow.fixture_sync_market_modes_for_test();
++    }
++
+     let (_, mut shadow, account) = due_retail_shadow(42);
+     // 数值身份后无字符串可断言：retail_quote_setup 单股目录按 rank 取 StockId(0)。
+     let code = crate::StockId(0);
+@@ -232,8 +257,9 @@ fn accepted_retail_observation_dates_a_fixture_buy_and_decays_only_its_influence
+     assert_eq!(state.feedback.failure_events.len(), 1);
+     assert_eq!(state.feedback.failure_events[0].moment, moment);
+     assert_eq!(state.consecutive_failed_buys, 1);
+-    shadow.state.day = 19;
+-    shadow.state.tick = u64::from(shadow.state.day) * shadow.state.setup.ticks_per_day;
++    advance_fixture_to_session(&mut shadow, 19);
++    let (nineteen_day, _) = shadow.prepare_market_calendar_projection().unwrap();
++    assert_eq!(nineteen_day.day_model().shared_sessions_before_date(), 19);
+     let tick = shadow.state.tick;
+     npc_working_quote_tests::force_attention_candidate(&mut shadow, account, tick);
+     let nineteen = capture_decision_snapshot(&mut shadow).unwrap();
+@@ -245,8 +271,9 @@ fn accepted_retail_observation_dates_a_fixture_buy_and_decays_only_its_influence
+             .failure_influence(),
+         Some(1)
+     );
+-    shadow.state.day = 20;
+-    shadow.state.tick = u64::from(shadow.state.day) * shadow.state.setup.ticks_per_day;
++    advance_fixture_to_session(&mut shadow, 20);
++    let (twenty_day, _) = shadow.prepare_market_calendar_projection().unwrap();
++    assert_eq!(twenty_day.day_model().shared_sessions_before_date(), 20);
+     let tick = shadow.state.tick;
+     npc_working_quote_tests::force_attention_candidate(&mut shadow, account, tick);
+     let twenty = capture_decision_snapshot(&mut shadow).unwrap();
+diff --git a/packages/engine/src/session/pipeline/t3_boundary_tests.rs b/packages/engine/src/session/pipeline/t3_boundary_tests.rs
+index 41a1dc31..4fcaf039 100644
+--- a/packages/engine/src/session/pipeline/t3_boundary_tests.rs
++++ b/packages/engine/src/session/pipeline/t3_boundary_tests.rs
+@@ -326,7 +326,15 @@ fn full_trading_day_and_day_boundary_keep_one_production_per_tick() {
+         session.step().expect("日内 tick");
+     }
+     assert_eq!(attempt_seq(&session), before + ticks_per_day);
+-    // 次日首 tick（新会话路径）：仍恰 +1。
++    let completed_day_attempts = attempt_seq(&session);
++    session.end_civil_day().expect("交易日日结");
++    assert_eq!(attempt_seq(&session), completed_day_attempts);
++    while session.civil_clock().phase() == crate::session::CivilPhase::ClosedDay {
++        let closed_day_attempts = attempt_seq(&session);
++        session.end_civil_day().expect("休市日日结");
++        assert_eq!(attempt_seq(&session), closed_day_attempts);
++    }
++    // 下一个交易日首 tick（新会话路径）：仍恰 +1。
+     session.step().expect("日界后首 tick");
+     assert_eq!(
+         attempt_seq(&session),

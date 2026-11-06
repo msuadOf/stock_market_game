@@ -1,0 +1,1 @@
+cannot start ordinary test command <项目根目录>/.tmp/node24-env/node_modules/.bin/oxlint: spawn <项目根目录>/.tmp/node24-env/node_modules/.bin/oxlint ENOENT

@@ -1,0 +1,11 @@
+COMMAND:
+<项目根目录>/.tmp/node24-env/node scripts/run-with-deadline.mjs 10000 -- <项目根目录>/.tmp/node24-env/node --experimental-strip-types --test --test-timeout=10000 --test-concurrency=1 apps/web/src/components/trading-timeline.test.ts
+
+RESULT BEFORE IMPLEMENTATION:
+exit 1; tests 5; pass 4; fail 1.
+✖ 形成中分钟槽按交易日内开盘窗口判断
+RangeError: 连续竞价 tick 15301 尚未结束开盘窗口
+at TradingTimeline.minuteSlot (trading-timeline.ts:45:43)
+at TradingTimeline.currentMinuteSlot (trading-timeline.ts:53:44)
+at TestContext.<anonymous> (trading-timeline.test.ts:58:25)
+bounded command exited with 1

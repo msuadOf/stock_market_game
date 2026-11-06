@@ -1,0 +1,6 @@
+COMMAND:
+<项目根目录>/.tmp/node24-env/node scripts/run-with-deadline.mjs 10000 -- <项目根目录>/.tmp/node24-env/node_modules/.bin/oxlint --deny-warnings apps/web/src/components/trading-timeline.ts apps/web/src/components/trading-timeline.test.ts
+
+RESULT:
+Could not start: spawn <项目根目录>/.tmp/node24-env/node_modules/.bin/oxlint ENOENT.
+The isolated worktree has no oxlint executable at the specified path.

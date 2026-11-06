@@ -1,0 +1,122 @@
+[
+  {
+    "source": ".worktree/attention-civil-fixture-2026-10-30/agents/branch-completion/attention-civil-fixture-2026-10-30/implementation.md",
+    "source_sha256": "af05f51b8738d34308eefc4be7e384a32ebf8475a14f4d3e3fad2a2f528b6dae",
+    "archive": "attention-civil-fixture-2026-10-30/implementation.md",
+    "archive_sha256": "af05f51b8738d34308eefc4be7e384a32ebf8475a14f4d3e3fad2a2f528b6dae"
+  },
+  {
+    "source": ".worktree/calendar-mirror-origin-oracle-2026-10-30/agents/calendar-mirror-origin-oracle-2026-10-30/manifest.json",
+    "source_sha256": "48c4673445ce2c5d312982d274ef22a249d9b6280b19bef1cb8a457860b7551f",
+    "archive": "calendar-mirror-origin-oracle-2026-10-30/manifest.json.txt",
+    "archive_sha256": "48c4673445ce2c5d312982d274ef22a249d9b6280b19bef1cb8a457860b7551f"
+  },
+  {
+    "source": ".worktree/calendar-mirror-origin-oracle-2026-10-30/agents/calendar-mirror-origin-oracle-2026-10-30/origin-oracle.diff",
+    "source_sha256": "8be7766f8691cec9db7db9beaa2854f08be6fa6c975e8a44bc56b53504191db2",
+    "archive": "calendar-mirror-origin-oracle-2026-10-30/origin-oracle.diff",
+    "archive_sha256": "8be7766f8691cec9db7db9beaa2854f08be6fa6c975e8a44bc56b53504191db2"
+  },
+  {
+    "source": ".worktree/calendar-mirror-origin-oracle-2026-10-30/agents/calendar-mirror-origin-oracle-2026-10-30/交接说明.md",
+    "source_sha256": "191c2f5fabb748efae08dd1c9cfdac42153f13cb427438c1ba72d627ad713f8e",
+    "archive": "calendar-mirror-origin-oracle-2026-10-30/交接说明.md",
+    "archive_sha256": "191c2f5fabb748efae08dd1c9cfdac42153f13cb427438c1ba72d627ad713f8e"
+  },
+  {
+    "source": ".worktree/calendar-mirror-origin-oracle-2026-10-30/agents/calendar-mirror-origin-oracle-2026-10-30/独立复核简讯.md",
+    "source_sha256": "453f64244ed06d8fb1b98356b857f74235bf7f4afe5190144efd76b92fb16ca2",
+    "archive": "calendar-mirror-origin-oracle-2026-10-30/独立复核简讯.md",
+    "archive_sha256": "453f64244ed06d8fb1b98356b857f74235bf7f4afe5190144efd76b92fb16ca2"
+  },
+  {
+    "source": ".worktree/trading-timeline-day-guard-2026-10-30/agents/branch-completion/trading-timeline-day-guard-2026-10-30/green-test.log",
+    "source_sha256": "d07e4144e7a69524ed60607d30bdb513aa490d1c9aa8a2ee2e5dce7c55447453",
+    "archive": "trading-timeline-day-guard-2026-10-30/green-test.log.txt",
+    "archive_sha256": "d07e4144e7a69524ed60607d30bdb513aa490d1c9aa8a2ee2e5dce7c55447453"
+  },
+  {
+    "source": ".worktree/trading-timeline-day-guard-2026-10-30/agents/branch-completion/trading-timeline-day-guard-2026-10-30/implementation.diff",
+    "source_sha256": "08a2af8e26a6d61e451b9979c728ca61d9a42c9175e2b99e6decb28d090dc550",
+    "archive": "trading-timeline-day-guard-2026-10-30/implementation.diff",
+    "archive_sha256": "08a2af8e26a6d61e451b9979c728ca61d9a42c9175e2b99e6decb28d090dc550"
+  },
+  {
+    "source": ".worktree/trading-timeline-day-guard-2026-10-30/agents/branch-completion/trading-timeline-day-guard-2026-10-30/implementation.md",
+    "source_sha256": "d0f458b495069947423ee65d4febb16f70195fe39563a0a7a4ebebfab4a6c886",
+    "archive": "trading-timeline-day-guard-2026-10-30/implementation.md",
+    "archive_sha256": "d0f458b495069947423ee65d4febb16f70195fe39563a0a7a4ebebfab4a6c886"
+  },
+  {
+    "source": ".worktree/trading-timeline-day-guard-2026-10-30/agents/branch-completion/trading-timeline-day-guard-2026-10-30/lint.log",
+    "source_sha256": "346d7cfb356eb985ee6c6fe28eadd6504ec71ffe812cce7137b76a5b62555f74",
+    "archive": "trading-timeline-day-guard-2026-10-30/lint.log.txt",
+    "archive_sha256": "e9bb44a024a34525d98c7b9c70678ab23b8ff1445d97ce072873c319e2756c20"
+  },
+  {
+    "source": ".worktree/trading-timeline-day-guard-2026-10-30/agents/branch-completion/trading-timeline-day-guard-2026-10-30/lint.txt",
+    "source_sha256": "472fa6f997b43c352c025b78b2ef46f37d7c2d7e94d36fbd6af614fc644a5425",
+    "archive": "trading-timeline-day-guard-2026-10-30/lint.txt",
+    "archive_sha256": "13bfde552f0f6ff5df8863601058dee5bc1d2b96d08b604b8dc45cd3a227dcfd"
+  },
+  {
+    "source": ".worktree/trading-timeline-day-guard-2026-10-30/agents/branch-completion/trading-timeline-day-guard-2026-10-30/red-test.txt",
+    "source_sha256": "62e51372e316235d90203d90c28c71e71f74c40ae937c49b91c6781013860f11",
+    "archive": "trading-timeline-day-guard-2026-10-30/red-test.txt",
+    "archive_sha256": "07e9646d17c13464d25aa8c8b48624a54e1c55c2b3671c67b96c6f524132f652"
+  },
+  {
+    "source": ".worktree/regression-calendar-fixtures-2026-10-30/agents/branch-completion/regression-calendar-fixtures-2026-10-30/implementation.md",
+    "source_sha256": "9039d56b4e8ce3c270acb0ad62c928dd6e17fd84e61927de8b02b30d2b2992ce",
+    "archive": "regression-calendar-fixtures-2026-10-30/implementation.md",
+    "archive_sha256": "9039d56b4e8ce3c270acb0ad62c928dd6e17fd84e61927de8b02b30d2b2992ce"
+  },
+  {
+    "source": ".worktree/regression-calendar-fixtures-2026-10-30/agents/branch-completion/regression-calendar-fixtures-2026-10-30/source-only.patch",
+    "source_sha256": "3b10da89c6525fe04438511457bf0cbb212e0e72a21d4096a9f6790c6794a60c",
+    "archive": "regression-calendar-fixtures-2026-10-30/source-only.patch",
+    "archive_sha256": "3b10da89c6525fe04438511457bf0cbb212e0e72a21d4096a9f6790c6794a60c"
+  },
+  {
+    "source": ".worktree/regression-calendar-fixtures-2026-10-30/agents/branch-completion/regression-calendar-fixtures-2026-10-30/独立复核.md",
+    "source_sha256": "bc7864b4bb38cc6fc624ec615ac929a194a65d594088a3e9d2b40ae1e6a8f8f0",
+    "archive": "regression-calendar-fixtures-2026-10-30/独立复核.md",
+    "archive_sha256": "bc7864b4bb38cc6fc624ec615ac929a194a65d594088a3e9d2b40ae1e6a8f8f0"
+  },
+  {
+    "source": ".worktree/regression-publication-contract-2026-10-30/agents/branch-completion/regression-publication-contract-2026-10-30/implementation-note.md",
+    "source_sha256": "5939b41e09f53ca10a4192a292d89a1ae0eba8a8315becc841e7b7c9c5568d82",
+    "archive": "regression-publication-contract-2026-10-30/implementation-note.md",
+    "archive_sha256": "0b5b47cfe617dcbeb54256018b9a2b4944b80b8e1c9f5212587afe66b1c82a0a"
+  },
+  {
+    "source": ".worktree/regression-publication-contract-2026-10-30/agents/branch-completion/regression-publication-contract-2026-10-30/source-only.patch",
+    "source_sha256": "432b7423be4283745cbe1921220040ce97e7d1e4921bc4a486947366689ca833",
+    "archive": "regression-publication-contract-2026-10-30/source-only.patch",
+    "archive_sha256": "432b7423be4283745cbe1921220040ce97e7d1e4921bc4a486947366689ca833"
+  },
+  {
+    "source": ".worktree/regression-publication-contract-2026-10-30/agents/branch-completion/regression-publication-contract-2026-10-30/独立复核.md",
+    "source_sha256": "5d6edad38c22e3c5937a9572f702d61bd55ddf8f0c9fb719378e6312e1aabb94",
+    "archive": "regression-publication-contract-2026-10-30/独立复核.md",
+    "archive_sha256": "5d6edad38c22e3c5937a9572f702d61bd55ddf8f0c9fb719378e6312e1aabb94"
+  },
+  {
+    "source": ".worktree/regression-error-boundaries-2026-10-30/agents/branch-completion/regression-error-boundaries-2026-10-30/source-only.patch",
+    "source_sha256": "06d143c71c52fee6c06cadff32e03b767dd7b96ca3dcfa32aa449084cbee0674",
+    "archive": "regression-error-boundaries-2026-10-30/source-only.patch",
+    "archive_sha256": "06d143c71c52fee6c06cadff32e03b767dd7b96ca3dcfa32aa449084cbee0674"
+  },
+  {
+    "source": ".worktree/regression-error-boundaries-2026-10-30/agents/branch-completion/regression-error-boundaries-2026-10-30/修复记录.md",
+    "source_sha256": "2468270a7a94acb03a2f1477679f5b3eb3f69a4bf42c29a2759021f785aa8d63",
+    "archive": "regression-error-boundaries-2026-10-30/修复记录.md",
+    "archive_sha256": "2468270a7a94acb03a2f1477679f5b3eb3f69a4bf42c29a2759021f785aa8d63"
+  },
+  {
+    "source": ".worktree/regression-error-boundaries-2026-10-30/agents/branch-completion/regression-error-boundaries-2026-10-30/独立复核.md",
+    "source_sha256": "a27e0a33b6d0849179fd94800ad5d8fad164e50ceb9585bd02e20c4d469e2653",
+    "archive": "regression-error-boundaries-2026-10-30/独立复核.md",
+    "archive_sha256": "a27e0a33b6d0849179fd94800ad5d8fad164e50ceb9585bd02e20c4d469e2653"
+  }
+]
