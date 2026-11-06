@@ -12,6 +12,6 @@
 | pending cash | `e02c1b67` |
 | worker error fidelity | `cafc847d` |
 
-main 工作树中的 `wasm_tombstone` 是未接线实验；`company-write-web` 工作区有两个 `UU` 冲突条目。其他 calendar、runtime、wasm 和 clippy 相关工作区存在多处差异，目前仅完成初筛，不能直接移植；后续须逐项确认归属、依赖、测试及大 A 语义。
+main 工作树中的 `wasm_tombstone` 是未接线实验；`company-write-web` 工作区有三个 `UU` 冲突条目。其他 calendar、runtime、wasm 和 clippy 相关工作区存在多处差异，目前仅完成初筛，不能直接移植；后续须逐项确认归属、依赖、测试及大 A 语义。
 
 根工作区约有 24 万个未跟踪项，混合历史证据与构建产物；这一估计不提供逐项分类依据。快照中的 186 个 worktree 是有状态条目或扫描错误的集合，并非全部确认为脏；其中两次 `git status` 超时，状态未知。未跟踪目录可能在状态输出中折叠。实际处理前须重新扫描并核对，不应据此删除任何内容。
