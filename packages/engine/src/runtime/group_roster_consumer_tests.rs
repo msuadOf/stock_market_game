@@ -461,6 +461,59 @@ fn roster_open_equity_includes_own_other_stock_pending_sell() {
     world.shutdown().expect("清理两股真实在途资源");
 }
 
+#[test]
+fn roster_open_equity_includes_real_other_stock_buy_purse() {
+    let mut world = world_with_stocks(2);
+    world.send_external_plan_grouped(
+        vec![
+            Vec::new(),
+            vec![crate::runtime::decision::PendingOp {
+                local: 0,
+                stock: 0,
+                side: Side::Buy,
+                routed: crate::runtime::protocol::RoutedPrice::Fixed(1_000),
+                purse_reference: 1_000,
+                qty: 300,
+            }],
+        ],
+        vec![Vec::new(); 2],
+    );
+    world.run_ticks(1).expect("真实买单受理并占用现金");
+    let accounts = world.snapshot_accounts().expect("真实账户");
+    let account = &accounts[1].1[0];
+    assert_eq!(account.shares[0], 1_000);
+    assert_eq!(world.public_views()[0].last_price, 1_000);
+    assert_eq!(world.public_views()[1].last_price, 1_000);
+    assert!(account.buy_purse_held_cents > 300_000, "purse 含费用预留");
+    assert_eq!(account.cash + account.buy_purse_held_cents, 1_000_000);
+    let (resting, _) = world.collect_desk_resting().expect("真实在途买单");
+    assert!(resting[0]
+        .iter()
+        .any(|order| order.owner == (1, 0) && order.side == Side::Buy && order.qty == 300));
+    let mut scores = assessment(10_000);
+    let score = scores.remove(&StockId(0)).expect("确定性开仓评分");
+    prepare_assessments(&mut world, 2, BTreeMap::from([(StockId(1), score)]));
+    world.run_ticks(1).expect("在途买单跨拍后开仓另一股");
+    let accounts = world.snapshot_accounts().expect("跨拍账户");
+    assert!(accounts[1].1[0].buy_purse_held_cents > 0);
+    let (resting, _) = world.collect_desk_resting().expect("跨拍真实在途买单");
+    assert!(resting[0]
+        .iter()
+        .any(|order| order.owner == (1, 0) && order.side == Side::Buy && order.qty == 300));
+    let books = world.collect_plans().expect("生产开仓计划");
+    let tail = books[1]
+        .1
+        .active_investor_plan(OWNERS[1], &StockId(1))
+        .expect("尾组新买计划");
+    assert_eq!(tail.direction(), Side::Buy);
+    assert_eq!(
+        tail.target(),
+        PlanTarget::ShareCount(1_600),
+        "权益含在途 purse，2_000_000 分的 80% 为 1_600 股"
+    );
+    world.shutdown().expect("回收真实在途资源");
+}
+
 /// urgency 只将含在途 equity 用作 max(peak, equity) 的第二项；两处生产
 /// 调用都在本人 observe 之后，peak 已不小于同口径 equity。错名册只能
 /// 漏掉本组在途量，因此被 max 吸收。本例固定真实复审入口及此不变量，
