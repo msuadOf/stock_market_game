@@ -1,0 +1,5 @@
+本轮实现前目标源码 SHA-1（git hash-object）：29e30a3077ee8bc5c3fc148785daaefa0bbe989f
+目标文件：apps/web/src/host/worker-host-company-write.test.ts
+父级已保存红测位置（由任务提供）：agents/perf-intraday-independent/resume-2026-10-29/web-origin-regression/worker-company-teardown/red.*
+父级红测描述（由任务提供）：定向 Node 24 三写 case 在 9.174s 被 10s 进程外门终止；首个 case 的 onPost 覆盖 fixture 默认 shutdown/quiesceIngress ACK，finally cleanup 中 host.dispose 等不到 ACK，fake clock 不推进 timeout。
+核对：上述红测目录在本独占 worktree 与共享主工作区均不存在；未重跑该既有红测。

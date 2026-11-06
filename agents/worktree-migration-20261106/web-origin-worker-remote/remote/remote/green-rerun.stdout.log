@@ -1,0 +1,294 @@
+✖ Worker 真实 host 注册公司只读查询，发送同代请求且不能指定其他账户 (2030.473978ms)
+✖ Worker 真实 host 拒绝其他账户回执与错 kind，不用空列表掩盖失败 (2002.870694ms)
+✖ Worker 真实 host 销毁后拒绝迟到的本人查询成功 (2001.459456ms)
+✖ Worker 本地固定玩家零不能接受改写为其他 owner 的完整回执 (2001.475002ms)
+✔ remote report ownership cannot survive a restored timeline with reused IDs (31.931482ms)
+✔ remote advertises its public company report capability (0.968367ms)
+✔ remote page uses the company route, opaque cursor, server limit and owning token (1.843311ms)
+✔ remote omits null pagination rather than sending null or inventing limits (0.898865ms)
+✔ remote by-ID refetches the report from its verified company route with the explicit token (1.892242ms)
+✔ remote rejects unknown report ownership without guessing a company or fetching (0.533378ms)
+✔ remote rejects cross-company pages atomically without registering their valid prefix (2.652004ms)
+✔ remote rejects conflicting report ownership without overwriting the verified company (2.452581ms)
+✔ remote rejects a by-ID response with mismatched company_id (2.792537ms)
+✔ remote rejects a by-ID response with mismatched id (1.247681ms)
+✔ remote exposes HTTP 403 for both report query entries without cached fallback (1.244561ms)
+✔ remote exposes HTTP 404 for both report query entries without cached fallback (1.089438ms)
+✔ remote exposes HTTP 500 for both report query entries without cached fallback (0.942265ms)
+✔ remote exposes network, JSON and DTO failures instead of returning empty reports (1.502345ms)
+✔ remote page response cannot cross a baseline timeline change (2.538833ms)
+✔ remote by-id response cannot cross a baseline timeline change (1.989553ms)
+✔ Remote proposePlayerCompanyAction 经实际 Host 转发可信身份与当前 generation (32.813126ms)
+✔ Remote enqueueReportCorrection 经实际 Host 转发可信身份与当前 generation (4.249981ms)
+✔ Remote cancelReportCorrection 经实际 Host 转发可信身份与当前 generation (4.396003ms)
+✔ Remote Proposal typed四分类拒绝保完整公开failure与cause，不串化或停会话 (2.551742ms)
+✔ Remote 拒绝错owner、错响应代际与畸形typed failure，不能拿receipt自证本人 (3.074901ms)
+✔ Remote真实HTTP入口保raw数字与重复字段拒绝，不先JSON.parse舍入 (2.904339ms)
+✔ Remote Proposal无member显式拒绝；Correction controller不伪造owner0 (1.681768ms)
+✔ Remote HostFailure之后三写均拒绝，不从旧baseline发送context或POST (1.375463ms)
+✔ Remote context等待时HostFailure中断，迟到context不得触发POST (1.366303ms)
+✔ Remote可信context的session不匹配时不发送命令 (1.216271ms)
+✔ Remote可信context的generation不匹配时不发送命令 (1.080168ms)
+✔ Remote可信context的control不匹配时不发送命令 (1.064358ms)
+✔ Remote context等待期间baseline变为1则旧context不能发送新写 (1.391484ms)
+✔ Remote context等待期间baseline变为2则旧context不能发送新写 (1.324282ms)
+✔ Remote迟到success在refresh后显式过期，保原拒绝cause (8.42646ms)
+✔ Remote迟到success在restore后显式过期，保原拒绝cause (1.579847ms)
+✔ Remote迟到success在dispose后显式过期，保原拒绝cause (1.421444ms)
+✔ Remote迟到success在failure后显式过期，保原拒绝cause (1.505625ms)
+✔ Remote迟到rejection在refresh后显式过期，保原拒绝cause (1.546095ms)
+✔ Remote迟到rejection在restore后显式过期，保原拒绝cause (1.469744ms)
+✔ Remote迟到rejection在dispose后显式过期，保原拒绝cause (1.517735ms)
+✔ Remote迟到rejection在failure后显式过期，保原拒绝cause (1.591356ms)
+✔ Given the remote whole-update DTO, when parsed, then it preserves generation and opaque EngineUpdate (1.970373ms)
+✔ Given the remote baseline DTO, when parsed, then it preserves generation and public metadata (1.513805ms)
+✔ Given legacy flat events or frames, when parsed in production, then remote rejects them (0.481559ms)
+✔ Given multiple remote envelope variants, when parsed, then the ambiguous message is rejected (0.188953ms)
+✔ Given malformed remote control payloads, when parsed, then their exact wire shapes are rejected (0.632941ms)
+✔ Given a pause preference payload mode, when converted from speed, then fastest stays JSON safe (0.188014ms)
+✔ Given enriched remote failures, when parsed, then diagnostic context and recovery guidance survive (0.261145ms)
+✔ Given an authenticated remote host, when player orders are queried, then it uses the read-only endpoint (25.944582ms)
+✔ 远程股票历史只通过显式 query endpoint 读取并绑定 generation (3.802713ms)
+✔ Given a keyed day-end save, when RemoteHost sends it, then the exact candidate key reaches the authenticated save endpoint (2.025684ms)
+✔ Given invalid indicators rejected by the server, when calculated remotely, then the host rejects instead of returning result arrays (0.709492ms)
+✔ Given a remote host without a Publisher baseline, when player orders are queried, then it rejects without inventing generation one (0.522609ms)
+✔ Given a same-generation Publisher resync, when refreshBaseline completes, then it redelivers the authoritative baseline (1.17538ms)
+✔ Given a server without diagnostic support, when created, then RemoteHost negotiates it as disabled (0.648761ms)
+✔ Given remote pause preferences, when serialized for the authenticated current generation API, then both flags remain explicit (0.133662ms)
+✔ Given remote session deletion fails, when disposed, then the host reports an explicit fatal failure (6.206554ms)
+✔ remote disposal authenticates the owning session before deletion (0.855824ms)
+✔ 浏览器 WS 凭据不进入 URL，speed GET 携带同一会话授权 (28.125038ms)
+✔ 暂停继续不重送旧 baseline，pull 持续请求并忽略旧 socket error (60.66745ms)
+✔ dispose 与切换 delivery 为已发送写请求提供结果未知出口 (2.568623ms)
+✔ 并发 refresh 与内部 ResyncRequired 共享请求，不遗失原 waiter (1.251711ms)
+✔ 意外断线自动取新权威 baseline，迟到旧 socket 消息不能污染恢复 (151.268409ms)
+✔ 已中断的写请求迟到 queued 不冒充完成，不关闭同 socket 的重同步连接 (1.162209ms)
+✔ 无入队确认的写请求在 5000ms 结果未知，真实未发送的 ID 仍协议失败 (1.543526ms)
+✔ 连续三次自动恢复失败后显式 fatal，不无限重连 (1.044648ms)
+✔ 应用层同步拒绝 baseline 后关闭当前连接并拒绝 waiter，不覆盖原 failure (0.866885ms)
+✔ 启动拒绝读档缓存 baseline 时返回失败且不请求 running true (2.005783ms)
+✔ 远程新 generation baseline 先于HTTP读档响应时，先通知恢复配置再交付 (1.295182ms)
+✔ 远程读档HTTP响应丢失后，重同步新generation仍先确认已提交配置 (1.056108ms)
+✔ 远程读档失败后旧generation确认不改变配置并允许重试 (0.970646ms)
+✔ RemotePublisherState socket 移交与连接 identity 不改变 baseline gate (1.223031ms)
+✔ RemotePublisherState epoch 每次 baseline 都更新，跨 generation 先通知再安装 cache (0.62075ms)
+✔ RemotePublisherState waiter 替换显式拒绝旧请求，完成前清槽保留重入请求 (0.873865ms)
+✔ remote startup restores and caches the authoritative baseline without running the market (28.107448ms)
+✔ remote startup connection loss rejects restoration even while the market is paused (1.886171ms)
+✔ remote startup without a baseline times out and closes its connection (5.99856ms)
+✔ disposed remote startup cannot reconnect after a late load response (0.883905ms)
+✔ Remote SubmitIntent 严格携带权威 generation，不用默认值且旧代确认拒绝 (33.406847ms)
+✔ 并发 remote command 逆序确认只完成对应 request，重复确认显式失败 (1.80809ms)
+✔ request gateway error 只拒绝对应 command，HostFailure 批量拒绝其余 command (1.940042ms)
+✔ mode 切换丢弃旧 socket message/close，已同步的新连接沿用 protocol gate (1.638657ms)
+✔ 旧 socket onerror 不关闭新连接，恢复前仍保留 baseline gate (0.939306ms)
+✔ 并发 resync 共享权威 baseline，所有 waiter 均完成 (1.422443ms)
+✔ baseline callback 抛错时先安装 cache，waiter 由 fail 拒绝 (1.123149ms)
+✔ 同步 send throw 清理 command，dispose 显式拒绝未确认请求 (1.130459ms)
+✔ generation mismatch 和 ResyncRequired 请求重同步且同步前丢弃 protocol (1.743749ms)
+✔ load 新连接的 5000ms timer 在 baseline 到达后清除，超时显式失败 (9.868194ms)
+✔ 同 generation baseline 更新后 orders 沿用各自原有的 query guard (1.591677ms)
+✔ 同 generation baseline 更新后 diagnostics 沿用各自原有的 query guard (1.080958ms)
+✔ 同 generation baseline 更新后 save 沿用各自原有的 query guard (1.158249ms)
+✔ resync send 同步失败拒绝已登记 waiter，后续可显式重试 (1.142969ms)
+✔ Remote实际发送按同code换代id，unknown在pending和timeout前本地拒绝 (1.338653ms)
+✔ 真实双Remote host的submitIntent按A/B/A实际目录隔离 (1.407384ms)
+ℹ tests 95
+ℹ suites 0
+ℹ pass 91
+ℹ fail 4
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 8991.406241
+
+✖ failing tests:
+
+test at src/host/company-read-hosts.test.ts:97:3
+✖ Worker 真实 host 注册公司只读查询，发送同代请求且不能指定其他账户 (2030.473978ms)
+  Error [AggregateError]: WASM shutdown 失败且最终释放事实未知
+      at file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/worker-host.ts:590:74
+      at runNextTicks (node:internal/process/task_queues:65:5)
+      at listOnTimeout (node:internal/timers:567:9)
+      at process.processTimers (node:internal/timers:541:7)
+      at async withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:91:5)
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:98:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    [cause]: {
+      primary: Error: Worker shutdown 操作超时（1999.5519020000002ms）
+          at Timeout.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/worker-request.ts:106:25)
+          at listOnTimeout (node:internal/timers:605:17)
+          at process.processTimers (node:internal/timers:541:7),
+      release: Error: 缺少 cooperative quiescence/真实 child exit 证据；terminate 返回不能证明 Memory 已停止 grow
+          at dispose (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/engine-supervisor.ts:166:35)
+          at Object.fatal [as discard] (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/engine-supervisor.ts:190:11)
+          at file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/worker-host.ts:588:26
+          at runNextTicks (node:internal/process/task_queues:65:5)
+          at listOnTimeout (node:internal/timers:567:9)
+          at process.processTimers (node:internal/timers:541:7)
+          at async withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:91:5)
+          at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:98:5)
+          at async Test.run (node:internal/test_runner/test:1332:7)
+          at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3)
+    },
+    [errors]: [
+      Error: Worker shutdown 操作超时（1999.5519020000002ms）
+          at Timeout.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/worker-request.ts:106:25)
+          at listOnTimeout (node:internal/timers:605:17)
+          at process.processTimers (node:internal/timers:541:7),
+      Error: 缺少 cooperative quiescence/真实 child exit 证据；terminate 返回不能证明 Memory 已停止 grow
+          at dispose (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/engine-supervisor.ts:166:35)
+          at Object.fatal [as discard] (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/engine-supervisor.ts:190:11)
+          at file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/worker-host.ts:588:26
+          at runNextTicks (node:internal/process/task_queues:65:5)
+          at listOnTimeout (node:internal/timers:567:9)
+          at process.processTimers (node:internal/timers:541:7)
+          at async withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:91:5)
+          at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:98:5)
+          at async Test.run (node:internal/test_runner/test:1332:7)
+          at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3)
+    ]
+  }
+
+test at src/host/company-read-hosts.test.ts:105:3
+✖ Worker 真实 host 拒绝其他账户回执与错 kind，不用空列表掩盖失败 (2002.870694ms)
+  Error [AggregateError]: WASM shutdown 失败且最终释放事实未知
+      at file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/worker-host.ts:590:74
+      at runNextTicks (node:internal/process/task_queues:65:5)
+      at listOnTimeout (node:internal/timers:567:9)
+      at process.processTimers (node:internal/timers:541:7)
+      at async withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:91:5)
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:106:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: {
+      primary: Error: Worker shutdown 操作超时（1999.936659ms）
+          at Timeout.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/worker-request.ts:106:25)
+          at listOnTimeout (node:internal/timers:605:17)
+          at process.processTimers (node:internal/timers:541:7),
+      release: Error: 缺少 cooperative quiescence/真实 child exit 证据；terminate 返回不能证明 Memory 已停止 grow
+          at dispose (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/engine-supervisor.ts:166:35)
+          at Object.fatal [as discard] (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/engine-supervisor.ts:190:11)
+          at file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/worker-host.ts:588:26
+          at runNextTicks (node:internal/process/task_queues:65:5)
+          at listOnTimeout (node:internal/timers:567:9)
+          at process.processTimers (node:internal/timers:541:7)
+          at async withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:91:5)
+          at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:106:5)
+          at async Test.run (node:internal/test_runner/test:1332:7)
+          at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+    },
+    [errors]: [
+      Error: Worker shutdown 操作超时（1999.936659ms）
+          at Timeout.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/worker-request.ts:106:25)
+          at listOnTimeout (node:internal/timers:605:17)
+          at process.processTimers (node:internal/timers:541:7),
+      Error: 缺少 cooperative quiescence/真实 child exit 证据；terminate 返回不能证明 Memory 已停止 grow
+          at dispose (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/engine-supervisor.ts:166:35)
+          at Object.fatal [as discard] (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/engine-supervisor.ts:190:11)
+          at file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/worker-host.ts:588:26
+          at runNextTicks (node:internal/process/task_queues:65:5)
+          at listOnTimeout (node:internal/timers:567:9)
+          at process.processTimers (node:internal/timers:541:7)
+          at async withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:91:5)
+          at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:106:5)
+          at async Test.run (node:internal/test_runner/test:1332:7)
+          at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+    ]
+  }
+
+test at src/host/company-read-hosts.test.ts:113:3
+✖ Worker 真实 host 销毁后拒绝迟到的本人查询成功 (2001.459456ms)
+  Error [AggregateError]: WASM shutdown 失败且最终释放事实未知
+      at file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/worker-host.ts:590:74
+      at runNextTicks (node:internal/process/task_queues:65:5)
+      at listOnTimeout (node:internal/timers:567:9)
+      at process.processTimers (node:internal/timers:541:7)
+      at async file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:119:7
+      at async withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:89:5)
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:114:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: {
+      primary: Error: Worker shutdown 操作超时（1999.9464189999999ms）
+          at Timeout.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/worker-request.ts:106:25)
+          at listOnTimeout (node:internal/timers:605:17)
+          at process.processTimers (node:internal/timers:541:7),
+      release: Error: 缺少 cooperative quiescence/真实 child exit 证据；terminate 返回不能证明 Memory 已停止 grow
+          at dispose (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/engine-supervisor.ts:166:35)
+          at Object.fatal [as discard] (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/engine-supervisor.ts:190:11)
+          at file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/worker-host.ts:588:26
+          at runNextTicks (node:internal/process/task_queues:65:5)
+          at listOnTimeout (node:internal/timers:567:9)
+          at process.processTimers (node:internal/timers:541:7)
+          at async file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:119:7
+          at async withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:89:5)
+          at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:114:5)
+          at async Test.run (node:internal/test_runner/test:1332:7)
+    },
+    [errors]: [
+      Error: Worker shutdown 操作超时（1999.9464189999999ms）
+          at Timeout.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/worker-request.ts:106:25)
+          at listOnTimeout (node:internal/timers:605:17)
+          at process.processTimers (node:internal/timers:541:7),
+      Error: 缺少 cooperative quiescence/真实 child exit 证据；terminate 返回不能证明 Memory 已停止 grow
+          at dispose (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/engine-supervisor.ts:166:35)
+          at Object.fatal [as discard] (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/engine-supervisor.ts:190:11)
+          at file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/worker-host.ts:588:26
+          at runNextTicks (node:internal/process/task_queues:65:5)
+          at listOnTimeout (node:internal/timers:567:9)
+          at process.processTimers (node:internal/timers:541:7)
+          at async file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:119:7
+          at async withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:89:5)
+          at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:114:5)
+          at async Test.run (node:internal/test_runner/test:1332:7)
+    ]
+  }
+
+test at src/host/company-read-hosts.test.ts:124:26
+✖ Worker 本地固定玩家零不能接受改写为其他 owner 的完整回执 (2001.475002ms)
+  Error [AggregateError]: WASM shutdown 失败且最终释放事实未知
+      at file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/worker-host.ts:590:74
+      at runNextTicks (node:internal/process/task_queues:65:5)
+      at listOnTimeout (node:internal/timers:567:9)
+      at process.processTimers (node:internal/timers:541:7)
+      at async withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:91:5)
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:125:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: {
+      primary: Error: Worker shutdown 操作超时（1999.9611189999996ms）
+          at Timeout.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/worker-request.ts:106:25)
+          at listOnTimeout (node:internal/timers:605:17)
+          at process.processTimers (node:internal/timers:541:7),
+      release: Error: 缺少 cooperative quiescence/真实 child exit 证据；terminate 返回不能证明 Memory 已停止 grow
+          at dispose (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/engine-supervisor.ts:166:35)
+          at Object.fatal [as discard] (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/engine-supervisor.ts:190:11)
+          at file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/worker-host.ts:588:26
+          at runNextTicks (node:internal/process/task_queues:65:5)
+          at listOnTimeout (node:internal/timers:567:9)
+          at process.processTimers (node:internal/timers:541:7)
+          at async withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:91:5)
+          at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:125:5)
+          at async Test.run (node:internal/test_runner/test:1332:7)
+          at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+    },
+    [errors]: [
+      Error: Worker shutdown 操作超时（1999.9611189999996ms）
+          at Timeout.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/worker-request.ts:106:25)
+          at listOnTimeout (node:internal/timers:605:17)
+          at process.processTimers (node:internal/timers:541:7),
+      Error: 缺少 cooperative quiescence/真实 child exit 证据；terminate 返回不能证明 Memory 已停止 grow
+          at dispose (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/engine-supervisor.ts:166:35)
+          at Object.fatal [as discard] (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/engine-supervisor.ts:190:11)
+          at file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/worker-host.ts:588:26
+          at runNextTicks (node:internal/process/task_queues:65:5)
+          at listOnTimeout (node:internal/timers:567:9)
+          at process.processTimers (node:internal/timers:541:7)
+          at async withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:91:5)
+          at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:125:5)
+          at async Test.run (node:internal/test_runner/test:1332:7)
+          at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+    ]
+  }

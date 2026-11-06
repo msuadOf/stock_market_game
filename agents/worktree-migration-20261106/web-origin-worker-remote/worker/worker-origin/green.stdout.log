@@ -1,0 +1,76 @@
+✔ 非共享 substrate 显式失败，不生成 intake、不通过 engine enqueue 静默降级 (27.603078ms)
+✔ Browser engine worker 忙碌时 submitIntent 由独立 intake worker 确认，dispose 同时关闭两者 (6.071237ms)
+✔ Browser ingress consumerReject 不泄漏 intake worker 或误报旧代成功 (2.382832ms)
+✔ Browser ingress initializationTimeout 不泄漏 intake worker 或误报旧代成功 (1.070047ms)
+✔ Browser ingress staleEnqueued 不泄漏 intake worker 或误报旧代成功 (1.501178ms)
+✖ Browser ingress disposedEnqueued 不泄漏 intake worker 或误报旧代成功 (1.586304ms)
+✔ Worker 股票历史请求绑定 requestId 与 generation，且不携带可指定账户 (0.910475ms)
+✔ Worker baseline baseline 被消费者拒绝时终止并显式失败 (2.735057ms)
+✔ Worker refreshBaseline baseline 被消费者拒绝时终止并显式失败 (1.639788ms)
+✔ Worker load baseline 被消费者拒绝时终止并显式失败 (6.409652ms)
+✔ 审计G53：Worker恢复必须推进generation，不能接受相同或更小代 (0.502006ms)
+✔ 审计G53：恢复代次拒绝零、负数、非安全整数和字符串 (0.390298ms)
+✖ Worker refresh 已回包但 continuation 前 dispose 不得复活 baseline (1.855734ms)
+✔ Worker save pins candidate generation and rejects an old saved response after baseline replacement (1.781829ms)
+✔ Given a generation-correlated Worker metrics response, when read, then it validates the shared speed contract (0.324633ms)
+✔ Given a generation-correlated Worker order response, when read, then it preserves Money cents (0.400459ms)
+✔ Given a typed WASM indicator input error, when returned through the Worker, then calculation rejects (0.241077ms)
+✔ Given an enriched Worker failure, when parsed, then cause and recovery actions survive (0.395428ms)
+✔ Given a restore response from the old request generation, when read, then it yields the new authority before load completes (0.192924ms)
+✔ Given a refresh request, when the worker reads its live session, then it returns that authoritative snapshot (0.240708ms)
+✔ Given local pause preferences, when sent across the Worker boundary, then the request retains both flags and generation (0.118539ms)
+✔ Given a paused Worker, the correlated single-step response exposes its committed tick (0.187514ms)
+✔ Given production or a missing injected capability, Worker E2E stepping is rejected (0.234097ms)
+✔ Worker initialization sends init without pool size and reports startup failure immediately (0.627115ms)
+✔ duplicate delivered baselines preserve pending order queries, while a new generation invalidates them (3.459499ms)
+✔ Worker 控制等待应用回执，protocolBatch 每个提交接纳后立即 ACK 且不等待 render (1.504469ms)
+✔ Worker cached baseline 拒绝不启动或 ACK，显式重试仍交付且旧 host 不干扰新 host (3.699196ms)
+✖ Worker dispose 与 fatal 立即取消在途请求，释放监听并拒绝后续请求 (1.561483ms)
+✔ Worker 真实 coordinator 拒绝批次中间提交后不消费尾部、不 ACK、立即终止并取消控制 (6.076288ms)
+✔ Worker reportError 的 error 事件将完整错误交付用户回调并终止会话 (1.724494ms)
+✔ 实际单股Worker shared ingress三variant与unknown零enqueue (1.625927ms)
+✖ Worker civilDate 已回包但 continuation 前 dispose 必须拒绝旧结果 (1.501619ms)
+✔ Worker civilDate 已回包但 continuation 前 generation 必须拒绝旧结果 (1.497347ms)
+ℹ tests 33
+ℹ suites 0
+ℹ pass 29
+ℹ fail 4
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 339.677771
+
+✖ failing tests:
+
+test at src/host/worker-host.test.ts:82:3
+✖ Browser ingress disposedEnqueued 不泄漏 intake worker 或误报旧代成功 (1.586304ms)
+  [AssertionError [ERR_ASSERTION]: Missing expected rejection.] { generatedMessage: false, code: 'ERR_ASSERTION', actual: undefined, expected: /消费者拒绝|已过期/, operator: 'rejects', diff: 'simple' }
+
+test at src/host/worker-host.test.ts:233:1
+✖ Worker refresh 已回包但 continuation 前 dispose 不得复活 baseline (1.855734ms)
+  [AssertionError [ERR_ASSERTION]: Missing expected rejection.] { generatedMessage: false, code: 'ERR_ASSERTION', actual: undefined, expected: /已过期会话 generation/, operator: 'rejects', diff: 'simple' }
+
+test at src/host/worker-host.test.ts:593:1
+✖ Worker dispose 与 fatal 立即取消在途请求，释放监听并拒绝后续请求 (1.561483ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /已被销毁|TEST_FATAL/. Input:
+  
+  'Error: WASM Worker 正在关闭，业务操作已取消'
+  
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.test.ts:624:7)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: WASM Worker 正在关闭，业务操作已取消
+        at Object.dispose (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.ts:552:32)
+        at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.test.ts:622:38)
+        at async Test.run (node:internal/test_runner/test:1332:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:911:7),
+    expected: /已被销毁|TEST_FATAL/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/host/worker-host.test.ts:786:3
+✖ Worker civilDate 已回包但 continuation 前 dispose 必须拒绝旧结果 (1.501619ms)
+  [AssertionError [ERR_ASSERTION]: Missing expected rejection.] { generatedMessage: false, code: 'ERR_ASSERTION', actual: undefined, expected: /过期|销毁/, operator: 'rejects', diff: 'simple' }

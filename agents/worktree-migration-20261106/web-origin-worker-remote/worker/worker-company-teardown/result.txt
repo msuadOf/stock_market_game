@@ -1,0 +1,8 @@
+修改范围：仅 apps/web/src/host/worker-host-company-write.test.ts。
+改动：首个真实三写 case 保存初始化时 fixture 默认 engine.onPost，并在三次业务 onPost 覆盖中先调用 controlOnPost(raw, transfer)，再执行原业务 ACK/拒绝逻辑；未改断言、fixture helper 或生产代码。
+
+验证（绝对 Node：<WORKSPACE>/.tmp/node24-env/node；每条命令同时 --test-timeout=10000 与 scripts/run-with-deadline.mjs 10000 进程树门）：
+- focused --test-name-pattern='Worker Host'：exit 0，1/1 pass，42ms case，270ms Node duration。
+- 整个 worker-host-company-write.test.ts：exit 1，13 tests，9 pass/4 fail，290ms Node duration。失败为 dispose replacement 的 success/rejection 两个未决写负控，以及 restore 在途 success/rejection 两个负控；restore 失败于生产清理报告“缺少 cooperative quiescence/真实 child exit 证据”。按任务要求仅报告真实 closing/teardown 失败，不修改生产代码或放宽断言。
+- 两命令均远低于 10s；没有 deadline 超时。完整原始输出见同目录 focused.*、file.*。
+- git diff --check：通过。

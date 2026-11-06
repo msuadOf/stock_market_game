@@ -1,0 +1,163 @@
+✔ 非共享 substrate 显式失败，不生成 intake、不通过 engine enqueue 静默降级 (28.237807ms)
+✔ Browser engine worker 忙碌时 submitIntent 由独立 intake worker 确认，dispose 同时关闭两者 (6.141151ms)
+✔ Browser ingress consumerReject 不泄漏 intake worker 或误报旧代成功 (2.407743ms)
+✔ Browser ingress initializationTimeout 不泄漏 intake worker 或误报旧代成功 (1.070035ms)
+✔ Browser ingress staleEnqueued 不泄漏 intake worker 或误报旧代成功 (1.525691ms)
+✖ Browser ingress disposedEnqueued 不泄漏 intake worker 或误报旧代成功 (1.596398ms)
+✔ Worker 股票历史请求绑定 requestId 与 generation，且不携带可指定账户 (0.920063ms)
+✔ Worker baseline baseline 被消费者拒绝时终止并显式失败 (2.895752ms)
+✔ Worker refreshBaseline baseline 被消费者拒绝时终止并显式失败 (1.649522ms)
+✔ Worker load baseline 被消费者拒绝时终止并显式失败 (6.454096ms)
+✖ 审计G53：Worker恢复必须推进generation，不能接受相同或更小代 (0.606839ms)
+✔ 审计G53：恢复代次拒绝零、负数、非安全整数和字符串 (0.36968ms)
+✖ Worker refresh 已回包但 continuation 前 dispose 不得复活 baseline (2.318365ms)
+✖ Worker save pins candidate generation and rejects an old saved response after baseline replacement (1.366959ms)
+✔ Given a generation-correlated Worker metrics response, when read, then it validates the shared speed contract (0.50283ms)
+✔ Given a generation-correlated Worker order response, when read, then it preserves Money cents (0.418723ms)
+✔ Given a typed WASM indicator input error, when returned through the Worker, then calculation rejects (0.254891ms)
+✔ Given an enriched Worker failure, when parsed, then cause and recovery actions survive (0.399452ms)
+✖ Given a restore response from the old request generation, when read, then it yields the new authority before load completes (0.208486ms)
+✖ Given a refresh request, when the worker reads its live session, then it returns that authoritative snapshot (0.202956ms)
+✔ Given local pause preferences, when sent across the Worker boundary, then the request retains both flags and generation (0.134411ms)
+✔ Given a paused Worker, the correlated single-step response exposes its committed tick (0.215047ms)
+✔ Given production or a missing injected capability, Worker E2E stepping is rejected (0.24353ms)
+✔ Worker initialization sends init without pool size and reports startup failure immediately (0.850598ms)
+✖ duplicate delivered baselines preserve pending order queries, while a new generation invalidates them (3.50057ms)
+✖ Worker 控制等待应用回执，protocolBatch 每个提交接纳后立即 ACK 且不等待 render (3.720957ms)
+✔ Worker cached baseline 拒绝不启动或 ACK，显式重试仍交付且旧 host 不干扰新 host (3.030362ms)
+✖ Worker dispose 与 fatal 立即取消在途请求，释放监听并拒绝后续请求 (1.081007ms)
+✔ Worker 真实 coordinator 拒绝批次中间提交后不消费尾部、不 ACK、立即终止并取消控制 (6.320236ms)
+✔ Worker reportError 的 error 事件将完整错误交付用户回调并终止会话 (1.776092ms)
+✔ 实际单股Worker shared ingress三variant与unknown零enqueue (1.683395ms)
+✖ Worker civilDate 已回包但 continuation 前 dispose 必须拒绝旧结果 (1.624949ms)
+✔ Worker civilDate 已回包但 continuation 前 generation 必须拒绝旧结果 (1.435985ms)
+ℹ tests 33
+ℹ suites 0
+ℹ pass 23
+ℹ fail 10
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 350.187478
+
+✖ failing tests:
+
+test at src/host/worker-host.test.ts:82:3
+✖ Browser ingress disposedEnqueued 不泄漏 intake worker 或误报旧代成功 (1.596398ms)
+  [AssertionError [ERR_ASSERTION]: Missing expected rejection.] { generatedMessage: false, code: 'ERR_ASSERTION', actual: undefined, expected: /消费者拒绝|已过期/, operator: 'rejects', diff: 'simple' }
+
+test at src/host/worker-host.test.ts:208:1
+✖ 审计G53：Worker恢复必须推进generation，不能接受相同或更小代 (0.606839ms)
+  Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+      at malformed (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/protocol/guards.ts:6:9)
+      at exact (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/protocol/guards.ts:21:5)
+      at parseSnapshotRaw (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/protocol/parse.ts:166:3)
+      at parseProtocolSnapshot (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/protocol/parse.ts:184:38)
+      at prepareBaselineUpdate (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/host-update.ts:81:18)
+      at restoreWorkerSlot (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.ts:164:8)
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.test.ts:216:24)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    code: 'PROTOCOL_MALFORMED',
+    where: 'baseline.snapshot'
+  }
+
+test at src/host/worker-host.test.ts:233:1
+✖ Worker refresh 已回包但 continuation 前 dispose 不得复活 baseline (2.318365ms)
+  [AssertionError [ERR_ASSERTION]: Missing expected rejection.] { generatedMessage: false, code: 'ERR_ASSERTION', actual: undefined, expected: /已过期会话 generation/, operator: 'rejects', diff: 'simple' }
+
+test at src/host/worker-host.test.ts:264:1
+✖ Worker save pins candidate generation and rejects an old saved response after baseline replacement (1.366959ms)
+  Error [WasmHostInitializationError]: WASM_WORKER_TRANSPORT @ worker-host.message: baseline.snapshot 字段不符合协议契约
+      at notifyFailure (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.ts:284:16)
+      at SaveWorker.onMessage (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.ts:445:9)
+      at [nodejs.internal.kHybridDispatch] (node:internal/event_target:843:20)
+      at SaveWorker.dispatchEvent (node:internal/event_target:776:26)
+      at SaveWorker.emit (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.test.ts:272:33)
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.test.ts:281:12)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    failure: { code: 'WASM_WORKER_TRANSPORT', where: 'worker-host.message', message: 'baseline.snapshot 字段不符合协议契约' },
+    [cause]: { code: 'WASM_WORKER_TRANSPORT', where: 'worker-host.message', message: 'baseline.snapshot 字段不符合协议契约' }
+  }
+
+test at src/host/worker-host.test.ts:346:1
+✖ Given a restore response from the old request generation, when read, then it yields the new authority before load completes (0.208486ms)
+  Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+      at malformed (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/protocol/guards.ts:6:9)
+      at exact (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/protocol/guards.ts:21:5)
+      at parseSnapshotRaw (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/protocol/parse.ts:166:3)
+      at parseProtocolSnapshot (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/protocol/parse.ts:184:38)
+      at prepareBaselineUpdate (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/host-update.ts:81:18)
+      at restoreWorkerSlot (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.ts:164:8)
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.test.ts:356:20)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    code: 'PROTOCOL_MALFORMED',
+    where: 'baseline.snapshot'
+  }
+
+test at src/host/worker-host.test.ts:363:1
+✖ Given a refresh request, when the worker reads its live session, then it returns that authoritative snapshot (0.202956ms)
+  Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+      at malformed (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/protocol/guards.ts:6:9)
+      at exact (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/protocol/guards.ts:21:5)
+      at parseSnapshotRaw (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/protocol/parse.ts:166:3)
+      at parseProtocolSnapshot (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/protocol/parse.ts:184:38)
+      at prepareBaselineUpdate (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/host-update.ts:81:18)
+      at refreshWorkerBaseline (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.ts:171:10)
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.test.ts:368:20)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    code: 'PROTOCOL_MALFORMED',
+    where: 'baseline.snapshot'
+  }
+
+test at src/host/worker-host.test.ts:433:1
+✖ duplicate delivered baselines preserve pending order queries, while a new generation invalidates them (3.50057ms)
+  Error [WasmHostInitializationError]: WASM_WORKER_TRANSPORT @ worker-host.message: baseline.snapshot 字段不符合协议契约
+      at notifyFailure (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.ts:284:16)
+      at BaselineWorker.onMessage (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.ts:445:9)
+      at [nodejs.internal.kHybridDispatch] (node:internal/event_target:843:20)
+      at BaselineWorker.dispatchEvent (node:internal/event_target:776:26)
+      at BaselineWorker.emit (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.test.ts:442:12)
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.test.ts:452:12)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    failure: { code: 'WASM_WORKER_TRANSPORT', where: 'worker-host.message', message: 'baseline.snapshot 字段不符合协议契约' },
+    [cause]: { code: 'WASM_WORKER_TRANSPORT', where: 'worker-host.message', message: 'baseline.snapshot 字段不符合协议契约' }
+  }
+
+test at src/host/worker-host.test.ts:482:1
+✖ Worker 控制等待应用回执，protocolBatch 每个提交接纳后立即 ACK 且不等待 render (3.720957ms)
+  Error [WasmHostInitializationError]: WASM_WORKER_TRANSPORT @ worker-host.message: baseline.snapshot 字段不符合协议契约
+      at notifyFailure (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.ts:284:16)
+      at ControlledWorker.onMessage (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.ts:445:9)
+      at [nodejs.internal.kHybridDispatch] (node:internal/event_target:843:20)
+      at ControlledWorker.dispatchEvent (node:internal/event_target:776:26)
+      at ControlledWorker.emit (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.test.ts:491:33)
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.test.ts:500:12)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    failure: { code: 'WASM_WORKER_TRANSPORT', where: 'worker-host.message', message: 'baseline.snapshot 字段不符合协议契约' },
+    [cause]: { code: 'WASM_WORKER_TRANSPORT', where: 'worker-host.message', message: 'baseline.snapshot 字段不符合协议契约' }
+  }
+
+test at src/host/worker-host.test.ts:593:1
+✖ Worker dispose 与 fatal 立即取消在途请求，释放监听并拒绝后续请求 (1.081007ms)
+  Error [WasmHostInitializationError]: WASM_WORKER_TRANSPORT @ worker-host.message: baseline.snapshot 字段不符合协议契约
+      at notifyFailure (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.ts:284:16)
+      at PendingWorker.onMessage (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.ts:445:9)
+      at [nodejs.internal.kHybridDispatch] (node:internal/event_target:843:20)
+      at PendingWorker.dispatchEvent (node:internal/event_target:776:26)
+      at PendingWorker.emit (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.test.ts:603:33)
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.test.ts:612:14)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    failure: { code: 'WASM_WORKER_TRANSPORT', where: 'worker-host.message', message: 'baseline.snapshot 字段不符合协议契约' },
+    [cause]: { code: 'WASM_WORKER_TRANSPORT', where: 'worker-host.message', message: 'baseline.snapshot 字段不符合协议契约' }
+  }
+
+test at src/host/worker-host.test.ts:786:3
+✖ Worker civilDate 已回包但 continuation 前 dispose 必须拒绝旧结果 (1.624949ms)
+  [AssertionError [ERR_ASSERTION]: Missing expected rejection.] { generatedMessage: false, code: 'ERR_ASSERTION', actual: undefined, expected: /过期|销毁/, operator: 'rejects', diff: 'simple' }

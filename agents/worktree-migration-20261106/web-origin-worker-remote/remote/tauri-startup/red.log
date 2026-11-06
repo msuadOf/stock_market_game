@@ -1,0 +1,217 @@
+▶ Tauri host startup contract
+  ✖ awaits a ready Tauri host before App configures speed and reads snapshot (2.645757ms)
+  ✔ uses an explicit JSON-safe protocol for the fastest desktop speed (1.285566ms)
+  ✔ uses the same speed metrics contract as the other engine hosts (0.300772ms)
+  ✔ uses generated report DTOs and generation-tagged query and restore IPC (0.252399ms)
+  ✔ keeps generation as an exact decimal string and preserves actor restore ordering (0.770228ms)
+  ✔ pauses a host that finishes initialization after the page became hidden (0.364647ms)
+✖ Tauri host startup contract (6.771264ms)
+ℹ tests 6
+ℹ suites 1
+ℹ pass 5
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 115.611748
+
+✖ failing tests:
+
+test at src/host/tauri-startup-contract.test.ts:6:3
+✖ awaits a ready Tauri host before App configures speed and reads snapshot (2.645757ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /const host = await createHost\(setup, seed, startupTarget, \(failure\) => \{\s*if \(!cancelled\) ports\.onSpawnFailure\(failure\);\s*\}, initialSlot\);/. Input:
+  
+  'import { prepareDocumentWasmRestoreCapability } from "../host/wasm-restore-capability-source.ts";\n' +
+    'import { useEffect, type MutableRefObject } from "react";\n' +
+    'import { getDocumentWasmMemoryOwner, WasmDocumentMemoryError } from "../host/wasm-document-memory-owner.ts";\n' +
+    'import type { WasmDocumentMemoryOwner, WasmMemoryAdmissionTicket } from "../host/wasm-document-memory-owner.ts";\n' +
+    'import type { WasmMemoryHandover, WasmMemoryPendingIntent } from "../host/wasm-memory-handover.ts";\n' +
+    'import type { DeliveryMode, EngineHost } from "../host/engine-host.ts";\n' +
+    'import type { HostFailure, HostUpdate } from "../host/host-update.ts";\n' +
+    'import { createProtocolUpdate } from "../host/host-update.ts";\n' +
+    'import { createTauriHost } from "../host/tauri-host.ts";\n' +
+    'import { createRemoteHost } from "../host/remote-host.ts";\n' +
+    'import { createWorkerHost, type WorkerE2EHost } from "../host/worker-host.ts";\n' +
+    'import { WasmHostInitializationError } from "../host/wasm-host-initialization-error.ts";\n' +
+    'import { WasmMemoryStorageError } from "../host/wasm-memory-storage.ts";\n' +
+    'import { parseWasmRuntimeOptions } from "../host/wasm-runtime-options.ts";\n' +
+    'import { assertWasmEnvironment, browserWasmEnvironment, fatalDesktopInitializationMessage, fatalRemoteInitializationMessage, fatalWasmInitializationMessage, type StartupTarget } from "../host/startup-policy.ts";\n' +
+    'import { DEFAULT_SEED } from "../config/defaults.ts";\n' +
+    'import { createNewSessionSeed } from "../config/session-seed.ts";\n' +
+    'import type { SessionSetup } from "../types/engine.ts";\n' +
+    'import { AutoOrderManager } from "../components/auto-order-manager.ts";\n' +
+    'import type { IndicatorCalculator } from "../components/indicator-results.ts";\n' +
+    'import type { PlayerOrderRefreshGate } from "../components/player-orders.ts";\n' +
+    'import type { StrictSaveEnvelope } from "../save/schema/root.ts";\n' +
+    'import { validateDayEndArchive } from "../save/day-end-candidate.ts";\n' +
+    'import type { InitialSaveSource, SessionReplacementGate } from "../save/session-replacement.ts";\n' +
+    'import type { DayEndPersistence } from "../save/day-end-persistence.ts";\n' +
+    'import type { InitialAllocation } from "../host/initial-allocation.ts";\n' +
+    '\n' +
+    '// 这里只记录宿主释放的排序事实；真实 WASM 终值由 document Memory owner 独立确认。\n' +
+    'export type HostTransitionOutcome = { readonly kind: "released" } | { readonly kind: "failed"; readonly error: unknown };\n' +
+    '\n' +
+    'export interface SessionHostLifecyclePorts {\n' +
+    '  hostRef: MutableRefObject<EngineHost | null>;\n' +
+    '  hostTransitionRef: MutableRefObject<Promise<HostTransitionOutcome>>;\n' +
+    '  wasmMemoryOwner?: WasmDocumentMemoryOwner;\n' +
+    '  prepareWasmRestoreCapability?(archive: StrictSaveEnvelope): Promise<void>;\n' +
+    '  confirmMemoryHandover?(handover: WasmMemoryHandover, explicitIntent?: Exclude<WasmMemoryPendingIntent, null>): Promise<WasmMemoryPendingIntent>;\n' +
+    '  confirmMemoryReloadRetry?(handover: WasmMemoryHandover & { kind: "frozen" }): Promise<boolean>;\n' +
+    '  reloadAfterMemoryNotice?(degraded: boolean): Promise<void>;\n' +
+    '  initialSaveSourceRef: MutableRefObject<InitialSaveSource<StrictSaveEnvelope>>;\n' +
+    '  dayEndPersistenceRef: MutableRefObject<DayEndPersistence>;\n' +
+    '  autoOrderMgrRef: MutableRefObject<AutoOrderManager | null>;\n' +
+    '  sessionReplacementGateRef: MutableRefObject<SessionReplacementGate>;\n' +
+    '  saveSelectionGenerationRef: MutableRefObject<number>;\n' +
+    '  playerOrderRefreshGateRef: MutableRefObject<PlayerOrderRefreshGate>;\n' +
+    '  hostUpdateRef: MutableRefObject<(update: HostUpdate) => void | boolean>;\n' +
+    '  fatalHostErrorRef: MutableRefObject<(failure: string | HostFailure) => void>;\n' +
+    '  startupTarget: StartupTarget;\n' +
+    '  sessionSetup: SessionSetup;\n' +
+    '  speed: number;\n' +
+    '  pauseAfterClose: boolean;\n' +
+    '  pauseBeforeOpen: boolean;\n' +
+    '  TRADING_E2E_MODE: boolean;\n' +
+    '  malformedProtocolFixture(): boolean;\n' +
+    '  setIndicatorCalculator(calculator: IndicatorCalculator): () => void;\n' +
+    '  connectProtocol(host: EngineHost): void;\n' +
+    '  disconnectProtocol(): void;\n' +
+    '  createHost(setup: SessionSetup, seed: bigint, target: StartupTarget, onSpawnFailure: (failure: HostFailure) => void, initialArchive: StrictSaveEnvelope | null, memoryAdmissionTicket?: WasmMemoryAdmissionTicket): Promise<EngineHost>;\n' +
+    '  onSpawnFailure(failure: HostFailure): void;\n' +
+    '  createSeed?(): bigint;\n' +
+    '  checkWasmEnvironment(): void;\n' +
+    '  isDocumentHidden(): boolean;\n' +
+    '  getBrowserSaveRepository(): { load(): Promise<StrictSaveEnvelope | null> };\n' +
+    '  setActiveSetup(setup: SessionSetup): void;\n' +
+    '  configureMarketTiming(setup: SessionSetup): void;\n' +
+    '  setStartDateDraft(date: string): void;\n' +
+    '  setPriceCageEnabledDraft(enabled: boolean): void;\n' +
+    '  setFloatAllocationDraft(allocation: SessionSetup["float_allocation"]): void;\n' +
+    '  setInitialAllocation(allocation: InitialAllocation | null): void;\n' +
+    '  setDeliveryModes(modes: readonly DeliveryMode[]): void;\n' +
+    '  setDeliveryModeState(mode: DeliveryMode | null): void;\n' +
+    '  setNotice(notice: string): void;\n' +
+    '  setReady(ready: boolean): void;\n' +
+    '  setError(error: string | HostFailure): void;\n' +
+    '  onRunning(running: boolean): void;\n' +
+    '  onAutoTriggered(id: string): void;\n' +
+    '}\n' +
+    '\n' +
+    '/** 单次 effect 的资源 owner；hostRef 只是 AppShell 借用的当前宿主别名。 */\n' +
+    'export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {\n' +
+    '  const {\n' +
+    '    hostRef, initialSaveSourceRef, dayEndPersistenceRef, autoOrderMgrRef, sessionReplacementGateRef,\n' +
+    '    saveSelectionGenerationRef, playerOrderRefreshGateRef, startupTarget, sessionSetup, speed, pauseAfterClose,\n' +
+    '    pauseBeforeOpen, TRADING_E2E_MODE, setIndicatorCalculator, setActiveSetup, configureMarketTiming, setStartDateDraft,\n' +
+    '    setPriceCageEnabledDraft, setFloatAllocationDraft, setInitialAllocation, setDeliveryModes, setDeliveryModeState, setNotice, setReady, setError,\n' +
+    '    hostUpdateRef, fatalHostErrorRef, connectProtocol, disconnectProtocol, createHost, checkWasmEnvironment,\n' +
+    '    isDocumentHidden, getBrowserSaveRepository, onRunning, onAutoTriggered, malformedProtocolFixture,\n' +
+    '    createSeed = createNewSessionSeed,\n' +
+    '  } = ports;\n' +
+    '  let cancelled = false;\n' +
+    '  let ownedHost: EngineHost | null = null;\n' +
+    '  let unsetIndicatorCalculator: (() => void) | null = null;\n' +
+    '  let releasingHost = Promise.resolve();\n' +
+    '  let started = false, predecessorSettled = false, createPending = false, ending = false;\n' +
+    '  let ownerEntered = false, sharedCleanupDone = false, blockedByPredecessor = false;\n' +
+    '  let releases = 0;\n' +
+    '  let outcome: HostTransitionOutcome = { kind: "released" };\n' +
+    '  let finishTransition: ((value: HostTransitionOutcome) => void) | undefined;\n' +
+    '  let teardownTask: Promise<void> | undefined;\n' +
+    '  let memoryTicket: WasmMemoryAdmissionTicket | undefined;\n' +
+    '  let closingTransportHost: EngineHost | null = null;\n' +
+    '  const publishReleased = () => {\n' +
+    '    if (!ending || !predecessorSettled || createPending || releases !== 0 || (ownedHost !== null && outcome.kind !== "failed")) return;\n' +
+    '    finishTransition?.(outcome); finishTransition = undefined;\n' +
+    '  };\n' +
+    '  const releaseOwnedHost = async () => {\n' +
+    '    releases++;\n' +
+    '    const transportHost = ownedHost;\n' +
+    '    if (transportHost !== null) closingTransportHost = transportHost;\n' +
+    '    try {\n' +
+    '      let hostReleaseFailure: { error: unknown } | undefined;\n' +
+    '      const recordCleanupFailure = (error: unknown) => {\n' +
+    '        hostReleaseFailure = { error: hostReleaseFailure === undefined ? error : new AggregateError([hostReleaseFailure.error, error], "多个宿主资源清理失败") };\n' +
+    '      };\n' +
+    '      // 一项 UI registration 解绑失败也不能越过真实宿主终结；各项错误仍原样报告。\n' +
+    '      if (ownerEntered && !sharedCleanupDone) {\n' +
+    '        sharedCleanupDone = true;\n' +
+    '        try { unsetIndicatorCalculator?.(); } catch (error) { recordCleanupFailure(error); }\n' +
+    '        unsetIndicatorCalculator = null;\n' +
+    '        if (hostRef.current === ownedHost) hostRef.current = null;\n' +
+    '        try { disconnectProtocol(); } catch (error) { recordCleanupFailure(error); }\n' +
+    '        try { autoOrderMgrRef.current?.clear(); } catch (error) { recordCleanupFailure(error); }\n' +
+    '        autoOrderMgrRef.current = null;\n' +
+    '      }\n' +
+    '      const host = ownedHost;\n' +
+    '      ownedHost = null;\n' +
+    '      try {\n' +
+    '        if (host) {\n' +
+    '          if (memoryTicket !== undefined) {\n' +
+    '            try {\n' +
+    '              // protocol delta 不保证更新宿主的 baseline 缓存；先停权威推进，再读取最终已提交位置。\n' +
+    '              await host.stop();\n' +
+    '              await host.refreshBaseline();\n' +
+    '              ports.wasmMemoryOwner!.recordCommittedBoundary(memoryTicket, { tick: host.tick(), day: host.day() });\n' +
+    '            } catch (error) { recordCleanupFailure(error); }\n' +
+    '          }\n' +
+    '          releasingHost = host.dispose();\n' +
+    '        }\n' +
+    '        await releasingHost;\n' +
+    '      } catch (error) {\n' +
+    '        hostReleaseFailure = { error: hostReleaseFailure === undefined ? error : new AggregateError([hostReleaseFailure.error, error], "读取提交边界与宿主释放均失败") };\n' +
+    '      }\n' +
+    '      // 未结束的 create 仍可能晚到一个 host；该次 cleanup 不提前确认 Memory 释放。\n' +
+    '      try {\n' +
+    '        if (memoryTicket !== undefined && !createPending) await ports.wasmMemoryOwner!.finish(memoryTicket);\n' +
+    '      } catch (error) {\n' +
+    '        if (hostReleaseFailure !== undefined) throw new AggregateError([hostReleaseFailure.error, error], "宿主释放与 Memory 终结回执均失败");\n' +
+    '        throw error;\n' +
+    '      }\n' +
+    '      if (hostReleaseFailure !== undefined) throw hostReleaseFailure.error;\n' +
+    '    } catch (error) {\n' +
+    '      if (outcome.kind === "released") outcome = { kind: "failed", error };\n' +
+    '      throw error;\n' +
+    '    } finally {\n' +
+    '      if (transportHost !== null && closingTransportHost === transportHost) closingTransportHost = null;\n' +
+    '      releases--; publishReleased();\n' +
+    '    }\n' +
+    '  };\n' +
+    '  const stopCurrentSession = () => {\n' +
+    '    if (teardownTask !== undefined) return teardownTask;\n' +
+    '    ending = true;\n' +
+    '    if (ownedHost !== null) closingTransportHost = ownedHost;\n' +
+    '    cancelled = true;\n' +
+    '    if (ownerEntered) {\n' +
+    '      saveSelectionGenerationRef.current += 1;\n' +
+    '      sessionReplacementGateRef.current.invalidate();\n' +
+    '      playerOrderRefreshGateRef.current.invalidate();\n' +
+    '    }\n' +
+    '    teardownTask = (async () => {\n' +
+    '      let stopFailure: { readonly error: unknown } | null = null;\n' +
+    '      try { if (memoryTicket === undefined) await ownedHost?.stop(); } catch (failure) {\n' +
+    '        stopFailure = { error: failure };\n' +
+    '        if (outcome.kind === "released") outcome = { kind: "failed", error: failure };\n' +
+    '      }\n' +
+    '      try { await releaseOwnedHost(); } catch (failure) {\n' +
+    '        if (stopFailure !== null) throw new Aggregate'... 16476 more characters
+  
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/tauri-startup-contract.test.ts:13:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25)
+      at Test.start (node:internal/test_runner/test:1191:17)
+      at node:internal/test_runner/test:1792:71
+      at node:internal/per_context/primordials:466:82
+      at new Promise (<anonymous>)
+      at new SafePromise (node:internal/per_context/primordials:435:3)
+      at node:internal/per_context/primordials:466:9
+      at Array.map (<anonymous>) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'import { prepareDocumentWasmRestoreCapability } from "../host/wasm-restore-capability-source.ts";\nimport { useEffect, type MutableRefObject } from "react";\nimport { getDocumentWasmMemoryOwner, WasmDocumentMemoryError } from "../host/wasm-document-memory-owner.ts";\nimport type { WasmDocumentMemoryOwner, WasmMemoryAdmissionTicket } from "../host/wasm-document-memory-owner.ts";\nimport type { WasmMemoryHandover, WasmMemoryPendingIntent } from "../host/wasm-memory-handover.ts";\nimport type { DeliveryMode, EngineHost } from "../host/engine-host.ts";\nimport type { HostFailure, HostUpdate } from "../host/host-update.ts";\nimport { createProtocolUpdate } from "../host/host-update.ts";\nimport { createTauriHost } from "../host/tauri-host.ts";\nimport { createRemoteHost } from "../host/remote-host.ts";\nimport { createWorkerHost, type WorkerE2EHost } from "../host/worker-host.ts";\nimport { WasmHostInitializationError } from "../host/wasm-host-initialization-error.ts";\nimport { WasmMemoryStorageError } from "../host/wasm-memory-storage.ts";\nimport { parseWasmRuntimeOptions } from "../host/wasm-runtime-options.ts";\nimport { assertWasmEnvironment, browserWasmEnvironment, fatalDesktopInitializationMessage, fatalRemoteInitializationMessage, fatalWasmInitializationMessage, type StartupTarget } from "../host/startup-policy.ts";\nimport { DEFAULT_SEED } from "../config/defaults.ts";\nimport { createNewSessionSeed } from "../config/session-seed.ts";\nimport type { SessionSetup } from "../types/engine.ts";\nimport { AutoOrderManager } from "../components/auto-order-manager.ts";\nimport type { IndicatorCalculator } from "../components/indicator-results.ts";\nimport type { PlayerOrderRefreshGate } from "../components/player-orders.ts";\nimport type { StrictSaveEnvelope } from "../save/schema/root.ts";\nimport { validateDayEndArchive } from "../save/day-end-candidate.ts";\nimport type { InitialSaveSource, SessionReplacementGate } from "../save/session-replacement.ts";\nimport type { DayEndPersistence } from "../save/day-end-persistence.ts";\nimport type { InitialAllocation } from "../host/initial-allocation.ts";\n\n// 这里只记录宿主释放的排序事实；真实 WASM 终值由 document Memory owner 独立确认。\nexport type HostTransitionOutcome = { readonly kind: "released" } | { readonly kind: "failed"; readonly error: unknown };\n\nexport interface SessionHostLifecyclePorts {\n  hostRef: MutableRefObject<EngineHost | null>;\n  hostTransitionRef: MutableRefObject<Promise<HostTransitionOutcome>>;\n  wasmMemoryOwner?: WasmDocumentMemoryOwner;\n  prepareWasmRestoreCapability?(archive: StrictSaveEnvelope): Promise<void>;\n  confirmMemoryHandover?(handover: WasmMemoryHandover, explicitIntent?: Exclude<WasmMemoryPendingIntent, null>): Promise<WasmMemoryPendingIntent>;\n  confirmMemoryReloadRetry?(handover: WasmMemoryHandover & { kind: "frozen" }): Promise<boolean>;\n  reloadAfterMemoryNotice?(degraded: boolean): Promise<void>;\n  initialSaveSourceRef: MutableRefObject<InitialSaveSource<StrictSaveEnvelope>>;\n  dayEndPersistenceRef: MutableRefObject<DayEndPersistence>;\n  autoOrderMgrRef: MutableRefObject<AutoOrderManager | null>;\n  sessionReplacementGateRef: MutableRefObject<SessionReplacementGate>;\n  saveSelectionGenerationRef: MutableRefObject<number>;\n  playerOrderRefreshGateRef: MutableRefObject<PlayerOrderRefreshGate>;\n  hostUpdateRef: MutableRefObject<(update: HostUpdate) => void | boolean>;\n  fatalHostErrorRef: MutableRefObject<(failure: string | HostFailure) => void>;\n  startupTarget: StartupTarget;\n  sessionSetup: SessionSetup;\n  speed: number;\n  pauseAfterClose: boolean;\n  pauseBeforeOpen: boolean;\n  TRADING_E2E_MODE: boolean;\n  malformedProtocolFixture(): boolean;\n  setIndicatorCalculator(calculator: IndicatorCalculator): () => void;\n  connectProtocol(host: EngineHost): void;\n  disconnectProtocol(): void;\n  createHost(setup: SessionSetup, seed: bigint, target: StartupTarget, onSpawnFailure: (failure: HostFailure) => void, initialArchive: StrictSaveEnvelope | null, memoryAdmissionTicket?: WasmMemoryAdmissionTicket): Promise<EngineHost>;\n  onSpawnFailure(failure: HostFailure): void;\n  createSeed?(): bigint;\n  checkWasmEnvironment(): void;\n  isDocumentHidden(): boolean;\n  getBrowserSaveRepository(): { load(): Promise<StrictSaveEnvelope | null> };\n  setActiveSetup(setup: SessionSetup): void;\n  configureMarketTiming(setup: SessionSetup): void;\n  setStartDateDraft(date: string): void;\n  setPriceCageEnabledDraft(enabled: boolean): void;\n  setFloatAllocationDraft(allocation: SessionSetup["float_allocation"]): void;\n  setInitialAllocation(allocation: InitialAllocation | null): void;\n  setDeliveryModes(modes: readonly DeliveryMode[]): void;\n  setDeliveryModeState(mode: DeliveryMode | null): void;\n  setNotice(notice: string): void;\n  setReady(ready: boolean): void;\n  setError(error: string | HostFailure): void;\n  onRunning(running: boolean): void;\n  onAutoTriggered(id: string): void;\n}\n\n/** 单次 effect 的资源 owner；hostRef 只是 AppShell 借用的当前宿主别名。 */\nexport function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {\n  const {\n    hostRef, initialSaveSourceRef, dayEndPersistenceRef, autoOrderMgrRef, sessionReplacementGateRef,\n    saveSelectionGenerationRef, playerOrderRefreshGateRef, startupTarget, sessionSetup, speed, pauseAfterClose,\n    pauseBeforeOpen, TRADING_E2E_MODE, setIndicatorCalculator, setActiveSetup, configureMarketTiming, setStartDateDraft,\n    setPriceCageEnabledDraft, setFloatAllocationDraft, setInitialAllocation, setDeliveryModes, setDeliveryModeState, setNotice, setReady, setError,\n    hostUpdateRef, fatalHostErrorRef, connectProtocol, disconnectProtocol, createHost, checkWasmEnvironment,\n    isDocumentHidden, getBrowserSaveRepository, onRunning, onAutoTriggered, malformedProtocolFixture,\n    createSeed = createNewSessionSeed,\n  } = ports;\n  let cancelled = false;\n  let ownedHost: EngineHost | null = null;\n  let unsetIndicatorCalculator: (() => void) | null = null;\n  let releasingHost = Promise.resolve();\n  let started = false, predecessorSettled = false, createPending = false, ending = false;\n  let ownerEntered = false, sharedCleanupDone = false, blockedByPredecessor = false;\n  let releases = 0;\n  let outcome: HostTransitionOutcome = { kind: "released" };\n  let finishTransition: ((value: HostTransitionOutcome) => void) | undefined;\n  let teardownTask: Promise<void> | undefined;\n  let memoryTicket: WasmMemoryAdmissionTicket | undefined;\n  let closingTransportHost: EngineHost | null = null;\n  const publishReleased = () => {\n    if (!ending || !predecessorSettled || createPending || releases !== 0 || (ownedHost !== null && outcome.kind !== "failed")) return;\n    finishTransition?.(outcome); finishTransition = undefined;\n  };\n  const releaseOwnedHost = async () => {\n    releases++;\n    const transportHost = ownedHost;\n    if (transportHost !== null) closingTransportHost = transportHost;\n    try {\n      let hostReleaseFailure: { error: unknown } | undefined;\n      const recordCleanupFailure = (error: unknown) => {\n        hostReleaseFailure = { error: hostReleaseFailure === undefined ? error : new AggregateError([hostReleaseFailure.error, error], "多个宿主资源清理失败") };\n      };\n      // 一项 UI registration 解绑失败也不能越过真实宿主终结；各项错误仍原样报告。\n      if (ownerEntered && !sharedCleanupDone) {\n        sharedCleanupDone = true;\n        try { unsetIndicatorCalculator?.(); } catch (error) { recordCleanupFailure(error); }\n        unsetIndicatorCalculator = null;\n        if (hostRef.current === ownedHost) hostRef.current = null;\n        try { disconnectProtocol(); } catch (error) { recordCleanupFailure(error); }\n        try { autoOrderMgrRef.current?.clear(); } catch (error) { recordCleanupFailure(error); }\n        autoOrderMgrRef.current = null;\n      }\n      const host = ownedHost;\n      ownedHost = null;\n      try {\n        if (host) {\n          if (memoryTicket !== undefined) {\n            try {\n              // protocol delta 不保证更新宿主的 baseline 缓存；先停权威推进，再读取最终已提交位置。\n              await host.stop();\n              await host.refreshBaseline();\n              ports.wasmMemoryOwner!.recordCommittedBoundary(memoryTicket, { tick: host.tick(), day: host.day() });\n            } catch (error) { recordCleanupFailure(error); }\n          }\n          releasingHost = host.dispose();\n        }\n        await releasingHost;\n      } catch (error) {\n        hostReleaseFailure = { error: hostReleaseFailure === undefined ? error : new AggregateError([hostReleaseFailure.error, error], "读取提交边界与宿主释放均失败") };\n      }\n      // 未结束的 create 仍可能晚到一个 host；该次 cleanup 不提前确认 Memory 释放。\n      try {\n        if (memoryTicket !== undefined && !createPending) await ports.wasmMemoryOwner!.finish(memoryTicket);\n      } catch (error) {\n        if (hostReleaseFailure !== undefined) throw new AggregateError([hostReleaseFailure.error, error], "宿主释放与 Memory 终结回执均失败");\n        throw error;\n      }\n      if (hostReleaseFailure !== undefined) throw hostReleaseFailure.error;\n    } catch (error) {\n      if (outcome.kind === "released") outcome = { kind: "failed", error };\n      throw error;\n    } finally {\n      if (transportHost !== null && closingTransportHost === transportHost) closingTransportHost = null;\n      releases--; publishReleased();\n    }\n  };\n  const stopCurrentSession = () => {\n    if (teardownTask !== undefined) return teardownTask;\n    ending = true;\n    if (ownedHost !== null) closingTransportHost = ownedHost;\n    cancelled = true;\n    if (ownerEntered) {\n      saveSelectionGenerationRef.current += 1;\n      sessionReplacementGateRef.current.invalidate();\n      playerOrderRefreshGateRef.current.invalidate();\n    }\n    teardownTask = (async () => {\n      let stopFailure: { readonly error: unknown } | null = null;\n      try { if (memoryTicket === undefined) await ownedHost?.stop(); } catch (failure) {\n        stopFailure = { error: failure };\n        if (outcome.kind === "released") outcome = { kind: "failed", error: failure };\n      }\n      try { await releaseOwnedHost(); } catch (failure) {\n        if (stopFailure !== null) throw new Aggregate'... 16476 more characters,
+    expected: /const host = await createHost\(setup, seed, startupTarget, \(failure\) => \{\s*if \(!cancelled\) ports\.onSpawnFailure\(failure\);\s*\}, initialSlot\);/,
+    operator: 'match',
+    diff: 'simple'
+  }
+bounded command exited with 1

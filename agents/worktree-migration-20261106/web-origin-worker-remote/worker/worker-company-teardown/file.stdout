@@ -1,0 +1,147 @@
+✔ Worker Host 真实三写透传及 typed 拒绝后继续使用同一会话 (36.807845ms)
+✔ Worker 三写 same-generation 后拒绝旧 success 并保原 cause (2.712073ms)
+✔ Worker 三写 next-generation 后拒绝旧 success 并保原 cause (1.958606ms)
+✖ Worker 三写 dispose 后拒绝旧 success 并保原 cause (2.292302ms)
+✔ Worker 三写 same-generation 后拒绝旧 rejection 并保原 cause (2.441179ms)
+✔ Worker 三写 next-generation 后拒绝旧 rejection 并保原 cause (1.682802ms)
+✖ Worker 三写 dispose 后拒绝旧 rejection 并保原 cause (2.696872ms)
+✔ Worker fatal 拒绝在途和后续公司写，不因可见基线仍在而继续发送 (2.286312ms)
+✖ Worker restore 在途新 ingress 先行时旧写 success 不跨 authority (7.118589ms)
+✖ Worker restore 在途新 ingress 先行时旧写 rejection 不跨 authority (3.168295ms)
+✔ 健康 WorkerHost 注册 proposePlayerCompanyAction 真实入口 (1.747926ms)
+✔ 健康 WorkerHost 注册 enqueueReportCorrection 真实入口 (1.172368ms)
+✔ 健康 WorkerHost 注册 cancelReportCorrection 真实入口 (1.139506ms)
+ℹ tests 13
+ℹ suites 0
+ℹ pass 9
+ℹ fail 4
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 289.551028
+
+✖ failing tests:
+
+test at apps/web/src/host/worker-host-company-write.test.ts:59:3
+✖ Worker 三写 dispose 后拒绝旧 success 并保原 cause (2.292302ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  true !== false
+  
+      at file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host-company-write.test.ts:70:14
+      at async withHost (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host-company-write.test.ts:15:5)
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host-company-write.test.ts:60:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: true,
+    expected: false,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/worker-host-company-write.test.ts:59:3
+✖ Worker 三写 dispose 后拒绝旧 rejection 并保原 cause (2.696872ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /过期|销毁/. Input:
+  
+  '公司写命令被拒绝：具体持仓拒绝'
+  
+      at file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host-company-write.test.ts:73:14
+      at async withHost (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host-company-write.test.ts:15:5)
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host-company-write.test.ts:60:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '公司写命令被拒绝：具体持仓拒绝',
+    expected: /过期|销毁/,
+    operator: 'match',
+    diff: 'simple'
+  }
+
+test at apps/web/src/host/worker-host-company-write.test.ts:95:3
+✖ Worker restore 在途新 ingress 先行时旧写 success 不跨 authority (7.118589ms)
+  Error [AggregateError]: WASM shutdown 失败且最终释放事实未知
+      at file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.ts:590:74
+      at async file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host-company-write.test.ts:114:7
+      at async withHost (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host-company-write.test.ts:15:5)
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host-company-write.test.ts:96:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: {
+      primary: AggregateError: WASM shutdown 已有 Rust 结果但整组停止失败
+          at file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.ts:587:19
+          at async file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host-company-write.test.ts:114:7
+          at async withHost (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host-company-write.test.ts:15:5)
+          at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host-company-write.test.ts:96:5)
+          at async Test.run (node:internal/test_runner/test:1332:7)
+          at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+        [cause]: [Object]
+      },
+      release: Error: 缺少 cooperative quiescence/真实 child exit 证据；terminate 返回不能证明 Memory 已停止 grow
+          at dispose (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/engine-supervisor.ts:166:35)
+          at Object.fatal [as discard] (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/engine-supervisor.ts:190:11)
+          at notifyFailure (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.ts:281:19)
+          at Object.load (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.ts:772:15)
+    },
+    [errors]: [
+      AggregateError: WASM shutdown 已有 Rust 结果但整组停止失败
+          at file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.ts:587:19
+          at async file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host-company-write.test.ts:114:7
+          at async withHost (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host-company-write.test.ts:15:5)
+          at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host-company-write.test.ts:96:5)
+          at async Test.run (node:internal/test_runner/test:1332:7)
+          at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+        [cause]: [Object]
+      },
+      Error: 缺少 cooperative quiescence/真实 child exit 证据；terminate 返回不能证明 Memory 已停止 grow
+          at dispose (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/engine-supervisor.ts:166:35)
+          at Object.fatal [as discard] (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/engine-supervisor.ts:190:11)
+          at notifyFailure (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.ts:281:19)
+          at Object.load (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.ts:772:15)
+    ]
+  }
+
+test at apps/web/src/host/worker-host-company-write.test.ts:95:3
+✖ Worker restore 在途新 ingress 先行时旧写 rejection 不跨 authority (3.168295ms)
+  Error [AggregateError]: WASM shutdown 失败且最终释放事实未知
+      at file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.ts:590:74
+      at async file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host-company-write.test.ts:114:7
+      at async withHost (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host-company-write.test.ts:15:5)
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host-company-write.test.ts:96:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: {
+      primary: AggregateError: WASM shutdown 已有 Rust 结果但整组停止失败
+          at file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.ts:587:19
+          at async file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host-company-write.test.ts:114:7
+          at async withHost (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host-company-write.test.ts:15:5)
+          at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host-company-write.test.ts:96:5)
+          at async Test.run (node:internal/test_runner/test:1332:7)
+          at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+        [cause]: [Object]
+      },
+      release: Error: 缺少 cooperative quiescence/真实 child exit 证据；terminate 返回不能证明 Memory 已停止 grow
+          at dispose (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/engine-supervisor.ts:166:35)
+          at Object.fatal [as discard] (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/engine-supervisor.ts:190:11)
+          at notifyFailure (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.ts:281:19)
+          at Object.load (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.ts:772:15)
+    },
+    [errors]: [
+      AggregateError: WASM shutdown 已有 Rust 结果但整组停止失败
+          at file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.ts:587:19
+          at async file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host-company-write.test.ts:114:7
+          at async withHost (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host-company-write.test.ts:15:5)
+          at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host-company-write.test.ts:96:5)
+          at async Test.run (node:internal/test_runner/test:1332:7)
+          at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+        [cause]: [Object]
+      },
+      Error: 缺少 cooperative quiescence/真实 child exit 证据；terminate 返回不能证明 Memory 已停止 grow
+          at dispose (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/engine-supervisor.ts:166:35)
+          at Object.fatal [as discard] (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/engine-supervisor.ts:190:11)
+          at notifyFailure (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.ts:281:19)
+          at Object.load (file://<WORKSPACE>/.worktree/web-origin-worker-2026-10-29/apps/web/src/host/worker-host.ts:772:15)
+    ]
+  }

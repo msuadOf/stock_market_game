@@ -1,0 +1,1306 @@
+✖ Worker 真实 host 注册公司只读查询，发送同代请求且不能指定其他账户 (27.258029ms)
+✖ Worker 真实 host 拒绝其他账户回执与错 kind，不用空列表掩盖失败 (2.446419ms)
+✖ Worker 真实 host 销毁后拒绝迟到的本人查询成功 (1.551225ms)
+✖ Worker 本地固定玩家零不能接受改写为其他 owner 的完整回执 (1.354552ms)
+✖ Worker 同 generation 重装基线仍拒绝旧目录查询结果 (1.386512ms)
+✖ Tauri 真实 host 注册公司只读查询，发送同代请求且不能指定其他账户 (2.209826ms)
+✖ Tauri 真实 host 拒绝其他账户回执与错 kind，不用空列表掩盖失败 (0.401076ms)
+✖ Tauri 真实 host 销毁后拒绝迟到的本人查询成功 (0.329976ms)
+✖ Tauri 本地固定玩家零不能接受改写为其他 owner 的完整回执 (0.383816ms)
+✖ Tauri 同 generation 重装基线仍拒绝旧目录查询结果 (0.464928ms)
+✖ Remote 真实 host 注册公司只读查询，发送同代请求且不能指定其他账户 (4.838818ms)
+✖ Remote 真实 host 拒绝其他账户回执与错 kind，不用空列表掩盖失败 (1.708837ms)
+✖ Remote 真实 host 销毁后拒绝迟到的本人查询成功 (1.054237ms)
+✖ Remote 同 generation 重装基线仍拒绝旧目录查询结果 (0.973096ms)
+✖ Tauri 公司查询拒绝保留结构化失败的可见详情，不将对象显示成 object Object (0.363206ms)
+✖ Worker 真实 Rust 六 kind 原始 JSON 通过现有 TypeScript host 与严格 decoder (6.960732ms)
+✖ Tauri 真实 Rust 六 kind 原始 JSON 通过现有 TypeScript host 与严格 decoder (0.559579ms)
+✖ Remote 真实 Rust 六 kind 原始 JSON 通过现有 TypeScript host 与严格 decoder (1.049447ms)
+✖ Tauri 真实 IPC 领域拒绝保留 BusinessCondition 与尚未结算的具体原因 (0.508218ms)
+ℹ Error: Test "Remote 真实 host 销毁后拒绝迟到的本人查询成功" at src/host/company-read-hosts.test.ts:113:3 generated asynchronous activity after the test ended. This activity created the error "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /销毁|关闭|过期|generation|中断/. Input:
+
+'Error: 远程公司查询需要健康的当前会话基线'
+" and would have caused the test to fail, but instead triggered an unhandledRejection event.
+ℹ Error: Test "Remote 同 generation 重装基线仍拒绝旧目录查询结果" at src/host/company-read-hosts.test.ts:130:3 generated asynchronous activity after the test ended. This activity created the error "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /generation|过期/. Input:
+
+'Error: 远程公司查询需要健康的当前会话基线'
+" and would have caused the test to fail, but instead triggered an unhandledRejection event.
+✖ remote report ownership cannot survive a restored timeline with reused IDs (31.552478ms)
+✔ remote advertises its public company report capability (0.957585ms)
+✔ remote page uses the company route, opaque cursor, server limit and owning token (3.839632ms)
+✔ remote omits null pagination rather than sending null or inventing limits (1.537355ms)
+✔ remote by-ID refetches the report from its verified company route with the explicit token (5.046811ms)
+✔ remote rejects unknown report ownership without guessing a company or fetching (0.906425ms)
+✔ remote rejects cross-company pages atomically without registering their valid prefix (1.174719ms)
+✔ remote rejects conflicting report ownership without overwriting the verified company (1.793369ms)
+✔ remote rejects a by-ID response with mismatched company_id (1.379802ms)
+✔ remote rejects a by-ID response with mismatched id (1.434483ms)
+✔ remote exposes HTTP 403 for both report query entries without cached fallback (1.403933ms)
+✔ remote exposes HTTP 404 for both report query entries without cached fallback (1.2922ms)
+✔ remote exposes HTTP 500 for both report query entries without cached fallback (1.2672ms)
+✔ remote exposes network, JSON and DTO failures instead of returning empty reports (1.793859ms)
+✖ remote page response cannot cross a baseline timeline change (2.422549ms)
+✖ remote by-id response cannot cross a baseline timeline change (2.236446ms)
+ℹ Error: Test "remote page response cannot cross a baseline timeline change" at src/host/remote-company-reports.test.ts:179:3 generated asynchronous activity after the test ended. This activity created the error "Error: baseline.snapshot 字段不符合协议契约；未确认请求的结果未知，请核对权威状态" and would have caused the test to fail, but instead triggered an unhandledRejection event.
+ℹ Error: Test "remote by-id response cannot cross a baseline timeline change" at src/host/remote-company-reports.test.ts:179:3 generated asynchronous activity after the test ended. This activity created the error "Error: baseline.snapshot 字段不符合协议契约；未确认请求的结果未知，请核对权威状态" and would have caused the test to fail, but instead triggered an unhandledRejection event.
+✖ Remote proposePlayerCompanyAction 经实际 Host 转发可信身份与当前 generation (27.705416ms)
+✖ Remote enqueueReportCorrection 经实际 Host 转发可信身份与当前 generation (2.280966ms)
+✖ Remote cancelReportCorrection 经实际 Host 转发可信身份与当前 generation (1.605465ms)
+✖ Remote Proposal typed四分类拒绝保完整公开failure与cause，不串化或停会话 (1.85338ms)
+✔ Remote 拒绝错owner、错响应代际与畸形typed failure，不能拿receipt自证本人 (1.581605ms)
+✔ Remote真实HTTP入口保raw数字与重复字段拒绝，不先JSON.parse舍入 (1.919691ms)
+✖ Remote Proposal无member显式拒绝；Correction controller不伪造owner0 (1.676207ms)
+✔ Remote HostFailure之后三写均拒绝，不从旧baseline发送context或POST (1.8461ms)
+✖ Remote context等待时HostFailure中断，迟到context不得触发POST (3.186911ms)
+✔ Remote可信context的session不匹配时不发送命令 (1.079648ms)
+✔ Remote可信context的generation不匹配时不发送命令 (0.712771ms)
+✔ Remote可信context的control不匹配时不发送命令 (0.63781ms)
+✖ Remote context等待期间baseline变为1则旧context不能发送新写 (0.998776ms)
+✖ Remote context等待期间baseline变为2则旧context不能发送新写 (0.869854ms)
+✖ Remote迟到success在refresh后显式过期，保原拒绝cause (8.444156ms)
+✖ Remote迟到success在restore后显式过期，保原拒绝cause (1.466443ms)
+✖ Remote迟到success在dispose后显式过期，保原拒绝cause (1.452344ms)
+✖ Remote迟到success在failure后显式过期，保原拒绝cause (1.300391ms)
+✖ Remote迟到rejection在refresh后显式过期，保原拒绝cause (1.388852ms)
+✖ Remote迟到rejection在restore后显式过期，保原拒绝cause (1.488444ms)
+✖ Remote迟到rejection在dispose后显式过期，保原拒绝cause (1.307341ms)
+✖ Remote迟到rejection在failure后显式过期，保原拒绝cause (1.354222ms)
+✔ Given the remote whole-update DTO, when parsed, then it preserves generation and opaque EngineUpdate (1.973592ms)
+✖ Given the remote baseline DTO, when parsed, then it preserves generation and public metadata (0.880504ms)
+✔ Given legacy flat events or frames, when parsed in production, then remote rejects them (0.447228ms)
+✔ Given multiple remote envelope variants, when parsed, then the ambiguous message is rejected (0.182743ms)
+✔ Given malformed remote control payloads, when parsed, then their exact wire shapes are rejected (0.61871ms)
+✔ Given a pause preference payload mode, when converted from speed, then fastest stays JSON safe (0.179213ms)
+✔ Given enriched remote failures, when parsed, then diagnostic context and recovery guidance survive (0.255465ms)
+✖ Given an authenticated remote host, when player orders are queried, then it uses the read-only endpoint (25.087664ms)
+✖ 远程股票历史只通过显式 query endpoint 读取并绑定 generation (1.612906ms)
+✖ Given a keyed day-end save, when RemoteHost sends it, then the exact candidate key reaches the authenticated save endpoint (1.320662ms)
+✔ Given invalid indicators rejected by the server, when calculated remotely, then the host rejects instead of returning result arrays (1.293621ms)
+✔ Given a remote host without a Publisher baseline, when player orders are queried, then it rejects without inventing generation one (0.725321ms)
+✖ Given a same-generation Publisher resync, when refreshBaseline completes, then it redelivers the authoritative baseline (0.982036ms)
+✔ Given a server without diagnostic support, when created, then RemoteHost negotiates it as disabled (0.575119ms)
+✔ Given remote pause preferences, when serialized for the authenticated current generation API, then both flags remain explicit (0.153662ms)
+✔ Given remote session deletion fails, when disposed, then the host reports an explicit fatal failure (8.475226ms)
+✔ remote disposal authenticates the owning session before deletion (1.032326ms)
+✔ 浏览器 WS 凭据不进入 URL，speed GET 携带同一会话授权 (28.595621ms)
+✖ 暂停继续不重送旧 baseline，pull 持续请求并忽略旧 socket error (4.97095ms)
+✖ dispose 与切换 delivery 为已发送写请求提供结果未知出口 (1.733068ms)
+✖ 并发 refresh 与内部 ResyncRequired 共享请求，不遗失原 waiter (1.21818ms)
+✖ 意外断线自动取新权威 baseline，迟到旧 socket 消息不能污染恢复 (151.342337ms)
+✖ 已中断的写请求迟到 queued 不冒充完成，不关闭同 socket 的重同步连接 (1.429893ms)
+✖ 无入队确认的写请求在 5000ms 结果未知，真实未发送的 ID 仍协议失败 (1.584546ms)
+✖ 连续三次自动恢复失败后显式 fatal，不无限重连 (0.734142ms)
+✖ 应用层同步拒绝 baseline 后关闭当前连接并拒绝 waiter，不覆盖原 failure (1.23618ms)
+✖ 启动拒绝读档缓存 baseline 时返回失败且不请求 running true (3.10556ms)
+✖ 远程新 generation baseline 先于HTTP读档响应时，先通知恢复配置再交付 (5000.972636ms)
+✖ 远程读档HTTP响应丢失后，重同步新generation仍先确认已提交配置 (1.25039ms)
+✖ 远程读档失败后旧generation确认不改变配置并允许重试 (0.786193ms)
+ℹ Error: Test "并发 refresh 与内部 ResyncRequired 共享请求，不遗失原 waiter" at src/host/remote-lifecycle.test.ts:81:1 generated asynchronous activity after the test ended. This activity created the error "Error: 远程 Publisher 未连接，无法请求基线重同步" and would have caused the test to fail, but instead triggered an unhandledRejection event.
+ℹ Error: Test "并发 refresh 与内部 ResyncRequired 共享请求，不遗失原 waiter" at src/host/remote-lifecycle.test.ts:81:1 generated asynchronous activity after the test ended. This activity created the error "Error: 远程 Publisher 未连接，无法请求基线重同步" and would have caused the test to fail, but instead triggered an unhandledRejection event.
+ℹ Error: Test "已中断的写请求迟到 queued 不冒充完成，不关闭同 socket 的重同步连接" at src/host/remote-lifecycle.test.ts:110:1 generated asynchronous activity after the test ended. This activity created the error "Error: 远程 Publisher 未连接，无法请求基线重同步" and would have caused the test to fail, but instead triggered an unhandledRejection event.
+file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/guards.ts:6
+  throw new ProtocolError("PROTOCOL_MALFORMED", path, message);
+        ^
+
+ProtocolError: 测试 baseline 字段不符合协议契约
+    at malformed (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/guards.ts:6:9)
+    at exact (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/guards.ts:21:5)
+    at parseSnapshotRaw (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/parse.ts:166:3)
+    at parseProtocolSnapshot (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/parse.ts:184:38)
+    at file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-publisher-state.test.ts:9:18
+    at ModuleJob.run (node:internal/modules/esm/module_job:439:25)
+    at async node:internal/modules/esm/loader:643:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5) {
+  code: 'PROTOCOL_MALFORMED',
+  where: '测试 baseline'
+}
+
+Node.js v24.18.0
+✖ src/host/remote-publisher-state.test.ts (125.747304ms)
+✖ remote startup restores and caches the authoritative baseline without running the market (26.629868ms)
+✔ remote startup connection loss rejects restoration even while the market is paused (1.643536ms)
+✔ remote startup without a baseline times out and closes its connection (5.171923ms)
+✔ disposed remote startup cannot reconnect after a late load response (1.079947ms)
+✖ Remote SubmitIntent 严格携带权威 generation，不用默认值且旧代确认拒绝 (30.275667ms)
+✖ 并发 remote command 逆序确认只完成对应 request，重复确认显式失败 (1.290391ms)
+✖ request gateway error 只拒绝对应 command，HostFailure 批量拒绝其余 command (1.351032ms)
+✖ mode 切换丢弃旧 socket message/close，已同步的新连接沿用 protocol gate (2.130474ms)
+✖ 旧 socket onerror 不关闭新连接，恢复前仍保留 baseline gate (0.980256ms)
+✖ 并发 resync 共享权威 baseline，所有 waiter 均完成 (0.860484ms)
+✖ baseline callback 抛错时先安装 cache，waiter 由 fail 拒绝 (0.852634ms)
+✖ 同步 send throw 清理 command，dispose 显式拒绝未确认请求 (0.777352ms)
+✖ generation mismatch 和 ResyncRequired 请求重同步且同步前丢弃 protocol (0.971706ms)
+✖ load 新连接的 5000ms timer 在 baseline 到达后清除，超时显式失败 (9.646086ms)
+✖ 同 generation baseline 更新后 orders 沿用各自原有的 query guard (1.370143ms)
+✖ 同 generation baseline 更新后 diagnostics 沿用各自原有的 query guard (0.901455ms)
+✖ 同 generation baseline 更新后 save 沿用各自原有的 query guard (0.792963ms)
+✖ resync send 同步失败拒绝已登记 waiter，后续可显式重试 (0.782183ms)
+✖ Remote实际发送按同code换代id，unknown在pending和timeout前本地拒绝 (1.062137ms)
+✖ 真实双Remote host的submitIntent按A/B/A实际目录隔离 (1.133778ms)
+ℹ Error: Test "Remote SubmitIntent 严格携带权威 generation，不用默认值且旧代确认拒绝" at src/host/remote-state-contract.test.ts:59:1 generated asynchronous activity after the test ended. This activity created the error "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /已过期.*generation/. Input:
+
+'Error: 远程 Publisher 尚未完成权威基线同步，写请求未入队'
+" and would have caused the test to fail, but instead triggered an unhandledRejection event.
+ℹ Error: Test "并发 remote command 逆序确认只完成对应 request，重复确认显式失败" at src/host/remote-state-contract.test.ts:78:1 generated asynchronous activity after the test ended. This activity created the error "Error: 远程 Publisher 尚未完成权威基线同步，写请求未入队" and would have caused the test to fail, but instead triggered an unhandledRejection event.
+ℹ Error: Test "并发 remote command 逆序确认只完成对应 request，重复确认显式失败" at src/host/remote-state-contract.test.ts:78:1 generated asynchronous activity after the test ended. This activity created the error "Error: 远程 Publisher 尚未完成权威基线同步，写请求未入队" and would have caused the test to fail, but instead triggered an unhandledRejection event.
+ℹ Error: Test "request gateway error 只拒绝对应 command，HostFailure 批量拒绝其余 command" at src/host/remote-state-contract.test.ts:96:1 generated asynchronous activity after the test ended. This activity created the error "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /REJECTED: 请求失败/. Input:
+
+'Error: 远程 Publisher 尚未完成权威基线同步，写请求未入队'
+" and would have caused the test to fail, but instead triggered an unhandledRejection event.
+ℹ Error: Test "request gateway error 只拒绝对应 command，HostFailure 批量拒绝其余 command" at src/host/remote-state-contract.test.ts:96:1 generated asynchronous activity after the test ended. This activity created the error "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /BROKEN: 会话失败/. Input:
+
+'Error: 远程 Publisher 尚未完成权威基线同步，写请求未入队'
+" and would have caused the test to fail, but instead triggered an unhandledRejection event.
+ℹ Error: Test "request gateway error 只拒绝对应 command，HostFailure 批量拒绝其余 command" at src/host/remote-state-contract.test.ts:96:1 generated asynchronous activity after the test ended. This activity created the error "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /BROKEN: 会话失败/. Input:
+
+'Error: 远程 Publisher 尚未完成权威基线同步，写请求未入队'
+" and would have caused the test to fail, but instead triggered an unhandledRejection event.
+ℹ Error: Test "并发 resync 共享权威 baseline，所有 waiter 均完成" at src/host/remote-state-contract.test.ts:144:1 generated asynchronous activity after the test ended. This activity created the error "Error: 远程 Publisher 未连接，无法请求基线重同步" and would have caused the test to fail, but instead triggered an unhandledRejection event.
+ℹ Error: Test "同 generation baseline 更新后 orders 沿用各自原有的 query guard" at src/host/remote-state-contract.test.ts:229:3 generated asynchronous activity after the test ended. This activity created the error "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /已过期会话 generation/. Input:
+
+'Error: 远程基线尚未就绪，不能查询玩家活动委托'
+" and would have caused the test to fail, but instead triggered an unhandledRejection event.
+ℹ Error: Test "同 generation baseline 更新后 diagnostics 沿用各自原有的 query guard" at src/host/remote-state-contract.test.ts:229:3 generated asynchronous activity after the test ended. This activity created the error "AssertionError [ERR_ASSERTION]: The input did not match the regular expression /已过期会话 generation/. Input:
+
+'Error: 远程基线尚未就绪，不能查询 NPC 决策诊断'
+" and would have caused the test to fail, but instead triggered an unhandledRejection event.
+ℹ Error: Test "同 generation baseline 更新后 save 沿用各自原有的 query guard" at src/host/remote-state-contract.test.ts:229:3 generated asynchronous activity after the test ended. This activity created the error "Error: 远程基线尚未就绪或已失效，不能保存" and would have caused the test to fail, but instead triggered an unhandledRejection event.
+ℹ Error: Test "真实双Remote host的submitIntent按A/B/A实际目录隔离" at src/host/remote-state-contract.test.ts:288:1 generated asynchronous activity after the test ended. This activity created the error "Error: 远程 Publisher 尚未完成权威基线同步，写请求未入队" and would have caused the test to fail, but instead triggered an unhandledRejection event.
+ℹ tests 108
+ℹ suites 0
+ℹ pass 35
+ℹ fail 73
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 8990.391335
+
+✖ failing tests:
+
+test at src/host/company-read-hosts.test.ts:97:3
+✖ Worker 真实 host 注册公司只读查询，发送同代请求且不能指定其他账户 (27.258029ms)
+  Error [WasmHostInitializationError]: WASM_WORKER_TRANSPORT @ worker-host.message: baseline.snapshot 字段不符合协议契约
+      at notifyFailure (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/worker-host.ts:284:16)
+      at QueryWorker.onMessage (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/worker-host.ts:445:9)
+      at [nodejs.internal.kHybridDispatch] (node:internal/event_target:843:20)
+      at QueryWorker.dispatchEvent (node:internal/event_target:776:26)
+      at QueryWorker.emit (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:41:36)
+      at withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:48:14)
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:98:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    failure: { code: 'WASM_WORKER_TRANSPORT', where: 'worker-host.message', message: 'baseline.snapshot 字段不符合协议契约' },
+    [cause]: { code: 'WASM_WORKER_TRANSPORT', where: 'worker-host.message', message: 'baseline.snapshot 字段不符合协议契约' }
+  }
+
+test at src/host/company-read-hosts.test.ts:105:3
+✖ Worker 真实 host 拒绝其他账户回执与错 kind，不用空列表掩盖失败 (2.446419ms)
+  Error [WasmHostInitializationError]: WASM_WORKER_TRANSPORT @ worker-host.message: baseline.snapshot 字段不符合协议契约
+      at notifyFailure (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/worker-host.ts:284:16)
+      at QueryWorker.onMessage (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/worker-host.ts:445:9)
+      at [nodejs.internal.kHybridDispatch] (node:internal/event_target:843:20)
+      at QueryWorker.dispatchEvent (node:internal/event_target:776:26)
+      at QueryWorker.emit (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:41:36)
+      at withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:48:14)
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:106:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    failure: { code: 'WASM_WORKER_TRANSPORT', where: 'worker-host.message', message: 'baseline.snapshot 字段不符合协议契约' },
+    [cause]: { code: 'WASM_WORKER_TRANSPORT', where: 'worker-host.message', message: 'baseline.snapshot 字段不符合协议契约' }
+  }
+
+test at src/host/company-read-hosts.test.ts:113:3
+✖ Worker 真实 host 销毁后拒绝迟到的本人查询成功 (1.551225ms)
+  Error [WasmHostInitializationError]: WASM_WORKER_TRANSPORT @ worker-host.message: baseline.snapshot 字段不符合协议契约
+      at notifyFailure (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/worker-host.ts:284:16)
+      at QueryWorker.onMessage (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/worker-host.ts:445:9)
+      at [nodejs.internal.kHybridDispatch] (node:internal/event_target:843:20)
+      at QueryWorker.dispatchEvent (node:internal/event_target:776:26)
+      at QueryWorker.emit (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:41:36)
+      at withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:48:14)
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:114:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    failure: { code: 'WASM_WORKER_TRANSPORT', where: 'worker-host.message', message: 'baseline.snapshot 字段不符合协议契约' },
+    [cause]: { code: 'WASM_WORKER_TRANSPORT', where: 'worker-host.message', message: 'baseline.snapshot 字段不符合协议契约' }
+  }
+
+test at src/host/company-read-hosts.test.ts:124:26
+✖ Worker 本地固定玩家零不能接受改写为其他 owner 的完整回执 (1.354552ms)
+  Error [WasmHostInitializationError]: WASM_WORKER_TRANSPORT @ worker-host.message: baseline.snapshot 字段不符合协议契约
+      at notifyFailure (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/worker-host.ts:284:16)
+      at QueryWorker.onMessage (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/worker-host.ts:445:9)
+      at [nodejs.internal.kHybridDispatch] (node:internal/event_target:843:20)
+      at QueryWorker.dispatchEvent (node:internal/event_target:776:26)
+      at QueryWorker.emit (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:41:36)
+      at withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:48:14)
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:125:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    failure: { code: 'WASM_WORKER_TRANSPORT', where: 'worker-host.message', message: 'baseline.snapshot 字段不符合协议契约' },
+    [cause]: { code: 'WASM_WORKER_TRANSPORT', where: 'worker-host.message', message: 'baseline.snapshot 字段不符合协议契约' }
+  }
+
+test at src/host/company-read-hosts.test.ts:130:3
+✖ Worker 同 generation 重装基线仍拒绝旧目录查询结果 (1.386512ms)
+  Error [WasmHostInitializationError]: WASM_WORKER_TRANSPORT @ worker-host.message: baseline.snapshot 字段不符合协议契约
+      at notifyFailure (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/worker-host.ts:284:16)
+      at QueryWorker.onMessage (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/worker-host.ts:445:9)
+      at [nodejs.internal.kHybridDispatch] (node:internal/event_target:843:20)
+      at QueryWorker.dispatchEvent (node:internal/event_target:776:26)
+      at QueryWorker.emit (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:41:36)
+      at withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:48:14)
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:131:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    failure: { code: 'WASM_WORKER_TRANSPORT', where: 'worker-host.message', message: 'baseline.snapshot 字段不符合协议契约' },
+    [cause]: { code: 'WASM_WORKER_TRANSPORT', where: 'worker-host.message', message: 'baseline.snapshot 字段不符合协议契约' }
+  }
+
+test at src/host/company-read-hosts.test.ts:97:3
+✖ Tauri 真实 host 注册公司只读查询，发送同代请求且不能指定其他账户 (2.209826ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/tauri-host.ts:191:11)
+      at async withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:66:14)
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:98:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/tauri-host.ts:174:14)
+        at async withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:66:14)
+        at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:98:5) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/company-read-hosts.test.ts:105:3
+✖ Tauri 真实 host 拒绝其他账户回执与错 kind，不用空列表掩盖失败 (0.401076ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/tauri-host.ts:191:11)
+      at async withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:66:14)
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:106:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/tauri-host.ts:174:14)
+        at async withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:66:14)
+        at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:106:5) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/company-read-hosts.test.ts:113:3
+✖ Tauri 真实 host 销毁后拒绝迟到的本人查询成功 (0.329976ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/tauri-host.ts:191:11)
+      at async withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:66:14)
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:114:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/tauri-host.ts:174:14)
+        at async withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:66:14)
+        at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:114:5) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/company-read-hosts.test.ts:124:26
+✖ Tauri 本地固定玩家零不能接受改写为其他 owner 的完整回执 (0.383816ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/tauri-host.ts:191:11)
+      at async withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:66:14)
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:125:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/tauri-host.ts:174:14)
+        at async withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:66:14)
+        at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:125:5) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/company-read-hosts.test.ts:130:3
+✖ Tauri 同 generation 重装基线仍拒绝旧目录查询结果 (0.464928ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/tauri-host.ts:191:11)
+      at async withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:66:14)
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:131:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/tauri-host.ts:174:14)
+        at async withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:66:14)
+        at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:131:5) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/company-read-hosts.test.ts:97:3
+✖ Remote 真实 host 注册公司只读查询，发送同代请求且不能指定其他账户 (4.838818ms)
+  Error: 远程公司查询需要健康的当前会话基线
+      at file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:323:59
+      at read (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read.ts:24:35)
+      at Object.queryAccountDividendTaxStatus (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read.ts:49:30)
+      at file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:99:35
+      at withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:89:11)
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:98:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+
+test at src/host/company-read-hosts.test.ts:105:3
+✖ Remote 真实 host 拒绝其他账户回执与错 kind，不用空列表掩盖失败 (1.708837ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /account/. Input:
+  
+  'Error: 远程公司查询需要健康的当前会话基线'
+  
+      at async file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:108:7
+      at async withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:89:5)
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:106:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: 远程公司查询需要健康的当前会话基线
+        at file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:323:59
+        at read (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read.ts:24:35)
+        at Object.queryOwnerFlatWithholdingReceipts (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read.ts:61:37)
+        at file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:108:33
+        at withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:89:11)
+        at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:106:5)
+        at async Test.run (node:internal/test_runner/test:1332:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:911:7),
+    expected: /account/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/host/company-read-hosts.test.ts:113:3
+✖ Remote 真实 host 销毁后拒绝迟到的本人查询成功 (1.054237ms)
+  TypeError: complete is not a function
+      at file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:120:7
+      at async withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:89:5)
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:114:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+
+test at src/host/company-read-hosts.test.ts:130:3
+✖ Remote 同 generation 重装基线仍拒绝旧目录查询结果 (0.973096ms)
+  TypeError: complete is not a function
+      at file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:137:7
+      at async withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:89:5)
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:131:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+
+test at src/host/company-read-hosts.test.ts:143:1
+✖ Tauri 公司查询拒绝保留结构化失败的可见详情，不将对象显示成 object Object (0.363206ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/tauri-host.ts:191:11)
+      at async withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:66:14)
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:144:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/tauri-host.ts:174:14)
+        at async withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:66:14)
+        at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:144:3) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/company-read-hosts.test.ts:168:60
+✖ Worker 真实 Rust 六 kind 原始 JSON 通过现有 TypeScript host 与严格 decoder (6.960732ms)
+  Error [WasmHostInitializationError]: WASM_WORKER_TRANSPORT @ worker-host.message: baseline.snapshot 字段不符合协议契约
+      at notifyFailure (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/worker-host.ts:284:16)
+      at QueryWorker.onMessage (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/worker-host.ts:445:9)
+      at [nodejs.internal.kHybridDispatch] (node:internal/event_target:843:20)
+      at QueryWorker.dispatchEvent (node:internal/event_target:776:26)
+      at QueryWorker.emit (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:41:36)
+      at withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:48:14)
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:174:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    failure: { code: 'WASM_WORKER_TRANSPORT', where: 'worker-host.message', message: 'baseline.snapshot 字段不符合协议契约' },
+    [cause]: { code: 'WASM_WORKER_TRANSPORT', where: 'worker-host.message', message: 'baseline.snapshot 字段不符合协议契约' }
+  }
+
+test at src/host/company-read-hosts.test.ts:168:60
+✖ Tauri 真实 Rust 六 kind 原始 JSON 通过现有 TypeScript host 与严格 decoder (0.559579ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/tauri-host.ts:191:11)
+      at async withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:66:14)
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:174:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/tauri-host.ts:174:14)
+        at async withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:66:14)
+        at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:174:3) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/company-read-hosts.test.ts:168:60
+✖ Remote 真实 Rust 六 kind 原始 JSON 通过现有 TypeScript host 与严格 decoder (1.049447ms)
+  Error: 远程公司查询需要健康的当前会话基线
+      at file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:323:59
+      at read (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read.ts:24:35)
+      at Object.queryAccountDividendTaxStatus (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read.ts:49:30)
+      at withHost.stocks.id (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:176:33)
+      at withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:89:11)
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:174:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+
+test at src/host/company-read-hosts.test.ts:188:1
+✖ Tauri 真实 IPC 领域拒绝保留 BusinessCondition 与尚未结算的具体原因 (0.508218ms)
+  Error: Tauri 会话初始化失败：baseline.snapshot 字段不符合协议契约
+      at createTauriHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/tauri-host.ts:191:11)
+      at async withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:66:14)
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:192:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    [cause]: Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+        at malformed (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/guards.ts:6:9)
+        at exact (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/guards.ts:21:5)
+        at parseSnapshotRaw (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/parse.ts:166:3)
+        at parseProtocolSnapshot (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/parse.ts:184:38)
+        at prepareBaselineUpdate (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/host-update.ts:81:18)
+        at TauriTimelineState.installSnapshot (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/tauri-timeline-state.ts:90:23)
+        at TauriTimelineState.installInitialBaseline (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/tauri-timeline-state.ts:69:17)
+        at createTauriHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/tauri-host.ts:174:14)
+        at async withHost (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:66:14)
+        at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/company-read-hosts.test.ts:192:3) {
+      code: 'PROTOCOL_MALFORMED',
+      where: 'baseline.snapshot'
+    }
+  }
+
+test at src/host/remote-company-reports.test.ts:39:1
+✖ remote report ownership cannot survive a restored timeline with reused IDs (31.552478ms)
+  Error: REMOTE_PROTOCOL: baseline.snapshot 字段不符合协议契约
+      at fail (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:113:20)
+      at next.onmessage (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:245:9)
+      at file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-company-reports.test.ts:50:46
+      at node:internal/process/task_queues:151:7
+      at AsyncResource.runInAsyncScope (node:async_hooks:227:14)
+      at AsyncResource.runMicrotask (node:internal/process/task_queues:148:8)
+
+test at src/host/remote-company-reports.test.ts:179:3
+✖ remote page response cannot cross a baseline timeline change (2.422549ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-company-reports.test.ts:213:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /时间线变更失效/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/host/remote-company-reports.test.ts:179:3
+✖ remote by-id response cannot cross a baseline timeline change (2.236446ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-company-reports.test.ts:213:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /时间线变更失效/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/host/remote-company-write.test.ts:56:37
+✖ Remote proposePlayerCompanyAction 经实际 Host 转发可信身份与当前 generation (27.705416ms)
+  Error: 远程公司写命令需要健康的当前连接与 baseline
+      at withCompanyWrite (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:272:84)
+      at proposePlayerCompanyAction (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:312:14)
+      at Object.invoke (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-company-write.test.ts:50:61)
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-company-write.test.ts:58:28)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3)
+
+test at src/host/remote-company-write.test.ts:56:37
+✖ Remote enqueueReportCorrection 经实际 Host 转发可信身份与当前 generation (2.280966ms)
+  Error: 远程公司写命令需要健康的当前连接与 baseline
+      at withCompanyWrite (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:272:84)
+      at enqueueReportCorrection (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:316:14)
+      at Object.invoke (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-company-write.test.ts:50:61)
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-company-write.test.ts:58:28)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+
+test at src/host/remote-company-write.test.ts:56:37
+✖ Remote cancelReportCorrection 经实际 Host 转发可信身份与当前 generation (1.605465ms)
+  Error: 远程公司写命令需要健康的当前连接与 baseline
+      at withCompanyWrite (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:272:84)
+      at cancelReportCorrection (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:320:14)
+      at Object.invoke (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-company-write.test.ts:50:61)
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-company-write.test.ts:58:28)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+
+test at src/host/remote-company-write.test.ts:63:1
+✖ Remote Proposal typed四分类拒绝保完整公开failure与cause，不串化或停会话 (1.85338ms)
+  AssertionError [ERR_ASSERTION]: The validation function is expected to return "true". Received false
+  
+  Caught error:
+  
+  Error: 远程公司写命令需要健康的当前连接与 baseline
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-company-write.test.ts:65:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: 远程公司写命令需要健康的当前连接与 baseline
+        at withCompanyWrite (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:272:84)
+        at proposePlayerCompanyAction (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:312:14)
+        at Object.invoke (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-company-write.test.ts:50:61)
+        at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-company-write.test.ts:65:26)
+        at async Test.run (node:internal/test_runner/test:1332:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:911:7),
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/host/remote-company-write.test.ts:86:1
+✖ Remote Proposal无member显式拒绝；Correction controller不伪造owner0 (1.676207ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /member|本人|加入/. Input:
+  
+  'Error: 远程公司写命令需要健康的当前连接与 baseline'
+  
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-company-write.test.ts:88:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: 远程公司写命令需要健康的当前连接与 baseline
+        at withCompanyWrite (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:272:84)
+        at proposePlayerCompanyAction (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:312:14)
+        at Object.invoke (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-company-write.test.ts:50:61)
+        at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-company-write.test.ts:88:26)
+        at async Test.run (node:internal/test_runner/test:1332:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:911:7),
+    expected: /member|本人|加入/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/host/remote-company-write.test.ts:101:1
+✖ Remote context等待时HostFailure中断，迟到context不得触发POST (3.186911ms)
+  TypeError: finish is not a function
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-company-write.test.ts:106:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+
+test at src/host/remote-company-write.test.ts:118:34
+✖ Remote context等待期间baseline变为1则旧context不能发送新写 (0.998776ms)
+  TypeError: finish is not a function
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-company-write.test.ts:124:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+
+test at src/host/remote-company-write.test.ts:118:34
+✖ Remote context等待期间baseline变为2则旧context不能发送新写 (0.869854ms)
+  TypeError: finish is not a function
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-company-write.test.ts:124:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+
+test at src/host/remote-company-write.test.ts:129:135
+✖ Remote迟到success在refresh后显式过期，保原拒绝cause (8.444156ms)
+  [AssertionError [ERR_ASSERTION]: The validation function is expected to return "true". Received false
+  
+  Caught error:
+  
+  Error: 远程公司写命令需要健康的当前连接与 baseline] {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: 远程公司写命令需要健康的当前连接与 baseline
+        at withCompanyWrite (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:272:84)
+        at proposePlayerCompanyAction (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:312:14)
+        at Object.invoke (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-company-write.test.ts:50:61)
+        at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-company-write.test.ts:132:21)
+        at async Test.run (node:internal/test_runner/test:1332:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:911:7),
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/host/remote-company-write.test.ts:129:135
+✖ Remote迟到success在restore后显式过期，保原拒绝cause (1.466443ms)
+  AssertionError [ERR_ASSERTION]: The validation function is expected to return "true". Received false
+  
+  Caught error:
+  
+  Error: 远程公司写命令需要健康的当前连接与 baseline
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: 远程公司写命令需要健康的当前连接与 baseline
+        at withCompanyWrite (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:272:84)
+        at proposePlayerCompanyAction (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:312:14)
+        at Object.invoke (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-company-write.test.ts:50:61)
+        at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-company-write.test.ts:132:21)
+        at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+        at async Test.run (node:internal/test_runner/test:1332:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:911:7),
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/host/remote-company-write.test.ts:129:135
+✖ Remote迟到success在dispose后显式过期，保原拒绝cause (1.452344ms)
+  AssertionError [ERR_ASSERTION]: The validation function is expected to return "true". Received false
+  
+  Caught error:
+  
+  Error: 远程公司写命令需要健康的当前连接与 baseline
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: 远程公司写命令需要健康的当前连接与 baseline
+        at withCompanyWrite (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:272:84)
+        at proposePlayerCompanyAction (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:312:14)
+        at Object.invoke (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-company-write.test.ts:50:61)
+        at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-company-write.test.ts:132:21)
+        at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+        at async Test.run (node:internal/test_runner/test:1332:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:911:7),
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/host/remote-company-write.test.ts:129:135
+✖ Remote迟到success在failure后显式过期，保原拒绝cause (1.300391ms)
+  AssertionError [ERR_ASSERTION]: The validation function is expected to return "true". Received false
+  
+  Caught error:
+  
+  Error: 远程公司写命令需要健康的当前连接与 baseline
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: 远程公司写命令需要健康的当前连接与 baseline
+        at withCompanyWrite (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:272:84)
+        at proposePlayerCompanyAction (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:312:14)
+        at Object.invoke (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-company-write.test.ts:50:61)
+        at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-company-write.test.ts:132:21)
+        at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+        at async Test.run (node:internal/test_runner/test:1332:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:911:7),
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/host/remote-company-write.test.ts:129:135
+✖ Remote迟到rejection在refresh后显式过期，保原拒绝cause (1.388852ms)
+  AssertionError [ERR_ASSERTION]: The validation function is expected to return "true". Received false
+  
+  Caught error:
+  
+  Error: 远程公司写命令需要健康的当前连接与 baseline
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: 远程公司写命令需要健康的当前连接与 baseline
+        at withCompanyWrite (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:272:84)
+        at proposePlayerCompanyAction (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:312:14)
+        at Object.invoke (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-company-write.test.ts:50:61)
+        at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-company-write.test.ts:132:21)
+        at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+        at async Test.run (node:internal/test_runner/test:1332:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:911:7),
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/host/remote-company-write.test.ts:129:135
+✖ Remote迟到rejection在restore后显式过期，保原拒绝cause (1.488444ms)
+  AssertionError [ERR_ASSERTION]: The validation function is expected to return "true". Received false
+  
+  Caught error:
+  
+  Error: 远程公司写命令需要健康的当前连接与 baseline
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: 远程公司写命令需要健康的当前连接与 baseline
+        at withCompanyWrite (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:272:84)
+        at proposePlayerCompanyAction (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:312:14)
+        at Object.invoke (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-company-write.test.ts:50:61)
+        at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-company-write.test.ts:132:21)
+        at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+        at async Test.run (node:internal/test_runner/test:1332:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:911:7),
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/host/remote-company-write.test.ts:129:135
+✖ Remote迟到rejection在dispose后显式过期，保原拒绝cause (1.307341ms)
+  AssertionError [ERR_ASSERTION]: The validation function is expected to return "true". Received false
+  
+  Caught error:
+  
+  Error: 远程公司写命令需要健康的当前连接与 baseline
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: 远程公司写命令需要健康的当前连接与 baseline
+        at withCompanyWrite (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:272:84)
+        at proposePlayerCompanyAction (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:312:14)
+        at Object.invoke (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-company-write.test.ts:50:61)
+        at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-company-write.test.ts:132:21)
+        at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+        at async Test.run (node:internal/test_runner/test:1332:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:911:7),
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/host/remote-company-write.test.ts:129:135
+✖ Remote迟到rejection在failure后显式过期，保原拒绝cause (1.354222ms)
+  AssertionError [ERR_ASSERTION]: The validation function is expected to return "true". Received false
+  
+  Caught error:
+  
+  Error: 远程公司写命令需要健康的当前连接与 baseline
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: 远程公司写命令需要健康的当前连接与 baseline
+        at withCompanyWrite (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:272:84)
+        at proposePlayerCompanyAction (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:312:14)
+        at Object.invoke (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-company-write.test.ts:50:61)
+        at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-company-write.test.ts:132:21)
+        at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+        at async Test.run (node:internal/test_runner/test:1332:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:911:7),
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/host/remote-host.test.ts:29:1
+✖ Given the remote baseline DTO, when parsed, then it preserves generation and public metadata (0.880504ms)
+  Error [ProtocolError]: baseline.snapshot 字段不符合协议契约
+      at malformed (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/guards.ts:6:9)
+      at exact (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/guards.ts:21:5)
+      at parseSnapshotRaw (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/parse.ts:166:3)
+      at parseProtocolSnapshot (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/protocol/parse.ts:184:38)
+      at prepareBaselineUpdate (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/host-update.ts:81:18)
+      at baseline (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-wire.ts:48:13)
+      at parseRemoteMessage (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-wire.ts:61:51)
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.test.ts:30:18)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1325:25) {
+    code: 'PROTOCOL_MALFORMED',
+    where: 'baseline.snapshot'
+  }
+
+test at src/host/remote-host.test.ts:113:1
+✖ Given an authenticated remote host, when player orders are queried, then it uses the read-only endpoint (25.087664ms)
+  Error: 远程基线尚未就绪，不能查询玩家活动委托
+      at RemotePublisherState.captureQueryCursor (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-publisher-state.ts:65:45)
+      at Object.playerWorkingOrders (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:443:32)
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.test.ts:145:31)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+
+test at src/host/remote-host.test.ts:156:1
+✖ 远程股票历史只通过显式 query endpoint 读取并绑定 generation (1.612906ms)
+  Error: 远程基线尚未就绪，不能查询股票历史
+      at RemotePublisherState.captureQueryCursor (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-publisher-state.ts:65:45)
+      at Object.queryStockHistory (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:457:32)
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.test.ts:176:31)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+
+test at src/host/remote-host.test.ts:187:1
+✖ Given a keyed day-end save, when RemoteHost sends it, then the exact candidate key reaches the authenticated save endpoint (1.320662ms)
+  Error: 远程基线尚未就绪或已失效，不能保存
+      at Object.save (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:430:82)
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.test.ts:211:14)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+
+test at src/host/remote-host.test.ts:259:1
+✖ Given a same-generation Publisher resync, when refreshBaseline completes, then it redelivers the authoritative baseline (0.982036ms)
+  Error: 远程 Publisher 未连接，无法请求基线重同步
+      at requestResync (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:124:29)
+      at Object.refreshBaseline (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:439:13)
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.test.ts:278:14)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+
+test at src/host/remote-lifecycle.test.ts:48:1
+✖ 暂停继续不重送旧 baseline，pull 持续请求并忽略旧 socket error (4.97095ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  0 !== 1
+  
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-lifecycle.test.ts:55:10)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at src/host/remote-lifecycle.test.ts:67:1
+✖ dispose 与切换 delivery 为已发送写请求提供结果未知出口 (1.733068ms)
+  [AssertionError [ERR_ASSERTION]: The input did not match the regular expression /结果未知/. Input:
+  
+  'Error: 远程 Publisher 尚未完成权威基线同步，写请求未入队'
+  ] {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: 远程 Publisher 尚未完成权威基线同步，写请求未入队
+        at Object.submitIntent (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:398:110)
+        at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-lifecycle.test.ts:72:34)
+        at async Test.run (node:internal/test_runner/test:1332:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:911:7),
+    expected: /结果未知/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/host/remote-lifecycle.test.ts:81:1
+✖ 并发 refresh 与内部 ResyncRequired 共享请求，不遗失原 waiter (1.21818ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  0 !== 1
+  
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-lifecycle.test.ts:88:10)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at src/host/remote-lifecycle.test.ts:94:1
+✖ 意外断线自动取新权威 baseline，迟到旧 socket 消息不能污染恢复 (151.342337ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  1 !== 2
+  
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-lifecycle.test.ts:101:10)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 2,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at src/host/remote-lifecycle.test.ts:110:1
+✖ 已中断的写请求迟到 queued 不冒充完成，不关闭同 socket 的重同步连接 (1.429893ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /结果未知/. Input:
+  
+  'Error: 远程 Publisher 尚未完成权威基线同步，写请求未入队'
+  
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-lifecycle.test.ts:118:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: 远程 Publisher 尚未完成权威基线同步，写请求未入队
+        at Object.submitIntent (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:398:110)
+        at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-lifecycle.test.ts:115:32)
+        at async Test.run (node:internal/test_runner/test:1332:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:911:7),
+    expected: /结果未知/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/host/remote-lifecycle.test.ts:126:1
+✖ 无入队确认的写请求在 5000ms 结果未知，真实未发送的 ID 仍协议失败 (1.584546ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /5000ms.*结果未知/. Input:
+  
+  'Error: 远程 Publisher 尚未完成权威基线同步，写请求未入队'
+  
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-lifecycle.test.ts:135:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: 远程 Publisher 尚未完成权威基线同步，写请求未入队
+        at Object.submitIntent (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:398:110)
+        at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-lifecycle.test.ts:132:39)
+        at async Test.run (node:internal/test_runner/test:1332:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:911:7),
+    expected: /5000ms.*结果未知/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/host/remote-lifecycle.test.ts:143:1
+✖ 连续三次自动恢复失败后显式 fatal，不无限重连 (0.734142ms)
+  TypeError: Cannot read properties of undefined (reading 'onclose')
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-lifecycle.test.ts:150:35)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+
+test at src/host/remote-lifecycle.test.ts:161:1
+✖ 应用层同步拒绝 baseline 后关闭当前连接并拒绝 waiter，不覆盖原 failure (1.23618ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /应用层拒绝.*结果未知/. Input:
+  
+  'Error: REMOTE_PROTOCOL: baseline.snapshot 字段不符合协议契约'
+  
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-lifecycle.test.ts:168:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: REMOTE_PROTOCOL: baseline.snapshot 字段不符合协议契约
+        at fail (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:113:20)
+        at next.onmessage (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:245:9)
+        at Object.receive (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-lifecycle.test.ts:34:67)
+        at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-lifecycle.test.ts:167:11)
+        at async Test.run (node:internal/test_runner/test:1332:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:911:7),
+    expected: /应用层拒绝.*结果未知/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/host/remote-lifecycle.test.ts:174:1
+✖ 启动拒绝读档缓存 baseline 时返回失败且不请求 running true (3.10556ms)
+  Error: REMOTE_PROTOCOL: baseline.snapshot 字段不符合协议契约
+      at fail (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:113:20)
+      at next.onmessage (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:245:9)
+      at Object.receive (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-lifecycle.test.ts:34:67)
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-lifecycle.test.ts:178:11)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+
+test at src/host/remote-lifecycle.test.ts:185:1
+✖ 远程新 generation baseline 先于HTTP读档响应时，先通知恢复配置再交付 (5000.972636ms)
+  Error: REMOTE_BASELINE_TIMEOUT: 读取恢复后的远程权威基线超时（5000ms）
+      at fail (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:113:20)
+      at Timeout.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:258:38)
+      at listOnTimeout (node:internal/timers:605:17)
+      at process.processTimers (node:internal/timers:541:7)
+
+test at src/host/remote-lifecycle.test.ts:205:1
+✖ 远程读档HTTP响应丢失后，重同步新generation仍先确认已提交配置 (1.25039ms)
+  Error: 远程 Publisher 未连接，无法请求基线重同步
+      at requestResync (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:124:29)
+      at Object.refreshBaseline (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:439:13)
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-lifecycle.test.ts:217:35)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+
+test at src/host/remote-lifecycle.test.ts:225:1
+✖ 远程读档失败后旧generation确认不改变配置并允许重试 (0.786193ms)
+  Error: 远程 Publisher 未连接，无法请求基线重同步
+      at requestResync (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:124:29)
+      at Object.refreshBaseline (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:439:13)
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-lifecycle.test.ts:232:35)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+
+test at src/host/remote-publisher-state.test.ts:1:1
+✖ src/host/remote-publisher-state.test.ts (125.747304ms)
+  'test failed'
+
+test at src/host/remote-startup.test.ts:34:1
+✖ remote startup restores and caches the authoritative baseline without running the market (26.629868ms)
+  Error: REMOTE_PROTOCOL: baseline.snapshot 字段不符合协议契约
+      at fail (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:113:20)
+      at next.onmessage (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:245:9)
+      at file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-startup.test.ts:36:95
+      at file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-startup.test.ts:27:28
+      at node:internal/process/task_queues:151:7
+      at AsyncResource.runInAsyncScope (node:async_hooks:227:14)
+      at AsyncResource.runMicrotask (node:internal/process/task_queues:148:8)
+
+test at src/host/remote-state-contract.test.ts:59:1
+✖ Remote SubmitIntent 严格携带权威 generation，不用默认值且旧代确认拒绝 (30.275667ms)
+  TypeError: Cannot read properties of undefined (reading 'SubmitIntent')
+      at commandId (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-state-contract.test.ts:54:78)
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-state-contract.test.ts:67:49)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3)
+
+test at src/host/remote-state-contract.test.ts:78:1
+✖ 并发 remote command 逆序确认只完成对应 request，重复确认显式失败 (1.290391ms)
+  TypeError: Cannot read properties of undefined (reading 'SubmitIntent')
+      at commandId (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-state-contract.test.ts:54:78)
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-state-contract.test.ts:84:19)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+
+test at src/host/remote-state-contract.test.ts:96:1
+✖ request gateway error 只拒绝对应 command，HostFailure 批量拒绝其余 command (1.351032ms)
+  TypeError: Cannot read properties of undefined (reading 'SubmitIntent')
+      at commandId (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-state-contract.test.ts:54:78)
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-state-contract.test.ts:105:48)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+
+test at src/host/remote-state-contract.test.ts:114:1
+✖ mode 切换丢弃旧 socket message/close，已同步的新连接沿用 protocol gate (2.130474ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+  + []
+  - [
+  -   'baseline'
+  - ]
+  
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-state-contract.test.ts:124:10)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [],
+    expected: [ 'baseline' ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at src/host/remote-state-contract.test.ts:132:1
+✖ 旧 socket onerror 不关闭新连接，恢复前仍保留 baseline gate (0.980256ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  1 !== 0
+  
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-state-contract.test.ts:139:10)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at src/host/remote-state-contract.test.ts:144:1
+✖ 并发 resync 共享权威 baseline，所有 waiter 均完成 (0.860484ms)
+  Error: 远程 Publisher 未连接，无法请求基线重同步
+      at requestResync (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:124:29)
+      at Object.refreshBaseline (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:439:13)
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-state-contract.test.ts:149:23)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+
+test at src/host/remote-state-contract.test.ts:157:1
+✖ baseline callback 抛错时先安装 cache，waiter 由 fail 拒绝 (0.852634ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /REMOTE_PROTOCOL: callback broke/. Input:
+  
+  'Error: 远程 Publisher 未连接，无法请求基线重同步'
+  
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-state-contract.test.ts:165:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: 远程 Publisher 未连接，无法请求基线重同步
+        at requestResync (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:124:29)
+        at Object.refreshBaseline (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:439:13)
+        at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-state-contract.test.ts:161:24)
+        at async Test.run (node:internal/test_runner/test:1332:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:911:7),
+    expected: /REMOTE_PROTOCOL: callback broke/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/host/remote-state-contract.test.ts:170:1
+✖ 同步 send throw 清理 command，dispose 显式拒绝未确认请求 (0.777352ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /send broke/. Input:
+  
+  'Error: 远程 Publisher 尚未完成权威基线同步，写请求未入队'
+  
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-state-contract.test.ts:174:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: 远程 Publisher 尚未完成权威基线同步，写请求未入队
+        at Object.submitIntent (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:398:110)
+        at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-state-contract.test.ts:174:29)
+        at async Test.run (node:internal/test_runner/test:1332:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:911:7),
+    expected: /send broke/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/host/remote-state-contract.test.ts:184:1
+✖ generation mismatch 和 ResyncRequired 请求重同步且同步前丢弃 protocol (0.971706ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+  + []
+  - [
+  -   {
+  -     Resync: {}
+  -   }
+  - ]
+  
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-state-contract.test.ts:190:10)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [],
+    expected: [ { Resync: {} } ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at src/host/remote-state-contract.test.ts:200:1
+✖ load 新连接的 5000ms timer 在 baseline 到达后清除，超时显式失败 (9.646086ms)
+  Error: REMOTE_PROTOCOL: baseline.snapshot 字段不符合协议契约
+      at fail (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:113:20)
+      at next.onmessage (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:245:9)
+      at FakeSocket.receive (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-state-contract.test.ts:28:45)
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-state-contract.test.ts:209:26)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+
+test at src/host/remote-state-contract.test.ts:229:3
+✖ 同 generation baseline 更新后 orders 沿用各自原有的 query guard (1.370143ms)
+  TypeError: finish is not a function
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-state-contract.test.ts:241:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+
+test at src/host/remote-state-contract.test.ts:229:3
+✖ 同 generation baseline 更新后 diagnostics 沿用各自原有的 query guard (0.901455ms)
+  TypeError: finish is not a function
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-state-contract.test.ts:241:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+
+test at src/host/remote-state-contract.test.ts:229:3
+✖ 同 generation baseline 更新后 save 沿用各自原有的 query guard (0.792963ms)
+  TypeError: finish is not a function
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-state-contract.test.ts:241:5)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)
+
+test at src/host/remote-state-contract.test.ts:248:1
+✖ resync send 同步失败拒绝已登记 waiter，后续可显式重试 (0.782183ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /resync send broke/. Input:
+  
+  'Error: 远程 Publisher 未连接，无法请求基线重同步'
+  
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-state-contract.test.ts:252:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: 远程 Publisher 未连接，无法请求基线重同步
+        at requestResync (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:124:29)
+        at Object.refreshBaseline (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-host.ts:439:13)
+        at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-state-contract.test.ts:252:29)
+        at async Test.run (node:internal/test_runner/test:1332:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:911:7),
+    expected: /resync send broke/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at src/host/remote-state-contract.test.ts:268:1
+✖ Remote实际发送按同code换代id，unknown在pending和timeout前本地拒绝 (1.062137ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /000812/. Input:
+  
+  'Error: 远程 Publisher 尚未完成权威基线同步，写请求未入队'
+  
+      at Object.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-state-contract.test.ts:273:12)
+      at expectedException (node:assert:578:17)
+      at expectsError (node:assert:703:21)
+      at strict.rejects (node:assert:769:3)
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-state-contract.test.ts:272:3)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'Error: 远程 Publisher 尚未完成权威基线同步，写请求未入队',
+    expected: /000812/,
+    operator: 'match',
+    diff: 'simple'
+  }
+
+test at src/host/remote-state-contract.test.ts:288:1
+✖ 真实双Remote host的submitIntent按A/B/A实际目录隔离 (1.133778ms)
+  TypeError: Cannot read properties of undefined (reading 'SubmitIntent')
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/web-origin-remote-2026-10-29/apps/web/src/host/remote-state-contract.test.ts:295:27)
+      at async Test.run (node:internal/test_runner/test:1332:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7)

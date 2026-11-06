@@ -1,0 +1,152 @@
+[
+  {
+    "source": ".worktree/web-origin-worker-2026-10-29/agents/perf-intraday-independent/resume-2026-10-29/web-origin-regression/worker-company-teardown/file.exit",
+    "archive": "worker/worker-company-teardown/file.exit",
+    "source_sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+    "archive_sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+  },
+  {
+    "source": ".worktree/web-origin-worker-2026-10-29/agents/perf-intraday-independent/resume-2026-10-29/web-origin-regression/worker-company-teardown/file.stderr",
+    "archive": "worker/worker-company-teardown/file.stderr",
+    "source_sha256": "d0ebb86e275cd92eb1d6df203cd2616b61cfe02d0cbdadfe0b71ebae146ec6e4",
+    "archive_sha256": "d0ebb86e275cd92eb1d6df203cd2616b61cfe02d0cbdadfe0b71ebae146ec6e4"
+  },
+  {
+    "source": ".worktree/web-origin-worker-2026-10-29/agents/perf-intraday-independent/resume-2026-10-29/web-origin-regression/worker-company-teardown/file.stdout",
+    "archive": "worker/worker-company-teardown/file.stdout",
+    "source_sha256": "a0b2ff1ae80e6b490005f37aa2d94279c289ba4a8686b9b3bb0e682134c572c5",
+    "archive_sha256": "3223fcc2c6f342ce1c494134a7c6254d60cb4621be29d8dd30a35dd0e60f0569"
+  },
+  {
+    "source": ".worktree/web-origin-worker-2026-10-29/agents/perf-intraday-independent/resume-2026-10-29/web-origin-regression/worker-company-teardown/focused.exit",
+    "archive": "worker/worker-company-teardown/focused.exit",
+    "source_sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "archive_sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+  },
+  {
+    "source": ".worktree/web-origin-worker-2026-10-29/agents/perf-intraday-independent/resume-2026-10-29/web-origin-regression/worker-company-teardown/focused.stderr",
+    "archive": "worker/worker-company-teardown/focused.stderr",
+    "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "archive_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "source": ".worktree/web-origin-worker-2026-10-29/agents/perf-intraday-independent/resume-2026-10-29/web-origin-regression/worker-company-teardown/focused.stdout",
+    "archive": "worker/worker-company-teardown/focused.stdout",
+    "source_sha256": "6fef5417b51ffe7fd41ef15f420cf53b9e7018421981e1b9789aa2d0ce1f7421",
+    "archive_sha256": "6fef5417b51ffe7fd41ef15f420cf53b9e7018421981e1b9789aa2d0ce1f7421"
+  },
+  {
+    "source": ".worktree/web-origin-worker-2026-10-29/agents/perf-intraday-independent/resume-2026-10-29/web-origin-regression/worker-company-teardown/red-reference.txt",
+    "archive": "worker/worker-company-teardown/red-reference.txt",
+    "source_sha256": "038799b8e21145d3536a36b2e415aacc3e5c61afcf1d439c807b81910cf6fd7b",
+    "archive_sha256": "038799b8e21145d3536a36b2e415aacc3e5c61afcf1d439c807b81910cf6fd7b"
+  },
+  {
+    "source": ".worktree/web-origin-worker-2026-10-29/agents/perf-intraday-independent/resume-2026-10-29/web-origin-regression/worker-company-teardown/result.txt",
+    "archive": "worker/worker-company-teardown/result.txt",
+    "source_sha256": "d9f99038c2581861c549408cac55818ef9f955be9fe2d9e7bbd3c654301d64b2",
+    "archive_sha256": "8a6d8cbc39c9712de081db3e3f0efa325efa066119a008e399c26228e37f4342"
+  },
+  {
+    "source": ".worktree/web-origin-worker-2026-10-29/agents/perf-intraday-independent/resume-2026-10-29/web-origin-regression/worker-origin/green.exit",
+    "archive": "worker/worker-origin/green.exit",
+    "source_sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+    "archive_sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+  },
+  {
+    "source": ".worktree/web-origin-worker-2026-10-29/agents/perf-intraday-independent/resume-2026-10-29/web-origin-regression/worker-origin/green.stderr.log",
+    "archive": "worker/worker-origin/green.stderr.log",
+    "source_sha256": "d0ebb86e275cd92eb1d6df203cd2616b61cfe02d0cbdadfe0b71ebae146ec6e4",
+    "archive_sha256": "d0ebb86e275cd92eb1d6df203cd2616b61cfe02d0cbdadfe0b71ebae146ec6e4"
+  },
+  {
+    "source": ".worktree/web-origin-worker-2026-10-29/agents/perf-intraday-independent/resume-2026-10-29/web-origin-regression/worker-origin/green.stdout.log",
+    "archive": "worker/worker-origin/green.stdout.log",
+    "source_sha256": "917c0bec024069cf83c660e4be90ce2c4ea50083b24978179eb79c7fcbb16c60",
+    "archive_sha256": "17eb80a760fbc36adb5ae6ef6c3734990436845e9850ca465f6753cdde54498f"
+  },
+  {
+    "source": ".worktree/web-origin-worker-2026-10-29/agents/perf-intraday-independent/resume-2026-10-29/web-origin-regression/worker-origin/red.exit",
+    "archive": "worker/worker-origin/red.exit",
+    "source_sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+    "archive_sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+  },
+  {
+    "source": ".worktree/web-origin-worker-2026-10-29/agents/perf-intraday-independent/resume-2026-10-29/web-origin-regression/worker-origin/red.stderr.log",
+    "archive": "worker/worker-origin/red.stderr.log",
+    "source_sha256": "d0ebb86e275cd92eb1d6df203cd2616b61cfe02d0cbdadfe0b71ebae146ec6e4",
+    "archive_sha256": "d0ebb86e275cd92eb1d6df203cd2616b61cfe02d0cbdadfe0b71ebae146ec6e4"
+  },
+  {
+    "source": ".worktree/web-origin-worker-2026-10-29/agents/perf-intraday-independent/resume-2026-10-29/web-origin-regression/worker-origin/red.stdout.log",
+    "archive": "worker/worker-origin/red.stdout.log",
+    "source_sha256": "b9d0cb32d71155fd9389d3bddba1a62636fe86c155250dad69d1aad8ec74e4cc",
+    "archive_sha256": "4f368bb0c805e5d6ffd85d8828d0244b329670771d398ec47d0cbde5da3b23f7"
+  },
+  {
+    "source": ".worktree/web-origin-remote-2026-10-29/agents/perf-intraday-independent/resume-2026-10-29/web-origin-regression/remote/green-rerun.exit",
+    "archive": "remote/remote/green-rerun.exit",
+    "source_sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+    "archive_sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+  },
+  {
+    "source": ".worktree/web-origin-remote-2026-10-29/agents/perf-intraday-independent/resume-2026-10-29/web-origin-regression/remote/green-rerun.stderr.log",
+    "archive": "remote/remote/green-rerun.stderr.log",
+    "source_sha256": "80bfcd60d56351d33630da43a0afb0a370249fdcbf86d2eb2e0842d2726e2859",
+    "archive_sha256": "80bfcd60d56351d33630da43a0afb0a370249fdcbf86d2eb2e0842d2726e2859"
+  },
+  {
+    "source": ".worktree/web-origin-remote-2026-10-29/agents/perf-intraday-independent/resume-2026-10-29/web-origin-regression/remote/green-rerun.stdout.log",
+    "archive": "remote/remote/green-rerun.stdout.log",
+    "source_sha256": "82c2b929ca0c62ebfec24dac7302c5ac637b6758bae344972a37d07b91ea0d31",
+    "archive_sha256": "eebea91b1883f9b45fff3b5a757038d57301457df9da500a041f23c4fbeca0ea"
+  },
+  {
+    "source": ".worktree/web-origin-remote-2026-10-29/agents/perf-intraday-independent/resume-2026-10-29/web-origin-regression/remote/green.exit",
+    "archive": "remote/remote/green.exit",
+    "source_sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+    "archive_sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+  },
+  {
+    "source": ".worktree/web-origin-remote-2026-10-29/agents/perf-intraday-independent/resume-2026-10-29/web-origin-regression/remote/green.stderr.log",
+    "archive": "remote/remote/green.stderr.log",
+    "source_sha256": "80bfcd60d56351d33630da43a0afb0a370249fdcbf86d2eb2e0842d2726e2859",
+    "archive_sha256": "80bfcd60d56351d33630da43a0afb0a370249fdcbf86d2eb2e0842d2726e2859"
+  },
+  {
+    "source": ".worktree/web-origin-remote-2026-10-29/agents/perf-intraday-independent/resume-2026-10-29/web-origin-regression/remote/green.stdout.log",
+    "archive": "remote/remote/green.stdout.log",
+    "source_sha256": "7bcf4ce14717c4c8474d5ce3cc903426100a70a54182a5975c2c3b3dbeccd992",
+    "archive_sha256": "98ce7508c3cd6be6a8fb0dc8a61bf048d64297d42b38583e6b40b020b0c5a09a"
+  },
+  {
+    "source": ".worktree/web-origin-remote-2026-10-29/agents/perf-intraday-independent/resume-2026-10-29/web-origin-regression/remote/red.exit",
+    "archive": "remote/remote/red.exit",
+    "source_sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+    "archive_sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+  },
+  {
+    "source": ".worktree/web-origin-remote-2026-10-29/agents/perf-intraday-independent/resume-2026-10-29/web-origin-regression/remote/red.stderr.log",
+    "archive": "remote/remote/red.stderr.log",
+    "source_sha256": "80bfcd60d56351d33630da43a0afb0a370249fdcbf86d2eb2e0842d2726e2859",
+    "archive_sha256": "80bfcd60d56351d33630da43a0afb0a370249fdcbf86d2eb2e0842d2726e2859"
+  },
+  {
+    "source": ".worktree/web-origin-remote-2026-10-29/agents/perf-intraday-independent/resume-2026-10-29/web-origin-regression/remote/red.stdout.log",
+    "archive": "remote/remote/red.stdout.log",
+    "source_sha256": "f57a024355f8bbff5e9193061453e960b9ff297dff72e610e51a96f15a275123",
+    "archive_sha256": "377a953aa868727d2e16761e00415809f5f66d631ea4b9e6248ce75e5a83340f"
+  },
+  {
+    "source": ".worktree/web-origin-remote-2026-10-29/agents/perf-intraday-independent/resume-2026-10-29/web-origin-regression/tauri-startup/green.log",
+    "archive": "remote/tauri-startup/green.log",
+    "source_sha256": "72e787098482d2a3e664044ac934137f7216f1af5f2e612c5eb2efd71ddac8a2",
+    "archive_sha256": "72e787098482d2a3e664044ac934137f7216f1af5f2e612c5eb2efd71ddac8a2"
+  },
+  {
+    "source": ".worktree/web-origin-remote-2026-10-29/agents/perf-intraday-independent/resume-2026-10-29/web-origin-regression/tauri-startup/red.log",
+    "archive": "remote/tauri-startup/red.log",
+    "source_sha256": "c2b451185d69eaea4d2e0eeb29dee8d3860e74445a86d697710d885b86a0106c",
+    "archive_sha256": "a6db308dfa6ad27ed3f9cd126bd84d1a4e6e875e014359a81d3ee79eb723be14"
+  }
+]
