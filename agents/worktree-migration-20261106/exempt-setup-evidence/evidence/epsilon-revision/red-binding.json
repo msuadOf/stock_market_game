@@ -1,0 +1,14 @@
+[
+  {
+    "path": "packages/engine/src/session.rs",
+    "sha256": "a452d22c20d74da3e5cab228110d8e674e3418c9bfca37580d5cc28195a81f42"
+  },
+  {
+    "path": "packages/engine/tests/session_company_foundation.rs",
+    "sha256": "cd349095b337cff7af2097bb8112917b063e7568fc82eb432524ed4a8ba95922"
+  },
+  {
+    "path": "<WORKSPACE>/.tmp/exempt-setup-target/debug/deps/session_company_foundation-c3d45966a29b05a7",
+    "sha256": "3f5dcd69bb6fce8a59f64cf34356cecd700dc86efb98f4e2f8ce94f942b45247"
+  }
+]

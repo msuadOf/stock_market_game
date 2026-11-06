@@ -1,0 +1,23 @@
+$ node scripts/run-with-deadline.mjs 10000 -- <WORKSPACE>/.tmp/exempt-setup-target/debug/deps/session_company_foundation-c3d45966a29b05a7 tax_mode_stamp_tax_contract:: --test-threads=8 --nocapture
+
+running 5 tests
+test tax_mode_stamp_tax_contract::company_modes_reject_mismatched_stamp_tax_with_expected_and_actual_context ... ok
+test tax_mode_stamp_tax_contract::plain_game_still_rejects_zero_stamp_tax_with_actual_context ... ok
+
+thread 'tax_mode_stamp_tax_contract::exempt_accepts_zero_stamp_tax_and_preserves_other_fees_on_restore' (1929627) panicked at packages/engine/tests/session_company_foundation.rs:168:50:
+Exempt 必须接受零印花税: InvalidSetup(ValidationFault { code: 1013, context: [0] })
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test tax_mode_stamp_tax_contract::exempt_accepts_zero_stamp_tax_and_preserves_other_fees_on_restore ... FAILED
+test tax_mode_stamp_tax_contract::flat_withholding_accepts_current_a_share_stamp_tax ... ok
+test tax_mode_stamp_tax_contract::a_share_individual_accepts_current_a_share_stamp_tax ... ok
+
+failures:
+
+failures:
+    tax_mode_stamp_tax_contract::exempt_accepts_zero_stamp_tax_and_preserves_other_fees_on_restore
+
+test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 16 filtered out; finished in 0.63s
+
+bounded command exited with 101
+
+exit=1

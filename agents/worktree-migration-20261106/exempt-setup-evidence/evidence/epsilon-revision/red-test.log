@@ -1,0 +1,30 @@
+$ node scripts/run-with-deadline.mjs 10000 -- <WORKSPACE>/.tmp/exempt-setup-target/debug/deps/session_company_foundation-c3d45966a29b05a7 tax_mode_stamp_tax_contract:: --test-threads=8 --nocapture
+
+running 7 tests
+test tax_mode_stamp_tax_contract::company_modes_reject_mismatched_stamp_tax_with_expected_and_actual_context ... ok
+test tax_mode_stamp_tax_contract::plain_game_still_rejects_zero_stamp_tax_with_actual_context ... ok
+
+thread 'tax_mode_stamp_tax_contract::exempt_rejects_even_smallest_positive_stamp_tax_at_setup_and_construction' (2083413) panicked at packages/engine/tests/session_company_foundation.rs:197:34:
+Exempt 必须精确零税率: ()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test tax_mode_stamp_tax_contract::exempt_rejects_even_smallest_positive_stamp_tax_at_setup_and_construction ... FAILED
+test tax_mode_stamp_tax_contract::a_share_individual_accepts_current_a_share_stamp_tax ... ok
+test tax_mode_stamp_tax_contract::flat_withholding_accepts_current_a_share_stamp_tax ... ok
+test tax_mode_stamp_tax_contract::exempt_accepts_zero_stamp_tax_and_preserves_other_fees_on_restore ... ok
+
+thread 'tax_mode_stamp_tax_contract::exempt_restore_rejects_saved_positive_stamp_tax_including_epsilon' (2083414) panicked at packages/engine/tests/session_company_foundation.rs:229:26:
+Exempt 存档必须拒绝非零印花税率 5e-324
+test tax_mode_stamp_tax_contract::exempt_restore_rejects_saved_positive_stamp_tax_including_epsilon ... FAILED
+
+failures:
+
+failures:
+    tax_mode_stamp_tax_contract::exempt_rejects_even_smallest_positive_stamp_tax_at_setup_and_construction
+    tax_mode_stamp_tax_contract::exempt_restore_rejects_saved_positive_stamp_tax_including_epsilon
+
+test result: FAILED. 5 passed; 2 failed; 0 ignored; 0 measured; 16 filtered out; finished in 1.46s
+
+bounded command exited with 101
+
+exit=1
+wall_seconds=1.6361225500004366

@@ -1,0 +1,398 @@
+[
+  {
+    "path": "build-resource-snapshot.txt",
+    "source_sha256": "ab391f427a44c64029ccd74d1a54d2686a730e8c9b24f53a44b25241c52ee929",
+    "archive_sha256": "ab391f427a44c64029ccd74d1a54d2686a730e8c9b24f53a44b25241c52ee929",
+    "workspace_prefix_replacements": 0
+  },
+  {
+    "path": "epsilon-revision/foundation-list.log",
+    "source_sha256": "8d8378cc38e3402cf4cb492b69f327b59020a40653a9422ed8471854be6bf254",
+    "archive_sha256": "8d8378cc38e3402cf4cb492b69f327b59020a40653a9422ed8471854be6bf254",
+    "workspace_prefix_replacements": 0
+  },
+  {
+    "path": "epsilon-revision/green-after-run-binding.json",
+    "source_sha256": "0c1df68e368e78f828491fcae293d2737886d86d5be841790a29d04c19e38dce",
+    "archive_sha256": "880e983f539ae23b3b0a9b0b4a7ed8801368db2c741856334f846d290faac598",
+    "workspace_prefix_replacements": 2
+  },
+  {
+    "path": "epsilon-revision/green-before-run-binding.json",
+    "source_sha256": "b7322869f42c64e01852f6934adb15c3ee4046e5a71fefc1df1a94cf707d3278",
+    "archive_sha256": "b2a2677abe52411b1ffe8c62f273ac4fbb158ed915837840f8893e327cbf5440",
+    "workspace_prefix_replacements": 2
+  },
+  {
+    "path": "epsilon-revision/green-build-resource-snapshot.txt",
+    "source_sha256": "f188d12e6c5ef5b8a0946e6d5572bcecf397d55b0e4469df6252eea0ef1abe33",
+    "archive_sha256": "f188d12e6c5ef5b8a0946e6d5572bcecf397d55b0e4469df6252eea0ef1abe33",
+    "workspace_prefix_replacements": 0
+  },
+  {
+    "path": "epsilon-revision/green-build.log",
+    "source_sha256": "6a98a77f14bdfdd7e91ea79c2a2d13e4c90d6c68875dc0a18d67663df65c2db6",
+    "archive_sha256": "47756121d08eddd037760ef18ba8ed35f13bed97567a4d27fbf8ca3606b534d6",
+    "workspace_prefix_replacements": 3
+  },
+  {
+    "path": "epsilon-revision/green-case-auto_foundation_builds_full_float_registry_and_legal_facts.log",
+    "source_sha256": "a254e3ea8c8db24910b9d3f24879758eab274872c6b53d9faa9877e369fae561",
+    "archive_sha256": "3bd431c28d892876bc79d6580abd0276518fcebd71bacfd471ffcd063c9dacb0",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "epsilon-revision/green-case-company_config_without_company_system_is_rejected.log",
+    "source_sha256": "535689cdb735da8d6699e07d976b90bf7ff846f6de82d8dacad9bdde0b44de2f",
+    "archive_sha256": "a6aae8b5b62dd9c8715eee9e348c235fbf27345aca7e1e7fb9a949c954602124",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "epsilon-revision/green-case-disabled_foundation_leaves_registry_empty.log",
+    "source_sha256": "0b06b64b79f1ccc63b774438d202fafed040d92de4a7609bc1b4b7bf5bfd29ee",
+    "archive_sha256": "158b6146d3ba93b470c9e0ccf100f6ef496672e5274d50d30b9267ddf7282efa",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "epsilon-revision/green-case-exempt_mode_requires_zero_stamp_tax.log",
+    "source_sha256": "d3f469f2f8b523bf45a403b1164111c0993b1d4c87401e4b256bd9ad75951c63",
+    "archive_sha256": "a022d1b2907494cbf087f162e2eb11dc673072f3499346afb47093625bebab3c",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "epsilon-revision/green-case-flat_withholding_boundary_values_are_accepted.log",
+    "source_sha256": "6080f1620846f1287958abcca2a91084db912f0056de357004a71c4e3d0bba28",
+    "archive_sha256": "ac528e0a72324a17d6c383d6bb0a233fedaa4f36e98666e73620babc9979f9d9",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "epsilon-revision/green-case-flat_withholding_three_state_contract.log",
+    "source_sha256": "1c1dc328dca6b723084877239fff84b125bcf54eeb05ac0112f2d693938f53f9",
+    "archive_sha256": "6e54aad458d5efb60749085e4a6dbb186fc1620cda6ba3903b8da08f6abe0cb5",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "epsilon-revision/green-case-formal_session_setup_enforces_a_share_baseline_and_category_limits.log",
+    "source_sha256": "1cd17b4500624c1b32a424f576432ac9fd1718feb88c8bcda3a3a58b32d13215",
+    "archive_sha256": "fefcf8e4f59fb609b75f77fc9de9a66db93d69456574eab04e0f0457526a330b",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "epsilon-revision/green-case-incomplete_company_config_residue_is_isolated_per_field.log",
+    "source_sha256": "fbf1221fea47a7e3b0353c028e3e1bd25becf6213dffc696733b61fbbe0ccf0f",
+    "archive_sha256": "2d18922e1e4c95a454d8bbde8b8e85d12370ca851cf9815991068a72a3066988",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "epsilon-revision/green-case-incomplete_company_save_is_rejected.log",
+    "source_sha256": "b6d3f6dec10ab37f37f753e2820553d70bccf35e58f32d2c4d4b3aecf4c1ce53",
+    "archive_sha256": "ad4040ef1e1ffe9ba1a1e38a3de4beab00559f4b2c3a1b13de15e2baf7e21e09",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "epsilon-revision/green-case-missing_dividend_tax_mode_with_company_system_is_rejected.log",
+    "source_sha256": "6430651ae4550412541c1c0f2fda0d5f533ff60c433cea999a63f1e683bf4f18",
+    "archive_sha256": "9dd572d6e64405bac81f9d6319081e895f967c8324ce93661466e0a6ac4f3e54",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "epsilon-revision/green-case-new_game_with_company_opens_repurchase_account_without_float.log",
+    "source_sha256": "39ed099ef3aa40b1864da38c6ab951b198bc3b77680ede0b3402490a1852e37a",
+    "archive_sha256": "16e048697c2b400ae180ff8cf91f050d3d28e49fe7995758baa78f0cc4113cac",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "epsilon-revision/green-case-new_game_without_repurchase_keeps_roster_unchanged.log",
+    "source_sha256": "7e9a5579c221e471429b5b81f8a6c58640ab6a0ebbc1674985aade1912567100",
+    "archive_sha256": "a74e31e7c329970a98d9142d34619cda7cefdf5206dab3aff8e82ac174811b32",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "epsilon-revision/green-case-par_value_domain_is_enforced.log",
+    "source_sha256": "277a7e99355c8ab09e458c52acd4e3043957df7094b7764a4199dbf11cd0c3a0",
+    "archive_sha256": "48a1485bbff3c8ba7d5892dbc4cfde8eff1bd4afd8384ce9c99027a02a305cab",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "epsilon-revision/green-case-plain_sessions_restore_identically.log",
+    "source_sha256": "7917a414d55f652a6d1b7de2529d79dd40587af4fd047a183603e6957c7c1b3a",
+    "archive_sha256": "5814a4f278f5733c57e2599604aaa012c314aadac93f6f4602c405cdb7088948",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "epsilon-revision/green-case-plain_sessions_save_json_carries_no_company_keys.log",
+    "source_sha256": "2b15e7b4d13d32cd65735fe3ec382324fc116fe99e31d0061fdd45f5e6857740",
+    "archive_sha256": "814d604c07aca7219f78bd908cac77b5ccdd323536700ab2bcaa8814269eaa59",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "epsilon-revision/green-case-restore_rejects_company_system_diverging_from_setup_issuers.log",
+    "source_sha256": "4289f10d5fe45ec524845ccd4ff70a95d0b9084484822960eb286f241cd25903",
+    "archive_sha256": "33f73388fae7edae554d11c428f947073b2a5aae2a0e18c0642e59ea34aafd57",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "epsilon-revision/green-case-save_restore_roundtrips_company_fields_bitwise.log",
+    "source_sha256": "775d4c5c5cec6ba0fce6235c2d4c23ed971224b2ef1ad5b1f5d174e570380bf1",
+    "archive_sha256": "ae17682462d32bdf1b1e89b3e5da7de6bb8ca14b4e790ff8023d3f91c2b17a48",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "epsilon-revision/green-case-tax_mode_stamp_tax_contract__a_share_individual_accepts_current_a_share_stamp_tax.log",
+    "source_sha256": "82f09ec3b1df7799cb70a6ac61b303deba8c358895b26f2f5b24ce2d5f2dcfa7",
+    "archive_sha256": "1c9ebac0640a653e3b2b2048b9396c94691c5ed3749723f06b43859cedd3f208",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "epsilon-revision/green-case-tax_mode_stamp_tax_contract__company_modes_reject_mismatched_stamp_tax_with_expected_and_actual_context.log",
+    "source_sha256": "a3d38d3cbdb9b8797b673ca6627ea775b8d5aef474c4d0538a6390d6adc93a75",
+    "archive_sha256": "e41e8ba9743e19e56369d7c4fd84f890d69bad1708847b0f8685379eadf804e4",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "epsilon-revision/green-case-tax_mode_stamp_tax_contract__exempt_accepts_zero_stamp_tax_and_preserves_other_fees_on_restore.log",
+    "source_sha256": "6dbdee9ac1545bce04f0eb7a51495fb1f4635bb3ea50fbc0b2f820782ccccdc0",
+    "archive_sha256": "3f547ee3a3eaf3344b4a067f75347ddbcd65e6168b41f8074c017ed74cde08b4",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "epsilon-revision/green-case-tax_mode_stamp_tax_contract__exempt_rejects_even_smallest_positive_stamp_tax_at_setup_and_construction.log",
+    "source_sha256": "9b67444285b2d2f68766068751980d4c43c715e1845ab4aeb4be298f07aaf4ee",
+    "archive_sha256": "93b6dfb0061c401ad35b3284998d9627e2440ffc3b4699a22c72f0d49e03df63",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "epsilon-revision/green-case-tax_mode_stamp_tax_contract__exempt_restore_rejects_saved_positive_stamp_tax_including_epsilon.log",
+    "source_sha256": "7d62f47950722c485f8fb43219972b6f8ce90e730765f8f7a9a3a2f7c01fc9a4",
+    "archive_sha256": "7209ed8e1a98171ae5fab4bba47ef5ca3412c5f303ad48af40cb9def198a9cf8",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "epsilon-revision/green-case-tax_mode_stamp_tax_contract__flat_withholding_accepts_current_a_share_stamp_tax.log",
+    "source_sha256": "e1618236e2149bb0dd3de6a9d06f41105c034260066fa2b2b23849482eb41c66",
+    "archive_sha256": "bc7ce925441e923b5454280524708e8433458c93688ab83ce69b7d6b05993c4c",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "epsilon-revision/green-case-tax_mode_stamp_tax_contract__plain_game_still_rejects_zero_stamp_tax_with_actual_context.log",
+    "source_sha256": "1e2ca37cad2733473ebc704f182ff63e5f1a01a5c95bef97104013269f8bf211",
+    "archive_sha256": "5e0774d2944b72647bf60c0e39adeb703d845b78da097362435da080214ddea7",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "epsilon-revision/green-summary.json",
+    "source_sha256": "180ec41553e9416a49e33a56cad5169fca43f385235c376505f2fdd82a22ee76",
+    "archive_sha256": "180ec41553e9416a49e33a56cad5169fca43f385235c376505f2fdd82a22ee76",
+    "workspace_prefix_replacements": 0
+  },
+  {
+    "path": "epsilon-revision/green-test.log",
+    "source_sha256": "bb8944dd25a5225a762baaf96ae54a3fb947b4bac26c6faa6ca52cff68cf1529",
+    "archive_sha256": "e47fe49a601c4e739a571f3959f02d5f214633fb7e2e6fbbddbc13d0158f2df6",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "epsilon-revision/red-binding.json",
+    "source_sha256": "b328435011378be46f9d3175405c6d38ad58c6f95126700514816132eef00416",
+    "archive_sha256": "cffa73e5c001f8b69f8328928509edd17124841f2391b10dd9bcc69c6d1127f4",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "epsilon-revision/red-build.log",
+    "source_sha256": "91394002236a0f05a1e30dddefae44d94b1b34d51f3166fb7866548c4f25e405",
+    "archive_sha256": "d313e42708842bf2ea76aa51d9b9b92749004785159f8afeba9c7847e6d80f2a",
+    "workspace_prefix_replacements": 3
+  },
+  {
+    "path": "epsilon-revision/red-test.log",
+    "source_sha256": "664de5f45af2727d75c629725bb46ba16ab25303bcb803a57f0431e357fdb956",
+    "archive_sha256": "c2f3f829d96b75f08c45789168ead1426d0ede78ee342794c30db06e84bf7682",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "final-build.log",
+    "source_sha256": "533526f1918b30ad8025aa094cc84ea83ccb19963819ead6b5e61b028623d33b",
+    "archive_sha256": "9c8b5edf955f6ddff67765c8c1f8c67c3663bd8837a732dbbf6522b71e85c106",
+    "workspace_prefix_replacements": 3
+  },
+  {
+    "path": "final-source-binary-sha256.json",
+    "source_sha256": "d05d65f95f51b5e8eec317202be2a832363d71f64a04107f6c3aa4672b342ba8",
+    "archive_sha256": "39d923e9ff2934586f738097d33dd85b704d7be92dc246b4d0c1de5ad7d5005b",
+    "workspace_prefix_replacements": 2
+  },
+  {
+    "path": "foundation-list.log",
+    "source_sha256": "1d10aa21e04a59fa33c9e6f29978ac517c5d6cf6ffe9a18e27573665eae1f6ce",
+    "archive_sha256": "1d10aa21e04a59fa33c9e6f29978ac517c5d6cf6ffe9a18e27573665eae1f6ce",
+    "workspace_prefix_replacements": 0
+  },
+  {
+    "path": "green-build.log",
+    "source_sha256": "9bf8e259bb6a951b8fd8621ae26efb7f712aacd918ab6fd75381266ac23db927",
+    "archive_sha256": "2403e9bacb4b3ca1227e159162558de854753c8569c2c3000539429502e7e4d5",
+    "workspace_prefix_replacements": 3
+  },
+  {
+    "path": "green-case-auto_foundation_builds_full_float_registry_and_legal_facts.log",
+    "source_sha256": "a3f981d5135260b9b778e831e75fd2a5ca649ff5bfb37d97d3e5d9df762337ed",
+    "archive_sha256": "c228b3766b13af858052d7cb68429b32ffb05d122d2b139190ddfabd6f499bc3",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "green-case-company_config_without_company_system_is_rejected.log",
+    "source_sha256": "fdf0a9ae9dab567b07ccd29bfd5069388f6d5ddc26848874370919f9131b9614",
+    "archive_sha256": "0a91f8fe7df5d0ab890926fcaedfc67a4e5b42e42ae94feb2d2b0617702716f1",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "green-case-disabled_foundation_leaves_registry_empty.log",
+    "source_sha256": "dbe5725604df59e715d2ebee8a93da27f180d9286374da60778ede61e883c38e",
+    "archive_sha256": "b82db44a8e6e01cd0fb87c97ff4a4cfbe24c7b3e5b0272facac1e9a51daf2c0e",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "green-case-exempt_mode_requires_zero_stamp_tax.log",
+    "source_sha256": "b896283bda7ce30ef8b2b5f0405c01489a8cd98ac1da1a3576f1268b09b25089",
+    "archive_sha256": "36f05fd2a62fd78cd48682a40deda0f9254bf521e579d2565e326af64b5c24bf",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "green-case-flat_withholding_boundary_values_are_accepted.log",
+    "source_sha256": "1a2b211bf1e5fe6d1953b25e9b3a5fb4e7512d412c878216d66d8274f2d40a71",
+    "archive_sha256": "6b559ddcfdd0aacba9210a5161bb67c4595d19cf6da908d7ba8c21b9a0b46249",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "green-case-flat_withholding_three_state_contract.log",
+    "source_sha256": "e353613617bf8a8a17ea028d62d8b6c4270dfa1e9ac43ecafbb56445a77d6f5a",
+    "archive_sha256": "0ec4e92b4e661bf79c5db9ba659974092ca3693e1070e20a59ab9d0d1d06d30d",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "green-case-formal_session_setup_enforces_a_share_baseline_and_category_limits.log",
+    "source_sha256": "aa373d018a6b3f1110cc3c0a7d08f3e7771591317b2b1d6f1b0ef25dc4cd5a9a",
+    "archive_sha256": "fbdc9c21c0e119360747f66833ef2ce5eea922b3c7702a433b2afea205cc3989",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "green-case-incomplete_company_config_residue_is_isolated_per_field.log",
+    "source_sha256": "d098dec6182b7248f4eeb5b0315b7e8d292e4c70b42646771560ff1f57634f68",
+    "archive_sha256": "83eb77550fdbc44af893fb04707758b43ac859bd66c95729f3a67ea6f13799db",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "green-case-incomplete_company_save_is_rejected.log",
+    "source_sha256": "e42ce1f40f566dc1500af2dfc3693820a2032bc27666a1aa171cc6cc3662a9ad",
+    "archive_sha256": "b16fc89308159842836402cc8716ba3dfe53f50c80f41e78ec3c9cf82ac7d7ed",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "green-case-missing_dividend_tax_mode_with_company_system_is_rejected.log",
+    "source_sha256": "674264e685bb240dec2621a01f534848ed240d36de9d8af9fb1e78ae6204bbea",
+    "archive_sha256": "91fa4b73857c7de50b842c827d5a997b66294c55023b9189ddc138e7423aeeb3",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "green-case-new_game_with_company_opens_repurchase_account_without_float.log",
+    "source_sha256": "8dbcb8e21f07c20b7f1c24a30389fdef081dae28dd540a03125db46cc0690f8c",
+    "archive_sha256": "88f0b3376868bfc15d0d270209253886255536b327193edc4f75ebbf2dd69652",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "green-case-new_game_without_repurchase_keeps_roster_unchanged.log",
+    "source_sha256": "49f7dfd70fcbbba485a20d1054fb092131bf8aa95cf51852a8db360de302cf83",
+    "archive_sha256": "91d8d6188469a80e274c4132ea594779c03a913378640dd80f2f72424a9bde2b",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "green-case-par_value_domain_is_enforced.log",
+    "source_sha256": "c6c00e18ef4d1a2a1231f6aad6c3e80783b3759a9db4dfadebcc68c49045a1c8",
+    "archive_sha256": "7656bd1af4b5ec528aadb6d48f22abea13ab8ac194e962564d8d6852ad69e323",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "green-case-plain_sessions_restore_identically.log",
+    "source_sha256": "9be14a5d178752420686db8436646feef3754079c412ca2dec09242b3c39bbca",
+    "archive_sha256": "1dd1d9236a0714adbbe7eb5c43fc62881120bdf2b164a000e367f61c3eced211",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "green-case-plain_sessions_save_json_carries_no_company_keys.log",
+    "source_sha256": "2bceaaea9a2b4a865e2e411692a37e02992cd58ea4fe7867b0be5146a70f2fdd",
+    "archive_sha256": "5584cbff69d5ccb6491f8c943216fd53b402b9f557ecbc2890fcdea18e3f20e5",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "green-case-restore_rejects_company_system_diverging_from_setup_issuers.log",
+    "source_sha256": "e8267f40eb4768547297f3cd2d51654869fea37caf42c4b3325cc5ba8fe7919e",
+    "archive_sha256": "5decbfa89cefd386d3245e8cfaa236e5a613d65dd8eb1c13f015c21c91b1c6d5",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "green-case-save_restore_roundtrips_company_fields_bitwise.log",
+    "source_sha256": "c194f0bbb81d78e4b54c56c4fb7514697340756e2f6e553db7273a2d31f1a4d6",
+    "archive_sha256": "2086d7cab4b67a54defbd223b8c53afbf47c53fc5593ecac51adc68ce3848bc8",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "green-case-tax_mode_stamp_tax_contract__a_share_individual_accepts_current_a_share_stamp_tax.log",
+    "source_sha256": "1f0721ffb8d1e8d04ebd6b4e8c52a96be4a0f86a1f3cab42915cbfc22f6ec258",
+    "archive_sha256": "c7d30c3d169a618f317a37f5aa588f43f2ed5df31225dfad2a1df275e4fc4ec7",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "green-case-tax_mode_stamp_tax_contract__company_modes_reject_mismatched_stamp_tax_with_expected_and_actual_context.log",
+    "source_sha256": "ad6eeabae2db3d7cd4b601769377a3ac3c643039403aeb4734b68aabf5a9992d",
+    "archive_sha256": "33e3ec66d235b35a8f3db11d49d6fd82f0ecdb778544209338f59e6e970f5d37",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "green-case-tax_mode_stamp_tax_contract__exempt_accepts_zero_stamp_tax_and_preserves_other_fees_on_restore.log",
+    "source_sha256": "8d03bda4e5757f1acdbf433791e51ce2dd74ed7541cc414772e7d5e11de0c145",
+    "archive_sha256": "2c4fc80f9c8f0682b6a216dd18246c68b65ce48f650bdff70459fff40cac52d6",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "green-case-tax_mode_stamp_tax_contract__flat_withholding_accepts_current_a_share_stamp_tax.log",
+    "source_sha256": "5ffc111f96a00120c973dac15a6c23687ec76ede9e0a83fca0c4b782d9034ab8",
+    "archive_sha256": "3eaaf5db280869884758c46baa724035e57da4cc0fe1a474e3224899f1bda768",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "green-case-tax_mode_stamp_tax_contract__plain_game_still_rejects_zero_stamp_tax_with_actual_context.log",
+    "source_sha256": "0460febaa7030ab745064a913cea5ba95c4e4cabb6bfb815e7b2dc30e2ef5611",
+    "archive_sha256": "0f51e646540ebf58a10768790d6d4322a37cf323f2eb3ec423efc012ce5c751f",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "green-summary.json",
+    "source_sha256": "43635f95a2f0a3ceea04a9a049df5cef73ab8845fff4788e3554e19b18d6b6fb",
+    "archive_sha256": "43635f95a2f0a3ceea04a9a049df5cef73ab8845fff4788e3554e19b18d6b6fb",
+    "workspace_prefix_replacements": 0
+  },
+  {
+    "path": "green-test.log",
+    "source_sha256": "8f9b00b997119591f81a20f23714239986c751630b32b49d7a114763bcc881e2",
+    "archive_sha256": "c0f968bc5d6d814db928b2f6ff25701f071b1ec873fffdea7ff8c2009023b98a",
+    "workspace_prefix_replacements": 1
+  },
+  {
+    "path": "official-stamp-tax-2026-10-25.html",
+    "source_sha256": "bdad8369ee854d205de9a1e355beecc4fa7841f7293e332997e6cadd2b923c35",
+    "archive_sha256": "bdad8369ee854d205de9a1e355beecc4fa7841f7293e332997e6cadd2b923c35",
+    "workspace_prefix_replacements": 0
+  },
+  {
+    "path": "red-build.log",
+    "source_sha256": "e4353ef3ca2e20ddd055fc040ffd2dd30f48397b9fc01ca5078a9faee6509c1f",
+    "archive_sha256": "03532fa517dcf6ad74e687ae13e23de5c6e48ae9338d2cf561c396e66e21c1dc",
+    "workspace_prefix_replacements": 3
+  },
+  {
+    "path": "red-test.log",
+    "source_sha256": "079f2ab26454443bcc9373ad0ad72eaf38a0409b88f22ab06a5dbd4a97670669",
+    "archive_sha256": "586ea76942c0c7cdac7e2dfd854ab1706a9b15095c1d16f555a607b416fbfc5c",
+    "workspace_prefix_replacements": 1
+  }
+]
