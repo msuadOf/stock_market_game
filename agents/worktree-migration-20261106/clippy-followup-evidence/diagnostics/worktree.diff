@@ -1,0 +1,323 @@
+diff --git a/packages/engine/src/company/cash_dividend.rs b/packages/engine/src/company/cash_dividend.rs
+index 3d8e52b2..703ef6c1 100644
+--- a/packages/engine/src/company/cash_dividend.rs
++++ b/packages/engine/src/company/cash_dividend.rs
+@@ -618,7 +618,7 @@ impl CashDividendBook {
+         self.plan.validate()?;
+         let registered = self.registration.is_some();
+         if registered
+-            != !matches!(
++            == matches!(
+                 self.status,
+                 CashDividendStatus::Approved | CashDividendStatus::Announced
+             )
+diff --git a/packages/engine/src/company/industrial/inventory_sources.rs b/packages/engine/src/company/industrial/inventory_sources.rs
+index 3fe5bced..c30aaf0d 100644
+--- a/packages/engine/src/company/industrial/inventory_sources.rs
++++ b/packages/engine/src/company/industrial/inventory_sources.rs
+@@ -53,7 +53,7 @@ impl IndustrialBooks {
+                 || !self
+                     .inventory()
+                     .get(&source.item)
+-                    .is_some_and(|item| item.account() == &source.account)
++                    .is_none_or(|item| item.account() != &source.account)
+             {
+                 return Err(IndustrialError::Accounting(
+                     crate::accounting::AccountingError::ChartInvalid { detail },
+diff --git a/packages/engine/src/runtime/group.rs b/packages/engine/src/runtime/group.rs
+index 15b0b13f..a7cfeaf4 100644
+--- a/packages/engine/src/runtime/group.rs
++++ b/packages/engine/src/runtime/group.rs
+@@ -8080,23 +8080,25 @@ mod sol_recheck3_tests {
+             ),
+         }));
+         std::sync::Arc::make_mut(&mut state.accounts[0]).cash = 1_000_000;
+-        state.apply_batch_immediate(
+-            batch(
+-                Vec::new(),
+-                vec![FillFact {
+-                    order: (0, 5),
+-                    owner: (0, 0),
+-                    side: Side::Buy,
+-                    price: 900,
+-                    qty: 100,
+-                    commission: 500,
+-                    stamp_tax: 0,
+-                    transfer_fee: 1,
+-                }],
+-            ),
+-            1,
+-            0,
+-        );
++        state
++            .apply_batch_immediate(
++                batch(
++                    Vec::new(),
++                    vec![FillFact {
++                        order: (0, 5),
++                        owner: (0, 0),
++                        side: Side::Buy,
++                        price: 900,
++                        qty: 100,
++                        commission: 500,
++                        stamp_tax: 0,
++                        transfer_fee: 1,
++                    }],
++                ),
++                1,
++                0,
++            )
++            .expect("有效全额成交事实正常应用");
+         state.apply_deferred().expect("全额成交正常推进");
+         // terminal 记录不再出现在 active 面——按 id 直查（记录保留在簿）。
+         let plan = state
+@@ -8148,23 +8150,25 @@ mod sol_recheck3_tests {
+     #[test]
+     fn sol3_fill_with_foreign_order_fails_instead_of_eating_the_leg() {
+         let mut state = chain_harness(Side::Buy);
+-        state.apply_batch_immediate(
+-            batch(
+-                Vec::new(),
+-                vec![FillFact {
+-                    order: (0, 77),
+-                    owner: (0, 0),
+-                    side: Side::Buy,
+-                    price: 1_000,
+-                    qty: 50,
+-                    commission: 0,
+-                    stamp_tax: 0,
+-                    transfer_fee: 0,
+-                }],
+-            ),
+-            1,
+-            0,
+-        );
++        state
++            .apply_batch_immediate(
++                batch(
++                    Vec::new(),
++                    vec![FillFact {
++                        order: (0, 77),
++                        owner: (0, 0),
++                        side: Side::Buy,
++                        price: 1_000,
++                        qty: 50,
++                        commission: 0,
++                        stamp_tax: 0,
++                        transfer_fee: 0,
++                    }],
++                ),
++                1,
++                0,
++            )
++            .expect("合法外来成交事实正常应用");
+         // Sol 六审勘正：外来同键单成交=合法形态（意图路由/测试注入）——
+         /// 跳过不误挂（Ok 且余量不动），不再显式失败（原 Err 形态实测会
+         /// 杀死合法外来单的拍——sol7th_foreign 场景红证）。
+@@ -8190,23 +8194,25 @@ mod sol_recheck3_tests {
+         // 卖出扣除后（挂单在途）：在手 0；挂出时镜像加 200。
+         std::sync::Arc::make_mut(&mut state.accounts[0]).shares[0] = 0;
+         std::sync::Arc::make_mut(&mut state.accounts[0]).pending_sell_qty[0] = 200;
+-        state.apply_batch_immediate(
+-            batch(
+-                Vec::new(),
+-                vec![FillFact {
+-                    order: (0, 5),
+-                    owner: (0, 0),
+-                    side: Side::Sell,
+-                    price: 1_000,
+-                    qty: 100,
+-                    commission: 0,
+-                    stamp_tax: 50,
+-                    transfer_fee: 1,
+-                }],
+-            ),
+-            1,
+-            0,
+-        );
++        state
++            .apply_batch_immediate(
++                batch(
++                    Vec::new(),
++                    vec![FillFact {
++                        order: (0, 5),
++                        owner: (0, 0),
++                        side: Side::Sell,
++                        price: 1_000,
++                        qty: 100,
++                        commission: 0,
++                        stamp_tax: 50,
++                        transfer_fee: 1,
++                    }],
++                ),
++                1,
++                0,
++            )
++            .expect("有效部分成交事实正常应用");
+         state.apply_deferred().expect("本单部分成交正常推进");
+         // session 镜像口径（fill 推进减 fill.qty）。
+         assert_eq!(state.accounts[0].pending_sell_qty[0], 100, "镜像减成交部分");
+@@ -8247,23 +8253,25 @@ mod sol_recheck3_tests {
+         const CHARGE: i64 = 90_000 + 500 + 1;
+         std::sync::Arc::make_mut(&mut state.accounts[0]).cash = 1_000_000 - PURSE0;
+         std::sync::Arc::make_mut(&mut state.accounts[0]).buy_purse_held_cents = PURSE0;
+-        state.apply_batch_immediate(
+-            batch(
+-                Vec::new(),
+-                vec![FillFact {
+-                    order: (0, 5),
+-                    owner: (0, 0),
+-                    side: Side::Buy,
+-                    price: 900,
+-                    qty: 100,
+-                    commission: 500,
+-                    stamp_tax: 0,
+-                    transfer_fee: 1,
+-                }],
+-            ),
+-            1,
+-            0,
+-        );
++        state
++            .apply_batch_immediate(
++                batch(
++                    Vec::new(),
++                    vec![FillFact {
++                        order: (0, 5),
++                        owner: (0, 0),
++                        side: Side::Buy,
++                        price: 900,
++                        qty: 100,
++                        commission: 500,
++                        stamp_tax: 0,
++                        transfer_fee: 1,
++                    }],
++                ),
++                1,
++                0,
++            )
++            .expect("有效部分成交事实正常应用");
+         state.apply_deferred().expect("本单部分成交正常推进");
+         let face = cash_with_pending_at(&state.accounts[0]);
+         assert_eq!(
+@@ -8406,29 +8414,31 @@ mod sol_recheck3_tests {
+         std::sync::Arc::make_mut(&mut state.accounts[0]).pending_sell_qty[0] = 200;
+         // desk 拒收形态：RefundedShares（卖单原路退回）+ Closed 与回执
+         // 同批（reject() 三件套）。
+-        state.apply_batch_immediate(
+-            DeskBatch {
+-                repurchase: Vec::new(),
+-                stock: 0,
+-                tick: 1,
+-                round: 0,
+-                entities: vec![
+-                    Entity::RefundedShares { local: 0, qty: 200 },
+-                    Entity::Closed {
+-                        local: 0,
+-                        order_serial: 43,
+-                    },
+-                ],
+-                fills: Vec::new(),
+-                receipts: vec![crate::runtime::DeskReceipt {
+-                    order: (0, 43),
+-                    owner: (0, 0),
+-                    kind: crate::runtime::ReceiptKind::PriceOutOfBand,
+-                }],
+-            },
+-            1,
+-            0,
+-        );
++        state
++            .apply_batch_immediate(
++                DeskBatch {
++                    repurchase: Vec::new(),
++                    stock: 0,
++                    tick: 1,
++                    round: 0,
++                    entities: vec![
++                        Entity::RefundedShares { local: 0, qty: 200 },
++                        Entity::Closed {
++                            local: 0,
++                            order_serial: 43,
++                        },
++                    ],
++                    fills: Vec::new(),
++                    receipts: vec![crate::runtime::DeskReceipt {
++                        order: (0, 43),
++                        owner: (0, 0),
++                        kind: crate::runtime::ReceiptKind::PriceOutOfBand,
++                    }],
++                },
++                1,
++                0,
++            )
++            .expect("未受理票的拒收回执正常应用");
+         state.apply_deferred().expect("未受理票的拒收回执正常释放");
+         assert!(
+             !state.child_in_flight.contains_key(&key),
+diff --git a/packages/engine/src/session/player_company_command_candidates.rs b/packages/engine/src/session/player_company_command_candidates.rs
+index 767aa176..cf8eff66 100644
+--- a/packages/engine/src/session/player_company_command_candidates.rs
++++ b/packages/engine/src/session/player_company_command_candidates.rs
+@@ -123,7 +123,7 @@ pub(super) fn player_holding_context(
+     if !input
+         .requester
+         .position(&stock)
+-        .is_some_and(|position| position.qty() > 0)
++        .is_none_or(|position| position.qty() <= 0)
+     {
+         return Err(fail(PlayerCommandCause::NoHolding { stock }));
+     }
+diff --git a/packages/engine/src/session/protocol/civil/session.rs b/packages/engine/src/session/protocol/civil/session.rs
+index 69d0abdb..26d38b2d 100644
+--- a/packages/engine/src/session/protocol/civil/session.rs
++++ b/packages/engine/src/session/protocol/civil/session.rs
+@@ -1243,25 +1243,29 @@ mod rollback_tests {
+         use crate::{Money, Side, StockId};
+         let setup = crate::session::protocol::civil::publication_tests::setup();
+         let mut session = ProtocolSession::new(setup, 75).unwrap();
+-        session.state.game.fixture_append_auction_orders(
+-            StockId(0),
+-            vec![
+-                crate::AuctionOrderSnap {
+-                    owner: crate::AccountId(0),
+-                    side: Side::Buy,
+-                    limit: Money::from_cents(1000),
+-                    qty: 100,
+-                    order_id: 81,
+-                },
+-                crate::AuctionOrderSnap {
+-                    owner: crate::AccountId(1),
+-                    side: Side::Sell,
+-                    limit: Money::from_cents(1000),
+-                    qty: 100,
+-                    order_id: 82,
+-                },
+-            ],
+-        );
++        session
++            .state
++            .game
++            .fixture_append_auction_orders(
++                StockId(0),
++                vec![
++                    crate::AuctionOrderSnap {
++                        owner: crate::AccountId(0),
++                        side: Side::Buy,
++                        limit: Money::from_cents(1000),
++                        qty: 100,
++                        order_id: 81,
++                    },
++                    crate::AuctionOrderSnap {
++                        owner: crate::AccountId(1),
++                        side: Side::Sell,
++                        limit: Money::from_cents(1000),
++                        qty: 100,
++                        order_id: 82,
++                    },
++                ],
++            )
++            .expect("追加竞价委托成功");
+         assert!(session.save().is_err());
+         let orders = session.player_working_orders();
+         assert_eq!(orders.len(), 1);
