@@ -1,0 +1,156 @@
+//! 每 Worker 固定 256B 诊断记录的纯原语（已批设计 §8.6-②）。
+//!
+//! 本模块没有 panic hook、身份 admission、死亡唤醒或 join 仲裁。调用方必须在
+//! 预分配之后绑定本人记录，并先发死亡通知再尽力发布。禁止复用/reset；整实例
+//! 废弃时才回收。产品接线尚未完成，不能据此声称 std panic 入口无锁或无分配。
+use std::sync::atomic::{AtomicU16, AtomicU32, AtomicU8, Ordering};
+
+const IDLE: u32 = 0;
+const WRITING: u32 = 1;
+const LIVE: u32 = 2;
+pub const PAYLOAD_BYTES: usize = 240;
+
+/// 所有字段为原子字节，允许 JS 观察半发布状态而不引入 Rust 数据竞争。
+#[repr(C)]
+pub struct TombstoneRecord {
+    magic: AtomicU32,
+    worker_id: AtomicU32,
+    phase: AtomicU16,
+    kind: AtomicU8,
+    truncated: AtomicU8,
+    len: AtomicU16,
+    reserved: AtomicU16,
+    payload: [AtomicU8; PAYLOAD_BYTES],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum DeathKind {
+    Panic = 1,
+    HardTrap = 2,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TombstoneHeader {
+    pub worker_id: u32,
+    pub phase: u16,
+    pub kind: DeathKind,
+}
+#[derive(Debug, PartialEq, Eq)]
+pub struct TombstoneSnapshot {
+    pub header: TombstoneHeader,
+    pub truncated: bool,
+    pub len: u16,
+    pub payload: [u8; PAYLOAD_BYTES],
+}
+/// 无等待读取；缺席、在写与损坏均不能被编造成 panic payload。
+#[derive(Debug, PartialEq, Eq)]
+pub enum TombstoneRead {
+    Idle,
+    Writing,
+    Live(TombstoneSnapshot),
+    Invalid(TombstoneInvalid),
+}
+#[derive(Debug, PartialEq, Eq)]
+pub enum TombstoneInvalid {
+    Magic(u32),
+    Kind(u8),
+    Length(u16),
+    Truncated(u8),
+    Reserved(u16),
+}
+/// 不可 Clone；唯一 CAS 获胜者持有写权，遗弃后永久停留 WRITING。
+pub struct TombstoneWriter<'a> {
+    record: &'a TombstoneRecord,
+    header: TombstoneHeader,
+}
+
+impl TombstoneRecord {
+    pub const fn new() -> Self {
+        Self {
+            magic: AtomicU32::new(IDLE),
+            worker_id: AtomicU32::new(0),
+            phase: AtomicU16::new(0),
+            kind: AtomicU8::new(0),
+            truncated: AtomicU8::new(0),
+            len: AtomicU16::new(0),
+            reserved: AtomicU16::new(0),
+            payload: [const { AtomicU8::new(0) }; PAYLOAD_BYTES],
+        }
+    }
+
+    pub fn try_claim(&self, header: TombstoneHeader) -> Option<TombstoneWriter<'_>> {
+        self.magic
+            .compare_exchange(IDLE, WRITING, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| TombstoneWriter {
+                record: self,
+                header,
+            })
+    }
+
+    pub fn read(&self) -> TombstoneRead {
+        // 定稿要求发布字 SeqCst，随后字段读取由此 Acquire 保证可见。
+        match self.magic.load(Ordering::SeqCst) {
+            IDLE => return TombstoneRead::Idle,
+            WRITING => return TombstoneRead::Writing,
+            LIVE => {}
+            value => return TombstoneRead::Invalid(TombstoneInvalid::Magic(value)),
+        }
+        let kind = match self.kind.load(Ordering::Relaxed) {
+            1 => DeathKind::Panic,
+            2 => DeathKind::HardTrap,
+            value => return TombstoneRead::Invalid(TombstoneInvalid::Kind(value)),
+        };
+        let len = self.len.load(Ordering::Relaxed);
+        if len as usize > PAYLOAD_BYTES {
+            return TombstoneRead::Invalid(TombstoneInvalid::Length(len));
+        }
+        let truncated = self.truncated.load(Ordering::Relaxed);
+        if truncated > 1 {
+            return TombstoneRead::Invalid(TombstoneInvalid::Truncated(truncated));
+        }
+        let reserved = self.reserved.load(Ordering::Relaxed);
+        if reserved != 0 {
+            return TombstoneRead::Invalid(TombstoneInvalid::Reserved(reserved));
+        }
+        TombstoneRead::Live(TombstoneSnapshot {
+            header: TombstoneHeader {
+                worker_id: self.worker_id.load(Ordering::Relaxed),
+                phase: self.phase.load(Ordering::Relaxed),
+                kind,
+            },
+            len,
+            truncated: truncated == 1,
+            payload: std::array::from_fn(|index| self.payload[index].load(Ordering::Relaxed)),
+        })
+    }
+}
+impl Default for TombstoneRecord {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+impl TombstoneWriter<'_> {
+    /// 原始字节有界复制，不做 UTF-8 解码、格式化、分配或加锁。
+    pub fn publish(self, payload: &[u8]) {
+        let record = self.record;
+        let len = payload.len().min(PAYLOAD_BYTES);
+        record
+            .worker_id
+            .store(self.header.worker_id, Ordering::Relaxed);
+        record.phase.store(self.header.phase, Ordering::Relaxed);
+        record.kind.store(self.header.kind as u8, Ordering::Relaxed);
+        record
+            .truncated
+            .store(u8::from(payload.len() > PAYLOAD_BYTES), Ordering::Relaxed);
+        record.len.store(len as u16, Ordering::Relaxed);
+        for (cell, byte) in record.payload.iter().zip(payload).take(PAYLOAD_BYTES) {
+            cell.store(*byte, Ordering::Relaxed);
+        }
+        record.magic.store(LIVE, Ordering::Release);
+    }
+}
+
+#[cfg(test)]
+#[path = "wasm_tombstone_tests.rs"]
+mod tests;
