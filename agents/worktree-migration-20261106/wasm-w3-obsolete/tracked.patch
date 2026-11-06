@@ -1,0 +1,144 @@
+diff --git a/apps/web/src/host/wasm-session-slot.ts b/apps/web/src/host/wasm-session-slot.ts
+index e6933054..70ae5ed7 100644
+--- a/apps/web/src/host/wasm-session-slot.ts
++++ b/apps/web/src/host/wasm-session-slot.ts
+@@ -50,6 +50,15 @@ export class WasmSessionSlot<TBindings extends WasmSessionBindings> {
+     this.generation += 1;
+   }
+ 
++  /** 首次选档只构造一个 World；后续换局必须更换整个 engine 实例。 */
++  restoreInitial(parsedSlot: unknown): void {
++    const wasm = this.bindings();
++    if (wasm === null) throw new Error("wasm 未初始化");
++    if (this.handle !== null || this.generation !== 0) throw new Error("首次 restore 只允许新鲜 WASM slot");
++    this.handle = wasm.restore_json(JSON.stringify(parsedSlot));
++    this.generation = 1;
++  }
++
+   restore(parsedSlot: unknown, loopHooks: WasmRestoreLoopHooks): unknown {
+     const [, wasm] = this.requireHandle();
+     const restoredSnapshot = restoreWasmSession({
+diff --git a/apps/web/src/host/wasm-worker-facade-init.test.ts b/apps/web/src/host/wasm-worker-facade-init.test.ts
+index e676edb5..c935a9cb 100644
+--- a/apps/web/src/host/wasm-worker-facade-init.test.ts
++++ b/apps/web/src/host/wasm-worker-facade-init.test.ts
+@@ -15,7 +15,7 @@ test("生产 Worker init 把原输入交唯一initializer，配置前create拒
+   function replace(name: PropertyKey, value: unknown) { saved.set(name, Object.getOwnPropertyDescriptor(globalThis, name)); Object.defineProperty(globalThis, name, { value, configurable: true }); }
+   const channels: MessageChannel[] = [], OriginalChannel = MessageChannel;
+   replace("MessageChannel", class extends OriginalChannel { constructor() { super(); channels.push(this); } });
+-  const state = { initialized, created, setup, substrate, load: async (): Promise<unknown> => { throw new Error("load 未接线"); }, async initialize(input: unknown) { initialized.push(input); await this.load(); await wait; configured = true; return substrate; }, requireConfigured() { if (!configured) throw new Error("fixture not configured"); return { setup, substrate }; }, dispose() {} };
++  const state = { initialized, created, setup, substrate, load: async (): Promise<unknown> => { throw new Error("load 未接线"); }, async initialize(input: unknown) { initialized.push(input); await this.load(); await wait; configured = true; return substrate; }, requireConfigured() { if (!configured) throw new Error("fixture not configured"); return { setup, substrate, initialArchive: null }; }, dispose() {} };
+   replace(key, state);
+   replace("self", { crossOriginIsolated: true, postMessage(message: Record<string, unknown>) { posted.push(message); }, addEventListener(_type: string, callback: typeof handler) { handler = callback; } });
+   replace("fetch", async () => ({ ok: true, arrayBuffer: async () => new Uint8Array([0,97,115,109,1,0,0,0]).buffer }));
+diff --git a/apps/web/src/host/wasm-worker.ts b/apps/web/src/host/wasm-worker.ts
+index 25c7f610..cadfea6e 100644
+--- a/apps/web/src/host/wasm-worker.ts
++++ b/apps/web/src/host/wasm-worker.ts
+@@ -179,6 +179,7 @@ function postFailureDetails(where: string, failure: WorkerFailureDetails): void
+ 
+ const restoreRestart = new WasmRestartGate();
+ let fatalSession = false;
++let initialSessionAttempted = false;
+ 
+ function postBaseline(): void {
+   const [session, wasm] = slot.requireHandle();
+@@ -255,10 +256,21 @@ ctx.addEventListener("message", (event) => {
+           await engineInitializer.initialize(message);
+           ctx.postMessage({ type: "ready" });
+           return;
+-        case "create": {
++        case "create":
++        case "restoreInitial": {
+           const configured = engineInitializer.requireConfigured();
+-          if (Object.hasOwn(message, "setup")) throw new Error("create 不接受第二份 setup；必须使用首次 init 保存的同份 setup");
+-          slot.create(configured.setup, message.seed);
++          if (initialSessionAttempted) throw new Error("同一 engine 实例只允许一次首建尝试；必须重建完整实例");
++          initialSessionAttempted = true;
++          if (message.type === "restoreInitial") {
++            if (Object.keys(message).some((key) => key !== "type")) throw new Error("restoreInitial 只接受 type，不接受第二份 archive/setup/seed");
++            if (configured.initialArchive === null) throw new Error("普通新局实例不能 restoreInitial");
++            slot.restoreInitial(configured.initialArchive);
++          } else {
++            if (configured.initialArchive !== null) throw new Error("选档实例不能 create 空新局");
++            if (Object.hasOwn(message, "setup")) throw new Error("create 不接受第二份 setup；必须使用首次 init 保存的同份 setup");
++            if (Object.keys(message).some((key) => !["type", "seed"].includes(key))) throw new Error("create 只接受 type/seed");
++            slot.create(configured.setup, message.seed);
++          }
+           const [, wasm] = slot.requireHandle();
+           const capabilities = readWasmCapabilities(wasm);
+           postIngressBridge();
+diff --git a/apps/web/src/host/worker-host.ts b/apps/web/src/host/worker-host.ts
+index b01d32b8..182d5bce 100644
+--- a/apps/web/src/host/worker-host.ts
++++ b/apps/web/src/host/worker-host.ts
+@@ -10,6 +10,8 @@ import type {
+ } from "../types/engine.ts";
+ import { wireIntentOf } from "./protocol/stock-identity.ts";
+ import type { PausePreferences } from "../types/generated/PausePreferences.ts";
++import type { StrictSaveEnvelope } from "../save/schema/root.ts";
++import { validateDayEndArchive } from "../save/day-end-candidate.ts";
+ import { parseSaveSlot } from "../save/save-schema.ts";
+ import type { EngineHost, IndicatorCapabilities, SpeedMetrics } from "./engine-host.ts";
+ import type { IntradayAverageCurveInput, IntradayAverageInput, IntradayAverageResult, PersonalTradeConfirmation } from "./engine-host.ts";
+@@ -26,6 +28,7 @@ import { normalizePublicReportById, normalizePublicReportPage } from "./serde-no
+ import { assertValidSpeedMultiplier, parseSpeedMetrics } from "./speed.ts";
+ import { normalizePlayerWorkingOrders, type PlayerWorkingOrder } from "./player-working-orders.ts";
+ import { parseHostFailure } from "./protocol-failure.ts";
++import { WasmHostInitializationError } from "./wasm-host-initialization-error.ts";
+ import { parseNpcDecisionTrace, type NpcDecisionTraceRecord } from "./npc-decision-trace.ts";
+ import type { IndicatorInput, IndicatorResults } from "../components/indicator-results.ts";
+ import { normalizeIndicatorInput, normalizeIndicatorResults } from "./indicator-transport.ts";
+@@ -33,7 +36,6 @@ import { createEngineSupervisor } from "./engine-supervisor.ts";
+ import { WorkerRequestScope } from "./worker-request.ts";
+ import { parseHistoricalStockData } from "./stock-history.ts";
+ import { parseInitialAllocation } from "./initial-allocation.ts";
+-import { WasmHostInitializationError } from "./wasm-host-initialization-error.ts";
+ 
+ type WorkerMessage = {
+   readonly type: string;
+@@ -181,6 +183,7 @@ export function assertWorkerE2EStepAllowed(e2eBuild: boolean, injectedCapability
+ }
+ 
+ interface WorkerHostOptions {
++  readonly initialArchive?: StrictSaveEnvelope | null;
+   readonly enableE2EStepping?: boolean;
+   readonly onSpawnFailure: (failure: HostFailure) => void;
+ }
+@@ -195,6 +198,15 @@ export function createWorkerHost(
+       reject(new Error("WorkerHost 必须提供 onSpawnFailure callback"));
+       return;
+     }
++    let initialArchive = options.initialArchive === undefined || options.initialArchive === null ? null
++      : validateDayEndArchive(parseSaveSlot(structuredClone(options.initialArchive)));
++    if (initialArchive !== null) {
++      throw Object.assign(new Error("当前缺少真实 restore topology ABI，不能使用 default-new topology 初始化读档"), {
++        code: "WASM_RESTORE_TOPOLOGY_NOT_READY", where: "worker-host.initial-archive", context: { operation: "restore" },
++      });
++    }
++    const restoringInitial = initialArchive !== null;
++    let initialCommandSent = false;
+     const worker = new Worker(new URL("./wasm-worker.ts", import.meta.url), { type: "module" });
+     let supervisor: ReturnType<typeof createEngineSupervisor> | null = null;
+     const requests = new WorkerRequestScope(worker);
+@@ -318,7 +330,9 @@ export function createWorkerHost(
+           }
+           case "ready":
+             supervisor.assertConfigured();
+-            worker.postMessage({ type: "create", seed });
++            if (initialCommandSent) throw new Error("Worker ready 重复，禁止同实例重复首建");
++            initialCommandSent = true;
++            worker.postMessage(restoringInitial ? { type: "restoreInitial" } : { type: "create", seed });
+             return;
+           case "created":
+             supervisor.assertConfigured();
+@@ -407,7 +421,8 @@ export function createWorkerHost(
+         onSpawnFailure: options.onSpawnFailure,
+       });
+       worker.addEventListener("message", onMessage);
+-      supervisor.bootstrapEngine({ type: "init", setup });
++      supervisor.bootstrapEngine(initialArchive === null ? { type: "init", setup } : { type: "init", initialArchive });
++      initialArchive = null;
+     } catch (error) {
+       notifyFailure({ code: "WASM_WORKER_TRANSPORT", where: "worker-host.initialize", message: error instanceof Error ? error.message : String(error) });
+     }
