@@ -1,0 +1,11 @@
+{
+  "base": "fabf1895186425477d6b3b3c0aef8119ce4b0872",
+  "files": {
+    "packages/engine/src/session.rs": "43576ee5f53c47423a355ff3018cf2507972f263857de3c851aadcea8296e2ee",
+    "packages/engine/src/session/civil_information.rs": "bdc83c6513b239728b99ac982b2c964685206e75d41b76eaf5c1e5011a97672a",
+    "packages/engine/src/session/corporate_actions/registry_day_end.rs": "fdd2802209f1fbd911b949b48cab07fbc8c26f5974520c5a4e0908d6f0928dbc",
+    "docs/trading-rules.md": "5e50a9f59f9f490f1a33ad6cf9ed9b1964c42c5e7bc72316607c1683269a26b6",
+    "packages/engine/src/session/ordinary_tax_day_end.rs": "38fff76fecfecadf0c23882a8c0665b85a60421d2a9be5dd7590670010f8bf4a"
+  },
+  "patch_sha256": "4810908b53f23270e9d69bc1332a49a6bec18fd0b74766422215c6a847ecace4"
+}

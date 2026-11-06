@@ -1,0 +1,17 @@
+{
+  "authority": "integration owner明确授权：只更新Git元数据，源码字节不变",
+  "before": {
+    "candidate": "7f970b259e442ee562177cef5219d3a58b5a842f",
+    "candidateTree": "5f0edf405cc9631b5bc33a6ca3370f285d1ac046",
+    "candidateStatus": "M apps/desktop/src-tauri/src/actor.rs\n M apps/desktop/src-tauri/src/actor/failure.rs\n M apps/desktop/src-tauri/src/lib.rs\n M apps/desktop/src-tauri/src/lib_tests.rs\n M apps/server/src/actor.rs\n M apps/server/src/lib.rs\n M apps/server/src/routes.rs\n M apps/server/src/routes/auth_tests.rs\n M apps/web-wasm/src/lib.rs\n M packages/engine/src/session/issuer_repurchase_approval.rs\n M packages/engine/src/session/ordinary_tax_day_end.rs\n M packages/engine/src/session/player_company_commands.rs\n M packages/engine/src/session/player_company_commands_tests.rs\n M packages/engine/src/session/protocol.rs\n M packages/engine/src/session/protocol/civil/session.rs\n?? agents/branch-completion/host-receive-2026-10-29/\n?? agents/branch-completion/joint-43-2026-10-29/\n?? agents/branch-completion/joint-green41-2026-10-29/\n?? agents/branch-completion/joint-green50-2026-10-29/\n?? agents/branch-completion/joint-green50-r2-2026-10-29/\n?? agents/branch-completion/joint-next-2026-10-29/\n?? agents/branch-completion/joint-next-r2-2026-10-29/\n?? agents/branch-completion/joint-red-2026-10-29/\n?? agents/branch-completion/joint-red-r2-2026-10-29/\n?? agents/branch-completion/wasm-w1/combined/\n?? apps/desktop/src-tauri/src/actor/correction_recovery_tests.rs\n?? apps/desktop/src-tauri/src/company_write_tests.rs\n?? apps/server/src/actor/correction_recovery_tests.rs\n?? apps/server/src/routes/company_write_tests.rs\n?? apps/web-wasm/src/company_write_tests.rs\n?? packages/engine/src/session/ordinary_tax_day_end/\n?? packages/engine/src/session/player_company_classification_tests.rs\n?? packages/engine/src/session/player_company_command_classification.rs\n?? packages/engine/src/session/protocol/company_writes.rs\n?? packages/engine/test-support/host_company_writes.rs"
+  },
+  "after": {
+    "candidate": "347e84f4ae371defd6b83de25888080bfbe9d311",
+    "candidateTree": "d499de72d0e57e2f4781d0a563d4fa547f8f2162",
+    "candidateStatus": "M packages/engine/src/session/ordinary_tax_day_end.rs\n?? agents/branch-completion/host-receive-2026-10-29/\n?? agents/branch-completion/joint-43-2026-10-29/\n?? agents/branch-completion/joint-green41-2026-10-29/\n?? agents/branch-completion/joint-green50-2026-10-29/\n?? agents/branch-completion/joint-green50-r2-2026-10-29/\n?? agents/branch-completion/joint-next-2026-10-29/\n?? agents/branch-completion/joint-next-r2-2026-10-29/\n?? agents/branch-completion/joint-red-2026-10-29/\n?? agents/branch-completion/joint-red-r2-2026-10-29/\n?? agents/branch-completion/wasm-w1/combined/\n?? packages/engine/src/session/ordinary_tax_day_end/"
+  },
+  "newPlanSha256": "70a6ad61b2872217b48e7627c9778a62310aafb2926bae96ff24b0b1ee810ff3",
+  "sourceArrayAndCfgPreserved": true,
+  "cargoExecuted": false,
+  "slotStillPending": true
+}

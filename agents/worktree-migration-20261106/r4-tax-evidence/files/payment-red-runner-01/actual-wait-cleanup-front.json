@@ -1,0 +1,138 @@
+{
+  "classification": "付款三门指定目标业务红，待root核验；不是生产实现或整树验收",
+  "actualSessionId": 57906,
+  "actualWaitExit": 0,
+  "actualWaitChunk": "60f4e3",
+  "batchReceipt": "/data1/<USER>/workplace/stock_market_game/.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-red-runner-01/batch-receipt.json",
+  "batchReceiptSha256": "6472f150a857adf9d94185e04cec27c1df891d17d39d69b2a1782b6051e72307",
+  "supervisorReceipt": "/data1/<USER>/workplace/stock_market_game/.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-red-runner-01/supervisor-receipt.json",
+  "supervisorReceiptSha256": "84befb350dca7a9994887464ac628b0e9ae9e395f5f41f7d8342ed146f94f6dc",
+  "wallSeconds": 103.94103735001408,
+  "outerWallSeconds": 104.16,
+  "remainingOwnedIdentities": [],
+  "remainingExactArgvPids": [],
+  "remainingCargoRustc": [],
+  "scratchExists": false,
+  "ownedSourceMtimeRestored": true,
+  "current": [
+    {
+      "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-6ae3f608f3352a4a",
+      "dev": 36,
+      "inode": 173830,
+      "bytes": 740796328,
+      "mtimeNs": 1793274015832992310,
+      "role": "feature-unit",
+      "sha256": "9f4e62be97a3e09132da73f320e66aa004447eb914e5934a949a46e179067dc5",
+      "source": "/data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28/packages/engine/src/lib.rs",
+      "features": [
+        "simulation-diagnostics",
+        "verification-harness"
+      ],
+      "fresh": false,
+      "profile": {
+        "opt_level": "0",
+        "debuginfo": 2,
+        "debug_assertions": true,
+        "overflow_checks": true,
+        "test": true
+      },
+      "executionBinding": {
+        "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-6ae3f608f3352a4a",
+        "sha256": "9f4e62be97a3e09132da73f320e66aa004447eb914e5934a949a46e179067dc5",
+        "dev": 36,
+        "inode": 173830,
+        "bytes": 740796328,
+        "mtimeNs": 1793274015832992310,
+        "scope": "仅本批直接执行，跨批无复用需求，不新增大seal"
+      },
+      "scope": "仅本次同源实际产物，正式预算内完整SHA；本批没有跨批大seal复用需求"
+    }
+  ],
+  "currentArtifacts": [
+    {
+      "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-6ae3f608f3352a4a",
+      "dev": 36,
+      "inode": 173830,
+      "bytes": 740796328,
+      "mtimeNs": 1793274015832992310,
+      "role": "feature-unit",
+      "sha256": "9f4e62be97a3e09132da73f320e66aa004447eb914e5934a949a46e179067dc5",
+      "source": "/data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28/packages/engine/src/lib.rs",
+      "features": [
+        "simulation-diagnostics",
+        "verification-harness"
+      ],
+      "fresh": false,
+      "profile": {
+        "opt_level": "0",
+        "debuginfo": 2,
+        "debug_assertions": true,
+        "overflow_checks": true,
+        "test": true
+      },
+      "executionBinding": {
+        "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-6ae3f608f3352a4a",
+        "sha256": "9f4e62be97a3e09132da73f320e66aa004447eb914e5934a949a46e179067dc5",
+        "dev": 36,
+        "inode": 173830,
+        "bytes": 740796328,
+        "mtimeNs": 1793274015832992310,
+        "scope": "仅本批直接执行，跨批无复用需求，不新增大seal"
+      },
+      "scope": "仅本次同源实际产物，正式预算内完整SHA；本批没有跨批大seal复用需求"
+    }
+  ],
+  "roleArtifacts": {
+    "feature-unit": {
+      "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-6ae3f608f3352a4a",
+      "dev": 36,
+      "inode": 173830,
+      "bytes": 740796328,
+      "mtimeNs": 1793274015832992310,
+      "role": "feature-unit",
+      "sha256": "9f4e62be97a3e09132da73f320e66aa004447eb914e5934a949a46e179067dc5",
+      "source": "/data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28/packages/engine/src/lib.rs",
+      "features": [
+        "simulation-diagnostics",
+        "verification-harness"
+      ],
+      "fresh": false,
+      "profile": {
+        "opt_level": "0",
+        "debuginfo": 2,
+        "debug_assertions": true,
+        "overflow_checks": true,
+        "test": true
+      },
+      "executionBinding": {
+        "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-6ae3f608f3352a4a",
+        "sha256": "9f4e62be97a3e09132da73f320e66aa004447eb914e5934a949a46e179067dc5",
+        "dev": 36,
+        "inode": 173830,
+        "bytes": 740796328,
+        "mtimeNs": 1793274015832992310,
+        "scope": "仅本批直接执行，跨批无复用需求，不新增大seal"
+      },
+      "scope": "仅本次同源实际产物，正式预算内完整SHA；本批没有跨批大seal复用需求"
+    }
+  },
+  "counts": {
+    "selected": 3,
+    "executed": 3,
+    "rawBusinessRed": 3,
+    "expectedRed": 3,
+    "green": 0,
+    "expectedMatched": 3
+  },
+  "historicalScope": "没有继承或提升任何历史角色；current只含本批实际接受artifact，未产出则为空",
+  "notRehashedAfterWait": true,
+  "quotaAfter": {
+    "uid": 1005,
+    "limitBytes": 106276195328,
+    "usedBytes": 97200775168,
+    "availableBytes": 9075420160,
+    "currentInodes": 16620,
+    "hardInodeLimit": 0,
+    "source": "只读 Linux x86_64 syscall443 quotactl_fd Q_GETQUOTA，不更改配额"
+  }
+}

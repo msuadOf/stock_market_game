@@ -1,0 +1,38 @@
+[
+  {
+    "target": "engine",
+    "configuration": "feature",
+    "name": "session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_01_payable_credits_gross_and_activates_personal_income_once",
+    "expected": "red",
+    "requiredPanicMarker": "R4 付款日必须真实增加持有人现金，不能只保持 Registered",
+    "panicChannel": "stderr",
+    "requiresEmptyStderr": false,
+    "sourcePath": "packages/engine/src/session/ordinary_tax_day_end/payment_runtime_tests.rs",
+    "requiredExpectedDeltaCents": 200,
+    "expectedActualDeltaCents": 0
+  },
+  {
+    "target": "engine",
+    "configuration": "feature",
+    "name": "session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_02_flat_payment_credits_net_and_records_real_withholding",
+    "expected": "red",
+    "requiredPanicMarker": "R4 简税付款必须在真实账户留下税后净额",
+    "panicChannel": "stderr",
+    "requiresEmptyStderr": false,
+    "sourcePath": "packages/engine/src/session/ordinary_tax_day_end/payment_runtime_tests.rs",
+    "requiredExpectedDeltaCents": 180,
+    "expectedActualDeltaCents": 0
+  },
+  {
+    "target": "engine",
+    "configuration": "feature",
+    "name": "session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_03_actual_sale_before_payment_collects_personal_tax",
+    "expected": "red",
+    "requiredPanicMarker": "R4 真实转让后的付款必须按原登记权益收缴个人税",
+    "panicChannel": "stderr",
+    "requiresEmptyStderr": false,
+    "sourcePath": "packages/engine/src/session/ordinary_tax_day_end/payment_runtime_tests.rs",
+    "requiredExpectedDeltaCents": 180,
+    "expectedActualDeltaCents": 0
+  }
+]

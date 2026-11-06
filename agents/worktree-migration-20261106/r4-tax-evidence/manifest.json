@@ -1,0 +1,807 @@
+[
+  {
+    "source": "capture-plan.md",
+    "archive": "files/capture-plan.md",
+    "source_sha256": "cd18cbce3bace73cd13e8b1fa657196772b826df602360663964a41f74415f9e",
+    "archive_sha256": "cd18cbce3bace73cd13e8b1fa657196772b826df602360663964a41f74415f9e",
+    "redacted": false
+  },
+  {
+    "source": "capture-production-02-fingerprints.json",
+    "archive": "files/capture-production-02-fingerprints.json",
+    "source_sha256": "c09bf46fc35978e707b7c8aafab44b1328cf90cf6bb9ae8aae9d07bfb717d870",
+    "archive_sha256": "c09bf46fc35978e707b7c8aafab44b1328cf90cf6bb9ae8aae9d07bfb717d870",
+    "redacted": false
+  },
+  {
+    "source": "capture-production-02.patch",
+    "archive": "files/capture-production-02.patch",
+    "source_sha256": "a13ba33189133b9178e8b6169bd269ad5e651d1d81f9b179079176404eace48e",
+    "archive_sha256": "a13ba33189133b9178e8b6169bd269ad5e651d1d81f9b179079176404eace48e",
+    "redacted": false
+  },
+  {
+    "source": "capture-production-03-fingerprints.json",
+    "archive": "files/capture-production-03-fingerprints.json",
+    "source_sha256": "914320b9c5a9113af310d617d86e431db77bc537bdcc45ab56b93f7ec522fb72",
+    "archive_sha256": "914320b9c5a9113af310d617d86e431db77bc537bdcc45ab56b93f7ec522fb72",
+    "redacted": false
+  },
+  {
+    "source": "capture-production-03.patch",
+    "archive": "files/capture-production-03.patch",
+    "source_sha256": "4810908b53f23270e9d69bc1332a49a6bec18fd0b74766422215c6a847ecace4",
+    "archive_sha256": "4810908b53f23270e9d69bc1332a49a6bec18fd0b74766422215c6a847ecace4",
+    "redacted": false
+  },
+  {
+    "source": "capture-production-04-fingerprints.json",
+    "archive": "files/capture-production-04-fingerprints.json",
+    "source_sha256": "bbbd1bce62031bd8a3758f6aae7f386f2bec237f9ea74d15053bdd6163e18629",
+    "archive_sha256": "bbbd1bce62031bd8a3758f6aae7f386f2bec237f9ea74d15053bdd6163e18629",
+    "redacted": false
+  },
+  {
+    "source": "capture-production-04.patch",
+    "archive": "files/capture-production-04.patch",
+    "source_sha256": "b9c7b57b1e527bd3433cf57b160c604c9132e0fcd35fc27a1de1ac32df783cfa",
+    "archive_sha256": "b9c7b57b1e527bd3433cf57b160c604c9132e0fcd35fc27a1de1ac32df783cfa",
+    "redacted": false
+  },
+  {
+    "source": "central-next-tests.md",
+    "archive": "files/central-next-tests.md",
+    "source_sha256": "808635e2d2ce832e2fdc61b5c1b82cee08ca8b62a1ad40e86bbd0ae7f6e4cb0f",
+    "archive_sha256": "808635e2d2ce832e2fdc61b5c1b82cee08ca8b62a1ad40e86bbd0ae7f6e4cb0f",
+    "redacted": false
+  },
+  {
+    "source": "ordinary-production-01-fingerprints.json",
+    "archive": "files/ordinary-production-01-fingerprints.json",
+    "source_sha256": "a85ea086495462904de389fc2e77d91d4c548ba1df90ed992824f6ec26182305",
+    "archive_sha256": "a85ea086495462904de389fc2e77d91d4c548ba1df90ed992824f6ec26182305",
+    "redacted": false
+  },
+  {
+    "source": "ordinary-production-01.patch",
+    "archive": "files/ordinary-production-01.patch",
+    "source_sha256": "12319e0949c670a2b66bd4bec97f86f2bdef42104273a17e189d6726173131b6",
+    "archive_sha256": "12319e0949c670a2b66bd4bec97f86f2bdef42104273a17e189d6726173131b6",
+    "redacted": false
+  },
+  {
+    "source": "payment-actual-green-01-limited-independent-review.md",
+    "archive": "files/payment-actual-green-01-limited-independent-review.md",
+    "source_sha256": "3a4aa8b7c12083d6399dfba210cd8bbc8f8ac26f098ea97e2d3e40df2a5a46c1",
+    "archive_sha256": "4a1ca4bdc7df3e8f0ab5d497ff6e742c2258b719a3e64885c2c356ecba4f86e3",
+    "redacted": true
+  },
+  {
+    "source": "payment-actual-green-docs-01-fingerprints.json",
+    "archive": "files/payment-actual-green-docs-01-fingerprints.json",
+    "source_sha256": "2319ab54a8322e3cd6686f9e283e361d943fc9aa4b4447a51d2823bd2ea8fec8",
+    "archive_sha256": "2319ab54a8322e3cd6686f9e283e361d943fc9aa4b4447a51d2823bd2ea8fec8",
+    "redacted": false
+  },
+  {
+    "source": "payment-actual-green-docs-01.patch",
+    "archive": "files/payment-actual-green-docs-01.patch",
+    "source_sha256": "46efcb997c62036d269c94caf09812d5e8df0738b1c5c27152decfaa6c0cecaa",
+    "archive_sha256": "46efcb997c62036d269c94caf09812d5e8df0738b1c5c27152decfaa6c0cecaa",
+    "redacted": false
+  },
+  {
+    "source": "payment-cash01-calendar-fixture-01-fingerprints.json",
+    "archive": "files/payment-cash01-calendar-fixture-01-fingerprints.json",
+    "source_sha256": "bb57b8fb519198e18ce1e5e571265cf591008b301e5098a068924f8c035c797f",
+    "archive_sha256": "bb57b8fb519198e18ce1e5e571265cf591008b301e5098a068924f8c035c797f",
+    "redacted": false
+  },
+  {
+    "source": "payment-cash01-calendar-fixture-01-independent-review.md",
+    "archive": "files/payment-cash01-calendar-fixture-01-independent-review.md",
+    "source_sha256": "6534e80aff3e1b52c5ac65544ea5a2d7b94dacb2fc94920a0cb45f5d8331aa88",
+    "archive_sha256": "700bd872c3a8d649f94dc2cdba2c709ff6f9d9e3d6e180740dc778a81f20a274",
+    "redacted": true
+  },
+  {
+    "source": "payment-cash01-calendar-fixture-01.patch",
+    "archive": "files/payment-cash01-calendar-fixture-01.patch",
+    "source_sha256": "12dd240796f23094b4de05ee779cf22a20b1bfba28e8e30f2abc0ea161bd0cdc",
+    "archive_sha256": "12dd240796f23094b4de05ee779cf22a20b1bfba28e8e30f2abc0ea161bd0cdc",
+    "redacted": false
+  },
+  {
+    "source": "payment-production-01-fingerprints.json",
+    "archive": "files/payment-production-01-fingerprints.json",
+    "source_sha256": "3a2f4a176cf7ae09795121f06563252bcbe41e267308c531e346ce777f4bc064",
+    "archive_sha256": "3a2f4a176cf7ae09795121f06563252bcbe41e267308c531e346ce777f4bc064",
+    "redacted": false
+  },
+  {
+    "source": "payment-production-01.patch",
+    "archive": "files/payment-production-01.patch",
+    "source_sha256": "7ba75eee75edc4c63786588efa15faeb368440200f84eb3cda5b5e365bd2a91d",
+    "archive_sha256": "7ba75eee75edc4c63786588efa15faeb368440200f84eb3cda5b5e365bd2a91d",
+    "redacted": false
+  },
+  {
+    "source": "payment-production-02-fingerprints.json",
+    "archive": "files/payment-production-02-fingerprints.json",
+    "source_sha256": "6fcb62ae97be630138904220080ea7ee5844f2ee507f880c9f2d33429106a94d",
+    "archive_sha256": "6fcb62ae97be630138904220080ea7ee5844f2ee507f880c9f2d33429106a94d",
+    "redacted": false
+  },
+  {
+    "source": "payment-production-02-green-cases.json",
+    "archive": "files/payment-production-02-green-cases.json",
+    "source_sha256": "38f64b9dbfb6ac744b311fbb6462af72322a3433d94640a2021acbd83067d16a",
+    "archive_sha256": "38f64b9dbfb6ac744b311fbb6462af72322a3433d94640a2021acbd83067d16a",
+    "redacted": false
+  },
+  {
+    "source": "payment-production-02-independent-review.md",
+    "archive": "files/payment-production-02-independent-review.md",
+    "source_sha256": "a9b9bd056131a2d5af94136026b26a261a1b443272d8302792dee871784ae44b",
+    "archive_sha256": "fc02b45657510a37f6bda468b12f67165bd9bb1d902ecf1cf60b6554b7178dde",
+    "redacted": true
+  },
+  {
+    "source": "payment-production-02.patch",
+    "archive": "files/payment-production-02.patch",
+    "source_sha256": "e67b9b0c1deffd6ada68bcd650ddd360a1438c0bff0c6288264b89a627b51edd",
+    "archive_sha256": "e67b9b0c1deffd6ada68bcd650ddd360a1438c0bff0c6288264b89a627b51edd",
+    "redacted": false
+  },
+  {
+    "source": "payment-production-03-delivery.json",
+    "archive": "files/payment-production-03-delivery.json",
+    "source_sha256": "76a6f0c802a0fd98507395db52a8f62a0d075b335f29d95e71fd45781a3eda43",
+    "archive_sha256": "76a6f0c802a0fd98507395db52a8f62a0d075b335f29d95e71fd45781a3eda43",
+    "redacted": false
+  },
+  {
+    "source": "payment-production-03-delta-independent-review.md",
+    "archive": "files/payment-production-03-delta-independent-review.md",
+    "source_sha256": "49422e5d5266eaa30883783f27c44f0d42b95042c9c0ed047a037b6a5e5c5cd1",
+    "archive_sha256": "49422e5d5266eaa30883783f27c44f0d42b95042c9c0ed047a037b6a5e5c5cd1",
+    "redacted": false
+  },
+  {
+    "source": "payment-production-03-fingerprints.json",
+    "archive": "files/payment-production-03-fingerprints.json",
+    "source_sha256": "7f029362448e8559a3838c941ccfbccff7e1418289ac7050374e0c880727033e",
+    "archive_sha256": "7f029362448e8559a3838c941ccfbccff7e1418289ac7050374e0c880727033e",
+    "redacted": false
+  },
+  {
+    "source": "payment-production-03-handoff.md",
+    "archive": "files/payment-production-03-handoff.md",
+    "source_sha256": "cc2717a8527e295763e1b4c1ffc04b5a78b267b4c4a5dd214021d030a3287ef7",
+    "archive_sha256": "cc2717a8527e295763e1b4c1ffc04b5a78b267b4c4a5dd214021d030a3287ef7",
+    "redacted": false
+  },
+  {
+    "source": "payment-production-03.patch",
+    "archive": "files/payment-production-03.patch",
+    "source_sha256": "6cabdb46eeb5caca7cb6175407c17a64e0cb75803defde58cd62f842d21d0881",
+    "archive_sha256": "6cabdb46eeb5caca7cb6175407c17a64e0cb75803defde58cd62f842d21d0881",
+    "redacted": false
+  },
+  {
+    "source": "payment-production-seam-notes.md",
+    "archive": "files/payment-production-seam-notes.md",
+    "source_sha256": "af74fb949bc3b33ce34a915fb236db8a658afc52e99a0ec54580cef368b63f28",
+    "archive_sha256": "af74fb949bc3b33ce34a915fb236db8a658afc52e99a0ec54580cef368b63f28",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/absolute-supervisor.mjs",
+    "archive": "files/payment-red-runner-01/absolute-supervisor.mjs",
+    "source_sha256": "3441ee156c98438c9a146532a007375c334faedbeac860acf63be99b412435b7",
+    "archive_sha256": "e07aebaa09604c2b1b01036dfa6955f1dc3275e2ac87ea7d51accb41132f3319",
+    "redacted": true
+  },
+  {
+    "source": "payment-red-runner-01/actual-wait-cleanup-front.json",
+    "archive": "files/payment-red-runner-01/actual-wait-cleanup-front.json",
+    "source_sha256": "29c5308a9ca6c3c89072947fd39477ff118bb858a8bce8ea37b641ccb46c580b",
+    "archive_sha256": "d8eb229d3da267ec8f112ee18db2f2afd366fb0171211afcda579ed09ff5fc95",
+    "redacted": true
+  },
+  {
+    "source": "payment-red-runner-01/batch-receipt.json",
+    "archive": "files/payment-red-runner-01/batch-receipt.json",
+    "source_sha256": "6472f150a857adf9d94185e04cec27c1df891d17d39d69b2a1782b6051e72307",
+    "archive_sha256": "96dd8204bc8d68ffe4c6d41d4abe205b625e5543439de64f5e376710a82d342f",
+    "redacted": true
+  },
+  {
+    "source": "payment-red-runner-01/batch-resources.jsonl",
+    "archive": "files/payment-red-runner-01/batch-resources.jsonl",
+    "source_sha256": "42f633960a638e74a5b2523165a170d9cb61628aee0c605df1169b62db6bf263",
+    "archive_sha256": "42f633960a638e74a5b2523165a170d9cb61628aee0c605df1169b62db6bf263",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/bind-preflight.py",
+    "archive": "files/payment-red-runner-01/bind-preflight.py",
+    "source_sha256": "ac6de291b111e1894e18f829700a45b5003f56c4be4e1a97481fa4610c7132f8",
+    "archive_sha256": "abdbd209e5e894010e4ccdc895f5fce02f543c86920eaf2696b0d05431473569",
+    "redacted": true
+  },
+  {
+    "source": "payment-red-runner-01/build-verified.mjs",
+    "archive": "files/payment-red-runner-01/build-verified.mjs",
+    "source_sha256": "71a796990f63dd134c7a053fdb36a61dda18a403f8161a6796680f7611c4e6e9",
+    "archive_sha256": "71a796990f63dd134c7a053fdb36a61dda18a403f8161a6796680f7611c4e6e9",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/candidate-metadata-update.json",
+    "archive": "files/payment-red-runner-01/candidate-metadata-update.json",
+    "source_sha256": "3d70f9cad2d4bc49b8d36b26aed1f648171c7170f261ec41beee194eab7f757a",
+    "archive_sha256": "3d70f9cad2d4bc49b8d36b26aed1f648171c7170f261ec41beee194eab7f757a",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/cases-plan.json",
+    "archive": "files/payment-red-runner-01/cases-plan.json",
+    "source_sha256": "1a3d7ea13c629d23c0fc6b5f793d4c6d6bc6675d80973ca9818dc296291b3dc1",
+    "archive_sha256": "1a3d7ea13c629d23c0fc6b5f793d4c6d6bc6675d80973ca9818dc296291b3dc1",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/cleanup-supervisor.mjs",
+    "archive": "files/payment-red-runner-01/cleanup-supervisor.mjs",
+    "source_sha256": "3cd851d0e2faee5d7c72f0a52ebea4dc1402076f563c3e304dc2f8936c0d11f8",
+    "archive_sha256": "6c1e458c71a2c5bc4a78f316bfccee1cc96e820f3248f5d2af7437653370dc14",
+    "redacted": true
+  },
+  {
+    "source": "payment-red-runner-01/control-delta-review.md",
+    "archive": "files/payment-red-runner-01/control-delta-review.md",
+    "source_sha256": "7cb6ab2c9e1bb99f462bf80900de7f3b2d88a0b41a33708b9d0ca183a92be543",
+    "archive_sha256": "88cd4f147effb3a2ddc9b242e638d3d8c63db0ae6acb4b4cb3b2ffb2672155ff",
+    "redacted": true
+  },
+  {
+    "source": "payment-red-runner-01/control-delta.md",
+    "archive": "files/payment-red-runner-01/control-delta.md",
+    "source_sha256": "df5739802b62a0dcb3f7bbf0d00986bc819e38ed7d24d852a41107e672baf58e",
+    "archive_sha256": "df5739802b62a0dcb3f7bbf0d00986bc819e38ed7d24d852a41107e672baf58e",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/exclusive-owner-claim.json",
+    "archive": "files/payment-red-runner-01/exclusive-owner-claim.json",
+    "source_sha256": "9a26620addfee306a6d778c3f98c2daac8fcde6ce398dcdb3a2971c7af600c35",
+    "archive_sha256": "9a26620addfee306a6d778c3f98c2daac8fcde6ce398dcdb3a2971c7af600c35",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/expected-red-contracts.json",
+    "archive": "files/payment-red-runner-01/expected-red-contracts.json",
+    "source_sha256": "7026d34fc775786e80e4e38398f81b8ced969b7a82b5bb7bec1e5b57201777ba",
+    "archive_sha256": "7026d34fc775786e80e4e38398f81b8ced969b7a82b5bb7bec1e5b57201777ba",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/feature-artifact-candidates-before-acceptance.json",
+    "archive": "files/payment-red-runner-01/feature-artifact-candidates-before-acceptance.json",
+    "source_sha256": "cc584741211aea53b97f27bdbff46715f9126a0194d9c59e182d00026b584fee",
+    "archive_sha256": "1a65d30ffb7dfa3c88ebfdd690f8eb2b4896f7767d2dc33be1b812aa111b33b9",
+    "redacted": true
+  },
+  {
+    "source": "payment-red-runner-01/feature-build.stderr",
+    "archive": "files/payment-red-runner-01/feature-build.stderr",
+    "source_sha256": "ceb30b62eb81cfa83de40c3334c1449a336a620f1c0053182610b403451bb802",
+    "archive_sha256": "ceb30b62eb81cfa83de40c3334c1449a336a620f1c0053182610b403451bb802",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/feature-build.stdout",
+    "archive": "files/payment-red-runner-01/feature-build.stdout",
+    "source_sha256": "229cde63ee4a90bcb3d3b3f1ead31ad2574565cdf1cd6fc31626a794cf359ecd",
+    "archive_sha256": "ce1b8aebe80e8459c2ad4e051d64e0b095780892ae491f1f3d195cef907aa806",
+    "redacted": true
+  },
+  {
+    "source": "payment-red-runner-01/feature-engine-actual-test-list.stderr",
+    "archive": "files/payment-red-runner-01/feature-engine-actual-test-list.stderr",
+    "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "archive_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/feature-engine-actual-test-list.stdout",
+    "archive": "files/payment-red-runner-01/feature-engine-actual-test-list.stdout",
+    "source_sha256": "01ffc1c67fc53e7f294bd24132de15e175e76c050035b464188c32325329e4da",
+    "archive_sha256": "01ffc1c67fc53e7f294bd24132de15e175e76c050035b464188c32325329e4da",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/feature-engine-r4_cash_01_payable_credits_gross_and_activates_personal_income_once.case-result.json",
+    "archive": "files/payment-red-runner-01/feature-engine-r4_cash_01_payable_credits_gross_and_activates_personal_income_once.case-result.json",
+    "source_sha256": "19915b230fcb4133a5a7eb3f550ecd4f372a06c3892c13591d683321405ea44e",
+    "archive_sha256": "eac0edfe1ff22d1c0591984c294eec7f333d85d8b4222f28ace66aa0a1efe9c2",
+    "redacted": true
+  },
+  {
+    "source": "payment-red-runner-01/feature-engine-r4_cash_01_payable_credits_gross_and_activates_personal_income_once.child-status.json",
+    "archive": "files/payment-red-runner-01/feature-engine-r4_cash_01_payable_credits_gross_and_activates_personal_income_once.child-status.json",
+    "source_sha256": "f4aea610875ef0d737dbea0d303d9fc38181e38a9bd752e2debc4795290ca3ad",
+    "archive_sha256": "f4aea610875ef0d737dbea0d303d9fc38181e38a9bd752e2debc4795290ca3ad",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/feature-engine-r4_cash_01_payable_credits_gross_and_activates_personal_income_once.stderr",
+    "archive": "files/payment-red-runner-01/feature-engine-r4_cash_01_payable_credits_gross_and_activates_personal_income_once.stderr",
+    "source_sha256": "3c2a335c2aad7e8a1e61530c658d511b050fcbd40b510991e0e7c63cadfec1b2",
+    "archive_sha256": "3c2a335c2aad7e8a1e61530c658d511b050fcbd40b510991e0e7c63cadfec1b2",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/feature-engine-r4_cash_01_payable_credits_gross_and_activates_personal_income_once.stdout",
+    "archive": "files/payment-red-runner-01/feature-engine-r4_cash_01_payable_credits_gross_and_activates_personal_income_once.stdout",
+    "source_sha256": "7a47db00e670fea473683a002761e31dc5aaacdefb3bb80beb2f6026498e8162",
+    "archive_sha256": "7a47db00e670fea473683a002761e31dc5aaacdefb3bb80beb2f6026498e8162",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/feature-engine-r4_cash_02_flat_payment_credits_net_and_records_real_withholding.case-result.json",
+    "archive": "files/payment-red-runner-01/feature-engine-r4_cash_02_flat_payment_credits_net_and_records_real_withholding.case-result.json",
+    "source_sha256": "9d4aa51900fa3f46ec91f36fef795f04f76a458cee9c02e58d7b62b3ca5ddfb0",
+    "archive_sha256": "f24039fc19866ce4138035b4c5f2deddc90567b80564e0c613d4b3e92bef9ceb",
+    "redacted": true
+  },
+  {
+    "source": "payment-red-runner-01/feature-engine-r4_cash_02_flat_payment_credits_net_and_records_real_withholding.child-status.json",
+    "archive": "files/payment-red-runner-01/feature-engine-r4_cash_02_flat_payment_credits_net_and_records_real_withholding.child-status.json",
+    "source_sha256": "f52e433de4f12e67838b26a25171d3adfe10406639b17277d78853369d6be31b",
+    "archive_sha256": "f52e433de4f12e67838b26a25171d3adfe10406639b17277d78853369d6be31b",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/feature-engine-r4_cash_02_flat_payment_credits_net_and_records_real_withholding.stderr",
+    "archive": "files/payment-red-runner-01/feature-engine-r4_cash_02_flat_payment_credits_net_and_records_real_withholding.stderr",
+    "source_sha256": "5d08a00ffd54138962b2a89895ffcc4e04383ebd20022aac9cbd646990a27337",
+    "archive_sha256": "5d08a00ffd54138962b2a89895ffcc4e04383ebd20022aac9cbd646990a27337",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/feature-engine-r4_cash_02_flat_payment_credits_net_and_records_real_withholding.stdout",
+    "archive": "files/payment-red-runner-01/feature-engine-r4_cash_02_flat_payment_credits_net_and_records_real_withholding.stdout",
+    "source_sha256": "ac22eb0d455aa100c358780b16961358316f6af28e9770ca6690f494d83a9df3",
+    "archive_sha256": "ac22eb0d455aa100c358780b16961358316f6af28e9770ca6690f494d83a9df3",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/feature-engine-r4_cash_03_actual_sale_before_payment_collects_personal_tax.case-result.json",
+    "archive": "files/payment-red-runner-01/feature-engine-r4_cash_03_actual_sale_before_payment_collects_personal_tax.case-result.json",
+    "source_sha256": "22ab275b937848df5b14d303fbaf206df7dc3c028b99801af2d0c9de0d44fb34",
+    "archive_sha256": "44ca4623f2302c3d2e9096a0f7ee502cc164aede9826e7e862d98bbb46adfc41",
+    "redacted": true
+  },
+  {
+    "source": "payment-red-runner-01/feature-engine-r4_cash_03_actual_sale_before_payment_collects_personal_tax.child-status.json",
+    "archive": "files/payment-red-runner-01/feature-engine-r4_cash_03_actual_sale_before_payment_collects_personal_tax.child-status.json",
+    "source_sha256": "18e02fe75814b427c58ff8e05cecd7ffada5d3b1ae8b499e8983cbd9902f9771",
+    "archive_sha256": "18e02fe75814b427c58ff8e05cecd7ffada5d3b1ae8b499e8983cbd9902f9771",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/feature-engine-r4_cash_03_actual_sale_before_payment_collects_personal_tax.stderr",
+    "archive": "files/payment-red-runner-01/feature-engine-r4_cash_03_actual_sale_before_payment_collects_personal_tax.stderr",
+    "source_sha256": "e62668eb795f6fb88462cbb313357c316854669c2097b1f801991c4e51316280",
+    "archive_sha256": "e62668eb795f6fb88462cbb313357c316854669c2097b1f801991c4e51316280",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/feature-engine-r4_cash_03_actual_sale_before_payment_collects_personal_tax.stdout",
+    "archive": "files/payment-red-runner-01/feature-engine-r4_cash_03_actual_sale_before_payment_collects_personal_tax.stdout",
+    "source_sha256": "c81c29b26cd39c5a28e1fc7c6d3ba0a0cfaff5ebf382b444c4b527ddf9b08aa0",
+    "archive_sha256": "c81c29b26cd39c5a28e1fc7c6d3ba0a0cfaff5ebf382b444c4b527ddf9b08aa0",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/feature-guard-receipt.json",
+    "archive": "files/payment-red-runner-01/feature-guard-receipt.json",
+    "source_sha256": "b543496a76eaf31c4d1942cf63d60ecd008cce1d5c9d63ac97b3ddc886f207cf",
+    "archive_sha256": "ef81daa522d741c63eb9d520cb271903e67b136abef5b69df51fedff9bf41b8b",
+    "redacted": true
+  },
+  {
+    "source": "payment-red-runner-01/feature-guard-resources.jsonl",
+    "archive": "files/payment-red-runner-01/feature-guard-resources.jsonl",
+    "source_sha256": "62fc579fec8e3d06bf053478d793e8a8f466f9a917275da6d90c5592079e058c",
+    "archive_sha256": "62fc579fec8e3d06bf053478d793e8a8f466f9a917275da6d90c5592079e058c",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/feature-guard.stderr",
+    "archive": "files/payment-red-runner-01/feature-guard.stderr",
+    "source_sha256": "569846d8d61e64f537479ced7b993967980c76139d6a707d219744ca2469ef12",
+    "archive_sha256": "cbfca4917764740048196f5fd4c5a76d3c3cba754e7149305cd346a6a32e98a4",
+    "redacted": true
+  },
+  {
+    "source": "payment-red-runner-01/feature-guard.stdout",
+    "archive": "files/payment-red-runner-01/feature-guard.stdout",
+    "source_sha256": "08d13a9341a82c2923a1271347e241243f33803edaf47b7710a280b2af7d94c5",
+    "archive_sha256": "bb39a6cbb2665550423f3baaf58ca7a2fae15d5307a67198cb0c837c8bc660e1",
+    "redacted": true
+  },
+  {
+    "source": "payment-red-runner-01/feature-plan.json",
+    "archive": "files/payment-red-runner-01/feature-plan.json",
+    "source_sha256": "df46e98f607388bee16a2128bbf4bf9223c5e42ac68ba650e0a342b4aa2a275b",
+    "archive_sha256": "d9adccecf5152e23552ab7032429d504ec4a126bd60fe65f145998624eca911a",
+    "redacted": true
+  },
+  {
+    "source": "payment-red-runner-01/freeze-current.py",
+    "archive": "files/payment-red-runner-01/freeze-current.py",
+    "source_sha256": "ae8f03180d298f18d6cb0d50474179fb894c2ab859408a0de5913fa0012805a0",
+    "archive_sha256": "24f3751b07641ac87abdbc86789e57b15ff9dbcee95e6355b646138d97ac4825",
+    "redacted": true
+  },
+  {
+    "source": "payment-red-runner-01/launch-batch.py",
+    "archive": "files/payment-red-runner-01/launch-batch.py",
+    "source_sha256": "36ddf4f3f9f04980d4b8ada606fafeae159e877fc3c76dcac98363720bc8fd04",
+    "archive_sha256": "9b13e5f1d043194bac7bbaec4b4ea1ce5e70bd65c8df23524dac8515c97b7ede",
+    "redacted": true
+  },
+  {
+    "source": "payment-red-runner-01/mechanical-control-fingerprints.json",
+    "archive": "files/payment-red-runner-01/mechanical-control-fingerprints.json",
+    "source_sha256": "96a2b933b91bfa77caabaae7c04857b7deafe1af593eb2fc38c01e9edee2dfdd",
+    "archive_sha256": "96a2b933b91bfa77caabaae7c04857b7deafe1af593eb2fc38c01e9edee2dfdd",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/mechanical-control.diff",
+    "archive": "files/payment-red-runner-01/mechanical-control.diff",
+    "source_sha256": "894045b9fe42bc37518b881c236af6191bf8afd3589ab19988a96c2a2becfe3a",
+    "archive_sha256": "b4939ca6f8eaa4b6f945553287260eb8bc0e6d92b0e140ec1f613c023fcc0072",
+    "redacted": true
+  },
+  {
+    "source": "payment-red-runner-01/metadata.stderr",
+    "archive": "files/payment-red-runner-01/metadata.stderr",
+    "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "archive_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/metadata.stdout",
+    "archive": "files/payment-red-runner-01/metadata.stdout",
+    "source_sha256": "28f66d0d247c27096c9548e1ccd17d9e2f76458b88874db2bd16dd54d8fb877f",
+    "archive_sha256": "747c6823c636d35c383e33ed0cb191f6de8e278a566bf0192d494150538cd978",
+    "redacted": true
+  },
+  {
+    "source": "payment-red-runner-01/native-cargo-inputs-after.json",
+    "archive": "files/payment-red-runner-01/native-cargo-inputs-after.json",
+    "source_sha256": "d80874fa95a354040474edd3ebf8c2f0fdf2a5d4f3033ca2cb155280368c150d",
+    "archive_sha256": "ef23f10510d972c9b397381c1a3e3f6866dea254baceebead008a555fce21d71",
+    "redacted": true
+  },
+  {
+    "source": "payment-red-runner-01/native-cargo-inputs-before.json",
+    "archive": "files/payment-red-runner-01/native-cargo-inputs-before.json",
+    "source_sha256": "d80874fa95a354040474edd3ebf8c2f0fdf2a5d4f3033ca2cb155280368c150d",
+    "archive_sha256": "ef23f10510d972c9b397381c1a3e3f6866dea254baceebead008a555fce21d71",
+    "redacted": true
+  },
+  {
+    "source": "payment-red-runner-01/observed-owned-before-cleanup.json",
+    "archive": "files/payment-red-runner-01/observed-owned-before-cleanup.json",
+    "source_sha256": "ac91051ab8df1900877ac2ff13c034274dece3dc3281bbff9dbd0bc1258d8083",
+    "archive_sha256": "ac91051ab8df1900877ac2ff13c034274dece3dc3281bbff9dbd0bc1258d8083",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/owned-native-source.py",
+    "archive": "files/payment-red-runner-01/owned-native-source.py",
+    "source_sha256": "39acaee39a5890f09017b4831832e9155da69630a058a1a55124fe43d4cf4414",
+    "archive_sha256": "6bbe1cca25926a3845c3e3dffa5598471c73587589d05524a89f1383577eaefe",
+    "redacted": true
+  },
+  {
+    "source": "payment-red-runner-01/owned-source-times.json",
+    "archive": "files/payment-red-runner-01/owned-source-times.json",
+    "source_sha256": "2304a84cdb55daf4c3669ff52b0749157cfa2981516d1ce701f94dc47ea171d3",
+    "archive_sha256": "d0da0fe74c08f211aefb2aba132e8560d76ccfb3ae641351e7ffc449a133e5f7",
+    "redacted": true
+  },
+  {
+    "source": "payment-red-runner-01/owned-termination.json",
+    "archive": "files/payment-red-runner-01/owned-termination.json",
+    "source_sha256": "76925b79d211fac52d5ded11bcb40fa1d1427f6760a16b4b0c0a1664014c2a4a",
+    "archive_sha256": "76925b79d211fac52d5ded11bcb40fa1d1427f6760a16b4b0c0a1664014c2a4a",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/owned-termination.stderr",
+    "archive": "files/payment-red-runner-01/owned-termination.stderr",
+    "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "archive_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/owned-termination.stdout",
+    "archive": "files/payment-red-runner-01/owned-termination.stdout",
+    "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "archive_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/plan-template-seed.json",
+    "archive": "files/payment-red-runner-01/plan-template-seed.json",
+    "source_sha256": "58826cab0a9aaf02736b12b5b19020c515d4ec5396beab6ddc176153a258fb71",
+    "archive_sha256": "1dbe9e3972a8dd8f4d5170368148a9a972ea842afd4d3be9ebd32d1e4512f9fe",
+    "redacted": true
+  },
+  {
+    "source": "payment-red-runner-01/plan-template.json",
+    "archive": "files/payment-red-runner-01/plan-template.json",
+    "source_sha256": "70a6ad61b2872217b48e7627c9778a62310aafb2926bae96ff24b0b1ee810ff3",
+    "archive_sha256": "4329c69f622ba13b463eadd98c04d112c24b8739abc896d3610310c33c86f455",
+    "redacted": true
+  },
+  {
+    "source": "payment-red-runner-01/preflight.json",
+    "archive": "files/payment-red-runner-01/preflight.json",
+    "source_sha256": "bbf80a1447c4e3921c0726fb8068ba1a8b24560776f030639e694030a5a022f0",
+    "archive_sha256": "71d42d43bedf180d1dbf0898a0735a171ffe0c7aad19df79921f494019881906",
+    "redacted": true
+  },
+  {
+    "source": "payment-red-runner-01/prepare-status.json",
+    "archive": "files/payment-red-runner-01/prepare-status.json",
+    "source_sha256": "7a692e1ae6f6148391c59daa59cf9f0f38f0766860c262ee37fce1602cdce051",
+    "archive_sha256": "7a692e1ae6f6148391c59daa59cf9f0f38f0766860c262ee37fce1602cdce051",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/product-source-manifest.json",
+    "archive": "files/payment-red-runner-01/product-source-manifest.json",
+    "source_sha256": "200eb1b6c7f22959c7b25566a83a2b75a39662487c7f31f58c4857e061cf4720",
+    "archive_sha256": "200eb1b6c7f22959c7b25566a83a2b75a39662487c7f31f58c4857e061cf4720",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/publish-actual-front.py",
+    "archive": "files/payment-red-runner-01/publish-actual-front.py",
+    "source_sha256": "722f3e3c96468f8413e12ddbd0000e7a39d46e66124a2ca82dc3f36a79454dcf",
+    "archive_sha256": "d7ee1bf275a6e7965b89228fe13e3a1b7cbdc3c99ec5270ad9035d6057759a80",
+    "redacted": true
+  },
+  {
+    "source": "payment-red-runner-01/refresh-owned-source-times.stderr",
+    "archive": "files/payment-red-runner-01/refresh-owned-source-times.stderr",
+    "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "archive_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/refresh-owned-source-times.stdout",
+    "archive": "files/payment-red-runner-01/refresh-owned-source-times.stdout",
+    "source_sha256": "5bde976a560efd6fc4696504d64bac65b65d20ca1a081b84f7a846d7713c2eec",
+    "archive_sha256": "5bde976a560efd6fc4696504d64bac65b65d20ca1a081b84f7a846d7713c2eec",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/run-ram-batch.py",
+    "archive": "files/payment-red-runner-01/run-ram-batch.py",
+    "source_sha256": "ea13d602dac45de6a1cb0a89ffa85f4f0aab7ef8bf7c8f0c0dc098de4907ae7c",
+    "archive_sha256": "5429a8ebb93067a4aa9334155594c5a6fa88a2be70ed19d977bd091269e60a65",
+    "redacted": true
+  },
+  {
+    "source": "payment-red-runner-01/runner-freeze.json",
+    "archive": "files/payment-red-runner-01/runner-freeze.json",
+    "source_sha256": "a4d4355ac12689b736cfce456973be711abd36c64e38b0fa890a18216fb1c10e",
+    "archive_sha256": "216793fe742fe8ce608667d7ede223d6ea64365e85bb0c9471f9f21fdc7e318f",
+    "redacted": true
+  },
+  {
+    "source": "payment-red-runner-01/slot-handoff.json",
+    "archive": "files/payment-red-runner-01/slot-handoff.json",
+    "source_sha256": "ad16c688be3258d1f80d68bdd507fbcc319b3782699242c90f87c4a12814237a",
+    "archive_sha256": "0cacc1d430a457e282d25050ab1b7130a064555559cc1c792180d9b22790019c",
+    "redacted": true
+  },
+  {
+    "source": "payment-red-runner-01/snapshot-plan.json",
+    "archive": "files/payment-red-runner-01/snapshot-plan.json",
+    "source_sha256": "c68b6b0fef37f10490641f9334ec6d48c0d9ad789951d7d66c3941eab5554179",
+    "archive_sha256": "ab693742455fe05895483388d1066373e8be069a18e707fd3f2335986dc5e62c",
+    "redacted": true
+  },
+  {
+    "source": "payment-red-runner-01/source-after.json",
+    "archive": "files/payment-red-runner-01/source-after.json",
+    "source_sha256": "200eb1b6c7f22959c7b25566a83a2b75a39662487c7f31f58c4857e061cf4720",
+    "archive_sha256": "200eb1b6c7f22959c7b25566a83a2b75a39662487c7f31f58c4857e061cf4720",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/source-before.json",
+    "archive": "files/payment-red-runner-01/source-before.json",
+    "source_sha256": "200eb1b6c7f22959c7b25566a83a2b75a39662487c7f31f58c4857e061cf4720",
+    "archive_sha256": "200eb1b6c7f22959c7b25566a83a2b75a39662487c7f31f58c4857e061cf4720",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/source-freeze-web.json",
+    "archive": "files/payment-red-runner-01/source-freeze-web.json",
+    "source_sha256": "4456b08e09225600a93d68676ade80882e842caf043415e8cbd0ad1d282622ed",
+    "archive_sha256": "4456b08e09225600a93d68676ade80882e842caf043415e8cbd0ad1d282622ed",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/source-freeze.json",
+    "archive": "files/payment-red-runner-01/source-freeze.json",
+    "source_sha256": "c5ed08034bb80fa983e559c29a65b075f43ed421f8143b6ccc8ff92f8b1bb351",
+    "archive_sha256": "c5ed08034bb80fa983e559c29a65b075f43ed421f8143b6ccc8ff92f8b1bb351",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/subreaper-owner-receipt.json",
+    "archive": "files/payment-red-runner-01/subreaper-owner-receipt.json",
+    "source_sha256": "a2ac89c3d6cc62564cbf74eab2c0ab39ab68732fbe6b02372a47da16f58264a9",
+    "archive_sha256": "a2ac89c3d6cc62564cbf74eab2c0ab39ab68732fbe6b02372a47da16f58264a9",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/subreaper-owner.py",
+    "archive": "files/payment-red-runner-01/subreaper-owner.py",
+    "source_sha256": "804b358e8758677c44ed22efc00f928e48fffe238800dea995c1dd6eaa472631",
+    "archive_sha256": "56929c2d2d9e7e07262b4eb2fa0cdfe2dd904e432eb84dc55ba72f3417a8d760",
+    "redacted": true
+  },
+  {
+    "source": "payment-red-runner-01/supervisor-receipt.json",
+    "archive": "files/payment-red-runner-01/supervisor-receipt.json",
+    "source_sha256": "84befb350dca7a9994887464ac628b0e9ae9e395f5f41f7d8342ed146f94f6dc",
+    "archive_sha256": "58cafb0e4a1a61a19fc2972694c6c2d52c2fe89ee527cd7b5884035b82d77c2e",
+    "redacted": true
+  },
+  {
+    "source": "payment-red-runner-01/terminate-owned.mjs",
+    "archive": "files/payment-red-runner-01/terminate-owned.mjs",
+    "source_sha256": "4cd50b0a014ba7f1f3a4d00fed977086482dae3b186b7b794a2d40c32699f3f6",
+    "archive_sha256": "627a09031ba23d140b54a8dfd802eb3057dac0a8e7170069c054349609fcf59f",
+    "redacted": true
+  },
+  {
+    "source": "payment-red-runner-01/web-source-after.json",
+    "archive": "files/payment-red-runner-01/web-source-after.json",
+    "source_sha256": "c09c688fe8181c0d82106187469522ed3bf896c9946adb84cffe821e125ccf46",
+    "archive_sha256": "c09c688fe8181c0d82106187469522ed3bf896c9946adb84cffe821e125ccf46",
+    "redacted": false
+  },
+  {
+    "source": "payment-red-runner-01/web-source-before.json",
+    "archive": "files/payment-red-runner-01/web-source-before.json",
+    "source_sha256": "c09c688fe8181c0d82106187469522ed3bf896c9946adb84cffe821e125ccf46",
+    "archive_sha256": "c09c688fe8181c0d82106187469522ed3bf896c9946adb84cffe821e125ccf46",
+    "redacted": false
+  },
+  {
+    "source": "payment-three-red-cases.json",
+    "archive": "files/payment-three-red-cases.json",
+    "source_sha256": "582f6ca7b15f6bd8a8763d33f30a1436c431cd363c511721daa0b346f113f009",
+    "archive_sha256": "582f6ca7b15f6bd8a8763d33f30a1436c431cd363c511721daa0b346f113f009",
+    "redacted": false
+  },
+  {
+    "source": "payment-three-red-source-01-fingerprints.json",
+    "archive": "files/payment-three-red-source-01-fingerprints.json",
+    "source_sha256": "e1679f6c9505688d5e7dfcd7f39253baa78512907edd26c20c7638d51b9edbe1",
+    "archive_sha256": "e1679f6c9505688d5e7dfcd7f39253baa78512907edd26c20c7638d51b9edbe1",
+    "redacted": false
+  },
+  {
+    "source": "payment-three-red-source-01-independent-review.md",
+    "archive": "files/payment-three-red-source-01-independent-review.md",
+    "source_sha256": "ccaf93f2f281c6bab6d26474799896cd94bb6b71c590868cee37bb9e8734ffa1",
+    "archive_sha256": "ccaf93f2f281c6bab6d26474799896cd94bb6b71c590868cee37bb9e8734ffa1",
+    "redacted": false
+  },
+  {
+    "source": "payment-three-red-source-01.patch",
+    "archive": "files/payment-three-red-source-01.patch",
+    "source_sha256": "e584d4c089767b5bf0695e67a77637b62f02d92953ce8036b6334802286a0385",
+    "archive_sha256": "e584d4c089767b5bf0695e67a77637b62f02d92953ce8036b6334802286a0385",
+    "redacted": false
+  },
+  {
+    "source": "stage-production-01-fingerprints.json",
+    "archive": "files/stage-production-01-fingerprints.json",
+    "source_sha256": "c9a0b18a73e8c9d2838324eb8837e61f19e9be45efabe58922883acbfcaa3648",
+    "archive_sha256": "c9a0b18a73e8c9d2838324eb8837e61f19e9be45efabe58922883acbfcaa3648",
+    "redacted": false
+  },
+  {
+    "source": "stage-production-01-independent-review.md",
+    "archive": "files/stage-production-01-independent-review.md",
+    "source_sha256": "2d3f378e7673a2b8f000043d953dbaa47e55202980fde54ee8e3a95db3e91d78",
+    "archive_sha256": "58056672a224db19eaa38a92b0281a0a7551dadb520597f563e09b4542aeb922",
+    "redacted": true
+  },
+  {
+    "source": "stage-production-01.patch",
+    "archive": "files/stage-production-01.patch",
+    "source_sha256": "c52b3e76fb819eec20c1975dc0dc3950e99cff3066ae691fb87236764b9f481c",
+    "archive_sha256": "c52b3e76fb819eec20c1975dc0dc3950e99cff3066ae691fb87236764b9f481c",
+    "redacted": false
+  },
+  {
+    "source": "stage-three-red-cases.json",
+    "archive": "files/stage-three-red-cases.json",
+    "source_sha256": "6b1a390822c6e1ce6e59eb5773b92ededc2108b4163b16769bc4ca82f5887971",
+    "archive_sha256": "6b1a390822c6e1ce6e59eb5773b92ededc2108b4163b16769bc4ca82f5887971",
+    "redacted": false
+  },
+  {
+    "source": "stage-three-red-source-01-fingerprints.json",
+    "archive": "files/stage-three-red-source-01-fingerprints.json",
+    "source_sha256": "b97b285defecfe304bd38f2455e8ec12030a80aa52f7bab814214e34ff4c5bd9",
+    "archive_sha256": "b97b285defecfe304bd38f2455e8ec12030a80aa52f7bab814214e34ff4c5bd9",
+    "redacted": false
+  },
+  {
+    "source": "stage-three-red-source-01.patch",
+    "archive": "files/stage-three-red-source-01.patch",
+    "source_sha256": "c0bdedd275cb2644ef5fcaf6c855fa51f168cfda75d210fc562f7f5d0a54819f",
+    "archive_sha256": "c0bdedd275cb2644ef5fcaf6c855fa51f168cfda75d210fc562f7f5d0a54819f",
+    "redacted": false
+  },
+  {
+    "source": "status.md",
+    "archive": "files/status.md",
+    "source_sha256": "0bc2a3e862bc94e6357621a08c6aae8ae17d45d44630276159367535336046b7",
+    "archive_sha256": "0bc2a3e862bc94e6357621a08c6aae8ae17d45d44630276159367535336046b7",
+    "redacted": false
+  },
+  {
+    "source": "tax-operation-accessor-01-fingerprints.json",
+    "archive": "files/tax-operation-accessor-01-fingerprints.json",
+    "source_sha256": "1d1125804aae8c0bb8eacd6e5d511f7de10a0f2512670c1b3fc768760b7a3b6a",
+    "archive_sha256": "1d1125804aae8c0bb8eacd6e5d511f7de10a0f2512670c1b3fc768760b7a3b6a",
+    "redacted": false
+  },
+  {
+    "source": "tax-operation-accessor-01.patch",
+    "archive": "files/tax-operation-accessor-01.patch",
+    "source_sha256": "ed156a0c4a7ef71dcc883560a5bc30d5f33076094a91a663868f9f02136be979",
+    "archive_sha256": "ed156a0c4a7ef71dcc883560a5bc30d5f33076094a91a663868f9f02136be979",
+    "redacted": false
+  },
+  {
+    "source": "tax04-05-guard-01-fingerprints.json",
+    "archive": "files/tax04-05-guard-01-fingerprints.json",
+    "source_sha256": "07694acb9ba6276a5a98ea5813adb7a2351c1e7dc581521031cecfff40934e9b",
+    "archive_sha256": "07694acb9ba6276a5a98ea5813adb7a2351c1e7dc581521031cecfff40934e9b",
+    "redacted": false
+  },
+  {
+    "source": "tax04-05-guard-01.patch",
+    "archive": "files/tax04-05-guard-01.patch",
+    "source_sha256": "f3af1956d399dd163e4c3ba7c42fc57df68330f14d7bc5b9bf7360135b1713a1",
+    "archive_sha256": "f3af1956d399dd163e4c3ba7c42fc57df68330f14d7bc5b9bf7360135b1713a1",
+    "redacted": false
+  },
+  {
+    "source": "tax04-05-tests-only.patch",
+    "archive": "files/tax04-05-tests-only.patch",
+    "source_sha256": "bd050499b5861d58384c2cd097591e5225a457f336eca7ead2d7fe730c265538",
+    "archive_sha256": "bd050499b5861d58384c2cd097591e5225a457f336eca7ead2d7fe730c265538",
+    "redacted": false
+  }
+]

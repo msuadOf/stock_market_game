@@ -1,0 +1,19 @@
+{
+  "status": "DOCS_ONLY_PENDING_NARROW_REVIEW",
+  "baseHead": "94ea2896781356b9c5f6f729255d22738f706b6d",
+  "files": [
+    {
+      "path": "docs/trading-rules.md",
+      "sha256": "b0f8fbd75ee07020a67a0eb904954ee43f4e55dfacd1938eaefa17b644ea9c96"
+    }
+  ],
+  "patchSha256": "46efcb997c62036d269c94caf09812d5e8df0738b1c5c27152decfaa6c0cecaa",
+  "actualGreen": {
+    "session": 48124,
+    "waitExit": 0,
+    "waitChunk": "0aeadf",
+    "inventorySha256": "ce62f654e6851d0b6cc6fea35119e63a24e1dbf502d0445c4d2e3f8fc4d56cd0",
+    "scope": "Tax16 native 16exact，cash4，非Tax01..05当前重跑/全量/WASM"
+  },
+  "cargoExecutedByWriter": false
+}

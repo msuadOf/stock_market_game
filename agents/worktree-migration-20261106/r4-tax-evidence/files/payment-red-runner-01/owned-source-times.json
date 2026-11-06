@@ -1,0 +1,514 @@
+{
+  "kind": "engine 根源码 mtime 失效与纳秒恢复记录",
+  "work": "/data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28",
+  "sources": [
+    {
+      "path": "/data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28/packages/engine/src/lib.rs",
+      "dev": 53,
+      "inode": 32944602,
+      "bytes": 6314,
+      "sha256": "2901d3860f0b5c3356dc7a077e58d8827b53093a5973fd16a77c8b7284e82768",
+      "originalAtimeNs": 1793136848767478281,
+      "originalMtimeNs": 1793136848767478281,
+      "consideredTimestamps": [
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-006444ae8c4f3292/invoked.timestamp",
+          "mtimeNs": 1793265648149750678
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-019adb65c1dde727/invoked.timestamp",
+          "mtimeNs": 1792967609946216064
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-03ee6b7030b00d10/invoked.timestamp",
+          "mtimeNs": 1792967610544662638
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-049b3808fc2be337/invoked.timestamp",
+          "mtimeNs": 1792967584231031302
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-083cbfd879f73626/invoked.timestamp",
+          "mtimeNs": 1792967610127652610
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-0aee6e46f87268f3/invoked.timestamp",
+          "mtimeNs": 1792977162850944502
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-0b09022ab917e013/invoked.timestamp",
+          "mtimeNs": 1793272845199178647
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-121219d49ebef006/invoked.timestamp",
+          "mtimeNs": 1793091680706162484
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-16bce2113b687025/invoked.timestamp",
+          "mtimeNs": 1792967611054674902
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-16c60958180f3484/invoked.timestamp",
+          "mtimeNs": 1793032623494863705
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-184bd22055fa2f71/invoked.timestamp",
+          "mtimeNs": 1793032623494863705
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-19e010ad73c542b6/invoked.timestamp",
+          "mtimeNs": 1792967610666665572
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-1ec40a6121c5d850/invoked.timestamp",
+          "mtimeNs": 1792967610119652418
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-2351f8987d034367/invoked.timestamp",
+          "mtimeNs": 1792967609801644772
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-2383fb67281b7521/invoked.timestamp",
+          "mtimeNs": 1793129211777036044
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-245593d311697775/invoked.timestamp",
+          "mtimeNs": 1792967610800668794
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-25570d620e5e2e54/invoked.timestamp",
+          "mtimeNs": 1792967609915647513
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-271ea11e0c8ca954/invoked.timestamp",
+          "mtimeNs": 1792967610325657372
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-285bed926e7d6e17/invoked.timestamp",
+          "mtimeNs": 1792933896599361923
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-2ae44f4d38e9f72e/invoked.timestamp",
+          "mtimeNs": 1792967609807644916
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-2b27bc2c2873dabe/invoked.timestamp",
+          "mtimeNs": 1792967610212654654
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-2c4117a6e2caf06f/invoked.timestamp",
+          "mtimeNs": 1793265158290665055
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-3097673cba652861/invoked.timestamp",
+          "mtimeNs": 1792967610094651817
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-323cb6cdf0c51550/invoked.timestamp",
+          "mtimeNs": 1793091680706162484
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-34ccae325906b72e/invoked.timestamp",
+          "mtimeNs": 1792967610385658814
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-35b7d31e21e038a1/invoked.timestamp",
+          "mtimeNs": 1792977134270682947
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-3750c9aa181806e8/invoked.timestamp",
+          "mtimeNs": 1792967611159677428
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-390dba23aafff738/invoked.timestamp",
+          "mtimeNs": 1793265219220546055
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-39fd630758ebb8c9/invoked.timestamp",
+          "mtimeNs": 1792967611043674638
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-3a4e106557b9f95b/invoked.timestamp",
+          "mtimeNs": 1793126044051013276
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-3b665251ed328e31/invoked.timestamp",
+          "mtimeNs": 1792967610565663143
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-3db8006bb1341b1f/invoked.timestamp",
+          "mtimeNs": 1793133942147816542
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-3dfc2c1a1e0f46a0/invoked.timestamp",
+          "mtimeNs": 1792967610407659344
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-3f33f233d6260d0f/invoked.timestamp",
+          "mtimeNs": 1792967610212654654
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-4264b7db003da24f/invoked.timestamp",
+          "mtimeNs": 1793254689330676869
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-436669dc3305723a/invoked.timestamp",
+          "mtimeNs": 1792977134470200235
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-451dcfaa84de87d5/invoked.timestamp",
+          "mtimeNs": 1792967611109676225
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-463ee462da3eb71b/invoked.timestamp",
+          "mtimeNs": 1792967611298680771
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-4703d45a7aade6bf/invoked.timestamp",
+          "mtimeNs": 1792967611145677091
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-4867d30c2f5c9cd4/invoked.timestamp",
+          "mtimeNs": 1792967611033674397
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-489c4c5fc06ffe58/invoked.timestamp",
+          "mtimeNs": 1792967610457660546
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-4b6cf34a92aa8d85/invoked.timestamp",
+          "mtimeNs": 1792977162859944739
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-4cb0d7f207ad25d9/invoked.timestamp",
+          "mtimeNs": 1792967610487572225
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-50e317caafaef3e5/invoked.timestamp",
+          "mtimeNs": 1793128597380839491
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-515255ac7526d632/invoked.timestamp",
+          "mtimeNs": 1792967610248655520
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-56032488c4e27d9d/invoked.timestamp",
+          "mtimeNs": 1793138086423389684
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-5736330162616bea/invoked.timestamp",
+          "mtimeNs": 1792967610531662325
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-58a800cfb1408c7f/invoked.timestamp",
+          "mtimeNs": 1792967610399659151
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-5a6ccd388e2817ef/invoked.timestamp",
+          "mtimeNs": 1792933896599361923
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-5ba38f2bc744362c/invoked.timestamp",
+          "mtimeNs": 1792933877414921018
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-5c59d277bc7dbe80/invoked.timestamp",
+          "mtimeNs": 1792967611309681035
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-5d541b905dac8506/invoked.timestamp",
+          "mtimeNs": 1792977162850944502
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-5f1dec369166164b/invoked.timestamp",
+          "mtimeNs": 1792967611227679063
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-60252b8b9878ff68/invoked.timestamp",
+          "mtimeNs": 1792967609939648090
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-62d2eae14e081b97/invoked.timestamp",
+          "mtimeNs": 1792967611344681877
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-683a0da9c9c309a7/invoked.timestamp",
+          "mtimeNs": 1792967610046650662
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-6a9e344d6bf0fc1a/invoked.timestamp",
+          "mtimeNs": 1792967610871670501
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-6ae3f608f3352a4a/invoked.timestamp",
+          "mtimeNs": 1793273480784349179
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-6c4b142f6da16dfe/invoked.timestamp",
+          "mtimeNs": 1792967610631664730
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-6eff44a2531682c9/invoked.timestamp",
+          "mtimeNs": 1792967611067675215
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-7125bbd5824dbffe/invoked.timestamp",
+          "mtimeNs": 1792967610106652105
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-7198f1d2bed88758/invoked.timestamp",
+          "mtimeNs": 1792977162850944502
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-7414db11a1a9d85d/invoked.timestamp",
+          "mtimeNs": 1792967611059675023
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-7640737b50b98a8e/invoked.timestamp",
+          "mtimeNs": 1792967611152677259
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-7ace8397750cc43d/invoked.timestamp",
+          "mtimeNs": 1792967611006138780
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-7d229a43a3254568/invoked.timestamp",
+          "mtimeNs": 1792967610523662133
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-8440b527013f2583/invoked.timestamp",
+          "mtimeNs": 1792977162854944607
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-8468b4b18abea8e5/invoked.timestamp",
+          "mtimeNs": 1793032557172341622
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-886c0566202829ce/invoked.timestamp",
+          "mtimeNs": 1793133942147816542
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-8cf22d2bc650b105/invoked.timestamp",
+          "mtimeNs": 1792967610714666726
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-8f55ed5699c4b9d0/invoked.timestamp",
+          "mtimeNs": 1792967610531662325
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-90c0ee6644320c9c/invoked.timestamp",
+          "mtimeNs": 1792967609801644772
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-90d8a505b21d05ef/invoked.timestamp",
+          "mtimeNs": 1792967611340412889
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-912cb1ae8aa28cb4/invoked.timestamp",
+          "mtimeNs": 1792967611298680771
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-914ad4a5c57c69a2/invoked.timestamp",
+          "mtimeNs": 1793032557172341622
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-94838fa7e08c05cd/invoked.timestamp",
+          "mtimeNs": 1792967609801644772
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-953ac2959827ec5a/invoked.timestamp",
+          "mtimeNs": 1792967610591663768
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-9d580335bb76efd9/invoked.timestamp",
+          "mtimeNs": 1792967611325681420
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-a4db93059849f246/invoked.timestamp",
+          "mtimeNs": 1792967610341657756
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-a4e8566d58dc84c9/invoked.timestamp",
+          "mtimeNs": 1793168064257386460
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-a5d35413b9c1ad33/invoked.timestamp",
+          "mtimeNs": 1793164636236936160
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-a6714b20341dd37b/invoked.timestamp",
+          "mtimeNs": 1792967610204654462
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-a6fe7e951d4448d7/invoked.timestamp",
+          "mtimeNs": 1793096733461652822
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-a8dd2f36c8d3f688/invoked.timestamp",
+          "mtimeNs": 1792967611351682046
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-a97ee0e468905033/invoked.timestamp",
+          "mtimeNs": 1792967610748667544
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-ad2107b18ac71e17/invoked.timestamp",
+          "mtimeNs": 1792967610913671511
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-b09f32e8f778ead4/invoked.timestamp",
+          "mtimeNs": 1792967610406659319
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-b0d6b27ecb22209f/invoked.timestamp",
+          "mtimeNs": 1793092472444079139
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-b5fe26a03e4210f6/invoked.timestamp",
+          "mtimeNs": 1792967609973648907
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-b81bedbd6b874527/invoked.timestamp",
+          "mtimeNs": 1792967609828645421
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-b865b058793aaa6e/invoked.timestamp",
+          "mtimeNs": 1793185342365547070
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-be8b676f04dd3585/invoked.timestamp",
+          "mtimeNs": 1793164636236936160
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-c05b7f42a2f2163a/invoked.timestamp",
+          "mtimeNs": 1792967610810669035
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-c33a33a886672e84/invoked.timestamp",
+          "mtimeNs": 1792967609801644772
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-cb235815647f4af7/invoked.timestamp",
+          "mtimeNs": 1792967611432683994
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-cbdf5d21bcfe8664/invoked.timestamp",
+          "mtimeNs": 1792967611117676418
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-cbe6c8ceef6a7f9e/invoked.timestamp",
+          "mtimeNs": 1793124253994193566
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-ccb35b3e18062e4d/invoked.timestamp",
+          "mtimeNs": 1792967610738667303
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-cdeb6ffde56227fa/invoked.timestamp",
+          "mtimeNs": 1792933877379920217
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-d0470e6953ee2607/invoked.timestamp",
+          "mtimeNs": 1792967610956672546
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-d166ffed89bed3b8/invoked.timestamp",
+          "mtimeNs": 1792933896599361923
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-d2d8c5978b2f381e/invoked.timestamp",
+          "mtimeNs": 1793272845343180370
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-d3c44cf94af2f07e/invoked.timestamp",
+          "mtimeNs": 1793175468618099224
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-d805cb60ecb97221/invoked.timestamp",
+          "mtimeNs": 1792967610112652250
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-da5dacde84b704f3/invoked.timestamp",
+          "mtimeNs": 1792967611476685052
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-dc747b6f0fd0e85e/invoked.timestamp",
+          "mtimeNs": 1793260412779696780
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-de749181d2c665bd/invoked.timestamp",
+          "mtimeNs": 1792967610672665716
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-e024975623ca4b70/invoked.timestamp",
+          "mtimeNs": 1793096000979927578
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-e1e75a7b1b228be4/invoked.timestamp",
+          "mtimeNs": 1793128891657588671
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-e1ee2880e68517b8/invoked.timestamp",
+          "mtimeNs": 1792967610248655520
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-e3bb1017267ad633/invoked.timestamp",
+          "mtimeNs": 1792933896599361923
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-e431ea3bdf36872f/invoked.timestamp",
+          "mtimeNs": 1793265219220546055
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-e5358e9fef7ea1dd/invoked.timestamp",
+          "mtimeNs": 1792967584231031302
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-ec04148a42ef21ed/invoked.timestamp",
+          "mtimeNs": 1793091680706162484
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-ef51083a18ee9cd4/invoked.timestamp",
+          "mtimeNs": 1792967610886670862
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-ef94cb2fb1fe1c92/invoked.timestamp",
+          "mtimeNs": 1792967610393659007
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-efc05eaa1ca789db/invoked.timestamp",
+          "mtimeNs": 1792967610162653452
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-efdc95ba012496f2/invoked.timestamp",
+          "mtimeNs": 1792967609808644940
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-f6ca431454445ae9/invoked.timestamp",
+          "mtimeNs": 1792967610950672401
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-f7ff6b8af6493b4b/invoked.timestamp",
+          "mtimeNs": 1793096000975927383
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-f8f2ee4752fb97d2/invoked.timestamp",
+          "mtimeNs": 1792967610232965741
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-fbcad4ca9bb30455/invoked.timestamp",
+          "mtimeNs": 1792967609961648619
+        },
+        {
+          "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/.fingerprint/engine-feff34882fbac7c8/invoked.timestamp",
+          "mtimeNs": 1793254744443272469
+        }
+      ],
+      "invokedMaxMtimeNs": 1793273480784349179,
+      "coldNoInvokedTimestamp": false,
+      "requestedMtimeNs": 1793273915834041778
+    }
+  ],
+  "restored": true,
+  "restoredAtUnixNs": 1793274019398667933
+}

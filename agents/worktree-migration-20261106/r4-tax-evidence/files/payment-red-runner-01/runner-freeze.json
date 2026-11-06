@@ -1,0 +1,92 @@
+{
+  "files": [
+    {
+      "path": "/data1/<USER>/workplace/stock_market_game/.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-red-runner-01/run-ram-batch.py",
+      "sha256": "ea13d602dac45de6a1cb0a89ffa85f4f0aab7ef8bf7c8f0c0dc098de4907ae7c"
+    },
+    {
+      "path": "/data1/<USER>/workplace/stock_market_game/.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-red-runner-01/launch-batch.py",
+      "sha256": "36ddf4f3f9f04980d4b8ada606fafeae159e877fc3c76dcac98363720bc8fd04"
+    },
+    {
+      "path": "/data1/<USER>/workplace/stock_market_game/.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-red-runner-01/absolute-supervisor.mjs",
+      "sha256": "3441ee156c98438c9a146532a007375c334faedbeac860acf63be99b412435b7"
+    },
+    {
+      "path": "/data1/<USER>/workplace/stock_market_game/.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-red-runner-01/cleanup-supervisor.mjs",
+      "sha256": "3cd851d0e2faee5d7c72f0a52ebea4dc1402076f563c3e304dc2f8936c0d11f8"
+    },
+    {
+      "path": "/data1/<USER>/workplace/stock_market_game/.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-red-runner-01/subreaper-owner.py",
+      "sha256": "804b358e8758677c44ed22efc00f928e48fffe238800dea995c1dd6eaa472631"
+    },
+    {
+      "path": "/data1/<USER>/workplace/stock_market_game/.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-red-runner-01/owned-native-source.py",
+      "sha256": "39acaee39a5890f09017b4831832e9155da69630a058a1a55124fe43d4cf4414"
+    },
+    {
+      "path": "/data1/<USER>/workplace/stock_market_game/.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-red-runner-01/build-verified.mjs",
+      "sha256": "71a796990f63dd134c7a053fdb36a61dda18a403f8161a6796680f7611c4e6e9"
+    },
+    {
+      "path": "/data1/<USER>/workplace/stock_market_game/.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-red-runner-01/terminate-owned.mjs",
+      "sha256": "4cd50b0a014ba7f1f3a4d00fed977086482dae3b186b7b794a2d40c32699f3f6"
+    },
+    {
+      "path": "/data1/<USER>/workplace/stock_market_game/.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-red-runner-01/cases-plan.json",
+      "sha256": "1a3d7ea13c629d23c0fc6b5f793d4c6d6bc6675d80973ca9818dc296291b3dc1"
+    },
+    {
+      "path": "/data1/<USER>/workplace/stock_market_game/.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-red-runner-01/expected-red-contracts.json",
+      "sha256": "7026d34fc775786e80e4e38398f81b8ced969b7a82b5bb7bec1e5b57201777ba"
+    },
+    {
+      "path": "/data1/<USER>/workplace/stock_market_game/.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-red-runner-01/source-freeze.json",
+      "sha256": "c5ed08034bb80fa983e559c29a65b075f43ed421f8143b6ccc8ff92f8b1bb351"
+    },
+    {
+      "path": "/data1/<USER>/workplace/stock_market_game/.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-red-runner-01/source-freeze-web.json",
+      "sha256": "4456b08e09225600a93d68676ade80882e842caf043415e8cbd0ad1d282622ed"
+    },
+    {
+      "path": "/data1/<USER>/workplace/stock_market_game/.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-red-runner-01/bind-preflight.py",
+      "sha256": "ac6de291b111e1894e18f829700a45b5003f56c4be4e1a97481fa4610c7132f8"
+    },
+    {
+      "path": "/data1/<USER>/workplace/stock_market_game/.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-red-runner-01/publish-actual-front.py",
+      "sha256": "722f3e3c96468f8413e12ddbd0000e7a39d46e66124a2ca82dc3f36a79454dcf"
+    },
+    {
+      "path": "/data1/<USER>/workplace/stock_market_game/.worktree/runtime-sync-e1/agents/perf-intraday-independent/implementation/e2/day-end-full-source-tmpfs-batch-r2/run-build-guard-tmpfs.mjs",
+      "sha256": "8d9e0c23edb5f267bd39eb2c1a8f838b41c491acb2b99168c11b8b74205727f9"
+    },
+    {
+      "path": "/data1/<USER>/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+      "sha256": "de7fd2a82bc66e7a62fbc487002727b71ad28b69c1e645f82fa84bbfdb068916"
+    },
+    {
+      "path": "/data1/<USER>/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-long-validation.mjs",
+      "sha256": "2d25f286fdec2159a1997cb3aa724a94ae3c8d09bc9bc242f9cfce1bcd641dff"
+    },
+    {
+      "path": "/data1/<USER>/workplace/stock_market_game/agents/branch-completion/funds-production-resume-2026-10-27/p1-formal-red-2026-10-28/collect-child-status.py",
+      "sha256": "c0a06ed34615572d91f8636999ed99bfea3aec7d0a70c458851cf3f9c95fd3f7"
+    },
+    {
+      "path": "/data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28/agents/branch-completion/wasm-w1/combined/fresh_binding.py",
+      "sha256": "896b33b95d28ccd00487420e7cc338f9615a777788b5b3e50c5c4a68ac1eef52"
+    },
+    {
+      "path": "/data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28/agents/branch-completion/wasm-w1/combined/owner.py",
+      "sha256": "95cd0235b8f0acb9eb9ac667e529ea623ed54e8859dac909e84195eb51653666"
+    },
+    {
+      "path": "/data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28/agents/branch-completion/wasm-w1/combined/cargo-inputs.mjs",
+      "sha256": "211f32158ce959cc1130f4758ed661fd8910aace93bcd169dd2b1656f2d17806"
+    },
+    {
+      "path": "/data1/<USER>/workplace/stock_market_game/.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-red-runner-01/plan-template.json",
+      "sha256": "70a6ad61b2872217b48e7627c9778a62310aafb2926bae96ff24b0b1ee810ff3"
+    }
+  ]
+}

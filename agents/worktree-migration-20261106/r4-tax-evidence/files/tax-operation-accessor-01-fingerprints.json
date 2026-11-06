@@ -1,0 +1,8 @@
+{
+  "base": "6559a938be17803f59b35548870ce803600f31f1",
+  "files": {
+    "packages/engine/src/company/cash_dividend_tax.rs": "77aeb88dab40cfac9b3d1e8cbcb02047cee140ff475953b07b93707b5543a6de",
+    "packages/engine/src/session/ordinary_tax_day_end.rs": "7e40e49ee4095c5386abd57d1370ba5e47f5acf3e880fb1934eb76c36d7d9d72"
+  },
+  "patch_sha256": "ed156a0c4a7ef71dcc883560a5bc30d5f33076094a91a663868f9f02136be979"
+}

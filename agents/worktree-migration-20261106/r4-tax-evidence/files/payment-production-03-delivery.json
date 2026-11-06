@@ -1,0 +1,13 @@
+{
+  "status": "SOURCE_ADMITTED_DELIVERED_PENDING_DEVMAIN_ACTUAL_GREEN",
+  "sourceCommit": "6fbcc324e3037e64082781bdaa56e1333d592366",
+  "baseHead": "779a7f913255b3e090c94d4f1a655a28c3913c14",
+  "patchSha256": "6cabdb46eeb5caca7cb6175407c17a64e0cb75803defde58cd62f842d21d0881",
+  "review": [
+    "payment-production-02-independent-review.md",
+    "payment-production-03-delta-independent-review.md"
+  ],
+  "cargoExecutedByWriter": false,
+  "receiver": "/root/sol_dev_main_merge29",
+  "sourceFrozen": true
+}

@@ -1,0 +1,1101 @@
+diff --git a/docs/trading-rules.md b/docs/trading-rules.md
+index 9ff5c8b0..4324d6cb 100644
+--- a/docs/trading-rules.md
++++ b/docs/trading-rules.md
+@@ -552,12 +552,13 @@ NPC 默认策略只在缴款首日日终对未显式申请的非玩家、非回
+ 
+ ## 分红与送转独立候选的支持边界（2026-10-26）
+ 
+-`session/corporate_actions/distributions_day_end.rs` 仅准备隔离候选，尚未接入生产日终。
++`session/corporate_actions/distributions_day_end.rs` 准备隔离候选；native civil 已接现金分红
++与个人税收缴的生产候选，尚待本轮正式绿测。送转仍只准备独立候选。
+ 调用前安装 R1 最终名册/税账；返回分红、送转、公司账面与发行人候选、逐笔税前股利、
+ 税款退出、新股可用数量，以及包括具名 `External` 持有人的来源和回执。`Paid`/`Credited`
+ 均是待提交候选状态，必须经组端真实行政回执逐笔勾稽后才能发布。公司 `Simple` 合成
+ 股利按 ADR-0038 保留来源；外部股东付款不计入游戏账户现金注入。没有真实账户直改、
+-除权、长期限售或生产事务接线。
++除权或长期限售生产接线。
+ 
+ - 税务模式沿 ADR-0040：`FlatWithholding` 按配置比例对每位账户持有人（包括机构）
+   的税前股利直接代扣，half-up 到分，不创建个人税账；具名外部股东无游戏账户，
+@@ -570,8 +571,12 @@ NPC 默认策略只在缴款首日日终对未显式申请的非玩家、非回
+   资金不足通知补足。候选按最终真实可用现金部分收缴，保留实收与未清税款；不含在途
+   buy purse，不以默认零余额代替缺失账户。登记日冻结权利，登记后卖出不减少已登记股利。
+ - `cash_dividend_tax::day_boundary::TaxDayBoundaryFacts` 由 native civil shadow 接入 ordinary
+-  REG、个人税日及同日现金分红 capture，随唯一 INFO/Admin 固定成功尾安装；本批尚待正式
+-  生产绿测，付款与 collection 仍待中央真实资金回执接线，不据此安装 `Paid`。每证券一次
++  REG、个人税日及同日现金分红 capture，随唯一 INFO/Admin 固定成功尾安装。
++  `civil_cash_distributions` 从同一次完整行政基线读取 raw cash，沿候选原顺序准备 cash／tax-only
++  stages，并在同一个 pending/id 的最终 INFO 与镜像检查中勾稽原 intent、借用的原 typed operand、
++  真实税阶段和完整最终账户；成功 Commit 后才随固定尾安装公司付款、`Paid`、payment 与
++  collection 候选。零税额不制造零额 `WithholdingTax`，不借 buy purse 或补钱；付款与收缴本轮
++  尚待实际绿测，不代表 WASM 或完整送转链已完成。每证券一次
+   消费 typed REG 完整自然日、最终确认全集与实际完成水位，零成交日和
+   休市日也记税日零净额。每本税账从自己的 `opened_on` 完成 frontier 核完整 opening lots，
+   其后每个 REG 自然日与税日的净额、取得和处置须逐项一致；当前同数量、同 lot 尾部不能
+diff --git a/packages/engine/src/runtime/drive/administrative_mirror.rs b/packages/engine/src/runtime/drive/administrative_mirror.rs
+index 3940bca9..df6aa700 100644
+--- a/packages/engine/src/runtime/drive/administrative_mirror.rs
++++ b/packages/engine/src/runtime/drive/administrative_mirror.rs
+@@ -177,6 +177,20 @@ impl super::RuntimeDriver {
+         )
+     }
+ 
++    pub(crate) fn with_prepared_staged_administrative_transaction<P>(
++        &mut self,
++        stages: Vec<crate::runtime::world::AdminOperationStage>,
++        information: Option<crate::runtime::world::InformationPreparePayload>,
++        inspect: impl FnOnce(
++            &crate::runtime::world::AdminCandidate,
++            &crate::runtime::world::PreparedAdministrativeSource,
++            &crate::runtime::world::PreparedAdministrativeStages<'_>,
++        ) -> Result<P, crate::runtime::RuntimeError>,
++    ) -> Result<(P, crate::runtime::source::PreparedMirrorAck), crate::runtime::RuntimeError> {
++        self.world
++            .with_prepared_staged_administrative_transaction(stages, information, inspect)
++    }
++
+     pub(crate) fn administrative_world_is_terminal(&self) -> bool {
+         self.world.is_terminal()
+     }
+diff --git a/packages/engine/src/runtime/world/admin_transaction/stages.rs b/packages/engine/src/runtime/world/admin_transaction/stages.rs
+index bbeff7f4..6320c460 100644
+--- a/packages/engine/src/runtime/world/admin_transaction/stages.rs
++++ b/packages/engine/src/runtime/world/admin_transaction/stages.rs
+@@ -244,6 +244,72 @@ fn prepare_stage_source<'a>(
+     Ok(evidence)
+ }
+ 
++fn prepare_stage_requests(
++    stages: &[AdminOperationStage],
++    n_groups: usize,
++    has_information: bool,
++) -> Result<
++    (
++        Vec<(GroupIdx, Vec<AdminOperation>)>,
++        BTreeMap<GroupIdx, AdminStageLayout>,
++    ),
++    RuntimeError,
++> {
++    let mut grouped = BTreeMap::<GroupIdx, Vec<AdminOperation>>::new();
++    let mut counts = BTreeMap::<GroupIdx, Vec<usize>>::new();
++    let mut tax_stages = BTreeSet::new();
++    for (stage_index, stage) in stages.iter().enumerate() {
++        let index = u32::try_from(stage_index).map_err(|_| invalid("阶段索引超出 u32"))?;
++        let mut seen = BTreeSet::new();
++        let mut tax = false;
++        let mut other = false;
++        for (group, operations) in &stage.operations {
++            if usize::from(*group) >= n_groups || !seen.insert(*group) {
++                return Err(invalid("阶段 group 越界或重复"));
++            }
++            for operation in operations {
++                if matches!(operation, AdminOperation::WithholdingTax { .. }) {
++                    tax = true;
++                } else {
++                    other = true;
++                }
++            }
++            grouped
++                .entry(*group)
++                .or_default()
++                .extend_from_slice(operations);
++            counts
++                .entry(*group)
++                .or_insert_with(|| vec![0; stages.len()])[stage_index] = operations.len();
++        }
++        if tax && other {
++            return Err(invalid("税阶段不得混入非 WithholdingTax 操作"));
++        }
++        if tax {
++            tax_stages.insert(index);
++        }
++    }
++    if has_information {
++        for group in 0..n_groups as GroupIdx {
++            grouped.entry(group).or_default();
++            counts.entry(group).or_insert_with(|| vec![0; stages.len()]);
++        }
++    }
++    let layouts = counts
++        .into_iter()
++        .map(|(group, counts)| {
++            (
++                group,
++                AdminStageLayout {
++                    counts,
++                    tax_stages: tax_stages.clone(),
++                },
++            )
++        })
++        .collect();
++    Ok((grouped.into_iter().collect(), layouts))
++}
++
+ impl World {
+     /// 资产阶段与最终 INFO 共用一个 pending/id；成功返回才代表最终 Commit 完成。
+     pub(crate) fn with_staged_admin_transaction<P>(
+@@ -255,60 +321,10 @@ impl World {
+             &PreparedAdministrativeStages<'_>,
+         ) -> Result<P, RuntimeError>,
+     ) -> Result<P, RuntimeError> {
+-        let mut grouped = BTreeMap::<GroupIdx, Vec<AdminOperation>>::new();
+-        let mut counts = BTreeMap::<GroupIdx, Vec<usize>>::new();
+-        let mut tax_stages = BTreeSet::new();
+-        for (stage_index, stage) in stages.iter().enumerate() {
+-            let index = u32::try_from(stage_index).map_err(|_| invalid("阶段索引超出 u32"))?;
+-            let mut seen = BTreeSet::new();
+-            let mut tax = false;
+-            let mut other = false;
+-            for (group, operations) in &stage.operations {
+-                if usize::from(*group) >= self.n_groups || !seen.insert(*group) {
+-                    return Err(invalid("阶段 group 越界或重复"));
+-                }
+-                for operation in operations {
+-                    if matches!(operation, AdminOperation::WithholdingTax { .. }) {
+-                        tax = true;
+-                    } else {
+-                        other = true;
+-                    }
+-                }
+-                grouped
+-                    .entry(*group)
+-                    .or_default()
+-                    .extend_from_slice(operations);
+-                counts
+-                    .entry(*group)
+-                    .or_insert_with(|| vec![0; stages.len()])[stage_index] = operations.len();
+-            }
+-            if tax && other {
+-                return Err(invalid("税阶段不得混入非 WithholdingTax 操作"));
+-            }
+-            if tax {
+-                tax_stages.insert(index);
+-            }
+-        }
+-        if information.is_some() {
+-            for group in 0..self.n_groups as GroupIdx {
+-                grouped.entry(group).or_default();
+-                counts.entry(group).or_insert_with(|| vec![0; stages.len()]);
+-            }
+-        }
+-        let layouts = counts
+-            .into_iter()
+-            .map(|(group, counts)| {
+-                (
+-                    group,
+-                    AdminStageLayout {
+-                        counts,
+-                        tax_stages: tax_stages.clone(),
+-                    },
+-                )
+-            })
+-            .collect();
++        let (grouped, layouts) =
++            prepare_stage_requests(&stages, self.n_groups, information.is_some())?;
+         self.with_administrative_inspection(
+-            grouped.into_iter().collect(),
++            grouped,
+             information,
+             None,
+             Some(layouts),
+@@ -320,6 +336,32 @@ impl World {
+         )
+         .map(|(value, _ack)| value)
+     }
++
++    /// 阶段账务与 INFO 共用一个 pending/id，并在真实 prepared source 上检查阶段证据。
++    pub(crate) fn with_prepared_staged_administrative_transaction<P>(
++        &mut self,
++        stages: Vec<AdminOperationStage>,
++        information: Option<crate::runtime::protocol::InformationPreparePayload>,
++        inspect: impl FnOnce(
++            &AdminCandidate,
++            &crate::runtime::world::PreparedAdministrativeSource,
++            &PreparedAdministrativeStages<'_>,
++        ) -> Result<P, RuntimeError>,
++    ) -> Result<(P, crate::runtime::source::PreparedMirrorAck), RuntimeError> {
++        let (grouped, layouts) =
++            prepare_stage_requests(&stages, self.n_groups, information.is_some())?;
++        self.with_administrative_inspection(
++            grouped,
++            information,
++            None,
++            Some(layouts),
++            |_candidate| Ok(()),
++            |candidate, source, ()| {
++                let evidence = prepare_stage_source(candidate, &stages)?;
++                inspect(candidate, source, &evidence)
++            },
++        )
++    }
+ }
+ 
+ #[cfg(all(test, not(target_arch = "wasm32")))]
+diff --git a/packages/engine/src/session.rs b/packages/engine/src/session.rs
+index 546ea719..a2879054 100644
+--- a/packages/engine/src/session.rs
++++ b/packages/engine/src/session.rs
+@@ -12,6 +12,7 @@ mod candles;
+ mod causal;
+ mod civil_clock;
+ mod civil_information;
++mod civil_cash_distributions;
+ #[cfg(all(test, not(target_arch = "wasm32")))]
+ mod civil_information_runtime_tests;
+ mod company_assembly;
+diff --git a/packages/engine/src/session/administrative_mirror.rs b/packages/engine/src/session/administrative_mirror.rs
+index 0956567b..81c5b91f 100644
+--- a/packages/engine/src/session/administrative_mirror.rs
++++ b/packages/engine/src/session/administrative_mirror.rs
+@@ -4,8 +4,8 @@ use super::civil_information::PreparedCivilFields;
+ use super::*;
+ use crate::runtime::drive::{AdministrativeBaseline, RuntimeDriver};
+ use crate::runtime::world::{
+-    AdminCandidate, AdminOperation, BeliefParticipantSnapshot, InformationPreparePayload,
+-    PreparedAdministrativeSource,
++    AdminCandidate, AdminOperation, AdminOperationStage, BeliefParticipantSnapshot,
++    InformationPreparePayload, PreparedAdministrativeSource, PreparedAdministrativeStages,
+ };
+ use crate::runtime::{GroupIdx, RuntimeError};
+ use std::sync::Arc;
+@@ -20,7 +20,10 @@ pub struct CivilInformationError {
+ }
+ 
+ impl CivilInformationError {
+-    pub(super) fn new(date: crate::calendar::CivilDate, source: RuntimeError) -> Self {
++    pub(super) fn new(
++        date: crate::calendar::CivilDate,
++        source: impl std::error::Error + Send + Sync + 'static,
++    ) -> Self {
+         Self {
+             date,
+             source: Box::new(source),
+@@ -44,9 +47,7 @@ pub(crate) enum AdministrativeMirrorError {
+     Runtime(#[from] RuntimeError),
+     #[error(transparent)]
+     Session(#[from] StepFatal),
+-    #[error(
+-        "行政入口 civil_date 不一致：Session={expected}，World={actual}；请先完成原自然日同步"
+-    )]
++    #[error("行政入口 civil_date 不一致：Session={expected}，World={actual}；请先完成原自然日同步")]
+     CivilDateMismatch {
+         expected: crate::calendar::CivilDate,
+         actual: crate::calendar::CivilDate,
+@@ -131,8 +132,15 @@ const CIVIL_PREPARATION_REJECTED: &str = "civil INFO precommit callback 已拒
+ 
+ impl AdministrativeBaseline {
+     /// 保留个人态其余字段，只叠同源真实 scheduler 两字段；cache 仍保原 raw 候选。
+-    fn attention_at(&self, id: AccountId, raw: &NpcAttentionState) -> Result<NpcAttentionState, RuntimeError> {
+-        let &(due, seed) = self.attention.get(&id).ok_or_else(|| invalid(format!("行政完整调度缺账户：{id:?}")))?;
++    fn attention_at(
++        &self,
++        id: AccountId,
++        raw: &NpcAttentionState,
++    ) -> Result<NpcAttentionState, RuntimeError> {
++        let &(due, seed) = self
++            .attention
++            .get(&id)
++            .ok_or_else(|| invalid(format!("行政完整调度缺账户：{id:?}")))?;
+         let mut attention = raw.clone();
+         attention.next_attention_candidate_tick = due;
+         attention.rng_state = seed;
+@@ -159,6 +167,42 @@ impl AdministrativeBaseline {
+ }
+ 
+ impl GameSession {
++    /// 付款候选与行政镜像共用这一份真实完整基线；首 Prepare 前还须核来源未变。
++    pub(super) fn prepare_civil_administrative_baseline(
++        &self,
++    ) -> Result<AdministrativeBaseline, SessionError> {
++        let baseline = {
++            let cell = self.runtime_driver.as_ref().ok_or_else(|| {
++                SessionError::CivilInformation(CivilInformationError::new(
++                    self.civil_date(),
++                    invalid("civil 基线前尚未接管 runtime"),
++                ))
++            })?;
++            let mut driver = cell.lock().map_err(|_| {
++                SessionError::CivilInformation(CivilInformationError::new(
++                    self.civil_date(),
++                    invalid("civil 基线 driver 锁被 poison"),
++                ))
++            })?;
++            driver
++                .prepare_administrative_baseline(self)
++                .map_err(|source| {
++                    SessionError::CivilInformation(CivilInformationError::new(
++                        self.civil_date(),
++                        source,
++                    ))
++                })?
++        };
++        self.validate_administrative_baseline(&baseline)
++            .map_err(|source| {
++                SessionError::CivilInformation(CivilInformationError::new(
++                    self.civil_date(),
++                    source,
++                ))
++            })?;
++        Ok(baseline)
++    }
++
+     /// 短借用只持 driver 锁；不进入普通 tick 的 freeze、take 或 inject 玩家意图路径。
+     pub(in crate::session) fn apply_administrative_operations<P>(
+         &mut self,
+@@ -188,20 +232,24 @@ impl GameSession {
+ 
+     pub(in crate::session) fn apply_civil_information_administrative_operations<P>(
+         &mut self,
+-        grouped: Vec<(GroupIdx, Vec<AdminOperation>)>,
++        baseline: AdministrativeBaseline,
++        stages: Vec<AdminOperationStage>,
+         information: InformationPreparePayload,
+         prepare: impl FnOnce(
+             &AdminCandidate,
+             &PreparedAdministrativeProjection<'_>,
++            Option<&PreparedAdministrativeStages<'_>>,
+         ) -> Result<(PreparedCivilFields, P), SessionError>,
+     ) -> Result<P, SessionError> {
+         let date = self.civil_date();
+         let mut original_error = None;
+-        let result = self.apply_administrative_scope(
+-            grouped,
++        let result = self.apply_prepared_administrative_scope(
++            Vec::new(),
+             Some(information),
+             None,
+-            |candidate, projection| match prepare(candidate, projection) {
++            Some(baseline),
++            (!stages.is_empty()).then_some(stages),
++            |candidate, projection, stages| match prepare(candidate, projection, stages) {
+                 Ok((fields, value)) => Ok((Some(fields), value)),
+                 Err(error) => {
+                     original_error = Some(error);
+@@ -240,6 +288,32 @@ impl GameSession {
+             &PreparedAdministrativeProjection<'_>,
+         ) -> Result<(Option<PreparedCivilFields>, P), RuntimeError>,
+     ) -> Result<P, AdministrativeMirrorError> {
++        self.apply_prepared_administrative_scope(
++            grouped,
++            information,
++            repurchase,
++            None,
++            None,
++            |candidate, projection, _| prepare(candidate, projection),
++        )
++    }
++
++    fn apply_prepared_administrative_scope<P>(
++        &mut self,
++        grouped: Vec<(GroupIdx, Vec<AdminOperation>)>,
++        information: Option<InformationPreparePayload>,
++        repurchase: Option<crate::runtime::RepurchasePreparePayload>,
++        baseline: Option<AdministrativeBaseline>,
++        stages: Option<Vec<AdminOperationStage>>,
++        prepare: impl FnOnce(
++            &AdminCandidate,
++            &PreparedAdministrativeProjection<'_>,
++            Option<&PreparedAdministrativeStages<'_>>,
++        ) -> Result<(Option<PreparedCivilFields>, P), RuntimeError>,
++    ) -> Result<P, AdministrativeMirrorError> {
++        if stages.is_some() && (!grouped.is_empty() || repurchase.is_some()) {
++            return Err(invalid("有序现金阶段不得混入另一份 flat 或 repurchase 请求").into());
++        }
+         self.require_healthy()?;
+         if self.runtime_driver.is_none() {
+             self.construct_runtime_driver_lazy()?;
+@@ -273,7 +347,12 @@ impl GameSession {
+                     actual: world_civil_date,
+                 });
+             }
+-            let baseline = match driver.prepare_administrative_baseline(self) {
++            let baseline_result = match baseline {
++                Some(baseline) if driver.mirror_source() == baseline.source => Ok(baseline),
++                Some(_) => Err(invalid("civil 付款候选后的实际行政来源已改变")),
++                None => driver.prepare_administrative_baseline(self),
++            };
++            let baseline = match baseline_result {
+                 Ok(value) => value,
+                 Err(error) => {
+                     self.retain_administrative_terminal(&driver, &error);
+@@ -284,11 +363,10 @@ impl GameSession {
+             let revision = self.external_revision();
+             let sequence = self.runtime_mirror_install_sequence;
+             let expected_information = information.clone();
+-            let result = driver.with_prepared_administrative_transaction(
+-                grouped,
+-                information,
+-                repurchase,
+-                |candidate, source| {
++            let inspect =
++                |candidate: &AdminCandidate,
++                 source: &PreparedAdministrativeSource,
++                 stages: Option<&PreparedAdministrativeStages<'_>>| {
+                     let prepared = self.prepare_administrative_mirror(
+                         &baseline,
+                         candidate,
+@@ -301,7 +379,7 @@ impl GameSession {
+                         original: self,
+                         prepared: &prepared,
+                     };
+-                    let (civil, value) = prepare(candidate, &projection)?;
++                    let (civil, value) = prepare(candidate, &projection, stages)?;
+                     if self.external_revision() != revision
+                         || self.runtime_mirror_install_sequence != sequence
+                         || self.tick() != baseline.source.tick
+@@ -310,8 +388,20 @@ impl GameSession {
+                         return Err(invalid("行政 prepare 的 Session 来源在 inspect 期间改变"));
+                     }
+                     Ok((value, prepared, civil))
+-                },
+-            );
++                };
++            let result = match stages {
++                Some(stages) => driver.with_prepared_staged_administrative_transaction(
++                    stages,
++                    information,
++                    |candidate, source, stages| inspect(candidate, source, Some(stages)),
++                ),
++                None => driver.with_prepared_administrative_transaction(
++                    grouped,
++                    information,
++                    repurchase,
++                    |candidate, source| inspect(candidate, source, None),
++                ),
++            };
+             let ((value, prepared, civil), ack) = match result {
+                 Ok(value) => value,
+                 Err(error) => {
+@@ -602,7 +692,8 @@ impl GameSession {
+                 retail: self.state.retail_experience.clone(),
+             };
+             for (_, id, value) in &personals {
+-                maps.attention.insert(*id, baseline.attention_at(*id, &value.attention)?);
++                maps.attention
++                    .insert(*id, baseline.attention_at(*id, &value.attention)?);
+                 maps.beliefs.insert(
+                     *id,
+                     BeliefParticipantState::new(
+diff --git a/packages/engine/src/session/civil_information.rs b/packages/engine/src/session/civil_information.rs
+index 508a0164..c21a5c04 100644
+--- a/packages/engine/src/session/civil_information.rs
++++ b/packages/engine/src/session/civil_information.rs
+@@ -130,6 +130,9 @@ impl GameSession {
+                 adopted.state.library = shadow.state.library;
+                 shadow = adopted;
+             }
++            let baseline = self.prepare_civil_administrative_baseline()?;
++            let (stages, cash) =
++                shadow.prepare_civil_cash_distributions(report.settled_date, &baseline)?;
+             let clock =
+                 crate::runtime::InformationClockContext::for_civil_disclosure(self, instant)?;
+             let as_of_anchors = clock.anchors().map_err(|source| {
+@@ -154,9 +157,11 @@ impl GameSession {
+                 }),
+             };
+             self.apply_civil_information_administrative_operations(
+-                Vec::new(),
++                baseline,
++                stages,
+                 payload,
+-                move |_, prepared| {
++                move |candidate, prepared, stages| {
++                    cash.inspect(candidate, stages)?;
+                     prepared.clone_into_civil_shadow(&mut shadow);
+                     shadow.market_calendar_day = None;
+                     let publication = project(&shadow, report)?;
+diff --git a/packages/engine/src/session/corporate_actions/distributions_day_end.rs b/packages/engine/src/session/corporate_actions/distributions_day_end.rs
+index 00ae7dc9..d14907df 100644
+--- a/packages/engine/src/session/corporate_actions/distributions_day_end.rs
++++ b/packages/engine/src/session/corporate_actions/distributions_day_end.rs
+@@ -1,4 +1,4 @@
+-//! 分红与送转的独立日终候选计算；尚未接入生产日终链。
++//! 分红与送转的日终候选计算；native civil 仅接现金分红与收缴，送转仍为独立候选。
+ //!
+ //! 调用前须在隔离公司状态安装 R1 名册/税账候选。这里只返回待行政回执验证的
+ //! 候选事实；`Paid`/`Credited` 不能在真实账户回执勾稽前安装到权威 Session。
+@@ -191,6 +191,22 @@ impl SessionCorporateActions {
+     pub(crate) fn distributions_day_end_candidate(
+         &self,
+         input: DistributionsDayEndInput<'_>,
++    ) -> Result<DistributionsDayEndCandidate, DistributionsDayEndError> {
++        self.prepare_distributions_candidate(input, true)
++    }
++
++    /// 现金生产片只复用现金与个人税候选，不顺带推进送转状态或股份 movement。
++    pub(crate) fn cash_distributions_day_end_candidate(
++        &self,
++        input: DistributionsDayEndInput<'_>,
++    ) -> Result<DistributionsDayEndCandidate, DistributionsDayEndError> {
++        self.prepare_distributions_candidate(input, false)
++    }
++
++    fn prepare_distributions_candidate(
++        &self,
++        input: DistributionsDayEndInput<'_>,
++        include_stock_distributions: bool,
+     ) -> Result<DistributionsDayEndCandidate, DistributionsDayEndError> {
+         let ctx = Context {
+             day: input.day,
+@@ -225,7 +241,9 @@ impl SessionCorporateActions {
+             projected_available_cash: input.available_cash.clone(),
+         };
+         result.prepare_dividends(&input)?;
+-        result.prepare_stock_distributions(&input)?;
++        if include_stock_distributions {
++            result.prepare_stock_distributions(&input)?;
++        }
+         result.prepare_individual_collections(&input)?;
+         Ok(result)
+     }
+diff --git a/packages/engine/src/session/ordinary_tax_day_end/payment_runtime_tests.rs b/packages/engine/src/session/ordinary_tax_day_end/payment_runtime_tests.rs
+index f7a7e077..bccd6c63 100644
+--- a/packages/engine/src/session/ordinary_tax_day_end/payment_runtime_tests.rs
++++ b/packages/engine/src/session/ordinary_tax_day_end/payment_runtime_tests.rs
+@@ -469,3 +469,60 @@ fn r4_cash_03_actual_sale_before_payment_collects_personal_tax() {
+         1_200
+     );
+ }
++
++#[test]
++fn r4_cash_04_final_projection_rejection_aborts_payment_and_company_candidates() {
++    let mut session = payment_session(CashDividendTaxMode::AShareIndividual);
++    register_on_june_3(&mut session);
++    step_on_june_4(&mut session);
++    let before_hash = session.business_state_hash().unwrap();
++    let before_actions = session.corporate_actions().unwrap().clone();
++    let before_cash = cash(&session, AccountId(1));
++    let before_runtime = session
++        .runtime_driver
++        .as_ref()
++        .unwrap()
++        .lock()
++        .unwrap()
++        .administrative_cache_snapshot_for_test();
++    let mut inspect_calls = 0;
++    let result: Result<(), SessionError> = session.with_prepared_runtime_civil_day(|shadow, _| {
++        inspect_calls += 1;
++        assert_eq!(
++            cash(shadow, AccountId(1)),
++            before_cash.add(Money::from_cents(200)).unwrap(),
++            "拒绝点必须已持有真实 prepared 账户付款候选"
++        );
++        assert_eq!(
++            shadow.corporate_actions().unwrap().dividends[0].status(),
++            &CashDividendStatus::Paid
++        );
++        Err(SessionError::CivilInformation(
++            super::super::administrative_mirror::CivilInformationError::new(
++                date(PAYMENT_DAY),
++                crate::runtime::RuntimeError::ProtocolInvariant {
++                    detail: "R4 付款最终公开投影主动拒绝".into(),
++                },
++            ),
++        ))
++    });
++    assert!(
++        result
++            .unwrap_err()
++            .to_string()
++            .contains("R4 付款最终公开投影主动拒绝")
++    );
++    assert_eq!(inspect_calls, 1);
++    assert_eq!(session.business_state_hash().unwrap(), before_hash);
++    assert_eq!(session.corporate_actions().unwrap(), &before_actions);
++    assert_eq!(cash(&session, AccountId(1)), before_cash);
++    let driver = session.runtime_driver.as_ref().unwrap().lock().unwrap();
++    assert!(
++        !driver.administrative_world_is_terminal(),
++        "业务投影拒绝应只 Abort 本次 Admin"
++    );
++    assert_eq!(
++        driver.administrative_cache_snapshot_for_test(),
++        before_runtime
++    );
++}
+diff --git a/packages/engine/src/session/civil_cash_distributions.rs b/packages/engine/src/session/civil_cash_distributions.rs
+new file mode 100644
+index 00000000..43077bbd
+--- /dev/null
++++ b/packages/engine/src/session/civil_cash_distributions.rs
+@@ -0,0 +1,479 @@
++//! 现金权益候选绑定真实行政基线、原 typed operand 与同次提交后的完整账户。
++
++use super::administrative_mirror::CivilInformationError;
++use super::corporate_actions::distributions_day_end::{
++    DistributionIntent, DistributionSource, DistributionsDayEndError, DistributionsDayEndInput,
++    WithholdingSource,
++};
++use super::*;
++use crate::runtime::drive::AdministrativeBaseline;
++use crate::runtime::group::GroupAccount;
++use crate::runtime::world::{
++    AdminCandidate, AdminOperation, AdminOperationStage, PreparedAdministrativeStages,
++};
++use crate::runtime::{GroupIdx, LocalIdx, RuntimeError, StockIdx};
++use std::sync::Arc;
++
++#[derive(Debug, thiserror::Error)]
++enum CashPreparationError {
++    #[error(transparent)]
++    Runtime(#[from] RuntimeError),
++    #[error(transparent)]
++    Distribution(#[from] DistributionsDayEndError),
++    #[error(transparent)]
++    Company(#[from] crate::company::CompanySystemError),
++}
++
++fn invalid(detail: impl Into<String>) -> RuntimeError {
++    RuntimeError::ProtocolInvariant {
++        detail: detail.into(),
++    }
++}
++
++struct IntentPosition {
++    intent_index: usize,
++    stage: u32,
++    group: GroupIdx,
++    group_index: usize,
++    local: LocalIdx,
++    operation_index: usize,
++}
++
++pub(super) struct PreparedCivilCash {
++    day: crate::CivilDate,
++    intents: Vec<DistributionIntent>,
++    positions: Vec<IntentPosition>,
++    expected_accounts: BTreeMap<(GroupIdx, LocalIdx), GroupAccount>,
++}
++
++fn operation(intent: &DistributionIntent, local: LocalIdx) -> Result<AdminOperation, RuntimeError> {
++    let (stock, amount, tax) = match intent {
++        DistributionIntent::DividendGrossCredit { stock, amount, .. } => (*stock, *amount, false),
++        DistributionIntent::DividendWithholding { stock, amount, .. } => (*stock, *amount, true),
++        DistributionIntent::StockDistributionCredit { .. } => {
++            return Err(invalid("现金付款入口不支持股份 movement"));
++        }
++    };
++    let stock = StockIdx::try_from(stock.0).map_err(|_| invalid("现金权益证券坐标溢出"))?;
++    if amount.cents() <= 0 {
++        return Err(invalid("现金权益 typed operand 必须为正分额"));
++    }
++    Ok(if tax {
++        AdminOperation::WithholdingTax {
++            local,
++            stock,
++            amount: amount.cents(),
++        }
++    } else {
++        AdminOperation::CashDividend {
++            local,
++            stock,
++            amount: amount.cents(),
++        }
++    })
++}
++
++impl GameSession {
++    /// 只安装到 civil shadow；真实账户、公司付款与税账均在同一个 Admin 成功尾发布。
++    pub(super) fn prepare_civil_cash_distributions(
++        &mut self,
++        day: crate::CivilDate,
++        baseline: &AdministrativeBaseline,
++    ) -> Result<(Vec<AdminOperationStage>, PreparedCivilCash), SessionError> {
++        let result: Result<_, CashPreparationError> = (|| {
++            let mut owners = BTreeMap::new();
++            let mut available = BTreeMap::new();
++            let mut raw_accounts = BTreeMap::new();
++            for (index, id) in baseline.roster.iter().enumerate() {
++                if baseline.per_group == 0 {
++                    return Err(invalid("现金权益真实分组宽度为零").into());
++                }
++                let group = GroupIdx::try_from(index / baseline.per_group)
++                    .map_err(|_| invalid("现金权益 group 溢出"))?;
++                let local = LocalIdx::try_from(index % baseline.per_group)
++                    .map_err(|_| invalid("现金权益 local 溢出"))?;
++                let raw = baseline
++                    .accounts
++                    .get(usize::from(group))
++                    .filter(|(actual, _)| *actual == group)
++                    .and_then(|(_, rows)| rows.get(local as usize))
++                    .ok_or_else(|| invalid("现金权益缺真实完整组账户"))?;
++                if owners.insert(*id, (group, local)).is_some() {
++                    return Err(invalid("现金权益名册重复账户").into());
++                }
++                available.insert(*id, Money::from_cents(raw.cash));
++                raw_accounts.insert((group, local), raw.clone());
++            }
++            let mut prepared = PreparedCivilCash {
++                day,
++                intents: Vec::new(),
++                positions: Vec::new(),
++                expected_accounts: BTreeMap::new(),
++            };
++            let Some(actions) = self.state.companies.corporate_actions() else {
++                return Ok((Vec::new(), prepared));
++            };
++            let system = self
++                .state
++                .companies
++                .company_system()
++                .ok_or_else(|| invalid("现金权益缺 CompanySystem"))?;
++            let mode = self
++                .state
++                .setup
++                .dividend_tax_mode
++                .ok_or_else(|| invalid("现金权益缺开局税务模式"))?;
++            let candidate =
++                actions.cash_distributions_day_end_candidate(DistributionsDayEndInput {
++                    day,
++                    calendar: self.state.civil_clock.calendar(),
++                    catalog: &self.state.stocks,
++                    company_system: system,
++                    available_cash: &available,
++                    tax_mode: mode,
++                    flat_withholding_bp: self.state.setup.flat_withholding_bp,
++                    capital_reserve_tax_sources: &BTreeMap::new(),
++                })?;
++            candidate
++                .company_system
++                .validate_cash_dividend_books(&candidate.actions.dividends)?;
++            let mut plan_stocks = BTreeMap::new();
++            for book in &candidate.actions.dividends {
++                let stock = self
++                    .state
++                    .stocks
++                    .id(&book.plan().stock.0)
++                    .ok_or_else(|| invalid("现金分红方案证券不在目录"))?;
++                if plan_stocks
++                    .insert(book.plan().plan_id.clone(), stock)
++                    .is_some()
++                {
++                    return Err(invalid("现金分红方案身份重复").into());
++                }
++            }
++            let mut gross_sources = BTreeMap::new();
++            for source in &candidate.sources {
++                match source {
++                    DistributionSource::SimpleSyntheticDividend {
++                        payment_id,
++                        plan_id,
++                        holder,
++                        stock,
++                        gross,
++                    } => {
++                        if plan_stocks.get(plan_id) != Some(stock) {
++                            return Err(invalid("税前股利原意图证券与方案不一致").into());
++                        }
++                        if let crate::company::share_registry::HolderId::Account(account) = holder {
++                            if gross_sources
++                                .insert(
++                                    (payment_id.clone(), plan_id.clone(), *account, *stock),
++                                    *gross,
++                                )
++                                .is_some()
++                            {
++                                return Err(invalid("现金股利公司来源重复").into());
++                            }
++                        }
++                    }
++                    DistributionSource::StockDistribution { .. } => {
++                        return Err(invalid("现金候选包含送转来源").into());
++                    }
++                }
++            }
++            let mut gross_receipts = BTreeMap::new();
++            for receipt in candidate
++                .actions
++                .account_gross_receipts
++                .iter()
++                .filter(|receipt| receipt.paid_on == day)
++            {
++                if gross_receipts
++                    .insert(
++                        (
++                            receipt.payment_id.clone(),
++                            receipt.plan_id.clone(),
++                            receipt.account,
++                        ),
++                        receipt.gross,
++                    )
++                    .is_some()
++                {
++                    return Err(invalid("现金股利税前回执重复").into());
++                }
++            }
++            let mut flat_receipts = BTreeMap::new();
++            for receipt in candidate
++                .actions
++                .flat_withholding_receipts
++                .iter()
++                .filter(|receipt| receipt.paid_on == day && receipt.withheld.cents() > 0)
++            {
++                if flat_receipts
++                    .insert(
++                        (
++                            receipt.payment_id.clone(),
++                            receipt.plan_id.clone(),
++                            receipt.account,
++                        ),
++                        receipt.withheld,
++                    )
++                    .is_some()
++                {
++                    return Err(invalid("简税代扣回执重复").into());
++                }
++            }
++            let mut collections = BTreeMap::new();
++            for book in &candidate.actions.dividend_tax_books {
++                if let Some(receipt) = book
++                    .collections()
++                    .last()
++                    .filter(|receipt| receipt.day == day && receipt.collected.cents() > 0)
++                {
++                    let stock = self
++                        .state
++                        .stocks
++                        .id(&book.stock().0)
++                        .ok_or_else(|| invalid("个人收缴证券不在目录"))?;
++                    if collections
++                        .insert(
++                            (book.account(), stock, receipt.event_id.clone()),
++                            receipt.collected,
++                        )
++                        .is_some()
++                    {
++                        return Err(invalid("个人收缴回执重复").into());
++                    }
++                }
++            }
++            let mut stages: Vec<AdminOperationStage> = Vec::new();
++            let mut flat_offsets = BTreeMap::<GroupIdx, usize>::new();
++            let mut prior_tax = None;
++            for (intent_index, intent) in candidate.intents.iter().enumerate() {
++                let (account, is_tax) = match intent {
++                    DistributionIntent::DividendGrossCredit {
++                        account,
++                        payment_id,
++                        plan_id,
++                        stock,
++                        amount,
++                    } => {
++                        if gross_sources.remove(&(
++                            payment_id.clone(),
++                            plan_id.clone(),
++                            *account,
++                            *stock,
++                        )) != Some(*amount)
++                            || gross_receipts.remove(&(
++                                payment_id.clone(),
++                                plan_id.clone(),
++                                *account,
++                            )) != Some(*amount)
++                        {
++                            return Err(invalid("现金股利缺唯一同源公司来源或税前回执").into());
++                        }
++                        (*account, false)
++                    }
++                    DistributionIntent::DividendWithholding {
++                        account,
++                        stock,
++                        amount,
++                        source,
++                    } => {
++                        let actual = match source {
++                            WithholdingSource::FlatPayment {
++                                payment_id,
++                                plan_id,
++                            } => {
++                                if plan_stocks.get(plan_id) != Some(stock) {
++                                    return Err(invalid("简税原意图证券与付款方案不一致").into());
++                                }
++                                flat_receipts.remove(&(
++                                    payment_id.clone(),
++                                    plan_id.clone(),
++                                    *account,
++                                ))
++                            }
++                            WithholdingSource::IndividualCollection { collection_id } => {
++                                collections.remove(&(*account, *stock, collection_id.clone()))
++                            }
++                        };
++                        if actual != Some(*amount) {
++                            return Err(invalid("扣税意图缺唯一真实候选收缴来源").into());
++                        }
++                        (*account, true)
++                    }
++                    DistributionIntent::StockDistributionCredit { .. } => {
++                        return Err(invalid("现金付款候选包含股份 movement").into());
++                    }
++                };
++                let &(group, local) = owners
++                    .get(&account)
++                    .ok_or_else(|| invalid("现金权益账户不在真实 Owner 名册"))?;
++                let typed = operation(intent, local)?;
++                // 按原意图连续段分 stage，不重排同账户的 credit／tax，保留 checked overflow 顺序。
++                if prior_tax != Some(is_tax) {
++                    stages.push(AdminOperationStage {
++                        operations: Vec::new(),
++                    });
++                    prior_tax = Some(is_tax);
++                }
++                let stage =
++                    u32::try_from(stages.len() - 1).map_err(|_| invalid("现金权益 stage 溢出"))?;
++                let rows = &mut stages.last_mut().expect("刚建立当前连续段").operations;
++                let group_index = match rows.iter().position(|(actual, _)| *actual == group) {
++                    Some(index) => {
++                        rows[index].1.push(typed);
++                        index
++                    }
++                    None => {
++                        rows.push((group, vec![typed]));
++                        rows.len() - 1
++                    }
++                };
++                let offset = flat_offsets.entry(group).or_default();
++                prepared.positions.push(IntentPosition {
++                    intent_index,
++                    stage,
++                    group,
++                    group_index,
++                    local,
++                    operation_index: *offset,
++                });
++                *offset = offset
++                    .checked_add(1)
++                    .ok_or_else(|| invalid("现金权益 flat index 溢出"))?;
++                // 未触及的真实账户沿基线保持原值，不以零值或另一账户代替。
++                let raw = prepared
++                    .expected_accounts
++                    .entry((group, local))
++                    .or_insert_with(|| raw_accounts[&(group, local)].clone());
++                raw.cash = match typed {
++                    AdminOperation::CashDividend { amount, .. } => raw.cash.checked_add(amount),
++                    AdminOperation::WithholdingTax { amount, .. } => {
++                        raw.cash.checked_sub(amount).filter(|cash| *cash >= 0)
++                    }
++                    _ => unreachable!("operation 只生成现金权益两种原语"),
++                }
++                .ok_or_else(|| invalid("现金权益完整账户预期现金溢出或不足"))?;
++            }
++            if !gross_sources.is_empty()
++                || !gross_receipts.is_empty()
++                || !flat_receipts.is_empty()
++                || !collections.is_empty()
++            {
++                return Err(invalid("现金候选存在未被原 typed 意图消费的付款或收缴事实").into());
++            }
++            for (account, expected_cash) in &candidate.projected_available_cash {
++                let &(group, local) = owners
++                    .get(account)
++                    .ok_or_else(|| invalid("现金权益候选额外账户"))?;
++                let raw = prepared
++                    .expected_accounts
++                    .get(&(group, local))
++                    .unwrap_or(&raw_accounts[&(group, local)]);
++                if raw.cash != expected_cash.cents() {
++                    return Err(invalid("现金权益候选与完整账户预期金额不一致").into());
++                }
++            }
++            if candidate.projected_available_cash.len() != available.len() {
++                return Err(invalid("现金权益候选漏真实账户").into());
++            }
++            prepared.intents = candidate.intents;
++            let SessionCompanies::CompanySystem(state) = &mut self.state.companies else {
++                unreachable!("候选来自同一公司容器")
++            };
++            state.system = Arc::new(candidate.company_system);
++            state.corporate_actions = candidate.actions;
++            Ok((stages, prepared))
++        })();
++        result.map_err(|source| {
++            SessionError::CivilInformation(CivilInformationError::new(day, source))
++        })
++    }
++}
++
++impl PreparedCivilCash {
++    pub(super) fn inspect(
++        &self,
++        candidate: &AdminCandidate,
++        stages: Option<&PreparedAdministrativeStages<'_>>,
++    ) -> Result<(), SessionError> {
++        let verify = (|| {
++            if self.positions.is_empty() {
++                if stages.is_some() {
++                    return Err(invalid("空现金权益意图不应含阶段来源"));
++                }
++                return Ok(());
++            }
++            let stages = stages.ok_or_else(|| invalid("现金权益缺同 pending 实际阶段来源"))?;
++            let mut expected = BTreeMap::new();
++            let mut tax = BTreeMap::new();
++            for position in &self.positions {
++                let typed = operation(&self.intents[position.intent_index], position.local)?;
++                let key = (position.group, position.stage, position.operation_index);
++                if expected.insert(key, typed).is_some() {
++                    return Err(invalid("现金权益原意图坐标重复"));
++                }
++                if let AdminOperation::WithholdingTax {
++                    local,
++                    stock,
++                    amount,
++                } = typed
++                {
++                    tax.insert(key, (position.group_index, local, stock, amount));
++                }
++            }
++            for operand in stages.operands() {
++                let key = (operand.group, operand.stage_index, operand.operation_index);
++                if expected.remove(&key).as_ref() != Some(operand.operation) {
++                    return Err(invalid("现金权益原意图与借用的真实 typed operand 不一致"));
++                }
++            }
++            if !expected.is_empty() {
++                return Err(invalid("现金权益漏原 typed operand"));
++            }
++            for projection in stages.tax_projections() {
++                if projection.id != candidate.id {
++                    return Err(invalid("现金权益税阶段不属于同一次 Admin id"));
++                }
++                let stage = projection
++                    .stage_index
++                    .ok_or_else(|| invalid("现金权益税阶段缺 stage index"))?;
++                for actual in &projection.operations {
++                    if tax.remove(&(actual.group, stage, actual.operation_index))
++                        != Some((
++                            actual.group_index,
++                            actual.local,
++                            actual.stock,
++                            actual.amount,
++                        ))
++                    {
++                        return Err(invalid("现金权益收缴来源与真实税阶段投影不一致"));
++                    }
++                }
++            }
++            if !tax.is_empty() {
++                return Err(invalid("现金权益遗漏实际税阶段投影"));
++            }
++            let mut actual = BTreeMap::new();
++            for group in &candidate.groups {
++                for (local, account) in &group.accounts {
++                    if actual
++                        .insert((group.group, *local), account.as_ref().clone())
++                        .is_some()
++                    {
++                        return Err(invalid("现金权益最终账户重复"));
++                    }
++                }
++            }
++            if actual != self.expected_accounts {
++                return Err(invalid("现金权益最终完整 GroupAccount 与原意图不一致"));
++            }
++            Ok(())
++        })();
++        verify.map_err(|source| {
++            SessionError::CivilInformation(CivilInformationError::new(self.day, source))
++        })
++    }
++}

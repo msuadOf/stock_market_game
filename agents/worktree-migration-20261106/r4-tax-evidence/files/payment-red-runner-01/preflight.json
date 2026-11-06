@@ -1,0 +1,19 @@
+{
+  "status": "READY",
+  "quota": {
+    "uid": 1005,
+    "limitBytes": 106276195328,
+    "usedBytes": 97201221632,
+    "availableBytes": 9074973696,
+    "currentInodes": 16619,
+    "hardInodeLimit": 0,
+    "source": "只读 Linux x86_64 syscall443 quotactl_fd Q_GETQUOTA，不更改配额"
+  },
+  "front": "/data1/<USER>/workplace/stock_market_game/.worktree/runtime-sync-policy-2026-10-29/agents/perf-intraday-independent/resume-2026-10-29/first-red-r2/actual-cleanup-addendum.json",
+  "frontSha256": "898c1257cb3f0f0e32ad4be239624c8ee3f3dec7ff2f71b50eef356f740b7e27",
+  "actualSession": 13881,
+  "actualWaitChunk": "6d84c1",
+  "planSha256": "70a6ad61b2872217b48e7627c9778a62310aafb2926bae96ff24b0b1ee810ff3",
+  "sourceCount": 1165,
+  "webCount": 910
+}

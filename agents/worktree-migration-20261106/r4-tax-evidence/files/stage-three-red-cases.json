@@ -1,0 +1,38 @@
+[
+  {
+    "target": "engine",
+    "configuration": "feature",
+    "name": "runtime::world::admin_transaction::stages::tests::r4_stage_01_credit_tax_debit_uses_real_working_stage_accounts",
+    "expected": "red",
+    "requiredPanicMarker": "R4 stage 真实 credit→tax→debit 必须共用同 pending 并成功提交",
+    "panicChannel": "stdout",
+    "requiresEmptyStderr": true,
+    "sourcePath": "packages/engine/src/runtime/world/admin_transaction/stage_tests.rs",
+    "sourceLineHint": 106,
+    "requiredCause": "R4 ordered stages 的同 pending 实际来源尚未接通"
+  },
+  {
+    "target": "engine",
+    "configuration": "feature",
+    "name": "runtime::world::admin_transaction::stages::tests::r4_stage_02_late_debit_rejection_aborts_credit_and_tax",
+    "expected": "red",
+    "requiredPanicMarker": "尾阶段必须由真实扣款拒绝，不能被未实现入口吞掉",
+    "panicChannel": "stdout",
+    "requiresEmptyStderr": true,
+    "sourcePath": "packages/engine/src/runtime/world/admin_transaction/stage_tests.rs",
+    "sourceLineHint": 135,
+    "requiredCause": "R4 ordered stages 的同 pending 实际来源尚未接通"
+  },
+  {
+    "target": "engine",
+    "configuration": "feature",
+    "name": "runtime::world::admin_transaction::stages::tests::r4_stage_03_final_inspect_rejection_aborts_tax_and_keeps_original_cause",
+    "expected": "red",
+    "requiredPanicMarker": "最终 inspect 原因必须保留，不能被未实现入口吞掉",
+    "panicChannel": "stdout",
+    "requiresEmptyStderr": true,
+    "sourcePath": "packages/engine/src/runtime/world/admin_transaction/stage_tests.rs",
+    "sourceLineHint": 163,
+    "requiredCause": "R4 ordered stages 的同 pending 实际来源尚未接通"
+  }
+]

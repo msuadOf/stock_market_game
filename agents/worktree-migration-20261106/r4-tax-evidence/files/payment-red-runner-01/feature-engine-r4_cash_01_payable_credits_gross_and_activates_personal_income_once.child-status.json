@@ -1,0 +1,1 @@
+{"pid": 2344097, "parentPid": 2344081, "argv": ["/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-6ae3f608f3352a4a", "session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_01_payable_credits_gross_and_activates_personal_income_once", "--exact", "--test-threads=1", "--nocapture"], "exit": 101, "seconds": 0.6650381899962667}

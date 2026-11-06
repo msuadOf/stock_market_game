@@ -1,0 +1,48 @@
+{
+  "name": "feature",
+  "cwd": "/data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28",
+  "target": "/tmp/stock-market-game-validation-2026-10-27-1311109/target",
+  "cargoJobs": 8,
+  "environment": {
+    "CARGO_TARGET_DIR": "/tmp/stock-market-game-validation-2026-10-27-1311109/target",
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_BUILD_JOBS": "8",
+    "TMPDIR": "/tmp/stock-market-game-validation-2026-10-27-1311109/engine-r4-payment-red-2026-10-29-01/scratch",
+    "RUSTFLAGS": "",
+    "CARGO_ENCODED_RUSTFLAGS": ""
+  },
+  "deadlineMs": 300000,
+  "noProgressMs": 60000,
+  "sampleMs": 500,
+  "mainHelperRepository": "/data1/<USER>/workplace/stock_market_game/.worktree/main-merge-2026-10-25",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "engine",
+    "--lib",
+    "--features",
+    "simulation-diagnostics,verification-harness",
+    "--no-run",
+    "-j8",
+    "--message-format=json-render-diagnostics"
+  ],
+  "cargoCommand": [
+    "cargo",
+    "test",
+    "-p",
+    "engine",
+    "--lib",
+    "--features",
+    "simulation-diagnostics,verification-harness",
+    "--no-run",
+    "-j8",
+    "--message-format=json-render-diagnostics"
+  ],
+  "launchReadiness": "PENDING_RECEIVER_TESTS_AND_SOURCE_CFG_AND_ROOT_LATEST_FRONT",
+  "nodePath": "/data1/<USER>/workplace/stock_market_game/.tmp/node24-env/node",
+  "nodeVersion": "v24.18.0",
+  "wasmToolHost": "/data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28",
+  "node": "/data1/<USER>/workplace/stock_market_game/.tmp/node24-env/node",
+  "nativeGuard": "/data1/<USER>/workplace/stock_market_game/.worktree/runtime-sync-e1/agents/perf-intraday-independent/implementation/e2/day-end-full-source-tmpfs-batch-r2/run-build-guard-tmpfs.mjs"
+}

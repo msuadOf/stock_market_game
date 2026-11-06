@@ -1,0 +1,10 @@
+{
+  "base": "1133d042f10b1df0b74fdb6425265945441f228a",
+  "files": {
+    "packages/engine/src/session.rs": "43576ee5f53c47423a355ff3018cf2507972f263857de3c851aadcea8296e2ee",
+    "packages/engine/src/session/civil_information.rs": "bdc83c6513b239728b99ac982b2c964685206e75d41b76eaf5c1e5011a97672a",
+    "packages/engine/src/session/corporate_actions/registry_day_end.rs": "fdd2802209f1fbd911b949b48cab07fbc8c26f5974520c5a4e0908d6f0928dbc",
+    "packages/engine/src/session/ordinary_tax_day_end.rs": "4ca10a16fcd56432b678c4f62ef7f307e497b4163853eed7eff4c0af4d7a524f"
+  },
+  "patch_sha256": "12319e0949c670a2b66bd4bec97f86f2bdef42104273a17e189d6726173131b6"
+}

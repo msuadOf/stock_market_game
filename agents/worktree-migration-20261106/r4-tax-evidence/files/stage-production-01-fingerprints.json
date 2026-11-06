@@ -1,0 +1,14 @@
+{
+  "base": "e78cb9e81da7070afccd4c43bb59e796066e8185",
+  "files": {
+    "packages/engine/src/runtime/protocol.rs": "a5e874e8e5283f356ac27a095ae1058950bf95ad60edcfdd7245607ddfe727ff",
+    "packages/engine/src/runtime/group.rs": "1b9c11db047b660aae72434ac8dee3cdc5211d57d960cc0be8ff870ed87acc61",
+    "packages/engine/src/runtime/group/admin_transaction.rs": "d3621ed8b5cf7361508ec6783f8b9227356d843a2cc44dc3984d61e6f168e594",
+    "packages/engine/src/runtime/world/admin_transaction.rs": "697db02caadcc39dae2e794a5a7ddaaf88978e82b012a23bd7580177f76337b4",
+    "packages/engine/src/runtime/world/admin_transaction/stages.rs": "a38460064cb717a814a90cc6a9302ad7144cc7cf63842aa909f8046b2add374b",
+    "packages/engine/src/runtime/world/admin_transaction/stage_tests.rs": "45dcd607dab65c90e5cab478da65bf5bd439489aad4ec0b7cd1e9fd45f746030",
+    "packages/engine/src/runtime/group/admin_transaction/stages.rs": "3987edd2ff20b3bb305817e7c3c4adf3348988fd022549d548e9adb88e688029",
+    "packages/engine/src/runtime/world/admin_transaction/stage_information_tests.rs": "f14929846f8f270c13fa8362dd606506a1445912f5e04a9549189aa7a148169b"
+  },
+  "patch_sha256": "c52b3e76fb819eec20c1975dc0dc3950e99cff3066ae691fb87236764b9f481c"
+}

@@ -1,0 +1,68 @@
+{
+  "stage": "feature-engine-r4_cash_03_actual_sale_before_payment_collects_personal_tax",
+  "actualArgv": [
+    "/data1/<USER>/workplace/stock_market_game/.tmp/node24-env/node",
+    "/data1/<USER>/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+    "10000",
+    "--",
+    "/home/<USER>/miniconda3/bin/python3",
+    "/data1/<USER>/workplace/stock_market_game/agents/branch-completion/funds-production-resume-2026-10-27/p1-formal-red-2026-10-28/collect-child-status.py",
+    "/data1/<USER>/workplace/stock_market_game/.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-red-runner-01/feature-engine-r4_cash_03_actual_sale_before_payment_collects_personal_tax.child-status.json",
+    "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-6ae3f608f3352a4a",
+    "session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_03_actual_sale_before_payment_collects_personal_tax",
+    "--exact",
+    "--test-threads=1",
+    "--nocapture"
+  ],
+  "pid": 2344062,
+  "exit": 0,
+  "seconds": 0.7248381039826199,
+  "name": "session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_03_actual_sale_before_payment_collects_personal_tax",
+  "configuration": "feature",
+  "target": "engine",
+  "childStatus": {
+    "pid": 2344098,
+    "parentPid": 2344087,
+    "argv": [
+      "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-6ae3f608f3352a4a",
+      "session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_03_actual_sale_before_payment_collects_personal_tax",
+      "--exact",
+      "--test-threads=1",
+      "--nocapture"
+    ],
+    "exit": 101,
+    "seconds": 0.6531895910156891
+  },
+  "childStatusError": null,
+  "summary": [
+    [
+      "FAILED",
+      "0",
+      "1",
+      "0"
+    ]
+  ],
+  "businessCaseRed": true,
+  "rawBusinessCaseRed": true,
+  "targetPanicMatched": true,
+  "group": "R4_cash_payment",
+  "expectedTarget": {
+    "name": "session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_03_actual_sale_before_payment_collects_personal_tax",
+    "requiredPanicMarker": "R4 真实转让后的付款必须按原登记权益收缴个人税",
+    "sourcePath": "packages/engine/src/session/ordinary_tax_day_end/payment_runtime_tests.rs",
+    "requiredExpectedDeltaCents": 180,
+    "expectedActualDeltaCents": 0,
+    "expected": "red",
+    "requiredEarliestPanic": "R4 真实转让后的付款必须按原登记权益收缴个人税",
+    "panicChannel": "stderr",
+    "target": "engine",
+    "requiresEmptyStderr": false,
+    "group": "R4_cash_payment",
+    "requiredError": null
+  },
+  "binarySha256": "9f4e62be97a3e09132da73f320e66aa004447eb914e5934a949a46e179067dc5",
+  "exactPassed": false,
+  "expectedMatched": true,
+  "stdoutSha256": "c81c29b26cd39c5a28e1fc7c6d3ba0a0cfaff5ebf382b444c4b527ddf9b08aa0",
+  "stderrSha256": "e62668eb795f6fb88462cbb313357c316854669c2097b1f801991c4e51316280"
+}

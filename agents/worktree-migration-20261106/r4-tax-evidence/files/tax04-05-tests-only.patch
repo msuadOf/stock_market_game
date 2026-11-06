@@ -1,0 +1,81 @@
+diff --git a/packages/engine/tests/company_r4_tax_production.rs b/packages/engine/tests/company_r4_tax_production.rs
+index fa347592..801e423e 100644
+--- a/packages/engine/tests/company_r4_tax_production.rs
++++ b/packages/engine/tests/company_r4_tax_production.rs
+@@ -357,3 +357,76 @@ fn r4_tax_03_registration_day_captures_two_plans_and_keeps_real_tax_lots_on_rest
+     assert_eq!(restored.civil_date(), ex_on);
+     assert_eq!(restored.tick(), 1);
+ }
++
++#[test]
++fn r4_tax_04_existing_personal_holder_without_tax_book_rejects_without_mutation() {
++    let initial = game("2030-06-01");
++    let mut saved = initial.save().unwrap();
++    let SavedSessionCompanies::CompanySystem {
++        corporate_actions, ..
++    } = &mut saved.company_state
++    else {
++        panic!("夹具显式选择 Simple")
++    };
++    let missing = corporate_actions.dividend_tax_books.remove(0);
++    assert!(!missing.lots().is_empty(), "只删除已有个人持有人的税账");
++    let mut game = GameSession::restore(&saved)
++        .expect("当前 strict restore 允许该输入，真实日结必须显式核个人税账覆盖");
++    let before = serde_json::to_value(game.save().unwrap()).unwrap();
++    let error = game
++        .end_civil_day()
++        .expect_err("已有个人持有人缺失税账必须拒绝，不能静默跳过税日");
++    assert!(
++        error.to_string().contains("税账"),
++        "必须保留缺失个人税账的上下文：{error}"
++    );
++    assert_eq!(
++        serde_json::to_value(game.save().unwrap()).unwrap(),
++        before,
++        "税账覆盖拒绝不得提交公司、REG、civil frontier 或个人态"
++    );
++}
++
++#[test]
++fn r4_tax_05_orphan_tax_book_rejects_without_creating_account_or_tax_day() {
++    let initial = game("2030-06-01");
++    let orphan = engine::AccountId(99);
++    assert!(
++        initial.account(orphan).is_none(),
++        "不存在夹具税账的归属账户"
++    );
++    let mut saved = initial.save().unwrap();
++    let SavedSessionCompanies::CompanySystem {
++        corporate_actions, ..
++    } = &mut saved.company_state
++    else {
++        panic!("夹具显式选择 Simple")
++    };
++    let registry = &corporate_actions.registries[0];
++    corporate_actions.dividend_tax_books.push(
++        engine::company::cash_dividend_tax::CashDividendTaxBook::new(
++            orphan,
++            registry.stock().clone(),
++            engine::company::cash_dividend_tax::DividendTaxProfile::IndividualPublicMarket,
++            registry.settled_on(),
++            Vec::new(),
++        )
++        .expect("空税账自身是合法领域值，Session 仍须核真实账户归属"),
++    );
++    let mut game = GameSession::restore(&saved)
++        .expect("当前 strict restore 允许该输入，真实日结必须核税账归户");
++    let before = serde_json::to_value(game.save().unwrap()).unwrap();
++    let error = game
++        .end_civil_day()
++        .expect_err("孤儿个人税账必须拒绝，不能为不存在账户记录税日");
++    assert!(
++        error.to_string().contains("税账"),
++        "必须保留孤儿税账的上下文：{error}"
++    );
++    assert!(game.account(orphan).is_none(), "失败不能补造账户");
++    assert_eq!(
++        serde_json::to_value(game.save().unwrap()).unwrap(),
++        before,
++        "孤儿税账拒绝不得提交公司、REG、civil frontier 或个人态"
++    );
++}

@@ -1,0 +1,672 @@
+{
+  "pythonPid": 2341352,
+  "actualPythonArgv": [
+    "/data1/<USER>/workplace/stock_market_game/.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-red-runner-01/run-ram-batch.py",
+    "1793274211246",
+    "1793274214246",
+    "1793274215246"
+  ],
+  "actualParentArgv": [
+    "/home/<USER>/miniconda3/bin/python3",
+    "/data1/<USER>/workplace/stock_market_game/.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-red-runner-01/subreaper-owner.py",
+    "1793273915246",
+    "/home/<USER>/miniconda3/bin/python3"
+  ],
+  "sharedTaskDeadlineUnixMs": 1793274211246,
+  "sharedPublicationDeadlineUnixMs": 1793274214246,
+  "sharedOuterDeadlineUnixMs": 1793274215246,
+  "target": "/tmp/stock-market-game-validation-2026-10-27-1311109/target",
+  "wholeTargetCopy": false,
+  "stages": [
+    {
+      "stage": "metadata",
+      "actualArgv": [
+        "/data1/<USER>/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/<USER>/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "env",
+        "CARGO_TARGET_DIR=/tmp/stock-market-game-validation-2026-10-27-1311109/target",
+        "CARGO_INCREMENTAL=0",
+        "cargo",
+        "metadata",
+        "--format-version",
+        "1",
+        "--no-deps",
+        "--locked"
+      ],
+      "pid": 2341386,
+      "exit": 0,
+      "seconds": 0.10602821898646653
+    },
+    {
+      "stage": "refresh-owned-source-times",
+      "actualArgv": [
+        "/data1/<USER>/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/<USER>/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/home/<USER>/miniconda3/bin/python3",
+        "/data1/<USER>/workplace/stock_market_game/.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-red-runner-01/owned-native-source.py",
+        "refresh",
+        "/data1/<USER>/workplace/stock_market_game/.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-red-runner-01/owned-source-times.json",
+        "/data1/<USER>/workplace/stock_market_game/.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-red-runner-01/product-source-manifest.json"
+      ],
+      "pid": 2341526,
+      "exit": 0,
+      "seconds": 0.07054927697754465
+    },
+    {
+      "stage": "feature-build",
+      "actualArgv": [
+        "/data1/<USER>/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/<USER>/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-long-validation.mjs",
+        "295398",
+        "--",
+        "/data1/<USER>/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/<USER>/workplace/stock_market_game/.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-red-runner-01/build-verified.mjs",
+        "/data1/<USER>/workplace/stock_market_game/.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-red-runner-01/feature-plan.json",
+        "native"
+      ],
+      "pid": 2341538,
+      "exit": 0,
+      "seconds": 101.18470931600314
+    },
+    {
+      "stage": "feature-engine-actual-test-list",
+      "actualArgv": [
+        "/data1/<USER>/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/<USER>/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-6ae3f608f3352a4a",
+        "--list",
+        "--format=terse"
+      ],
+      "pid": 2344045,
+      "exit": 0,
+      "seconds": 0.059466161008458585
+    },
+    {
+      "stage": "feature-engine-r4_cash_02_flat_payment_credits_net_and_records_real_withholding",
+      "actualArgv": [
+        "/data1/<USER>/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/<USER>/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/home/<USER>/miniconda3/bin/python3",
+        "/data1/<USER>/workplace/stock_market_game/agents/branch-completion/funds-production-resume-2026-10-27/p1-formal-red-2026-10-28/collect-child-status.py",
+        "/data1/<USER>/workplace/stock_market_game/.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-red-runner-01/feature-engine-r4_cash_02_flat_payment_credits_net_and_records_real_withholding.child-status.json",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-6ae3f608f3352a4a",
+        "session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_02_flat_payment_credits_net_and_records_real_withholding",
+        "--exact",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "pid": 2344061,
+      "exit": 0,
+      "seconds": 0.723609918000875
+    },
+    {
+      "stage": "feature-engine-r4_cash_03_actual_sale_before_payment_collects_personal_tax",
+      "actualArgv": [
+        "/data1/<USER>/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/<USER>/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/home/<USER>/miniconda3/bin/python3",
+        "/data1/<USER>/workplace/stock_market_game/agents/branch-completion/funds-production-resume-2026-10-27/p1-formal-red-2026-10-28/collect-child-status.py",
+        "/data1/<USER>/workplace/stock_market_game/.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-red-runner-01/feature-engine-r4_cash_03_actual_sale_before_payment_collects_personal_tax.child-status.json",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-6ae3f608f3352a4a",
+        "session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_03_actual_sale_before_payment_collects_personal_tax",
+        "--exact",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "pid": 2344062,
+      "exit": 0,
+      "seconds": 0.7248381039826199
+    },
+    {
+      "stage": "feature-engine-r4_cash_01_payable_credits_gross_and_activates_personal_income_once",
+      "actualArgv": [
+        "/data1/<USER>/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/<USER>/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/home/<USER>/miniconda3/bin/python3",
+        "/data1/<USER>/workplace/stock_market_game/agents/branch-completion/funds-production-resume-2026-10-27/p1-formal-red-2026-10-28/collect-child-status.py",
+        "/data1/<USER>/workplace/stock_market_game/.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-red-runner-01/feature-engine-r4_cash_01_payable_credits_gross_and_activates_personal_income_once.child-status.json",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-6ae3f608f3352a4a",
+        "session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_01_payable_credits_gross_and_activates_personal_income_once",
+        "--exact",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "pid": 2344060,
+      "exit": 0,
+      "seconds": 0.7336278089787811
+    }
+  ],
+  "tests": [
+    {
+      "stage": "feature-engine-r4_cash_01_payable_credits_gross_and_activates_personal_income_once",
+      "actualArgv": [
+        "/data1/<USER>/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/<USER>/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/home/<USER>/miniconda3/bin/python3",
+        "/data1/<USER>/workplace/stock_market_game/agents/branch-completion/funds-production-resume-2026-10-27/p1-formal-red-2026-10-28/collect-child-status.py",
+        "/data1/<USER>/workplace/stock_market_game/.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-red-runner-01/feature-engine-r4_cash_01_payable_credits_gross_and_activates_personal_income_once.child-status.json",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-6ae3f608f3352a4a",
+        "session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_01_payable_credits_gross_and_activates_personal_income_once",
+        "--exact",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "pid": 2344060,
+      "exit": 0,
+      "seconds": 0.7336278089787811,
+      "name": "session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_01_payable_credits_gross_and_activates_personal_income_once",
+      "configuration": "feature",
+      "target": "engine",
+      "childStatus": {
+        "pid": 2344097,
+        "parentPid": 2344081,
+        "argv": [
+          "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-6ae3f608f3352a4a",
+          "session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_01_payable_credits_gross_and_activates_personal_income_once",
+          "--exact",
+          "--test-threads=1",
+          "--nocapture"
+        ],
+        "exit": 101,
+        "seconds": 0.6650381899962667
+      },
+      "childStatusError": null,
+      "summary": [
+        [
+          "FAILED",
+          "0",
+          "1",
+          "0"
+        ]
+      ],
+      "businessCaseRed": true,
+      "rawBusinessCaseRed": true,
+      "targetPanicMatched": true,
+      "group": "R4_cash_payment",
+      "expectedTarget": {
+        "name": "session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_01_payable_credits_gross_and_activates_personal_income_once",
+        "requiredPanicMarker": "R4 付款日必须真实增加持有人现金，不能只保持 Registered",
+        "sourcePath": "packages/engine/src/session/ordinary_tax_day_end/payment_runtime_tests.rs",
+        "requiredExpectedDeltaCents": 200,
+        "expectedActualDeltaCents": 0,
+        "expected": "red",
+        "requiredEarliestPanic": "R4 付款日必须真实增加持有人现金，不能只保持 Registered",
+        "panicChannel": "stderr",
+        "target": "engine",
+        "requiresEmptyStderr": false,
+        "group": "R4_cash_payment",
+        "requiredError": null
+      },
+      "binarySha256": "9f4e62be97a3e09132da73f320e66aa004447eb914e5934a949a46e179067dc5",
+      "exactPassed": false,
+      "expectedMatched": true,
+      "stdoutSha256": "7a47db00e670fea473683a002761e31dc5aaacdefb3bb80beb2f6026498e8162",
+      "stderrSha256": "3c2a335c2aad7e8a1e61530c658d511b050fcbd40b510991e0e7c63cadfec1b2"
+    },
+    {
+      "stage": "feature-engine-r4_cash_02_flat_payment_credits_net_and_records_real_withholding",
+      "actualArgv": [
+        "/data1/<USER>/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/<USER>/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/home/<USER>/miniconda3/bin/python3",
+        "/data1/<USER>/workplace/stock_market_game/agents/branch-completion/funds-production-resume-2026-10-27/p1-formal-red-2026-10-28/collect-child-status.py",
+        "/data1/<USER>/workplace/stock_market_game/.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-red-runner-01/feature-engine-r4_cash_02_flat_payment_credits_net_and_records_real_withholding.child-status.json",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-6ae3f608f3352a4a",
+        "session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_02_flat_payment_credits_net_and_records_real_withholding",
+        "--exact",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "pid": 2344061,
+      "exit": 0,
+      "seconds": 0.723609918000875,
+      "name": "session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_02_flat_payment_credits_net_and_records_real_withholding",
+      "configuration": "feature",
+      "target": "engine",
+      "childStatus": {
+        "pid": 2344096,
+        "parentPid": 2344082,
+        "argv": [
+          "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-6ae3f608f3352a4a",
+          "session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_02_flat_payment_credits_net_and_records_real_withholding",
+          "--exact",
+          "--test-threads=1",
+          "--nocapture"
+        ],
+        "exit": 101,
+        "seconds": 0.6554728659975808
+      },
+      "childStatusError": null,
+      "summary": [
+        [
+          "FAILED",
+          "0",
+          "1",
+          "0"
+        ]
+      ],
+      "businessCaseRed": true,
+      "rawBusinessCaseRed": true,
+      "targetPanicMatched": true,
+      "group": "R4_cash_payment",
+      "expectedTarget": {
+        "name": "session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_02_flat_payment_credits_net_and_records_real_withholding",
+        "requiredPanicMarker": "R4 简税付款必须在真实账户留下税后净额",
+        "sourcePath": "packages/engine/src/session/ordinary_tax_day_end/payment_runtime_tests.rs",
+        "requiredExpectedDeltaCents": 180,
+        "expectedActualDeltaCents": 0,
+        "expected": "red",
+        "requiredEarliestPanic": "R4 简税付款必须在真实账户留下税后净额",
+        "panicChannel": "stderr",
+        "target": "engine",
+        "requiresEmptyStderr": false,
+        "group": "R4_cash_payment",
+        "requiredError": null
+      },
+      "binarySha256": "9f4e62be97a3e09132da73f320e66aa004447eb914e5934a949a46e179067dc5",
+      "exactPassed": false,
+      "expectedMatched": true,
+      "stdoutSha256": "ac22eb0d455aa100c358780b16961358316f6af28e9770ca6690f494d83a9df3",
+      "stderrSha256": "5d08a00ffd54138962b2a89895ffcc4e04383ebd20022aac9cbd646990a27337"
+    },
+    {
+      "stage": "feature-engine-r4_cash_03_actual_sale_before_payment_collects_personal_tax",
+      "actualArgv": [
+        "/data1/<USER>/workplace/stock_market_game/.tmp/node24-env/node",
+        "/data1/<USER>/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "/home/<USER>/miniconda3/bin/python3",
+        "/data1/<USER>/workplace/stock_market_game/agents/branch-completion/funds-production-resume-2026-10-27/p1-formal-red-2026-10-28/collect-child-status.py",
+        "/data1/<USER>/workplace/stock_market_game/.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-red-runner-01/feature-engine-r4_cash_03_actual_sale_before_payment_collects_personal_tax.child-status.json",
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-6ae3f608f3352a4a",
+        "session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_03_actual_sale_before_payment_collects_personal_tax",
+        "--exact",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "pid": 2344062,
+      "exit": 0,
+      "seconds": 0.7248381039826199,
+      "name": "session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_03_actual_sale_before_payment_collects_personal_tax",
+      "configuration": "feature",
+      "target": "engine",
+      "childStatus": {
+        "pid": 2344098,
+        "parentPid": 2344087,
+        "argv": [
+          "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-6ae3f608f3352a4a",
+          "session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_03_actual_sale_before_payment_collects_personal_tax",
+          "--exact",
+          "--test-threads=1",
+          "--nocapture"
+        ],
+        "exit": 101,
+        "seconds": 0.6531895910156891
+      },
+      "childStatusError": null,
+      "summary": [
+        [
+          "FAILED",
+          "0",
+          "1",
+          "0"
+        ]
+      ],
+      "businessCaseRed": true,
+      "rawBusinessCaseRed": true,
+      "targetPanicMatched": true,
+      "group": "R4_cash_payment",
+      "expectedTarget": {
+        "name": "session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_03_actual_sale_before_payment_collects_personal_tax",
+        "requiredPanicMarker": "R4 真实转让后的付款必须按原登记权益收缴个人税",
+        "sourcePath": "packages/engine/src/session/ordinary_tax_day_end/payment_runtime_tests.rs",
+        "requiredExpectedDeltaCents": 180,
+        "expectedActualDeltaCents": 0,
+        "expected": "red",
+        "requiredEarliestPanic": "R4 真实转让后的付款必须按原登记权益收缴个人税",
+        "panicChannel": "stderr",
+        "target": "engine",
+        "requiresEmptyStderr": false,
+        "group": "R4_cash_payment",
+        "requiredError": null
+      },
+      "binarySha256": "9f4e62be97a3e09132da73f320e66aa004447eb914e5934a949a46e179067dc5",
+      "exactPassed": false,
+      "expectedMatched": true,
+      "stdoutSha256": "c81c29b26cd39c5a28e1fc7c6d3ba0a0cfaff5ebf382b444c4b527ddf9b08aa0",
+      "stderrSha256": "e62668eb795f6fb88462cbb313357c316854669c2097b1f801991c4e51316280"
+    }
+  ],
+  "artifacts": [
+    {
+      "configuration": "feature",
+      "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-6ae3f608f3352a4a",
+      "sha256": "9f4e62be97a3e09132da73f320e66aa004447eb914e5934a949a46e179067dc5",
+      "bytes": 740796328,
+      "fresh": false,
+      "target": "engine",
+      "targetKind": [
+        "rlib"
+      ],
+      "testProfile": true,
+      "features": [
+        "simulation-diagnostics",
+        "verification-harness"
+      ],
+      "actualPlanSha256": "df46e98f607388bee16a2128bbf4bf9223c5e42ac68ba650e0a342b4aa2a275b",
+      "cargoArtifact": {
+        "reason": "compiler-artifact",
+        "package_id": "path+file:///data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28/packages/engine#0.1.0",
+        "manifest_path": "/data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28/packages/engine/Cargo.toml",
+        "target": {
+          "kind": [
+            "rlib"
+          ],
+          "crate_types": [
+            "rlib"
+          ],
+          "name": "engine",
+          "src_path": "/data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28/packages/engine/src/lib.rs",
+          "edition": "2021",
+          "doc": true,
+          "doctest": true,
+          "test": true
+        },
+        "profile": {
+          "opt_level": "0",
+          "debuginfo": 2,
+          "debug_assertions": true,
+          "overflow_checks": true,
+          "test": true
+        },
+        "features": [
+          "simulation-diagnostics",
+          "verification-harness"
+        ],
+        "filenames": [
+          "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-6ae3f608f3352a4a"
+        ],
+        "executable": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-6ae3f608f3352a4a",
+        "fresh": false
+      },
+      "executionBinding": {
+        "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-6ae3f608f3352a4a",
+        "sha256": "9f4e62be97a3e09132da73f320e66aa004447eb914e5934a949a46e179067dc5",
+        "dev": 36,
+        "inode": 173830,
+        "bytes": 740796328,
+        "mtimeNs": 1793274015832992310,
+        "scope": "仅本批直接执行，跨批无复用需求，不新增大seal"
+      }
+    }
+  ],
+  "persistence": "单一RAMtarget与封存单件均非持久；root统一保留",
+  "historicalInventoryScope": "其余历史只继承不可变前槽snapshot小SHA/map，as-of前槽；本批未逐stat/hash，未来实际使用时再核",
+  "frontInventory": "/data1/<USER>/workplace/stock_market_game/.worktree/runtime-sync-policy-2026-10-29/agents/perf-intraday-independent/resume-2026-10-29/first-red-r2/actual-cleanup-addendum.json",
+  "frontInventorySha256": "898c1257cb3f0f0e32ad4be239624c8ee3f3dec7ff2f71b50eef356f740b7e27",
+  "artifactArchiveMaps": [],
+  "candidate": "347e84f4ae371defd6b83de25888080bfbe9d311",
+  "candidateTree": "d499de72d0e57e2f4781d0a563d4fa547f8f2162",
+  "before": {
+    "outputAvailableBytes": 35427749888,
+    "sourceAvailableBytes": 369595076608,
+    "tmpUserQuota": {
+      "uid": 1005,
+      "limitBytes": 106276195328,
+      "usedBytes": 97201221632,
+      "availableBytes": 9074973696,
+      "currentInodes": 16619,
+      "hardInodeLimit": 0,
+      "source": "只读 Linux x86_64 syscall443 quotactl_fd Q_GETQUOTA，不更改配额"
+    }
+  },
+  "metadata": {
+    "sha256": "28f66d0d247c27096c9548e1ccd17d9e2f76458b88874db2bd16dd54d8fb877f",
+    "manifests": [
+      "apps/desktop/src-tauri/Cargo.toml",
+      "apps/server/Cargo.toml",
+      "apps/web-wasm/Cargo.toml",
+      "packages/engine-gpu/Cargo.toml",
+      "packages/engine/Cargo.toml",
+      "packages/native-store/Cargo.toml",
+      "packages/std-thread-proto/Cargo.toml"
+    ],
+    "workspaceMembers": [
+      "path+file:///data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28/packages/engine#0.1.0",
+      "path+file:///data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28/packages/engine-gpu#0.1.0",
+      "path+file:///data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28/apps/web-wasm#0.1.0",
+      "path+file:///data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28/apps/server#0.1.0",
+      "path+file:///data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28/packages/native-store#0.1.0",
+      "path+file:///data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28/apps/desktop/src-tauri#stock-market-game@0.1.0",
+      "path+file:///data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28/packages/std-thread-proto#0.1.0"
+    ],
+    "workspaceDefaultMembers": [
+      "path+file:///data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28/packages/engine#0.1.0",
+      "path+file:///data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28/packages/engine-gpu#0.1.0",
+      "path+file:///data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28/apps/web-wasm#0.1.0",
+      "path+file:///data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28/apps/server#0.1.0",
+      "path+file:///data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28/packages/native-store#0.1.0",
+      "path+file:///data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28/apps/desktop/src-tauri#stock-market-game@0.1.0",
+      "path+file:///data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28/packages/std-thread-proto#0.1.0"
+    ]
+  },
+  "protectedPriors": [],
+  "webSourceUnchanged": true,
+  "sourceCount": 1165,
+  "sourceUnchanged": true,
+  "status": "付款三门指定目标业务红，待root核验；不是生产实现或整树验收",
+  "samplingErrors": [],
+  "ownedTerminationCommand": [
+    "/data1/<USER>/workplace/stock_market_game/.tmp/node24-env/node",
+    "/data1/<USER>/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+    "10000",
+    "--",
+    "/data1/<USER>/workplace/stock_market_game/.tmp/node24-env/node",
+    "/data1/<USER>/workplace/stock_market_game/.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-red-runner-01/terminate-owned.mjs",
+    "/data1/<USER>/workplace/stock_market_game/.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-red-runner-01/observed-owned-before-cleanup.json",
+    "/data1/<USER>/workplace/stock_market_game/.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-red-runner-01/owned-termination.json",
+    "1793274213946"
+  ],
+  "ownedTerminationExit": 0,
+  "scratchCleanup": {
+    "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/engine-r4-payment-red-2026-10-29-01/scratch",
+    "ownedByThisBatch": true,
+    "terminationConfirmed": true,
+    "removed": false,
+    "seconds": 0.07357146398862824
+  },
+  "observedOwnedProcesses": [
+    {
+      "pid": 2341386,
+      "ppid": 2341352,
+      "state": "S",
+      "birth": "21351573",
+      "cpuTicks": 2,
+      "threads": 11
+    },
+    {
+      "pid": 2341526,
+      "ppid": 2341352,
+      "state": "R",
+      "birth": "21351584",
+      "cpuTicks": 0,
+      "threads": 1
+    },
+    {
+      "pid": 2341538,
+      "ppid": 2341352,
+      "state": "S",
+      "birth": "21351591",
+      "cpuTicks": 3,
+      "threads": 11
+    },
+    {
+      "pid": 2341545,
+      "ppid": 2341538,
+      "state": "S",
+      "birth": "21351594",
+      "cpuTicks": 3,
+      "threads": 7
+    },
+    {
+      "pid": 2341558,
+      "ppid": 2341545,
+      "state": "R",
+      "birth": "21351604",
+      "cpuTicks": 811,
+      "threads": 11
+    },
+    {
+      "pid": 2341566,
+      "ppid": 2341558,
+      "state": "S",
+      "birth": "21351618",
+      "cpuTicks": 30,
+      "threads": 3
+    },
+    {
+      "pid": 2341707,
+      "ppid": 2341566,
+      "state": "S",
+      "birth": "21351665",
+      "cpuTicks": 18839,
+      "threads": 4
+    },
+    {
+      "pid": 2343988,
+      "ppid": 2341707,
+      "state": "S",
+      "birth": "21361439",
+      "cpuTicks": 11,
+      "threads": 1
+    },
+    {
+      "pid": 2343995,
+      "ppid": 2343988,
+      "state": "S",
+      "birth": "21361451",
+      "cpuTicks": 0,
+      "threads": 1
+    },
+    {
+      "pid": 2343996,
+      "ppid": 2343995,
+      "state": "S",
+      "birth": "21361451",
+      "cpuTicks": 554,
+      "threads": 17
+    },
+    {
+      "pid": 2344045,
+      "ppid": 2341352,
+      "state": "R",
+      "birth": "21361766",
+      "cpuTicks": 0,
+      "threads": 1
+    },
+    {
+      "pid": 2344060,
+      "ppid": 2341352,
+      "state": "S",
+      "birth": "21361772",
+      "cpuTicks": 3,
+      "threads": 11
+    },
+    {
+      "pid": 2344061,
+      "ppid": 2341352,
+      "state": "S",
+      "birth": "21361773",
+      "cpuTicks": 2,
+      "threads": 11
+    },
+    {
+      "pid": 2344062,
+      "ppid": 2341352,
+      "state": "S",
+      "birth": "21361773",
+      "cpuTicks": 3,
+      "threads": 11
+    },
+    {
+      "pid": 2344081,
+      "ppid": 2344060,
+      "state": "S",
+      "birth": "21361775",
+      "cpuTicks": 2,
+      "threads": 1
+    },
+    {
+      "pid": 2344082,
+      "ppid": 2344061,
+      "state": "S",
+      "birth": "21361776",
+      "cpuTicks": 2,
+      "threads": 1
+    },
+    {
+      "pid": 2344087,
+      "ppid": 2344062,
+      "state": "S",
+      "birth": "21361776",
+      "cpuTicks": 1,
+      "threads": 1
+    },
+    {
+      "pid": 2344096,
+      "ppid": 2344082,
+      "state": "S",
+      "birth": "21361778",
+      "cpuTicks": 35,
+      "threads": 2
+    },
+    {
+      "pid": 2344097,
+      "ppid": 2344081,
+      "state": "S",
+      "birth": "21361778",
+      "cpuTicks": 36,
+      "threads": 2
+    },
+    {
+      "pid": 2344098,
+      "ppid": 2344087,
+      "state": "S",
+      "birth": "21361778",
+      "cpuTicks": 36,
+      "threads": 2
+    }
+  ],
+  "ownedAlive": [],
+  "after": {
+    "outputAvailableBytes": 35428196352,
+    "sourceAvailableBytes": 369593270272,
+    "tmpUserQuota": {
+      "uid": 1005,
+      "limitBytes": 106276195328,
+      "usedBytes": 97200775168,
+      "availableBytes": 9075420160,
+      "currentInodes": 16621,
+      "hardInodeLimit": 0,
+      "source": "只读 Linux x86_64 syscall443 quotactl_fd Q_GETQUOTA，不更改配额"
+    }
+  },
+  "wallSecondsIncludingCleanup": 103.94103735001408
+}

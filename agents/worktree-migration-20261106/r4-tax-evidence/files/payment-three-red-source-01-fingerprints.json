@@ -1,0 +1,18 @@
+{
+  "status": "TESTS_ONLY_PENDING_INDEPENDENT_SOURCE_REVIEW_AND_ACTUAL_RED",
+  "baseHead": "4ad5a291acd6cc72e2981de2b66115b9b1abc715",
+  "paths": [
+    {
+      "path": "packages/engine/src/session/ordinary_tax_day_end.rs",
+      "sha256": "ecad092789c498c068db42d4beee126b27a54704ec5571d22801c514aa6b45a1"
+    },
+    {
+      "path": "packages/engine/src/session/ordinary_tax_day_end/payment_runtime_tests.rs",
+      "sha256": "81a21a6d8a9fbf2dbc6e062fa76f27010c5a60c578a9142f9e4f610deae34bca"
+    }
+  ],
+  "patchSha256": "e584d4c089767b5bf0695e67a77637b62f02d92953ce8036b6334802286a0385",
+  "ordinaryCaseDeadlineMs": 10000,
+  "cargoExecutedByThisWriter": false,
+  "productionImplemented": false
+}

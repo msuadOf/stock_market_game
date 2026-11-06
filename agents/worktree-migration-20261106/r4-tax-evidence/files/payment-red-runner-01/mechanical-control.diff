@@ -1,0 +1,219 @@
+--- green50/run-ram-batch.py
++++ payment3/run-ram-batch.py
+@@ -1,4 +1,4 @@
+-# A/B 与 M2 必要先红：同一 feature 图四个真实强 exact，按两组独立判据采集。
++# R4 付款三门目标红：单一 engine feature 图，三 exact 并发采集。
+ from pathlib import Path
+ import ast, concurrent.futures, hashlib, json, os, re, runpy, shutil, stat, subprocess, sys, threading, time
+ 
+@@ -6,7 +6,7 @@
+ here = Path(__file__).resolve().parent
+ work = root / '.worktree/d3-p1-integration-2026-10-28'
+ out = here
+-owner = Path('/tmp/stock-market-game-validation-2026-10-27-1311109/engine-joint-green50-2026-10-29-02')
++owner = Path('/tmp/stock-market-game-validation-2026-10-27-1311109/engine-r4-payment-red-2026-10-29-01')
+ target = owner.parent / 'target'
+ guard = root / '.worktree/runtime-sync-e1/agents/perf-intraday-independent/implementation/e2/day-end-full-source-tmpfs-batch-r2/run-build-guard-tmpfs.mjs'
+ helper = root / '.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs'
+@@ -140,14 +140,14 @@
+     contract = json.loads((here / 'expected-red-contracts.json').read_text())
+     contracts = {case['name']: {**case, 'group': group['group'], 'requiredError': group.get('requiredError')}
+                  for group in contract['groupedCases'] for case in group['cases']}
+-    if len(contracts) != 50:
+-        raise RuntimeError('四个独立目标契约不完整')
++    if len(contracts) != 3:
++        raise RuntimeError('付款三门目标契约不完整')
+     if sorted(contracts) != sorted(case for batch in cases['batches'] for target in batch['targets'] for case in target['cases']):
+-        raise RuntimeError('四个实际选定 exact 必须逐项对应分组目标契约')
++        raise RuntimeError('三个实际选定 exact 必须逐项对应目标契约')
+     if cases['buildOrder'] != ['feature'] or [row['name'] for row in cases['batches']] != ['feature']:
+         raise RuntimeError('只允许一个feature构建图')
+-    if [[(target['name'], len(target['cases'])) for target in batch['targets']] for batch in cases['batches']] != [[('engine', 44), ('company_r4_tax_production', 5), ('runtime_diagnostics_d1', 1)]]:
+-        raise RuntimeError('同一feature的A/B2+M2两case最少四选集非法')
++    if [[(target['name'], len(target['cases'])) for target in batch['targets']] for batch in cases['batches']] != [[('engine', 3)]]:
++        raise RuntimeError('付款三门必须仅从单一engine lib图执行')
+     if git('rev-parse', 'HEAD') != template['candidate'] or git('rev-parse', 'HEAD^{tree}') != template['candidateTree'] or git('status', '--porcelain=v1') != template['candidateStatus']:
+         raise RuntimeError('候选HEAD/tree/clean冻结不符')
+     receipt['candidate'] = template['candidate']
+@@ -167,7 +167,7 @@
+     me = identity(os.getpid())
+     write_json(out / 'exclusive-owner-claim.json', {'wrapperPid': os.getppid(), 'pythonPid': os.getpid(), 'pythonBirthTicks': me['birth'], 'owner': str(owner), 'scratch': str(owner / 'scratch')})
+     (owner / 'scratch').mkdir()
+-    sampler = threading.Thread(target=sampling_loop, name='engine-green50-resource-sampler', daemon=True)
++    sampler = threading.Thread(target=sampling_loop, name='engine-payment-red-resource-sampler', daemon=True)
+     sampler.start()
+     metadata = run_logged('metadata', ['env', 'CARGO_TARGET_DIR=' + str(target), 'CARGO_INCREMENTAL=0',
+         'cargo', 'metadata', '--format-version', '1', '--no-deps', '--locked'])
+@@ -204,7 +204,7 @@
+         if [m for m in messages if m.get('reason') == 'build-finished'] != [{'reason': 'build-finished', 'success': True}]:
+             raise RuntimeError(name + ' Cargo未唯一成功完成')
+         for message in messages:
+-            if message.get('reason') != 'compiler-artifact' or message['target']['name'] not in ['engine', 'company_r4_tax_production', 'runtime_diagnostics_d1']:
++            if message.get('reason') != 'compiler-artifact' or message['target']['name'] != 'engine':
+                 continue
+             target_name = message['target']['name']
+             expected_src = work / ('packages/engine/src/lib.rs' if target_name == 'engine' else 'packages/engine/tests/' + target_name + '.rs')
+@@ -214,7 +214,7 @@
+                 raise RuntimeError('必须本候选src/fresh:false/debug2实际制品')
+             if message.get('executable') and message['profile']['test'] is True:
+                 actual = Path(message['executable'])
+-                if message['target']['kind'] != (['rlib'] if target_name == 'engine' else ['test']) or not actual.is_relative_to(target):
++                if message['target']['kind'] != ['rlib'] or not actual.is_relative_to(target):
+                     raise RuntimeError('实际unit targetKind或唯一target路径不等冻结')
+                 artifacts.append({'configuration': name, 'path': str(actual), 'sha256': sha(actual), 'bytes': actual.stat().st_size,
+                     'fresh': message['fresh'], 'target': target_name, 'targetKind': message['target']['kind'], 'testProfile': True,
+@@ -223,7 +223,7 @@
+                 receipt.setdefault('normalArtifacts', []).append(message)
+             else:
+                 raise RuntimeError('出现未声明的engine artifact类别')
+-        if sorted(a['target'] for a in artifacts) != sorted(t['name'] for t in batch['targets']):
++        if sorted(a['target'] for a in artifacts) != ['engine']:
+             raise RuntimeError('必须精确匹配唯一feature unit制品')
+         for message in receipt.get('normalArtifacts', []):
+             for filename in message['filenames']:
+@@ -248,7 +248,7 @@
+             full_name, artifact = item
+             label = name + '-' + artifact['target'] + '-' + full_name.split('::')[-1]
+             status_path = out / (label + '.child-status.json')
+-            case_flags = ['--exact', '--test-threads=1'] + ([] if contracts[full_name].get('panicChannel') == 'stdout' else ['--nocapture'])
++            case_flags = ['--exact', '--test-threads=1', '--nocapture']
+             child_argv = [sys.executable, collector, status_path, artifact['path'], full_name, *case_flags]
+             if contracts[full_name].get('environment'):
+                 child_argv = ['env', *[key + '=' + value for key, value in contracts[full_name]['environment'].items()], *child_argv]
+@@ -273,9 +273,6 @@
+             panic_text = stdout if expected.get('panicChannel') == 'stdout' else stderr
+             panic_headers = re.findall(r"panicked at ([^:\n]+):(\d+):(\d+):", panic_text)
+             target_panic = len(panic_headers) == 1 and panic_headers[0][0] == expected['sourcePath'] and expected['requiredEarliestPanic'] in panic_text and all(marker in panic_text for marker in expected.get('requiredAdditionalMarkers', []))
+-            required_error = expected['requiredError']
+-            if required_error is not None:
+-                target_panic = target_panic and ('location: "' + required_error['location'] + '"') in stderr and required_error['descriptionContains'] in stderr
+             if expected.get('requiresEmptyStderr'):
+                 target_panic = target_panic and not stderr
+             business_red = raw_business_red and target_panic
+@@ -290,13 +287,10 @@
+             if status_error is not None or not (passed or raw_business_red):
+                 raise RuntimeError('case执行证据或基础设施失败，停止后续配置：' + json.dumps(row, ensure_ascii=False))
+             return row
+-        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
++        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+             receipt['tests'].extend(pool.map(run_case, cases_to_run))
+-        # 任何未通过的 case 均保留失败原件；本批不接受预期红。
+-        receipt.setdefault('testFailures', []).extend(
+-            {'name': row['name'], 'configuration': row['configuration'], 'target': row['target'], 'childStatus': row['childStatus']}
+-            for row in receipt['tests'] if row['configuration'] == name and not row['exactPassed']
+-        )
++        if any(not row['businessCaseRed'] or not row['expectedMatched'] for row in receipt['tests'] if row['configuration'] == name):
++            raise RuntimeError('付款三门必须全部由指定源码marker与唯一目标panic构成businessCaseRed')
+     after = fingerprint(template['productSources'])
+     web_after = fingerprint(template['webProductSources'])
+     write_json(out / 'web-source-after.json', web_after)
+@@ -314,11 +308,10 @@
+     for artifact in receipt['artifacts']:
+         if sha(artifact['path']) != artifact['sha256']:
+             raise RuntimeError('本批实际产物被意外覆盖')
+-    if len(receipt['tests']) != 50 or not all(row['exactPassed'] for row in receipt['tests']):
+-        raise RuntimeError('50个必要绿门未全部取得预期结果；保留各case原件，不将fixture或提前错误当业务首红')
++    if len(receipt['tests']) != 3 or not all(row['businessCaseRed'] and row['expectedMatched'] for row in receipt['tests']):
++        raise RuntimeError('付款三门须全部取得指定目标业务红；fixture、编译或超时错误不算目标红')
+     remain_ms()
+-    receipt['groupCounts'] = {group['group']: {'total': len(group['cases']), 'targetRed': sum(row['businessCaseRed'] for row in receipt['tests'] if row['group'] == group['group']), 'green': sum(row['exactPassed'] for row in receipt['tests'] if row['group'] == group['group'])} for group in contract['groupedCases']}
+-    receipt['status'] = '必要50门实际全绿，待未实施者独立复核；非整树验收'
++    receipt['status'] = '付款三门指定目标业务红，待root核验；不是生产实现或整树验收'
+ 
+ except BaseException as error:
+     receipt['status'] = '失败'
+--- green50/cleanup-supervisor.mjs
++++ payment3/cleanup-supervisor.mjs
+@@ -12,7 +12,7 @@
+     || parentArgv[2] !== String(anchor + 300000) || Date.now() < anchor || Date.now() >= anchor + 296000) {
+   throw new Error('必须由同一原始300秒绝对监督启动');
+ }
+-const owner = '/tmp/stock-market-game-validation-2026-10-27-1311109/engine-joint-green50-2026-10-29-02';
++const owner = '/tmp/stock-market-game-validation-2026-10-27-1311109/engine-r4-payment-red-2026-10-29-01';
+ const scratch = path.join(owner, 'scratch');
+ const receiptHandle = await fs.open(path.join(directory, 'supervisor-receipt.json'), 'wx');
+ const receipt = { actualArgv: process.argv, parentArgv, anchorUnixMs: anchor, workDeadlineUnixMs: anchor + 296000,
+--- green50/owned-native-source.py
++++ payment3/owned-native-source.py
+@@ -8,7 +8,7 @@
+ 
+ ROOT = Path('/data1/<USER>/workplace/stock_market_game')
+ WORK = ROOT / '.worktree/d3-p1-integration-2026-10-28'
+-OWNER = Path('/tmp/stock-market-game-validation-2026-10-27-1311109/engine-joint-green50-2026-10-29-02')
++OWNER = Path('/tmp/stock-market-game-validation-2026-10-27-1311109/engine-r4-payment-red-2026-10-29-01')
+ TARGET = OWNER.parent / 'target'
+ SOURCE = 'packages/engine/src/lib.rs'
+ 
+--- green50/freeze-current.py
++++ payment3/freeze-current.py
+@@ -1,9 +1,15 @@
+ from pathlib import Path
+ import concurrent.futures,hashlib,json,subprocess,ast
+ root=Path('/data1/<USER>/workplace/stock_market_game');work=Path.cwd();here=Path(__file__).resolve().parent
+-old=here.with_name('joint-red-r2-2026-10-29');helper=root/'.worktree/main-merge-2026-10-25'
++old=Path('/data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28/agents/branch-completion/joint-green50-r2-2026-10-29');helper=root/'.worktree/main-merge-2026-10-25'
++if work != Path('/data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28'):
++ raise RuntimeError('freeze-current.py仅允许在固定integration工作树cwd执行')
++receiver=json.loads((root/'.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-three-red-source-01-fingerprints.json').read_text())
+ def sha(p):
+  with Path(p).open('rb') as f:return hashlib.file_digest(f,'sha256').hexdigest()
++for row in receiver['paths']:
++ if sha(work/row['path']) != row['sha256']:
++  raise RuntimeError('接收树付款tests-only source SHA未达到付款freeze：'+row['path'])
+ def put(name,x):(here/name).write_text(json.dumps(x,ensure_ascii=False,indent=2)+'\n')
+ def git(*args):return subprocess.check_output(['git','-C',str(work),*args],text=True).strip()
+ files=git('ls-files', '--cached', '--others', '--exclude-standard').splitlines()
+@@ -14,12 +20,12 @@
+ with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+  rust=list(pool.map(source,rust_names));web=list(pool.map(source,web_names))
+ put('source-freeze.json',rust);put('source-freeze-web.json',web)
+-plan={**old_plan,'candidate':git('rev-parse','HEAD'),'candidateTree':git('rev-parse','HEAD^{tree}'),'candidateStatus':git('status','--porcelain=v1'),'mainHelperHead':subprocess.check_output(['git','-C',str(helper),'rev-parse','HEAD'],text=True).strip(),'productSources':rust,'webProductSources':web,'launchReadiness':'SOURCE_READY_WAIT_LATEST_FRONT_AND_ROOT_SLOT'}
++plan={**json.loads((here/'plan-template-seed.json').read_text()),'candidate':git('rev-parse','HEAD'),'candidateTree':git('rev-parse','HEAD^{tree}'),'candidateStatus':git('status','--porcelain=v1'),'mainHelperHead':subprocess.check_output(['git','-C',str(helper),'rev-parse','HEAD'],text=True).strip(),'productSources':rust,'webProductSources':web,'launchReadiness':'SOURCE_READY_WAIT_LATEST_FRONT_AND_ROOT_SLOT'}
+ cmd=json.loads((here/'cases-plan.json').read_text())['batches'][0]['command'];plan['command']=cmd;plan['cargoCommand']=cmd
+-plan['environment']['TMPDIR']='/tmp/stock-market-game-validation-2026-10-27-1311109/engine-joint-green50-2026-10-29-02/scratch'
++plan['environment']['TMPDIR']='/tmp/stock-market-game-validation-2026-10-27-1311109/engine-r4-payment-red-2026-10-29-01/scratch'
+ put('snapshot-plan.json',plan)
+ plan['expectedNativeCargoInputs']=json.loads(subprocess.check_output([plan['nodePath'],str(here/'build-verified.mjs'),str(here/'snapshot-plan.json'),'native','--snapshot-only'],text=True,cwd=work))
+-control=[here/n for n in ['run-ram-batch.py','launch-batch.py','absolute-supervisor.mjs','cleanup-supervisor.mjs','subreaper-owner.py','owned-native-source.py','build-verified.mjs','terminate-owned.mjs','cases-plan.json','expected-red-contracts.json','source-freeze.json','source-freeze-web.json','bind-preflight.py']]
++control=[here/n for n in ['run-ram-batch.py','launch-batch.py','absolute-supervisor.mjs','cleanup-supervisor.mjs','subreaper-owner.py','owned-native-source.py','build-verified.mjs','terminate-owned.mjs','cases-plan.json','expected-red-contracts.json','source-freeze.json','source-freeze-web.json','bind-preflight.py','publish-actual-front.py']]
+ control += [Path(plan['nativeGuard']),helper/'scripts/run-with-deadline.mjs',helper/'scripts/run-long-validation.mjs',root/'agents/branch-completion/funds-production-resume-2026-10-27/p1-formal-red-2026-10-28/collect-child-status.py',work/'agents/branch-completion/wasm-w1/combined/fresh_binding.py',work/'agents/branch-completion/wasm-w1/combined/owner.py',work/'agents/branch-completion/wasm-w1/combined/cargo-inputs.mjs']
+ plan['runnerSources']=[{'path':str(p),'sha256':sha(p)} for p in control]
+ put('plan-template.json',plan);put('runner-freeze.json',{'files':plan['runnerSources']+[{'path':str(here/'plan-template.json'),'sha256':sha(here/'plan-template.json')}]})
+--- green50/bind-preflight.py
++++ payment3/bind-preflight.py
+@@ -1,6 +1,6 @@
+ from pathlib import Path
+ import concurrent.futures,hashlib,json,os,runpy,stat,subprocess,sys
+-here=Path(__file__).resolve().parent;work=here.parents[2];root=Path('/data1/<USER>/workplace/stock_market_game');target=Path('/tmp/stock-market-game-validation-2026-10-27-1311109/target')
++here=Path(__file__).resolve().parent;work=Path('/data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28');root=Path('/data1/<USER>/workplace/stock_market_game');target=Path('/tmp/stock-market-game-validation-2026-10-27-1311109/target')
+ if len(sys.argv)!=5:raise RuntimeError('必须具名传root实际前槽front、SHA、session、WAIT chunk，不自动猜最新')
+ front=Path(sys.argv[1]);front_sha=sys.argv[2];session=int(sys.argv[3]);chunk=sys.argv[4]
+ def sha(p):
+@@ -30,7 +30,7 @@
+   try:
+    if (p/'comm').read_text().strip() in ['cargo','rustc','wasm-pack']:raise RuntimeError('有其他实际build，不接唯一窗口')
+   except (FileNotFoundError,ProcessLookupError):pass
+-if (target.parent/'engine-joint-green50-2026-10-29-02').exists() or (here/'batch-receipt.json').exists():raise RuntimeError('已有本批原件，禁止重复launch')
++if (target.parent/'engine-r4-payment-red-2026-10-29-01').exists() or (here/'batch-receipt.json').exists():raise RuntimeError('已有本批原件，禁止重复launch')
+ plan['mainHelperHead']=subprocess.check_output(['git','-C',plan['mainHelperRepository'],'rev-parse','HEAD'],text=True).strip()
+ put('plan-template.json',plan);put('runner-freeze.json',{'files':plan['runnerSources']+[{'path':str(here/'plan-template.json'),'sha256':sha(here/'plan-template.json')}]})
+ put('slot-handoff.json',{'pendingSlotHandoff':False,'rootAuthorized':True,'authority':'root正式唯一后继窗口；全部准入成功才可独立launch','actualWaitReceipt':str(front),'actualWaitReceiptSha256':front_sha,'artifactArchiveMaps':[],'historicalScope':'未读核继承链；只是前槽as-of小摘要，本批无旧制品直接输入','artifacts':priors,'expectedPlanSha256':sha(here/'plan-template.json'),'expectedSourceFreezeSha256':sha(here/'source-freeze.json')})
+--- green50/publish-actual-front.py
++++ payment3/publish-actual-front.py
+@@ -1,6 +1,6 @@
+ from pathlib import Path
+ import hashlib,json,runpy,sys
+-here=Path(__file__).resolve().parent;work=here.parents[2]
++here=Path(__file__).resolve().parent;work=Path('/data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28')
+ if len(sys.argv)!=4:raise RuntimeError('必须以真实工具WAIT传session/exit/chunk，不预写结果')
+ session,exit_code,chunk=int(sys.argv[1]),int(sys.argv[2]),sys.argv[3]
+ b=json.loads((here/'batch-receipt.json').read_text());s=json.loads((here/'supervisor-receipt.json').read_text())
+@@ -26,7 +26,7 @@
+    if comm in ['cargo','rustc','wasm-pack']:cargo.append({'pid':int(p.name),'comm':comm,'argv':argv})
+    if argv in exact_argv:argv_pids.append({'pid':int(p.name),'argv':argv})
+  except (FileNotFoundError,ProcessLookupError):pass
+-counts={'selected':50,'executed':len(b['tests']),'rawBusinessRed':sum(t['rawBusinessCaseRed'] for t in b['tests']),'expectedRed':sum(t['expectedTarget'].get('expected') == 'red' and t['businessCaseRed'] for t in b['tests']),'green':sum(t['exactPassed'] for t in b['tests']),'expectedMatched':sum(t['expectedMatched'] for t in b['tests'])}
++counts={'selected':3,'executed':len(b['tests']),'rawBusinessRed':sum(t['rawBusinessCaseRed'] for t in b['tests']),'expectedRed':sum(t['expectedTarget'].get('expected') == 'red' and t['businessCaseRed'] for t in b['tests']),'green':sum(t['exactPassed'] for t in b['tests']),'expectedMatched':sum(t['expectedMatched'] for t in b['tests'])}
+ x={'classification':b['status'],'actualSessionId':session,'actualWaitExit':exit_code,'actualWaitChunk':chunk,'batchReceipt':str(here/'batch-receipt.json'),'batchReceiptSha256':sha(here/'batch-receipt.json'),'supervisorReceipt':str(here/'supervisor-receipt.json'),'supervisorReceiptSha256':sha(here/'supervisor-receipt.json'),'wallSeconds':b['wallSecondsIncludingCleanup'],'outerWallSeconds':s['wallMs']/1000,'remainingOwnedIdentities':owners,'remainingExactArgvPids':argv_pids,'remainingCargoRustc':cargo,'scratchExists':Path(s['scratch']).exists(),'ownedSourceMtimeRestored':s.get('ownedSourceTimesRestored',False),'current':list(roles.values()),'currentArtifacts':list(roles.values()),'roleArtifacts':roles,'counts':counts,'historicalScope':'没有继承或提升任何历史角色；current只含本批实际接受artifact，未产出则为空','notRehashedAfterWait':True,'quotaAfter':runpy.run_path(str(work/'agents/branch-completion/wasm-w1/combined/fresh_binding.py'))['tmp_user_quota']()}
+ p=here/'actual-wait-cleanup-front.json';p.write_text(json.dumps(x,ensure_ascii=False,indent=2)+'\n')
+ print(json.dumps({'path':str(p),'sha256':sha(p),'counts':counts,'owned':owners,'cargo':cargo,'scratchExists':x['scratchExists']}))

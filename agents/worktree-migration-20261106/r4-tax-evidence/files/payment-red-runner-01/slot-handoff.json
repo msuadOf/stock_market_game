@@ -1,0 +1,12 @@
+{
+  "pendingSlotHandoff": false,
+  "rootAuthorized": true,
+  "authority": "root正式唯一后继窗口；全部准入成功才可独立launch",
+  "actualWaitReceipt": "/data1/<USER>/workplace/stock_market_game/.worktree/runtime-sync-policy-2026-10-29/agents/perf-intraday-independent/resume-2026-10-29/first-red-r2/actual-cleanup-addendum.json",
+  "actualWaitReceiptSha256": "898c1257cb3f0f0e32ad4be239624c8ee3f3dec7ff2f71b50eef356f740b7e27",
+  "artifactArchiveMaps": [],
+  "historicalScope": "未读核继承链；只是前槽as-of小摘要，本批无旧制品直接输入",
+  "artifacts": [],
+  "expectedPlanSha256": "70a6ad61b2872217b48e7627c9778a62310aafb2926bae96ff24b0b1ee810ff3",
+  "expectedSourceFreezeSha256": "c5ed08034bb80fa983e559c29a65b075f43ed421f8143b6ccc8ff92f8b1bb351"
+}

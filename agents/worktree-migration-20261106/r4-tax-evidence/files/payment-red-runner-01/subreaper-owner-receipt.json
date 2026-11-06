@@ -1,0 +1,24 @@
+{
+  "ownerPid": 2341351,
+  "success": true,
+  "status": 0,
+  "clean": true,
+  "echild": true,
+  "error": null,
+  "signals": [],
+  "executionDeadlineNs": 213811312596042,
+  "deadlineNs": 213812112596042,
+  "audit": [
+    {
+      "type": "spawn",
+      "pid": 2341352,
+      "ownerPgid": 2341336
+    },
+    {
+      "type": "echild",
+      "atNs": 213619425975381
+    }
+  ],
+  "supervisorPid": 2341336,
+  "completedAtUnixMs": 1793274019359
+}

@@ -1,0 +1,13 @@
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2030, month: 6, day: 3 }, second_of_day: 54000 } cadence=Monthly
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2030, month: 6, day: 3 }, second_of_day: 54000 } cadence=EveryDays { days: 1 }
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2030, month: 6, day: 3 }, second_of_day: 64800 } cadence=EveryDays { days: 4 }
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2030, month: 6, day: 3 }, second_of_day: 64800 } cadence=Monthly
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2030, month: 6, day: 3 }, second_of_day: 64800 } cadence=EveryDays { days: 7 }
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2030, month: 6, day: 3 }, second_of_day: 64800 } cadence=Monthly
+PROBE info-check now=CivilInstant { date: CivilDate { year: 2030, month: 6, day: 4 }, second_of_day: 64800 } cadence=EveryDays { days: 1 }
+
+thread 'session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_03_actual_sale_before_payment_collects_personal_tax' (2344101) panicked at packages/engine/src/session/ordinary_tax_day_end/payment_runtime_tests.rs:429:5:
+assertion `left == right` failed: R4 真实转让后的付款必须按原登记权益收缴个人税
+  left: 0
+ right: 180
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

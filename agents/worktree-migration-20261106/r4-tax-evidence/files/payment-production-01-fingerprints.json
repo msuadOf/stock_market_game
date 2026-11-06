@@ -1,0 +1,52 @@
+{
+  "baseHead": "779a7f913255b3e090c94d4f1a655a28c3913c14",
+  "status": "SOURCE_CANDIDATE_PENDING_INDEPENDENT_REVIEW_AND_ACTUAL_GREEN",
+  "files": [
+    {
+      "path": "docs/trading-rules.md",
+      "sha256": "6b7186af9125453b08d5dc995eea695b7746b7f7aab82889be6f1e26bf69e47e"
+    },
+    {
+      "path": "packages/engine/src/runtime/drive/administrative_mirror.rs",
+      "sha256": "7dfde33e585c50c1929cca67e23ec92e0bf25b7a3c44370c1ac0680f189942d9"
+    },
+    {
+      "path": "packages/engine/src/runtime/world/admin_transaction/stages.rs",
+      "sha256": "de102db5f433c9dae550454fde849aaa5b0663e2213be6abcce1574ac05b23a9"
+    },
+    {
+      "path": "packages/engine/src/session.rs",
+      "sha256": "d66da63e895c1d6fb2ab809d41752ab9f602f909750997f467e9ec7d78d864fd"
+    },
+    {
+      "path": "packages/engine/src/session/administrative_mirror.rs",
+      "sha256": "2cf1d9699f58e5688296d5f9cec5f608e2b84bf470ee03a2df3f8d5cab07eb0d"
+    },
+    {
+      "path": "packages/engine/src/session/civil_information.rs",
+      "sha256": "0835febf9cfbc293b4660459c8b4af54dc6d582892baf1f008590f1b74a27c84"
+    },
+    {
+      "path": "packages/engine/src/session/corporate_actions/distributions_day_end.rs",
+      "sha256": "7d830fe6205867f0949141d391671b2650bd96c0462a96719dcf4444fcd409bc"
+    },
+    {
+      "path": "packages/engine/src/session/ordinary_tax_day_end/payment_runtime_tests.rs",
+      "sha256": "893099decc4694d56759295d415af454b590634ff6e94b73d38f7540c8af62e9"
+    },
+    {
+      "path": "packages/engine/src/session/civil_cash_distributions.rs",
+      "sha256": "d75d98519d4786c42127fb634a4f5f0f572785696eed4e889ff661f08114dec3"
+    }
+  ],
+  "patchSha256": "7ba75eee75edc4c63786588efa15faeb368440200f84eb3cda5b5e365bd2a91d",
+  "actualRed": {
+    "session": 57906,
+    "waitExit": 0,
+    "waitChunk": "60f4e3",
+    "frontSha256": "29c5308a9ca6c3c89072947fd39477ff118bb858a8bce8ea37b641ccb46c580b"
+  },
+  "cargoExecutedByWriter": false,
+  "newCase04": "implementation-following regression，不列为历史first-red",
+  "integrationSeam": "Session administrative_mirror较新trunk拥有causal fields；仅按净hunk适配，不能旧整文件覆盖"
+}

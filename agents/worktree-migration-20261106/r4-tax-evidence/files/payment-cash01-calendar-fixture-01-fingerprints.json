@@ -1,0 +1,18 @@
+{
+  "status": "TESTS_ONLY_PENDING_NARROW_REVIEW_AND_ACTUAL_GREEN",
+  "baseHead": "6fbcc324e3037e64082781bdaa56e1333d592366",
+  "files": [
+    {
+      "path": "packages/engine/src/session/ordinary_tax_day_end/payment_runtime_tests.rs",
+      "sha256": "71f794cbe2067e26e4e2bf463da8c72ce08fffb7b955c5af72def2fedad414c7"
+    }
+  ],
+  "patchSha256": "12dd240796f23094b4de05ee779cf22a20b1bfba28e8e30f2abc0ea161bd0cdc",
+  "actualFailure": {
+    "session": 31387,
+    "waitExit": 1,
+    "waitChunk": "c79d78",
+    "result": "Tax16 15 green + cash01 restore tail fixture FAIL，原真实stdout/stderr已亲读；不改成付款case通过"
+  },
+  "cargoExecutedByWriter": false
+}

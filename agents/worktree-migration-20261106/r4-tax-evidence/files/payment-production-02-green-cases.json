@@ -1,0 +1,28 @@
+{
+  "status": "SUGGESTED_NARROW_GREEN_SET_PENDING_DEVMAIN_SOURCE",
+  "target": "engine",
+  "features": [
+    "simulation-diagnostics",
+    "verification-harness"
+  ],
+  "caseDeadlineMs": 10000,
+  "names": [
+    "session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_01_payable_credits_gross_and_activates_personal_income_once",
+    "session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_02_flat_payment_credits_net_and_records_real_withholding",
+    "session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_03_actual_sale_before_payment_collects_personal_tax",
+    "session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_04_final_projection_rejection_aborts_payment_and_company_candidates",
+    "session::civil_information_runtime_tests::runtime_after_market_close_numeric_failure_keeps_original_fault_and_terminal_state",
+    "session::civil_information_runtime_tests::runtime_closed_numeric_projection_failure_keeps_original_fault_and_retryability",
+    "session::corporate_actions::distributions_day_end::tests::flat_preserves_gross_tax_exit_external_source_and_inputs",
+    "session::corporate_actions::distributions_day_end::tests::stock_credit_returns_available_shares_and_all_three_candidate_totals",
+    "session::corporate_actions::distributions_day_end::tests::individual_tax_collects_partial_cash_and_keeps_unpaid_debt",
+    "session::corporate_actions::distributions_day_end::tests::zero_flat_withholding_keeps_receipts_without_zero_tax_admin_intents",
+    "runtime::world::admin_transaction::stages::tests::r4_stage_01_credit_tax_debit_uses_real_working_stage_accounts",
+    "runtime::world::admin_transaction::stages::tests::r4_stage_02_late_debit_rejection_aborts_credit_and_tax",
+    "runtime::world::admin_transaction::stages::tests::r4_stage_03_final_inspect_rejection_aborts_tax_and_keeps_original_cause",
+    "runtime::world::admin_transaction::stages::tests::r4_stage_04_join_borrows_original_operands_and_rejects_corrupt_indices",
+    "runtime::world::admin_transaction::stages::information_tests::r4_stage_05_late_rejection_preserves_information_and_world_source",
+    "runtime::world::admin_transaction::tests::admin_00_empty_duplicate_group_and_id_exhaustion_are_explicit"
+  ],
+  "scope": "现金4+原civil失败2+被现金包装复用的旧candidate4+stage5/oldflat1，非完整验收"
+}

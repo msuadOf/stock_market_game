@@ -1,0 +1,111 @@
+{
+  "cargoCwd": "/data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28",
+  "cargoHome": "/home/<USER>/.cargo",
+  "variables": {
+    "CARGO_HOME": {
+      "present": true,
+      "value": "/home/<USER>/.cargo"
+    },
+    "RUSTFLAGS": {
+      "present": true,
+      "value": ""
+    },
+    "CARGO_ENCODED_RUSTFLAGS": {
+      "present": true,
+      "value": ""
+    },
+    "CARGO_BUILD_JOBS": {
+      "present": true,
+      "value": "8"
+    },
+    "CARGO_TARGET_DIR": {
+      "present": true,
+      "value": "/tmp/stock-market-game-validation-2026-10-27-1311109/target"
+    },
+    "CARGO_INCREMENTAL": {
+      "present": true,
+      "value": "0"
+    },
+    "CARGO_PROFILE_DEV_DEBUG": {
+      "present": false
+    },
+    "RAYON_NUM_THREADS": {
+      "present": false
+    },
+    "RUSTUP_TOOLCHAIN": {
+      "present": false
+    }
+  },
+  "configs": [
+    {
+      "path": "/.cargo/config",
+      "exists": false
+    },
+    {
+      "path": "/.cargo/config.toml",
+      "exists": false
+    },
+    {
+      "path": "/data1/.cargo/config",
+      "exists": false
+    },
+    {
+      "path": "/data1/.cargo/config.toml",
+      "exists": false
+    },
+    {
+      "path": "/data1/<USER>/.cargo/config",
+      "exists": false
+    },
+    {
+      "path": "/data1/<USER>/.cargo/config.toml",
+      "exists": false
+    },
+    {
+      "path": "/data1/<USER>/workplace/.cargo/config",
+      "exists": false
+    },
+    {
+      "path": "/data1/<USER>/workplace/.cargo/config.toml",
+      "exists": false
+    },
+    {
+      "path": "/data1/<USER>/workplace/stock_market_game/.cargo/config",
+      "exists": false
+    },
+    {
+      "path": "/data1/<USER>/workplace/stock_market_game/.cargo/config.toml",
+      "exists": true,
+      "type": "file",
+      "bytes": 856,
+      "sha256": "2fc6f33513ae303f5a8b6186ff9d4ee2e3deb9be4c52a6d8e942e25d1b70f8b0"
+    },
+    {
+      "path": "/data1/<USER>/workplace/stock_market_game/.worktree/.cargo/config",
+      "exists": false
+    },
+    {
+      "path": "/data1/<USER>/workplace/stock_market_game/.worktree/.cargo/config.toml",
+      "exists": false
+    },
+    {
+      "path": "/data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28/.cargo/config",
+      "exists": false
+    },
+    {
+      "path": "/data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28/.cargo/config.toml",
+      "exists": true,
+      "type": "file",
+      "bytes": 856,
+      "sha256": "2fc6f33513ae303f5a8b6186ff9d4ee2e3deb9be4c52a6d8e942e25d1b70f8b0"
+    },
+    {
+      "path": "/home/<USER>/.cargo/config",
+      "exists": false
+    },
+    {
+      "path": "/home/<USER>/.cargo/config.toml",
+      "exists": false
+    }
+  ]
+}

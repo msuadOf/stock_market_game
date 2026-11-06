@@ -1,0 +1,11 @@
+
+running 1 test
+test session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_01_payable_credits_gross_and_activates_personal_income_once ... FAILED
+
+failures:
+
+failures:
+    session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_01_payable_credits_gross_and_activates_personal_income_once
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3343 filtered out; finished in 0.65s
+

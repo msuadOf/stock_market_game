@@ -1,0 +1,13 @@
+{
+  "status": "SOURCE_READY_PENDING_ROOT_LATEST_FRONT_AND_SLOT",
+  "launchReadiness": "PENDING_RECEIVER_TESTS_AND_SOURCE_CFG_AND_ROOT_LATEST_FRONT",
+  "sourceFreeze": "尚未生成，待主writer在integration cwd执行freeze-current.py",
+  "externalCargoConfigSnapshot": "尚未生成，随freeze流程写入plan",
+  "slotHandoffPending": true,
+  "rootAuthorized": false,
+  "actualResults": null,
+  "candidateBound": true,
+  "sourceAndCfgFrozen": true,
+  "cargoExecuted": false,
+  "planSha256": "f114545791e10c1e9ed483b24826c837ad27eb56f4d6d4708f988ff207bbc69e"
+}

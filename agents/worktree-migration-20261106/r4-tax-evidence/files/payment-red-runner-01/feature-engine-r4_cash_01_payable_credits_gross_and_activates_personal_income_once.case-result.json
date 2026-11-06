@@ -1,0 +1,68 @@
+{
+  "stage": "feature-engine-r4_cash_01_payable_credits_gross_and_activates_personal_income_once",
+  "actualArgv": [
+    "/data1/<USER>/workplace/stock_market_game/.tmp/node24-env/node",
+    "/data1/<USER>/workplace/stock_market_game/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs",
+    "10000",
+    "--",
+    "/home/<USER>/miniconda3/bin/python3",
+    "/data1/<USER>/workplace/stock_market_game/agents/branch-completion/funds-production-resume-2026-10-27/p1-formal-red-2026-10-28/collect-child-status.py",
+    "/data1/<USER>/workplace/stock_market_game/.worktree/r4-tax-production-2026-10-29/agents/branch-completion/r4-tax-production-2026-10-29/payment-red-runner-01/feature-engine-r4_cash_01_payable_credits_gross_and_activates_personal_income_once.child-status.json",
+    "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-6ae3f608f3352a4a",
+    "session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_01_payable_credits_gross_and_activates_personal_income_once",
+    "--exact",
+    "--test-threads=1",
+    "--nocapture"
+  ],
+  "pid": 2344060,
+  "exit": 0,
+  "seconds": 0.7336278089787811,
+  "name": "session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_01_payable_credits_gross_and_activates_personal_income_once",
+  "configuration": "feature",
+  "target": "engine",
+  "childStatus": {
+    "pid": 2344097,
+    "parentPid": 2344081,
+    "argv": [
+      "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-6ae3f608f3352a4a",
+      "session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_01_payable_credits_gross_and_activates_personal_income_once",
+      "--exact",
+      "--test-threads=1",
+      "--nocapture"
+    ],
+    "exit": 101,
+    "seconds": 0.6650381899962667
+  },
+  "childStatusError": null,
+  "summary": [
+    [
+      "FAILED",
+      "0",
+      "1",
+      "0"
+    ]
+  ],
+  "businessCaseRed": true,
+  "rawBusinessCaseRed": true,
+  "targetPanicMatched": true,
+  "group": "R4_cash_payment",
+  "expectedTarget": {
+    "name": "session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_01_payable_credits_gross_and_activates_personal_income_once",
+    "requiredPanicMarker": "R4 付款日必须真实增加持有人现金，不能只保持 Registered",
+    "sourcePath": "packages/engine/src/session/ordinary_tax_day_end/payment_runtime_tests.rs",
+    "requiredExpectedDeltaCents": 200,
+    "expectedActualDeltaCents": 0,
+    "expected": "red",
+    "requiredEarliestPanic": "R4 付款日必须真实增加持有人现金，不能只保持 Registered",
+    "panicChannel": "stderr",
+    "target": "engine",
+    "requiresEmptyStderr": false,
+    "group": "R4_cash_payment",
+    "requiredError": null
+  },
+  "binarySha256": "9f4e62be97a3e09132da73f320e66aa004447eb914e5934a949a46e179067dc5",
+  "exactPassed": false,
+  "expectedMatched": true,
+  "stdoutSha256": "7a47db00e670fea473683a002761e31dc5aaacdefb3bb80beb2f6026498e8162",
+  "stderrSha256": "3c2a335c2aad7e8a1e61530c658d511b050fcbd40b510991e0e7c63cadfec1b2"
+}

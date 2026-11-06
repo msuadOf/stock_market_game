@@ -1,0 +1,42 @@
+diff --git a/packages/engine/src/session/ordinary_tax_day_end/payment_runtime_tests.rs b/packages/engine/src/session/ordinary_tax_day_end/payment_runtime_tests.rs
+index e989e8a1..ba0e65ea 100644
+--- a/packages/engine/src/session/ordinary_tax_day_end/payment_runtime_tests.rs
++++ b/packages/engine/src/session/ordinary_tax_day_end/payment_runtime_tests.rs
+@@ -254,10 +254,35 @@ fn r4_cash_01_payable_credits_gross_and_activates_personal_income_once() {
+         .map(|account| (*account, cash(&restored, *account)))
+         .collect();
+     let mut restored = restored;
++    let next_market_date = restored
++        .civil_clock()
++        .calendar()
++        .next_trading_day(crate::calendar::CalendarExchange::Sse, date(PAYMENT_DAY))
++        .expect("恢复后使用本局冻结 Calendar 求下一真实交易日");
++    while restored.civil_date() < next_market_date {
++        let closed_date = restored.civil_date();
++        assert!(
++            !restored
++                .civil_clock()
++                .calendar()
++                .is_trading_day(crate::calendar::CalendarExchange::Sse, closed_date)
++                .expect("恢复后中间自然日的冻结 Calendar 判定有效")
++        );
++        let market_progress = (restored.tick(), restored.day());
++        let report = restored
++            .end_civil_day()
++            .expect("恢复后中间休市日只推进真实自然日日结");
++        assert_eq!(report.settled_date, closed_date);
++        assert_eq!(report.next_date, closed_date.next().unwrap());
++        assert_eq!((restored.tick(), restored.day()), market_progress);
++    }
++    assert_eq!(restored.civil_date(), next_market_date);
+     restored
+         .step()
+-        .expect("恢复后 6 月 5 日真实 market step 完成");
+-    restored.end_civil_day().expect("恢复后 6 月 5 日日结完成");
++        .expect("恢复后下一真实交易日 market step 完成");
++    restored
++        .end_civil_day()
++        .expect("恢复后下一真实交易日日结完成");
+     for (account, previous) in restored_before {
+         assert_eq!(
+             cash(&restored, account),

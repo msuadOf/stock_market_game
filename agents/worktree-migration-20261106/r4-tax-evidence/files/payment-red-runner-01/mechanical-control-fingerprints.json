@@ -1,0 +1,61 @@
+{
+  "status": "CONTROL_READY_PENDING_DELTA_REVIEW_AND_LIVE_SOURCE_CFG_FREEZE",
+  "files": [
+    {
+      "path": "run-ram-batch.py",
+      "sha256": "ea13d602dac45de6a1cb0a89ffa85f4f0aab7ef8bf7c8f0c0dc098de4907ae7c",
+      "unchangedFromGreen50": false
+    },
+    {
+      "path": "launch-batch.py",
+      "sha256": "36ddf4f3f9f04980d4b8ada606fafeae159e877fc3c76dcac98363720bc8fd04",
+      "unchangedFromGreen50": true
+    },
+    {
+      "path": "absolute-supervisor.mjs",
+      "sha256": "3441ee156c98438c9a146532a007375c334faedbeac860acf63be99b412435b7",
+      "unchangedFromGreen50": true
+    },
+    {
+      "path": "cleanup-supervisor.mjs",
+      "sha256": "3cd851d0e2faee5d7c72f0a52ebea4dc1402076f563c3e304dc2f8936c0d11f8",
+      "unchangedFromGreen50": false
+    },
+    {
+      "path": "subreaper-owner.py",
+      "sha256": "804b358e8758677c44ed22efc00f928e48fffe238800dea995c1dd6eaa472631",
+      "unchangedFromGreen50": true
+    },
+    {
+      "path": "owned-native-source.py",
+      "sha256": "39acaee39a5890f09017b4831832e9155da69630a058a1a55124fe43d4cf4414",
+      "unchangedFromGreen50": false
+    },
+    {
+      "path": "build-verified.mjs",
+      "sha256": "71a796990f63dd134c7a053fdb36a61dda18a403f8161a6796680f7611c4e6e9",
+      "unchangedFromGreen50": true
+    },
+    {
+      "path": "terminate-owned.mjs",
+      "sha256": "4cd50b0a014ba7f1f3a4d00fed977086482dae3b186b7b794a2d40c32699f3f6",
+      "unchangedFromGreen50": true
+    },
+    {
+      "path": "freeze-current.py",
+      "sha256": "ae8f03180d298f18d6cb0d50474179fb894c2ab859408a0de5913fa0012805a0",
+      "unchangedFromGreen50": false
+    },
+    {
+      "path": "bind-preflight.py",
+      "sha256": "ac6de291b111e1894e18f829700a45b5003f56c4be4e1a97481fa4610c7132f8",
+      "unchangedFromGreen50": false
+    },
+    {
+      "path": "publish-actual-front.py",
+      "sha256": "722f3e3c96468f8413e12ddbd0000e7a39d46e66124a2ca82dc3f36a79454dcf",
+      "unchangedFromGreen50": false
+    }
+  ],
+  "deltaSha256": "894045b9fe42bc37518b881c236af6191bf8afd3589ab19988a96c2a2becfe3a"
+}

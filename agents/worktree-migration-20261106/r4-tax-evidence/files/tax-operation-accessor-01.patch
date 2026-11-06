@@ -1,0 +1,28 @@
+diff --git a/packages/engine/src/company/cash_dividend_tax.rs b/packages/engine/src/company/cash_dividend_tax.rs
+index ccd28689..cd798004 100644
+--- a/packages/engine/src/company/cash_dividend_tax.rs
++++ b/packages/engine/src/company/cash_dividend_tax.rs
+@@ -778,6 +778,10 @@ impl CashDividendTaxBook {
+         *self = candidate;
+         Ok(receipt)
+     }
++    /// 只读当前操作水位；供同源登记归属与市场尾校验。
++    pub(crate) const fn operation_seq(&self) -> u64 {
++        self.operation_seq
++    }
+     pub fn lots(&self) -> &[DividendTaxLot] {
+         &self.lots
+     }
+diff --git a/packages/engine/src/session/ordinary_tax_day_end.rs b/packages/engine/src/session/ordinary_tax_day_end.rs
+index 438eb3fd..5a413926 100644
+--- a/packages/engine/src/session/ordinary_tax_day_end.rs
++++ b/packages/engine/src/session/ordinary_tax_day_end.rs
+@@ -436,7 +436,7 @@ impl GameSession {
+                     if attribution.stock() != &stock
+                         || attribution.registered_on() != day
+                         || attribution.settled_receipts() != snapshot.settled_receipts()
+-                        || attribution.after_book_operation() != market_book.operation_seq
++                        || attribution.after_book_operation() != market_book.operation_seq()
+                         || attribution.lots() != market_book.lots()
+                         || book.lots() != market_book.lots()
+                     {

@@ -1,0 +1,264 @@
+diff --git a/packages/engine/src/runtime/mod.rs b/packages/engine/src/runtime/mod.rs
+index ccf86d8a..855d30f9 100644
+--- a/packages/engine/src/runtime/mod.rs
++++ b/packages/engine/src/runtime/mod.rs
+@@ -31,6 +31,7 @@ pub type OrderRef = (StockIdx, u64);
+ mod entities;
+ mod facts;
+ mod protocol;
++pub(crate) mod admin_tax_projection;
+ pub(crate) use protocol::{RepurchasePreparePayload, RepurchaseProjectionInput, RuntimeError};
+ mod information_clock_context;
+ pub use information_clock_context::InformationClockContext;
+diff --git a/packages/engine/src/runtime/world/admin_transaction.rs b/packages/engine/src/runtime/world/admin_transaction.rs
+index f60ef025..40e06dc7 100644
+--- a/packages/engine/src/runtime/world/admin_transaction.rs
++++ b/packages/engine/src/runtime/world/admin_transaction.rs
+@@ -1,6 +1,8 @@
+ use super::*;
+ use crate::runtime::protocol::{AdminGroupCandidate, AdminPhase};
+ use std::collections::{BTreeMap, BTreeSet};
++mod stages;
++pub(crate) use stages::{AdminOperationStage, PreparedAdministrativeStages};
+ 
+ type PanicPayload = Box<dyn std::any::Any + Send>;
+ 
+diff --git a/packages/engine/src/runtime/world/admin_transaction/stages.rs b/packages/engine/src/runtime/world/admin_transaction/stages.rs
+new file mode 100644
+index 00000000..727e3a64
+--- /dev/null
++++ b/packages/engine/src/runtime/world/admin_transaction/stages.rs
+@@ -0,0 +1,51 @@
++//! 同一行政事务的有序资产阶段；当前 placeholder 仅用于先取得真实行为红。
++
++use super::*;
++use crate::runtime::admin_tax_projection::PreparedTaxProjection;
++use crate::runtime::group::GroupAccount;
++use crate::runtime::LocalIdx;
++use std::sync::Arc;
++
++/// 阶段只携原 typed 请求，不携“已执行”或付款成功标志。
++#[derive(Clone, Debug)]
++pub(crate) struct AdminOperationStage {
++    pub(crate) operations: Vec<(GroupIdx, Vec<AdminOperation>)>,
++}
++
++#[derive(Debug)]
++struct PreparedTaxStageGroup {
++    group_index: usize,
++    group: GroupIdx,
++    accounts: Vec<(LocalIdx, Arc<GroupAccount>, Arc<GroupAccount>)>,
++}
++
++#[derive(Debug)]
++struct PreparedTaxStageAccounts {
++    stage_index: u32,
++    groups: Vec<PreparedTaxStageGroup>,
++}
++
++/// 仅在同次 inspect 借用；真实生产实现须从该 pending 的 working 构造。
++#[derive(Debug)]
++pub(crate) struct PreparedAdministrativeStages {
++    operation_indices: Vec<(GroupIdx, u32, usize)>,
++    tax_stages: Vec<PreparedTaxStageAccounts>,
++    tax_projections: Vec<PreparedTaxProjection>,
++}
++
++impl World {
++    /// 保留一个 pending/id/Commit；不能循环调用旧整事务入口冒阶段。
++    pub(crate) fn with_staged_admin_transaction<P>(
++        &mut self,
++        stages: Vec<AdminOperationStage>,
++        information: Option<crate::runtime::protocol::InformationPreparePayload>,
++        inspect: impl FnOnce(&AdminCandidate, &PreparedAdministrativeStages) -> Result<P, RuntimeError>,
++    ) -> Result<P, RuntimeError> {
++        let _ = (stages, information, inspect);
++        Err(invalid("R4 ordered stages 的同 pending 实际来源尚未接通"))
++    }
++}
++
++#[cfg(all(test, not(target_arch = "wasm32")))]
++#[path = "stage_tests.rs"]
++mod tests;
+diff --git a/packages/engine/src/runtime/world/admin_transaction/stage_tests.rs b/packages/engine/src/runtime/world/admin_transaction/stage_tests.rs
+new file mode 100644
+index 00000000..e537a99b
+--- /dev/null
++++ b/packages/engine/src/runtime/world/admin_transaction/stage_tests.rs
+@@ -0,0 +1,176 @@
++use super::*;
++use crate::runtime::group::TickPlan;
++use crate::runtime::skeleton_tests::basic_spec;
++use std::cell::Cell;
++
++fn world() -> World {
++    let mut spec = basic_spec(3, 2, 2, Box::new(|_| Box::new(|_, _| TickPlan::default())));
++    spec.initial_cash = 100;
++    World::spawn(
++        spec,
++        crate::calendar::TradingCalendar::current_default_calendar().unwrap(),
++    )
++    .expect("真实三组 World 应成功构造")
++}
++
++fn stages(debit: i64) -> Vec<AdminOperationStage> {
++    vec![
++        AdminOperationStage {
++            operations: vec![(
++                1,
++                vec![AdminOperation::CashDividend {
++                    local: 1,
++                    stock: 0,
++                    amount: 40,
++                }],
++            )],
++        },
++        AdminOperationStage {
++            operations: vec![(
++                1,
++                vec![
++                    AdminOperation::WithholdingTax {
++                        local: 1,
++                        stock: 1,
++                        amount: 25,
++                    },
++                    AdminOperation::WithholdingTax {
++                        local: 1,
++                        stock: 0,
++                        amount: 5,
++                    },
++                ],
++            )],
++        },
++        AdminOperationStage {
++            operations: vec![(
++                1,
++                vec![AdminOperation::PaymentDebit {
++                    local: 1,
++                    stock: 0,
++                    amount: debit,
++                }],
++            )],
++        },
++    ]
++}
++
++#[test]
++fn r4_stage_01_credit_tax_debit_uses_real_working_stage_accounts() {
++    let mut world = world();
++    let before = world.snapshot_accounts().unwrap();
++    let inspections = Cell::new(0);
++    let projection = world
++        .with_staged_admin_transaction(stages(10), None, |candidate, evidence| {
++            inspections.set(inspections.get() + 1);
++            assert_eq!(
++                evidence.operation_indices,
++                vec![(1, 0, 0), (1, 1, 1), (1, 1, 2), (1, 2, 3)]
++            );
++            assert_eq!(evidence.tax_stages.len(), 1);
++            let tax = &evidence.tax_stages[0];
++            assert_eq!(tax.stage_index, 1);
++            assert_eq!(tax.groups.len(), 1);
++            let group = &tax.groups[0];
++            assert_eq!((group.group_index, group.group), (0, 1));
++            assert_eq!(group.accounts.len(), 1);
++            let (local, actual_before, actual_after) = &group.accounts[0];
++            assert_eq!(*local, 1);
++            let mut expected_before = before[1].1[1].clone();
++            expected_before.cash = 140;
++            let mut expected_after = expected_before.clone();
++            expected_after.cash = 110;
++            assert_eq!(actual_before.as_ref(), &expected_before);
++            assert_eq!(actual_after.as_ref(), &expected_after);
++            assert_eq!(evidence.tax_projections.len(), 1);
++            let projection = &evidence.tax_projections[0];
++            assert_eq!(projection.id, candidate.id);
++            assert_eq!(projection.stage_index, Some(1));
++            assert_eq!(
++                projection
++                    .operations
++                    .iter()
++                    .map(|op| (
++                        op.group_index,
++                        op.group,
++                        op.operation_index,
++                        op.local,
++                        op.stock,
++                        op.amount
++                    ))
++                    .collect::<Vec<_>>(),
++                vec![(0, 1, 1, 1, 1, 25), (0, 1, 2, 1, 0, 5)]
++            );
++            Ok(projection.clone())
++        })
++        .expect("R4 stage 真实 credit→tax→debit 必须共用同 pending 并成功提交");
++    assert_eq!(inspections.get(), 1, "只能在最终候选 inspect 一次");
++    assert_eq!(
++        projection
++            .operations
++            .iter()
++            .map(|op| op.amount)
++            .sum::<i64>(),
++        30
++    );
++    assert_eq!(
++        world.snapshot_accounts().unwrap(),
++        before,
++        "净额相等不能替代中间税阶段来源"
++    );
++    world.shutdown().unwrap();
++}
++
++#[test]
++fn r4_stage_02_late_debit_rejection_aborts_credit_and_tax() {
++    let mut world = world();
++    let before = world.snapshot_accounts().unwrap();
++    let called = Cell::new(false);
++    let error = world
++        .with_staged_admin_transaction(stages(111), None, |_, _| {
++            called.set(true);
++            Ok(())
++        })
++        .expect_err("真实尾阶段现金不足应拒绝");
++    assert!(
++        error.to_string().contains("PaymentDebit")
++            && error.to_string().contains("InsufficientCash")
++            && error.to_string().contains("requested: 111")
++            && error.to_string().contains("available: 110"),
++        "尾阶段必须由真实扣款拒绝，不能被未实现入口吞掉：{error}"
++    );
++    assert!(!called.get(), "失败阶段不得到最终 inspect");
++    assert_eq!(world.snapshot_accounts().unwrap(), before);
++    world
++        .with_staged_admin_transaction(stages(10), None, |_, _| Ok(()))
++        .expect("业务拒绝不应杀死健康 World");
++    assert_eq!(world.snapshot_accounts().unwrap(), before);
++    world.shutdown().unwrap();
++}
++
++#[test]
++fn r4_stage_03_final_inspect_rejection_aborts_tax_and_keeps_original_cause() {
++    let mut world = world();
++    let before = world.snapshot_accounts().unwrap();
++    let called = Cell::new(0);
++    let error = world
++        .with_staged_admin_transaction(stages(10), None, |_, evidence| {
++            called.set(called.get() + 1);
++            assert_eq!(evidence.tax_projections.len(), 1);
++            Err::<(), _>(invalid("R4-stage-final-inspect-original-cause"))
++        })
++        .expect_err("最终 inspect 应拒绝整个真实阶段候选");
++    assert!(
++        error
++            .to_string()
++            .contains("R4-stage-final-inspect-original-cause"),
++        "最终 inspect 原因必须保留，不能被未实现入口吞掉：{error}"
++    );
++    assert_eq!(called.get(), 1);
++    assert_eq!(world.snapshot_accounts().unwrap(), before);
++    world
++        .with_staged_admin_transaction(stages(10), None, |_, _| Ok(()))
++        .expect("inspect 业务拒绝之后合法事务应仍可成功");
++    assert_eq!(world.snapshot_accounts().unwrap(), before);
++    world.shutdown().unwrap();
++}

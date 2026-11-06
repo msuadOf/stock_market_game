@@ -1,0 +1,54 @@
+[
+  {
+    "configuration": "feature",
+    "path": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-6ae3f608f3352a4a",
+    "sha256": "9f4e62be97a3e09132da73f320e66aa004447eb914e5934a949a46e179067dc5",
+    "bytes": 740796328,
+    "fresh": false,
+    "target": "engine",
+    "targetKind": [
+      "rlib"
+    ],
+    "testProfile": true,
+    "features": [
+      "simulation-diagnostics",
+      "verification-harness"
+    ],
+    "actualPlanSha256": "df46e98f607388bee16a2128bbf4bf9223c5e42ac68ba650e0a342b4aa2a275b",
+    "cargoArtifact": {
+      "reason": "compiler-artifact",
+      "package_id": "path+file:///data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28/packages/engine#0.1.0",
+      "manifest_path": "/data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28/packages/engine/Cargo.toml",
+      "target": {
+        "kind": [
+          "rlib"
+        ],
+        "crate_types": [
+          "rlib"
+        ],
+        "name": "engine",
+        "src_path": "/data1/<USER>/workplace/stock_market_game/.worktree/d3-p1-integration-2026-10-28/packages/engine/src/lib.rs",
+        "edition": "2021",
+        "doc": true,
+        "doctest": true,
+        "test": true
+      },
+      "profile": {
+        "opt_level": "0",
+        "debuginfo": 2,
+        "debug_assertions": true,
+        "overflow_checks": true,
+        "test": true
+      },
+      "features": [
+        "simulation-diagnostics",
+        "verification-harness"
+      ],
+      "filenames": [
+        "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-6ae3f608f3352a4a"
+      ],
+      "executable": "/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-6ae3f608f3352a4a",
+      "fresh": false
+    }
+  }
+]

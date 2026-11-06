@@ -1,0 +1,32 @@
+{
+  "buildOrder": [
+    "feature"
+  ],
+  "batches": [
+    {
+      "name": "feature",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "engine",
+        "--lib",
+        "--features",
+        "simulation-diagnostics,verification-harness",
+        "--no-run",
+        "-j8",
+        "--message-format=json-render-diagnostics"
+      ],
+      "targets": [
+        {
+          "name": "engine",
+          "cases": [
+            "session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_01_payable_credits_gross_and_activates_personal_income_once",
+            "session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_02_flat_payment_credits_net_and_records_real_withholding",
+            "session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_03_actual_sale_before_payment_collects_personal_tax"
+          ]
+        }
+      ]
+    }
+  ]
+}

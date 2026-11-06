@@ -1,0 +1,10 @@
+{
+  "base": "549ab3f91259a08ef28351003ee2dce909c83848",
+  "files": {
+    "packages/engine/src/runtime/mod.rs": "8fc17475af92486f3239d72eb9237529c5845865d8400d9f8e9bd7b41476be60",
+    "packages/engine/src/runtime/world/admin_transaction.rs": "0ca876bcda7d44708e8ed8b1f64cfeec7ce528d7741a084c862f43417f4af15c",
+    "packages/engine/src/runtime/world/admin_transaction/stages.rs": "463d32ed826a451cfa53ce99e1d49eeb7fb3148e7dd232eabe0c7f08aaa7773b",
+    "packages/engine/src/runtime/world/admin_transaction/stage_tests.rs": "578bab8a13dc33f193ba8be8eef63f8699a94beed3553f4613064dcee58469da"
+  },
+  "patch_sha256": "c0bdedd275cb2644ef5fcaf6c855fa51f168cfda75d210fc562f7f5d0a54819f"
+}

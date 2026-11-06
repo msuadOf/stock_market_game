@@ -1,0 +1,1 @@
+{"pid": 2344096, "parentPid": 2344082, "argv": ["/tmp/stock-market-game-validation-2026-10-27-1311109/target/debug/deps/engine-6ae3f608f3352a4a", "session::ordinary_tax_day_end::payment_runtime_tests::r4_cash_02_flat_payment_credits_net_and_records_real_withholding", "--exact", "--test-threads=1", "--nocapture"], "exit": 101, "seconds": 0.6554728659975808}
