@@ -1,0 +1,121 @@
+diff --git a/packages/engine/src/session/plan_chain_candidates.rs b/packages/engine/src/session/plan_chain_candidates.rs
+index c626522e..9be3580a 100644
+--- a/packages/engine/src/session/plan_chain_candidates.rs
++++ b/packages/engine/src/session/plan_chain_candidates.rs
+@@ -471,14 +471,14 @@ enum AccountSource {
+ 
+ /// bound 段的运输结果：观察载荷，或 unwind 的原 panic payload（仅运输）。
+ enum RootOutcome {
+-    Prepared(PreparedRoot),
++    Prepared(Box<PreparedRoot>),
+     Died(Box<dyn std::any::Any + Send>),
+ }
+ 
+ /// spawned root 任务的消息：观察载荷（含 observe 的 Option 语义），或 unwind
+ /// 的原 panic payload（TaskDied，绑定释放后由 finish 段发布）。
+ enum RootMessage {
+-    Prepared(PreparedRoot),
++    Prepared(Box<PreparedRoot>),
+     TaskDied(Box<dyn std::any::Any + Send>),
+ }
+ 
+@@ -486,10 +486,35 @@ enum RootMessage {
+ /// 暂无），或池外协调者的容量上提信号（drive 循环层 `wait_for_spawn_capacity`
+ /// 后重入）。
+ pub(super) enum RootPoll {
+-    Delivered(Option<PlanChainOperationBatch>),
++    Delivered(Option<ReadyRootOperations>),
+     PendingCapacity,
+ }
+ 
++pub(super) struct ReadyRootOperations {
++    operations: VecDeque<PlanChainOperation>,
++    existing_plan_ids: BTreeSet<PlanId>,
++}
++
++impl ReadyRootOperations {
++    fn from_batch(batch: PlanChainOperationBatch) -> Self {
++        let PlanChainOperationBatch {
++            roots,
++            operations,
++            candidate_source,
++            routes,
++            reports,
++            existing_plan_ids,
++        } = batch;
++        // observe 从空 batch 开始且只填这两个输出；其余空容器与 EmptyRootCoordinator
++        // 不持有 guard，按原 batch 离开 consumer 时的析构语义提前释放。
++        drop((roots, candidate_source, routes, reports));
++        Self {
++            operations,
++            existing_plan_ids,
++        }
++    }
++}
++
+ /// `PlanChainOperationBatch::prepare_ready_accounts` 的包装回复。
+ pub(in crate::session) enum PrepareReady {
+     Progress(bool),
+@@ -503,6 +528,22 @@ type PreparedRoot = (
+     super::decision_chain::PlanRootDiagnostics,
+ );
+ 
++#[cfg(test)]
++mod transport_layout_tests {
++    use super::{RootMessage, RootOutcome, RootPoll};
++
++    #[test]
++    fn root_replies_keep_compact_transport_envelopes() {
++        for (name, size) in [
++            ("RootOutcome", std::mem::size_of::<RootOutcome>()),
++            ("RootMessage", std::mem::size_of::<RootMessage>()),
++            ("RootPoll", std::mem::size_of::<RootPoll>()),
++        ] {
++            assert!(size <= 128, "{name} 占 {size} 字节，超过 128 字节运输预算");
++        }
++    }
++}
++
+ enum PlanChainOperation {
+     ExecutionRoute(Box<PlanExecutionRoute>),
+     QuotePlans(QuotePlans),
+@@ -844,7 +885,7 @@ impl PlanRootCoordinator {
+                             }
+                         })
+                     })) {
+-                        Ok(payload) => RootOutcome::Prepared(payload),
++                        Ok(payload) => RootOutcome::Prepared(Box::new(payload)),
+                         Err(panic_payload) => RootOutcome::Died(panic_payload),
+                     }
+                 },
+@@ -953,7 +994,7 @@ impl PlanRootCoordinator {
+                         }
+                         continue;
+                     }
+-                    let (account, personal, generated, diagnostics) = result;
++                    let (account, personal, generated, diagnostics) = *result;
+                     #[cfg(test)]
+                     session
+                         .compute
+@@ -968,7 +1009,9 @@ impl PlanRootCoordinator {
+                     if *remaining == 0 && pending.is_empty() {
+                         self.source = AccountSource::Empty;
+                     }
+-                    return Ok(RootPoll::Delivered(Some(generated)));
++                    return Ok(RootPoll::Delivered(Some(ReadyRootOperations::from_batch(
++                        generated,
++                    ))));
+                 }
+                 Ok(RootMessage::TaskDied(payload)) => {
+                     // 接收探针：收到 TaskDied 的当场（协调者线程）回调——
+@@ -1079,7 +1122,9 @@ impl PlanRootCoordinator {
+                         if pending.is_empty() {
+                             self.source = AccountSource::Empty;
+                         }
+-                        return Ok(RootPoll::Delivered(Some(generated)));
++                        return Ok(RootPoll::Delivered(Some(ReadyRootOperations::from_batch(
++                            generated,
++                        ))));
+                     } else {
+                         // 池外：容量上提信号（drive 循环层 wait_for_spawn_capacity
+                         // 后重入本循环，重入从 4a 起）。
