@@ -1,0 +1,73 @@
+diff --git a/packages/engine/src/orderbook.rs b/packages/engine/src/orderbook.rs
+index 3e60aff3..da88959d 100644
+--- a/packages/engine/src/orderbook.rs
++++ b/packages/engine/src/orderbook.rs
+@@ -4,7 +4,7 @@
+ //! ADR-0005 §3 撮合驱动价格的核心；纯逻辑，只依赖 Money，与 account/market/strategy 解耦。
+ 
+ use std::cmp::Reverse;
+-use std::collections::{BTreeMap, BTreeSet};
++use std::collections::BTreeMap;
+ 
+ use thiserror::Error;
+ 
+diff --git a/packages/engine/src/session/pipeline/npc_decisions.rs b/packages/engine/src/session/pipeline/npc_decisions.rs
+index 0965c015..6ad7eb7a 100644
+--- a/packages/engine/src/session/pipeline/npc_decisions.rs
++++ b/packages/engine/src/session/pipeline/npc_decisions.rs
+@@ -1,7 +1,7 @@
+ //! 运行纯 NPC 决策源。
++use super::{DecisionAccountInput, IntentCandidateKey};
+ #[cfg(test)]
+-use super::DecisionSnapshot;
+-use super::{DecisionAccountInput, DecisionSnapshotError, IntentCandidateKey};
++use super::{DecisionSnapshot, DecisionSnapshotError};
+ use crate::account::StoredStrategy;
+ use crate::strategy::{Intent, StrategyDecision, StrategyState, StrategyStateError};
+ use crate::{AccountId, SplitMix64};
+@@ -139,6 +139,7 @@ pub(in crate::session) enum NpcDecisionSourceError {
+         source: crate::plans::UrgencyError,
+     },
+     #[error("DecisionAndContinuation NPC 来源快照错误：{0}")]
++    #[cfg(test)]
+     Snapshot(DecisionSnapshotError),
+     #[error("DecisionAndContinuation NPC 来源无法恢复账户 {account:?} 的 strategy：{source}")]
+     StrategyHydration {
+diff --git a/packages/engine/src/session/pipeline/npc_tick_preparation.rs b/packages/engine/src/session/pipeline/npc_tick_preparation.rs
+index 0dd807bd..066e4f81 100644
+--- a/packages/engine/src/session/pipeline/npc_tick_preparation.rs
++++ b/packages/engine/src/session/pipeline/npc_tick_preparation.rs
+@@ -13,24 +13,28 @@ use super::npc_decisions::run_npc_decisions;
+ #[cfg(test)]
+ use super::npc_decisions::stream_npc_decisions_with;
+ #[cfg(test)]
++use super::npc_decisions::{NpcDecisionSourceError, NpcDecisionSourceOutput};
++#[cfg(test)]
+ use super::npc_state_projection::project_npc_state;
+ #[cfg(test)]
+-use super::npc_state_projection::{NpcDecisionProjectionOutput, NpcReconciliationDecision};
++use super::npc_state_projection::{
++    NpcDecisionProjectionError, NpcDecisionProjectionOutput, NpcReconciliationDecision,
++};
+ #[cfg(test)]
+ use super::DecisionSnapshot;
+ #[cfg(test)]
+ use super::IntentCandidateError;
+ use super::{
+-    decision_snapshot_capture::DecisionSnapshotCaptureError,
+-    npc_decisions::{NpcDecisionSourceError, NpcDecisionSourceOutput, NpcDecisionStreamError},
+-    npc_state_projection::NpcDecisionProjectionError,
++    decision_snapshot_capture::DecisionSnapshotCaptureError, npc_decisions::NpcDecisionStreamError,
+     IntentCandidate, IntentCandidateBatch, IntentCandidateKey, StepFatal,
+ };
+ #[cfg(test)]
+ use crate::compute::join;
+ #[cfg(test)]
+ use crate::session::plan_chain_candidates::PlanChainOperationBatch;
+-use crate::{AccountId, AccountKind, GameSession, Intent, StockId};
++use crate::{AccountId, AccountKind, GameSession};
++#[cfg(test)]
++use crate::{Intent, StockId};
+ use std::collections::BTreeMap;
+ 
+ #[cfg(test)]

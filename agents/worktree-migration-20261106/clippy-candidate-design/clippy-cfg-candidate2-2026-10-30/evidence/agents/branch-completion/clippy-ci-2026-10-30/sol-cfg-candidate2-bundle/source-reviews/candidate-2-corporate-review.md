@@ -1,0 +1,7 @@
+# registry / rights 独立候选 test cfg 复核
+
+已读原叶两文件完整diff和全消费者，未接的独立candidate仅unit测试使用，保完整算法与强测试。registry正式reconcile_registry及依赖保生产，rights正式validate_rights_offering_capability与完整错误类型/生产分类均保留，不为lint新增日结执行链。
+
+独审发现原叶误门控两个生产类型import（与Simple前次问题同源）：registry的StockId被reconcile_registry签名使用；rights的Money被完整NegativeCash错误variant使用。reviewer在独callsite树恢复二者production imports，不扩大candidate生产范围，finalpatch需上级独立复核这两个修正。其余cfg函数/DTO/impl与本来testconsumer闭包一致。
+
+保留未构造错误variants，未改玩家错误分类与公开能力门禁；这4条dead_code尚未修复，不能把此片说成all green。A股限售unsupported真实错误、账户实际资源、日终时点、分/股单位均原样。函数体/断言未动，没有Cargo/target。

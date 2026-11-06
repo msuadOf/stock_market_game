@@ -1,0 +1,522 @@
+diff --git a/packages/engine/src/session/execution/reconcile_plan.rs b/packages/engine/src/session/execution/reconcile_plan.rs
+index 5875bab2..09b3604b 100644
+--- a/packages/engine/src/session/execution/reconcile_plan.rs
++++ b/packages/engine/src/session/execution/reconcile_plan.rs
+@@ -1,5 +1,6 @@
+ use super::*;
+ 
++#[cfg(test)]
+ use crate::session::pipeline::npc_split::SessionReadView;
+ 
+ #[derive(Clone, Debug)]
+@@ -11,6 +12,7 @@ pub(in crate::session) struct ReconciliationPlan {
+ #[derive(Clone, Debug)]
+ pub(in crate::session) enum WorkingOrderDecision {
+     Keep {
++        #[cfg(test)]
+         order_id: OrderId,
+     },
+     Cancel {
+@@ -24,6 +26,7 @@ pub(in crate::session) enum WorkingOrderDecision {
+ }
+ 
+ impl GameSession {
++    #[cfg(test)]
+     pub(in crate::session) fn plan_npc_working_order_reconciliation(
+         &self,
+         desired: Vec<Intent>,
+@@ -44,6 +47,7 @@ impl GameSession {
+     /// 窗口判定）与 markets（压制判定所需的行情快照），其余依赖经参数传入。
+     /// 读视图版本（queue 链转换目标形态）：会话读集仅 tick/setup（竞价不可撤销
+     /// 窗口判定）与 markets（压制判定所需的行情快照），其余依赖经参数传入。
++    #[cfg(test)]
+     pub(in crate::session) fn plan_npc_working_order_reconciliation_on(
+         view: &SessionReadView<'_>,
+         desired: Vec<Intent>,
+@@ -84,7 +88,10 @@ pub(in crate::session) fn plan_npc_working_order_reconciliation_standalone(
+                     continue;
+                 }
+                 if take_exact(&mut desired, code, order.side, order.price, order.qty) {
+-                    decisions.push(WorkingOrderDecision::Keep { order_id: order.id });
++                    decisions.push(WorkingOrderDecision::Keep {
++                        #[cfg(test)]
++                        order_id: order.id,
++                    });
+                 } else if let Some(intent) = desired
+                     .iter()
+                     .find(|intent| same_side(intent, code, order.side))
+@@ -109,6 +116,7 @@ pub(in crate::session) fn plan_npc_working_order_reconciliation_standalone(
+                 }
+                 if take_exact(&mut desired, code, order.side, order.limit, order.qty) {
+                     decisions.push(WorkingOrderDecision::Keep {
++                        #[cfg(test)]
+                         order_id: OrderId(order.order_id),
+                     });
+                 } else if cancelable_auction_window {
+diff --git a/packages/engine/src/session/pipeline/decision_snapshot_capture.rs b/packages/engine/src/session/pipeline/decision_snapshot_capture.rs
+index 75161951..cd387b29 100644
+--- a/packages/engine/src/session/pipeline/decision_snapshot_capture.rs
++++ b/packages/engine/src/session/pipeline/decision_snapshot_capture.rs
+@@ -3,13 +3,16 @@
+ //! 只推进密封 strategy 输入所需的 attention/retail-observation 状态。
+ //! 不路由 intent，不修改订单簿。
+ 
+-use super::{DecisionAccountInput, DecisionSnapshot, DecisionSnapshotError};
++use super::DecisionAccountInput;
++#[cfg(test)]
++use super::DecisionSnapshot;
+ use crate::behavior::BehaviorMarketObservation;
+ use crate::compute::parallel::*;
+ use crate::observation::{
+     build_account_risk_observation, build_equal_weight_market_observation, AccountRiskObservation,
+     ObservationError, RiskPositionInput,
+ };
++#[cfg(test)]
+ use crate::session::{AuctionOrdersByAccount, ContinuousOrdersByAccount};
+ use crate::strategy::{PositionView, SelfView, StrategyStateError};
+ use crate::{
+@@ -18,6 +21,7 @@ use crate::{
+ use std::collections::{BTreeMap, BTreeSet};
+ use std::sync::Arc;
+ 
++#[cfg(test)]
+ #[derive(Debug)]
+ pub(in crate::session) struct CapturedDecisionSnapshot {
+     pub(super) snapshot: Arc<DecisionSnapshot>,
+@@ -87,8 +91,9 @@ pub(in crate::session) enum DecisionSnapshotCaptureError {
+         #[source]
+         source: ObservationError,
+     },
++    #[cfg(test)]
+     #[error("DecisionAndContinuation 决策快照契约拒绝捕获的输入：{0}")]
+-    Snapshot(#[source] DecisionSnapshotError),
++    Snapshot(#[source] super::DecisionSnapshotError),
+     #[error("DecisionAndContinuation urgency policy 校验失败：{0}")]
+     UrgencyPolicy(#[from] crate::plans::UrgencyError),
+     #[error("DecisionAndContinuation 散户个人分析失败: {0}")]
+@@ -100,6 +105,7 @@ pub(in crate::session) enum DecisionSnapshotCaptureError {
+ ///
+ /// 此处仅修改到期 attention 与受理的散户观察；
+ /// 捕获失败时调用方丢弃完整 tick candidate。
++#[cfg(test)]
+ pub(in crate::session) fn capture_decision_snapshot(
+     shadow: &mut super::GameSession,
+ ) -> Result<CapturedDecisionSnapshot, DecisionSnapshotCaptureError> {
+@@ -108,6 +114,7 @@ pub(in crate::session) fn capture_decision_snapshot(
+ }
+ 
+ /// 读视图+写组版本（queue 链转换目标形态）。
++#[cfg(test)]
+ pub(super) fn capture_decision_snapshot_on(
+     view: &super::npc_split::SessionReadView<'_>,
+     writes: &mut super::npc_split::NpcWriteFields<'_>,
+@@ -272,12 +279,6 @@ pub(super) fn capture_decision_snapshot_on(
+     })
+ }
+ 
+-fn validate_market_view_inputs(
+-    session: &super::GameSession,
+-) -> Result<(), DecisionSnapshotCaptureError> {
+-    validate_market_view_inputs_on(&session.read_view())
+-}
+-
+ /// T1·两阶段（ADR-0042 §T1）：单账户**个人观察 + 密封输入组装**的纯输出。
+ pub(in crate::session) struct NpcObservedAccount {
+     /// 密封决策输入（未挂 retail_analysis；持有经验行的 Arc 快照）。
+@@ -396,32 +397,6 @@ struct CapturedAccountObservation {
+ }
+ 
+ impl CapturedExperienceObservation {
+-    fn capture(
+-        session: &super::GameSession,
+-        account: AccountId,
+-        market_minute: u64,
+-    ) -> Result<Self, DecisionSnapshotCaptureError> {
+-        Self::capture_on(
+-            &session.state.retail_experience,
+-            &session.read_view(),
+-            account,
+-            market_minute,
+-        )
+-    }
+-
+-    /// 读视图+写组再借用版本：retail_experience 由调用方经 &*writes 再借用传入。
+-    fn capture_on(
+-        experience: &crate::session::AccountPagedMap<crate::RetailExperienceState>,
+-        view: &super::npc_split::SessionReadView<'_>,
+-        account: AccountId,
+-        market_minute: u64,
+-    ) -> Result<Self, DecisionSnapshotCaptureError> {
+-        match experience.get(&account).cloned() {
+-            Some(row) => Self::capture_from_row(row, view, account, market_minute),
+-            None => Ok(Self::NoExperience),
+-        }
+-    }
+-
+     /// T1·两阶段（ADR-0042 §T1）：owned 经验行版本——queue 链账户任务在
+     /// 任务内对已 take 的个人经验行做个人观察（纯计算）。
+     fn capture_from_row(
+diff --git a/packages/engine/src/session/pipeline/npc_decisions.rs b/packages/engine/src/session/pipeline/npc_decisions.rs
+index a54cafbc..0b7de6b8 100644
+--- a/packages/engine/src/session/pipeline/npc_decisions.rs
++++ b/packages/engine/src/session/pipeline/npc_decisions.rs
+@@ -1,5 +1,7 @@
+ //! 运行纯 NPC 决策源。
+-use super::{DecisionAccountInput, DecisionSnapshot, DecisionSnapshotError, IntentCandidateKey};
++#[cfg(test)]
++use super::DecisionSnapshot;
++use super::{DecisionAccountInput, DecisionSnapshotError, IntentCandidateKey};
+ use crate::account::StoredStrategy;
+ use crate::strategy::{Intent, StrategyDecision, StrategyState, StrategyStateError};
+ use crate::{AccountId, SplitMix64};
+@@ -151,6 +153,7 @@ pub(crate) fn npc_rng_seed(base: u64, tick: u64, account: AccountId) -> u64 {
+     base ^ tick.wrapping_mul(0x9E3779B97F4A7C15) ^ account.0.wrapping_mul(0x6A09E667F3BCC908)
+ }
+ 
++#[cfg(test)]
+ pub(in crate::session) struct NpcAccountDecision {
+     #[cfg(test)]
+     pub(in crate::session) account: AccountId,
+@@ -159,10 +162,12 @@ pub(in crate::session) struct NpcAccountDecision {
+ 
+ #[derive(Debug)]
+ pub(in crate::session) enum NpcDecisionStreamError<E> {
++    #[cfg(test)]
+     Decision(NpcDecisionSourceError),
+     Consumer(E),
+ }
+ 
++#[cfg(test)]
+ pub(in crate::session) fn decide_npc_account(
+     snapshot: &DecisionSnapshot,
+     config: &crate::GameConfig,
+@@ -314,6 +319,7 @@ pub(in crate::session) fn set_decide_panic_accounts(accounts: &[AccountId]) {
+         accounts.iter().copied().collect();
+ }
+ 
++#[cfg(test)]
+ pub(in crate::session) fn stream_npc_decisions<E>(
+     snapshot: Arc<DecisionSnapshot>,
+     config: &crate::GameConfig,
+@@ -339,6 +345,7 @@ where
+ /// 运输原 panic payload（不恢复不转换，ADR-0017:117 边界内），绑定释放后发送
+ /// TaskDied；协调者收到即停止派发（pending 冻结）、排空其余在飞、最后重抛原
+ /// payload。原始 sender 持有至排空完成（Disconnected 仅作冗余断言）。
++#[cfg(test)]
+ pub(super) fn stream_npc_decisions_with<E, B, R>(
+     snapshot: Arc<DecisionSnapshot>,
+     config: &crate::GameConfig,
+@@ -741,31 +748,6 @@ where
+     })
+ }
+ 
+-fn stream_npc_decisions_inline<E>(
+-    snapshot: Arc<DecisionSnapshot>,
+-    config: &crate::GameConfig,
+-    before_decide: impl Fn(AccountId),
+-    mut receive: impl FnMut(NpcAccountDecision) -> Result<(), E>,
+-) -> Result<(), NpcDecisionStreamError<E>> {
+-    let mut errors = Vec::new();
+-    for account in snapshot.due_npc_ids().iter().copied() {
+-        before_decide(account);
+-        match decide_npc_account(&snapshot, config, account) {
+-            Ok(output) => {
+-                if let Err(error) = receive(NpcAccountDecision {
+-                    #[cfg(test)]
+-                    account,
+-                    output,
+-                }) {
+-                    errors.push((account, NpcDecisionStreamError::Consumer(error)));
+-                }
+-            }
+-            Err(error) => errors.push((account, NpcDecisionStreamError::Decision(error))),
+-        }
+-    }
+-    select_stream_error(errors)
+-}
+-
+ /// 泛化错误记账（T1）：merge 回调返回 Err ⇒ Consumer 错误；任务结果 Err ⇒
+ /// 由 merge 侧自行转换（decide 适配器把决策错误并入同一聚合——见
+ /// decide_merge_adapter）。到达序首错语义与旧 record_stream_result 一致。
+diff --git a/packages/engine/src/session/pipeline/npc_state_projection.rs b/packages/engine/src/session/pipeline/npc_state_projection.rs
+index d0e2578e..6f66337e 100644
+--- a/packages/engine/src/session/pipeline/npc_state_projection.rs
++++ b/packages/engine/src/session/pipeline/npc_state_projection.rs
+@@ -4,17 +4,23 @@
+ //! candidate composer 在投影后为每个账户分配连续局部序号，
+ //! 保留 reconciliation 在 residual 之前的顺序，不重用 raw strategy 身份。
+ 
++#[cfg(test)]
+ use super::decision_snapshot_capture::CapturedDecisionSnapshot;
+ use super::npc_decisions::{NpcDecisionSourceOutput, NpcStrategyUpdate};
+ use super::IntentCandidateKey;
+ use crate::session::execution::reconcile_plan::WorkingOrderDecision;
+-use crate::session::{GameSession, ReconcileScope, RetailDecisionTrace, WorkingOrderSlices};
++#[cfg(test)]
++use crate::session::GameSession;
++use crate::session::{ReconcileScope, RetailDecisionTrace, WorkingOrderSlices};
+ use crate::strategy::Intent;
+-use crate::{AccountId, AccountKind, LimitPrice, OrderId, StockId};
++#[cfg(test)]
++use crate::LimitPrice;
++use crate::{AccountId, AccountKind, OrderId, StockId};
+ use std::collections::BTreeMap;
+ use std::collections::BTreeSet;
+ 
+ #[derive(Clone, Debug)]
++#[cfg(test)]
+ pub(in crate::session) struct ProjectedNpcIntent {
+     account: AccountId,
+     source_key: Option<IntentCandidateKey>,
+@@ -23,6 +29,7 @@ pub(in crate::session) struct ProjectedNpcIntent {
+     projected_intent: Intent,
+ }
+ 
++#[cfg(test)]
+ impl ProjectedNpcIntent {
+     pub(in crate::session) const fn account(&self) -> AccountId {
+         self.account
+@@ -43,11 +50,10 @@ impl ProjectedNpcIntent {
+ }
+ 
+ #[derive(Clone, Debug)]
++#[cfg(test)]
+ pub(in crate::session) enum NpcReconciliationDecision {
+     Keep {
+-        #[cfg(test)]
+         account: AccountId,
+-        #[cfg(test)]
+         order_id: OrderId,
+     },
+     Cancel {
+@@ -62,6 +68,7 @@ pub(in crate::session) enum NpcReconciliationDecision {
+     },
+ }
+ 
++#[cfg(test)]
+ impl NpcReconciliationDecision {
+     #[cfg(test)]
+     pub(in crate::session) const fn contract_parts(
+@@ -84,6 +91,7 @@ impl NpcReconciliationDecision {
+ }
+ 
+ #[derive(Clone, Debug)]
++#[cfg(test)]
+ pub(in crate::session) struct NpcDecisionProjectionOutput {
+     #[cfg(test)]
+     accepted_due_npc_ids: Vec<AccountId>,
+@@ -91,6 +99,7 @@ pub(in crate::session) struct NpcDecisionProjectionOutput {
+     residual_intents: Vec<ProjectedNpcIntent>,
+ }
+ 
++#[cfg(test)]
+ impl NpcDecisionProjectionOutput {
+     #[cfg(test)]
+     pub(in crate::session) fn accepted_due_npc_ids(&self) -> &[AccountId] {
+@@ -109,6 +118,7 @@ impl NpcDecisionProjectionOutput {
+ 
+ #[derive(Debug, thiserror::Error)]
+ pub(in crate::session) enum NpcDecisionProjectionError {
++    #[cfg(test)]
+     #[error(
+         "DecisionAndContinuation NPC 投影时钟不一致：shadow tick/phase {shadow_tick}/{shadow_phase:?}，snapshot {snapshot_tick}/{snapshot_phase:?}"
+     )]
+@@ -122,6 +132,7 @@ pub(in crate::session) enum NpcDecisionProjectionError {
+     AccountOrderMismatch,
+     #[error("DecisionAndContinuation NPC 投影缺少 shadow 账户 {0:?}")]
+     MissingAccount(AccountId),
++    #[cfg(test)]
+     #[error("DecisionAndContinuation NPC 投影账户 {0:?} 的 kind 在捕获后发生变化")]
+     AccountKindMismatch(AccountId),
+     #[error("DecisionAndContinuation NPC 投影账户 {0:?} 缺少 retail experience state")]
+@@ -369,6 +380,7 @@ pub(in crate::session) fn install_npc_account_patch(
+     Ok(())
+ }
+ 
++#[cfg(test)]
+ pub(in crate::session) fn project_npc_state(
+     shadow: &mut GameSession,
+     captured: &CapturedDecisionSnapshot,
+@@ -396,43 +408,7 @@ pub(in crate::session) fn project_npc_state(
+     project_npc_state_in_place(shadow, captured, source, false)
+ }
+ 
+-/// 将一个已完成的 NPC 账户结果投影到可丢弃 tick shadow。
+-/// 调用方拥有账户完成 channel；任一账户投影失败都必须丢弃整个 candidate。
+-pub(in crate::session) fn project_npc_account(
+-    shadow: &mut GameSession,
+-    captured: &CapturedDecisionSnapshot,
+-    source: &mut NpcDecisionSourceOutput,
+-) -> Result<NpcDecisionProjectionOutput, NpcDecisionProjectionError> {
+-    let (view, mut writes) = super::npc_split::npc_split(shadow);
+-    project_npc_account_on(&view, &mut writes, captured, source)
+-}
+-
+-/// 读视图+写组版本（queue 链转换目标形态）。
+-pub(in crate::session) fn project_npc_account_on(
+-    view: &super::npc_split::SessionReadView<'_>,
+-    writes: &mut super::npc_split::NpcWriteFields<'_>,
+-    captured: &CapturedDecisionSnapshot,
+-    source: &mut NpcDecisionSourceOutput,
+-) -> Result<NpcDecisionProjectionOutput, NpcDecisionProjectionError> {
+-    let snapshot = &captured.snapshot;
+-    if view.tick != snapshot.tick() || view.phase() != snapshot.phase() {
+-        return Err(NpcDecisionProjectionError::ClockMismatch {
+-            shadow_tick: view.tick,
+-            shadow_phase: view.phase(),
+-            snapshot_tick: snapshot.tick(),
+-            snapshot_phase: snapshot.phase(),
+-        });
+-    }
+-    if source.accounts().len() != 1
+-        || source.account_outputs().len() != 1
+-        || source.accounts()[0] != source.account_outputs()[0].account()
+-        || !snapshot.due_npc_ids().contains(&source.accounts()[0])
+-    {
+-        return Err(NpcDecisionProjectionError::AccountOrderMismatch);
+-    }
+-    project_npc_state_in_place_on(view, writes, captured, source, true)
+-}
+-
++#[cfg(test)]
+ fn project_npc_state_in_place(
+     shadow: &mut GameSession,
+     captured: &CapturedDecisionSnapshot,
+@@ -444,6 +420,7 @@ fn project_npc_state_in_place(
+ }
+ 
+ /// 读视图+写组版本。
++#[cfg(test)]
+ fn project_npc_state_in_place_on(
+     view: &super::npc_split::SessionReadView<'_>,
+     writes: &mut super::npc_split::NpcWriteFields<'_>,
+@@ -607,6 +584,7 @@ fn project_npc_state_in_place_on(
+     })
+ }
+ 
++#[cfg(test)]
+ fn working_intent(
+     order_id: OrderId,
+     phase: crate::TradingPhase,
+@@ -633,6 +611,7 @@ fn working_intent(
+     }
+ }
+ 
++#[cfg(test)]
+ pub(super) fn remove_first_matching_raw(
+     raw: &mut Vec<(IntentCandidateKey, Intent)>,
+     consumed: &Intent,
+@@ -645,6 +624,7 @@ pub(super) fn remove_first_matching_raw(
+     }
+ }
+ 
++#[cfg(test)]
+ pub(super) fn take_exact_raw_source(
+     raw: &mut Vec<(IntentCandidateKey, Intent)>,
+     projected: &Intent,
+@@ -654,22 +634,15 @@ pub(super) fn take_exact_raw_source(
+         .map(|index| raw.remove(index))
+ }
+ 
++#[cfg(test)]
+ fn project_reconciliation_decision(
+     account: AccountId,
+     decision: WorkingOrderDecision,
+ ) -> NpcReconciliationDecision {
+     match decision {
+-        WorkingOrderDecision::Keep {
+-            #[cfg(test)]
+-            order_id,
+-            #[cfg(not(test))]
+-                order_id: _,
+-        } => NpcReconciliationDecision::Keep {
+-            #[cfg(test)]
+-            account,
+-            #[cfg(test)]
+-            order_id,
+-        },
++        WorkingOrderDecision::Keep { order_id } => {
++            NpcReconciliationDecision::Keep { account, order_id }
++        }
+         WorkingOrderDecision::Cancel { order_id, code } => NpcReconciliationDecision::Cancel {
+             account,
+             order_id,
+@@ -686,6 +659,7 @@ fn project_reconciliation_decision(
+     }
+ }
+ 
++#[cfg(test)]
+ fn intents_equal(left: &Intent, right: &Intent) -> bool {
+     match (left, right) {
+         (
+diff --git a/packages/engine/src/session/pipeline/npc_tick_preparation.rs b/packages/engine/src/session/pipeline/npc_tick_preparation.rs
+index 6014fd0a..4a6b6cd9 100644
+--- a/packages/engine/src/session/pipeline/npc_tick_preparation.rs
++++ b/packages/engine/src/session/pipeline/npc_tick_preparation.rs
+@@ -2,6 +2,8 @@
+ //!
+ //! 后续账户校验、股票处理、结算、最终事件与权威提交由完整 tick coordinator 负责。
+ 
++#[cfg(test)]
++use super::candidate_composition::CandidateCompositionError;
+ #[cfg(test)]
+ use super::decision_snapshot_capture::capture_decision_snapshot;
+ #[cfg(test)]
+@@ -11,19 +13,18 @@ use super::npc_decisions::run_npc_decisions;
+ #[cfg(test)]
+ use super::npc_decisions::stream_npc_decisions_with;
+ #[cfg(test)]
+-use super::npc_state_projection::project_npc_account;
+-#[cfg(test)]
+ use super::npc_state_projection::project_npc_state;
+ #[cfg(test)]
++use super::npc_state_projection::{NpcDecisionProjectionOutput, NpcReconciliationDecision};
++#[cfg(test)]
+ use super::DecisionSnapshot;
++#[cfg(test)]
++use super::IntentCandidateError;
+ use super::{
+-    candidate_composition::CandidateCompositionError,
+     decision_snapshot_capture::DecisionSnapshotCaptureError,
+     npc_decisions::{NpcDecisionSourceError, NpcDecisionSourceOutput, NpcDecisionStreamError},
+-    npc_state_projection::{
+-        NpcDecisionProjectionError, NpcDecisionProjectionOutput, NpcReconciliationDecision,
+-    },
+-    IntentCandidate, IntentCandidateBatch, IntentCandidateError, IntentCandidateKey, StepFatal,
++    npc_state_projection::NpcDecisionProjectionError,
++    IntentCandidate, IntentCandidateBatch, IntentCandidateKey, StepFatal,
+ };
+ #[cfg(test)]
+ use crate::compute::join;
+@@ -34,6 +35,7 @@ use std::collections::BTreeMap;
+ #[cfg(test)]
+ use std::sync::Arc;
+ 
++#[cfg(test)]
+ #[derive(Debug, thiserror::Error)]
+ pub(super) enum NpcDecisionPreparationError {
+     #[error("NPC decision snapshot capture failed: {0}")]
+@@ -1251,6 +1253,7 @@ pub(in crate::session) fn produce_decision_output_on(
+     *writes.plans = plans;
+     if let Err(error) = stream_error {
+         let description = match error {
++            #[cfg(test)]
+             NpcDecisionStreamError::Decision(error) => error.to_string(),
+             NpcDecisionStreamError::Consumer(error) => error,
+         };
+@@ -1967,6 +1970,7 @@ fn projected_candidates(
+         .map_err(Into::into)
+ }
+ 
++#[cfg(test)]
+ struct ProjectedNpcIntents {
+     intents: Vec<(AccountId, Intent)>,
+     dependencies: Vec<(usize, usize)>,
+@@ -1993,6 +1997,7 @@ fn with_dependencies(
+         .collect()
+ }
+ 
++#[cfg(test)]
+ fn projected_ordered_intents(
+     source: &NpcDecisionSourceOutput,
+     projection: &NpcDecisionProjectionOutput,

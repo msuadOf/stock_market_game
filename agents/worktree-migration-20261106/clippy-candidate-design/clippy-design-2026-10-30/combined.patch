@@ -1,0 +1,2371 @@
+diff --git a/apps/web-wasm/src/shutdown.rs b/apps/web-wasm/src/shutdown.rs
+index 6bcb475f..1804fe07 100644
+--- a/apps/web-wasm/src/shutdown.rs
++++ b/apps/web-wasm/src/shutdown.rs
+@@ -55,7 +55,7 @@ impl SessionRegistry {
+             (Some(primary), Ok(report)) => Err(ShutdownFailure {
+                 primary,
+                 secondary: Vec::new(),
+-                completion: report.runtime,
++                completion: report.runtime.map(Box::new),
+             }),
+             (Some(primary), Err(failure)) => {
+                 let mut secondary = vec![failure.primary];
+diff --git a/packages/engine/src/accounting/disclosure_roe.rs b/packages/engine/src/accounting/disclosure_roe.rs
+index 22582887..e6d33a67 100644
+--- a/packages/engine/src/accounting/disclosure_roe.rs
++++ b/packages/engine/src/accounting/disclosure_roe.rs
+@@ -115,7 +115,7 @@ pub struct DisclosureRoeResult {
+ 
+ #[derive(Clone, Eq, PartialEq, Debug)]
+ pub enum DisclosureRoeOutcome {
+-    Available(DisclosureRoeResult),
++    Available(Box<DisclosureRoeResult>),
+     Unavailable(DisclosureRoeUnavailable),
+ }
+ 
+@@ -230,13 +230,15 @@ pub fn calculate_disclosure_roe(
+             .numerator
+             .clone(),
+     );
+-    Ok(DisclosureRoeOutcome::Available(DisclosureRoeResult {
+-        ordinary_roe: ordinary.ordinary_roe,
+-        adjusted_roe,
+-        weighted_average_parent_equity_cents: ordinary.weighted_average_parent_equity_cents,
+-        adjusted_weighted_average_parent_equity_cents: ordinary
+-            .adjusted_weighted_average_parent_equity_cents,
+-    }))
++    Ok(DisclosureRoeOutcome::Available(Box::new(
++        DisclosureRoeResult {
++            ordinary_roe: ordinary.ordinary_roe,
++            adjusted_roe,
++            weighted_average_parent_equity_cents: ordinary.weighted_average_parent_equity_cents,
++            adjusted_weighted_average_parent_equity_cents: ordinary
++                .adjusted_weighted_average_parent_equity_cents,
++        },
++    )))
+ }
+ 
+ pub fn calculate_ordinary_disclosure_roe(
+diff --git a/packages/engine/src/accounting/disclosure_roe/tests.rs b/packages/engine/src/accounting/disclosure_roe/tests.rs
+index 2b90d1cc..a2eb4d8e 100644
+--- a/packages/engine/src/accounting/disclosure_roe/tests.rs
++++ b/packages/engine/src/accounting/disclosure_roe/tests.rs
+@@ -440,3 +440,30 @@ fn arithmetic_keeps_i128_sized_facts_exact_without_intermediate_overflow() {
+         DisclosureRoeValue::Available(ratio_big(&maximum * 24, &maximum * 36)),
+     );
+ }
++
++#[test]
++fn outcome_payload_preserves_value_semantics_and_stays_within_inline_budget() {
++    let input = report(full_year());
++    let outcome = calculate_disclosure_roe(&input).unwrap();
++    let DisclosureRoeOutcome::Available(result) = &outcome else {
++        panic!("正平均权益应有可用披露 ROE")
++    };
++    assert_eq!(
++        result.ordinary_roe,
++        DisclosureRoeValue::Available(ratio(576_000, 2_688_000))
++    );
++    assert_eq!(
++        result.adjusted_roe,
++        DisclosureRoeValue::Available(ratio(288_000, 2_688_000))
++    );
++    assert_eq!(
++        result.weighted_average_parent_equity_cents,
++        ratio(2_688_000, 24)
++    );
++    assert_eq!(
++        result.adjusted_weighted_average_parent_equity_cents,
++        ratio(2_688_000, 24)
++    );
++    assert_eq!(outcome.clone(), outcome);
++    assert!(std::mem::size_of::<DisclosureRoeOutcome>() <= 128);
++}
+diff --git a/packages/engine/src/accounting/reports/roe.rs b/packages/engine/src/accounting/reports/roe.rs
+index 295ec282..952c23dd 100644
+--- a/packages/engine/src/accounting/reports/roe.rs
++++ b/packages/engine/src/accounting/reports/roe.rs
+@@ -89,6 +89,7 @@ pub(super) fn calculate_report_roe(
+             detail: "规则9计算在通过前置校验后不应整体不可用".to_string(),
+         });
+     };
++    let result = *result;
+     let average_equity = ReportRoeValue::Available(ReportRational {
+         numerator: result
+             .weighted_average_parent_equity_cents
+diff --git a/packages/engine/src/company/query.rs b/packages/engine/src/company/query.rs
+index 96bbaca6..bc69740f 100644
+--- a/packages/engine/src/company/query.rs
++++ b/packages/engine/src/company/query.rs
+@@ -38,7 +38,7 @@ pub struct PublicReportAvailabilityQuery {
+ #[ts(export)]
+ pub enum PublicReportAvailability {
+     Available {
+-        report: PublicReportSummary,
++        report: Box<PublicReportSummary>,
+     },
+     Unavailable {
+         reason: PublicReportUnavailableReason,
+diff --git a/packages/engine/src/company/simple/finance_settlement_entry_tests.rs b/packages/engine/src/company/simple/finance_settlement_entry_tests.rs
+index 0b5abc58..0642c97e 100644
+--- a/packages/engine/src/company/simple/finance_settlement_entry_tests.rs
++++ b/packages/engine/src/company/simple/finance_settlement_entry_tests.rs
+@@ -7,6 +7,9 @@ use super::tests::{amount, date, fixture};
+ use super::*;
+ use crate::company::simple::period::{PeriodNoiseConfig, SettlementCycle, TrendSegment};
+ 
++type ExpectedJournalLine = (String, PostingSide, AccountingAmount);
++type ExpectedJournalEntry<'a> = (&'a str, Vec<ExpectedJournalLine>);
++
+ /// 结算末日账簿中「逐项分录」的期望形状（kind 字符串 + 借贷行）。
+ /// 用字符串断言以兼容红测阶段（旧实现只有混合摘要分录，红测仍可编译运行）。
+ fn kind_string(kind: &BusinessKind) -> String {
+@@ -56,7 +59,7 @@ fn settlement_posts_one_journal_entry_per_explicit_item_with_dedicated_kinds() {
+         })
+         .collect();
+     assert!(blended.is_empty(), "不得再用混合摘要分录承载多项明确项目");
+-    let expected: Vec<(&str, Vec<(String, PostingSide, AccountingAmount)>)> = vec![
++    let expected: Vec<ExpectedJournalEntry<'_>> = vec![
+         (
+             "SimpleRevenueAccrual",
+             vec![
+diff --git a/packages/engine/src/compute.rs b/packages/engine/src/compute.rs
+index 2940bc98..d10a3cee 100644
+--- a/packages/engine/src/compute.rs
++++ b/packages/engine/src/compute.rs
+@@ -54,7 +54,7 @@ pub struct ComputeContext {
+     /// 上下文时后写者生效（与准入台账同域，登记为已知形状）。
+     active_width: std::sync::atomic::AtomicUsize,
+     #[cfg(any(test, feature = "verification-harness"))]
+-    observer: std::sync::RwLock<Option<std::sync::Arc<dyn Fn(ComputeObservation) + Send + Sync>>>,
++    observer: std::sync::RwLock<Option<ComputeObserver>>,
+     /// 派发门（测试/验证专用）：派发点成功预留之后、spawn 入队之前调用，
+     /// 用于把「预留返回与 spawn 之间」的计数窗口钉成确定交错（round4
+     /// ①-必修a 的红测试）。仅本上下文显式设置时生效，互不干扰。
+@@ -254,6 +254,9 @@ pub enum ComputeWork {
+     ReceiptAggregationAudit,
+ }
+ 
++#[cfg(any(test, feature = "verification-harness"))]
++type ComputeObserver = std::sync::Arc<dyn Fn(ComputeObservation) + Send + Sync>;
++
+ #[cfg(any(test, feature = "verification-harness"))]
+ #[derive(Clone, Copy, Debug, serde::Serialize)]
+ pub struct ComputeObservation {
+diff --git a/packages/engine/src/information/queries.rs b/packages/engine/src/information/queries.rs
+index ff2e2a71..993b6460 100644
+--- a/packages/engine/src/information/queries.rs
++++ b/packages/engine/src/information/queries.rs
+@@ -71,7 +71,7 @@ impl PublicLibrary {
+             .max_by_key(|report| (report.reports.version.sequence, report.id))
+         {
+             return Ok(PublicReportAvailability::Available {
+-                report: PublicReportSummary::from(report),
++                report: Box::new(PublicReportSummary::from(report)),
+             });
+         }
+         let unavailable = |reason| Ok(PublicReportAvailability::Unavailable { reason });
+diff --git a/packages/engine/src/information/source_tests.rs b/packages/engine/src/information/source_tests.rs
+index 6e2b3535..afd4fbb3 100644
+--- a/packages/engine/src/information/source_tests.rs
++++ b/packages/engine/src/information/source_tests.rs
+@@ -505,3 +505,55 @@ fn simple_monthly_disclosure_obeys_public_time_and_repeated_scans_are_idempotent
+     .is_err());
+     assert_eq!(library.save().reports, saved.reports);
+ }
++
++#[test]
++fn public_report_availability_preserves_complete_report_wire_and_inline_budget() {
++    use crate::company::{PublicReportAvailability, PublicReportUnavailableReason};
++
++    let unavailable = PublicReportAvailability::Unavailable {
++        reason: PublicReportUnavailableReason::NotYetPublished,
++    };
++    assert_eq!(
++        serde_json::to_value(&unavailable).unwrap(),
++        serde_json::json!({"status": "Unavailable", "reason": "NotYetPublished"})
++    );
++
++    let system = simple_model(1);
++    let query = monthly_availability_query();
++    let day = CivilDate::from_iso("2030-01-01").unwrap();
++    let published = CivilInstant::from_hms(day, 18, 0, 0).unwrap();
++    let frequency = ReportFrequency::Monthly {
++        schedule: MonthlyReportSchedule::Preset {
++            preset: MonthlyReportPreset::FirstDayEvening,
++            delay: MonthlyReportDelay::None,
++        },
++    };
++    let mut library = PublicLibrary::new();
++    let ids =
++        publish_simple_scheduled(&system, frequency, 17, None, published, &mut library, false)
++            .unwrap();
++    let original = library.report(ids[0], published).unwrap();
++    let report_wire =
++        serde_json::to_value(crate::company::PublicReportSummary::from(original)).unwrap();
++    let availability = library
++        .query_report_availability(&system, &query, frequency, published)
++        .unwrap();
++    let PublicReportAvailability::Available { report } = &availability else {
++        panic!("已公开同期间材料应可查询")
++    };
++    assert_eq!(report.period, query.period_end);
++    let encoded = serde_json::to_value(&availability).unwrap();
++    assert_eq!(encoded["status"], "Available");
++    assert_eq!(
++        encoded,
++        serde_json::json!({"status": "Available", "report": report_wire})
++    );
++    assert!(encoded["report"]["accounting"].is_object());
++    assert!(encoded["report"]["financials"]["cash_flow"].is_object());
++
++    let typescript = <PublicReportAvailability as ts_rs::TS>::decl(&ts_rs::Config::default());
++    assert!(typescript.contains("\"status\": \"Available\""));
++    assert!(typescript.contains("report: PublicReportSummary"));
++    assert!(typescript.contains("\"status\": \"Unavailable\""));
++    assert!(std::mem::size_of::<PublicReportAvailability>() <= 128);
++}
+diff --git a/packages/engine/src/market.rs b/packages/engine/src/market.rs
+index d35d0a53..7bc1e845 100644
+--- a/packages/engine/src/market.rs
++++ b/packages/engine/src/market.rs
+@@ -13,6 +13,8 @@ use crate::strategy::LimitPrice;
+ use std::collections::BTreeMap;
+ use thiserror::Error;
+ 
++pub(crate) type MarketDepth = (Vec<(Money, u64)>, Vec<(Money, u64)>);
++
+ /// market 操作失败。绝不静默吞掉（铁律二）。
+ #[derive(Debug, Error)]
+ pub enum MarketError {
+@@ -397,10 +399,7 @@ impl Market {
+         Ok(())
+     }
+ 
+-    pub(crate) fn depth_before_sequence(
+-        &self,
+-        cutoff: u64,
+-    ) -> (Vec<(Money, u64)>, Vec<(Money, u64)>) {
++    pub(crate) fn depth_before_sequence(&self, cutoff: u64) -> MarketDepth {
+         let mut bids = BTreeMap::<Money, u64>::new();
+         let mut asks = BTreeMap::<Money, u64>::new();
+         for order in self.resting_order_refs().filter(|order| order.seq < cutoff) {
+diff --git a/packages/engine/src/runtime/bridge.rs b/packages/engine/src/runtime/bridge.rs
+index 47ca27aa..a165af69 100644
+--- a/packages/engine/src/runtime/bridge.rs
++++ b/packages/engine/src/runtime/bridge.rs
+@@ -156,15 +156,7 @@ pub fn default_retail_decision(count: usize, seed_base: u64) -> DecisionSetup {
+ pub fn accounts_projection_from_session(
+     session: &crate::GameSession,
+     n_stocks: usize,
+-) -> (
+-    Vec<i64>,
+-    Vec<Vec<u32>>,
+-    Vec<Vec<i64>>,
+-    Vec<Vec<i64>>,
+-    Vec<Vec<u32>>,
+-    Vec<Vec<bool>>,
+-    Vec<crate::AccountId>,
+-) {
++) -> super::type_aliases::SessionAccountProjection {
+     // B3 远程登录：名册取全量账户（id 升序）而非仅有策略的 NPC——共享
+     // 市场的动态加入成员（无策略 Player，意图只走 ExternalPlan 路由）
+     /// 必须在 id_map 内，否则 owner 路由显式失败。账户 0 仍由下方惯例位
+diff --git a/packages/engine/src/runtime/desk.rs b/packages/engine/src/runtime/desk.rs
+index de93d788..82efe1f7 100644
+--- a/packages/engine/src/runtime/desk.rs
++++ b/packages/engine/src/runtime/desk.rs
+@@ -21,6 +21,7 @@ use super::fees::{buy_purse_limit, buyer_charge, seller_charge, FeeQuote};
+ use super::protocol::{
+     DeskBatch, DeskIn, DeskMsg, DeskReport, RoutedPrice, RuntimeError, UpMsg, WorkerId,
+ };
++use super::type_aliases::CandleProjection;
+ use super::watchdog::{worker_recv, WatchdogConfig};
+ use super::{DeskReceipt, Entity, FillFact, OrderRef, Owner, ReceiptKind, StockIdx};
+ use crate::config::GameConfig;
+@@ -3273,12 +3274,7 @@ impl DeskState {
+     }
+ 
+     /// K 线投影（回写 candle_book 用）。
+-    fn candle_projection(
+-        &self,
+-    ) -> (
+-        Vec<(i64, i64, i64, i64, i64, u64, i64, u64)>,
+-        Option<(i64, i64, i64, i64, i64, u64, i64, u64)>,
+-    ) {
++    fn candle_projection(&self) -> (Vec<CandleProjection>, Option<CandleProjection>) {
+         let hist = self
+             .market
+             .candles
+diff --git a/packages/engine/src/runtime/drive.rs b/packages/engine/src/runtime/drive.rs
+index f62464d4..bbd9868a 100644
+--- a/packages/engine/src/runtime/drive.rs
++++ b/packages/engine/src/runtime/drive.rs
+@@ -13,6 +13,7 @@
+ use super::bridge::{accounts_projection_from_session, world_spec_from_setup};
+ use super::decision::{DecisionSetup, NpcProfile};
+ use super::event_bridge::{collect_lifecycle, project_auction_events, project_lifecycle_events};
++use super::type_aliases::{GroupAccountShard, GroupAccountShards};
+ use super::world::World;
+ use std::sync::Arc;
+ mod administrative_mirror;
+@@ -112,9 +113,7 @@ mod event_identity_tests;
+ /// 等价物，请求集改述为本拍事实集）。独立自由函数供负控单测直击。
+ pub(crate) fn ensure_fact_owners_covered_arc(
+     fact_rec: Option<&super::world::TickRecord>,
+-    snapshots: &[std::sync::Arc<
+-        Vec<(super::LocalIdx, std::sync::Arc<super::group::GroupAccount>)>,
+-    >],
++    snapshots: &[GroupAccountShard],
+     accounts_per_group: usize,
+ ) -> Result<(), String> {
+     // 复核登记项收口（sealtop 批）：覆盖校验只消费 local 下标——Arc
+@@ -1017,11 +1016,8 @@ impl RuntimeDriver {
+                 let n_groups = self.world.n_groups();
+                 // 归因优化：分片句柄直接借用（Arc deref）——免每拍全量
+                 /// clone 重组（净机实测该 clone 占 A 税 ~140μs/tick）。
+-                let mut shards: Vec<
+-                    std::sync::Arc<
+-                        Vec<(super::LocalIdx, std::sync::Arc<super::group::GroupAccount>)>,
+-                    >,
+-                > = vec![std::sync::Arc::new(Vec::new()); n_groups];
++                let mut shards: GroupAccountShards =
++                    vec![std::sync::Arc::new(Vec::new()); n_groups];
+                 for shard in &published.groups {
+                     let Some(slot) = shards.get_mut(shard.group as usize) else {
+                         return Err(format!(
+@@ -1315,7 +1311,7 @@ impl RuntimeDriver {
+         let tick_after = session.tick();
+         let candle_time = session.candle_date_time_for_runtime();
+         // 逐字段借用（不 clone 整个 StockPublic——recent/minute 等大面无关）。
+-        let views: Vec<(i64, Vec<(i64, u64)>, Vec<(i64, u64)>)> = self
++        let views: Vec<super::type_aliases::MarketDepthLevels> = self
+             .world_public_views()
+             .iter()
+             .map(|v| (v.last_price, v.depth_bids.clone(), v.depth_asks.clone()))
+@@ -1761,13 +1757,7 @@ impl RuntimeDriver {
+     /// 同步自发布版本（mirror/save 投影源）。
+     pub fn resting_snapshot_for_session(
+         &mut self,
+-    ) -> Result<
+-        (
+-            Vec<std::sync::Arc<Vec<super::protocol::RestingFact>>>,
+-            std::sync::Arc<Vec<AccountId>>,
+-        ),
+-        String,
+-    > {
++    ) -> Result<super::type_aliases::RestingSessionSnapshot, String> {
+         let published = self.world.publication().load();
+         if published.tick != self.world.global.committed_tick {
+             return Err(format!(
+@@ -2090,13 +2080,7 @@ impl RuntimeDriver {
+         &mut self,
+         intents: &[crate::session::ReceiptBearingIntent],
+         upper_limits: &[i64],
+-    ) -> Result<
+-        (
+-            Vec<Vec<super::decision::PendingOp>>,
+-            Vec<Vec<(super::LocalIdx, super::StockIdx, u64)>>,
+-        ),
+-        String,
+-    > {
++    ) -> Result<super::type_aliases::RoutedExternalIntents, String> {
+         // Sol 终审修复 1c 同族：多组名册的 owner→(组, 组内 local) 换算
+         ///（此前全局下标直接当 local——双组下组 1 账户的单被发给组 0
+         /// 的越界 local，tick 失败）。产物按组号分桶，定向发送。
+@@ -2305,7 +2289,7 @@ impl RuntimeDriver {
+ 
+     pub fn collect_attention(
+         &mut self,
+-    ) -> Result<Vec<(super::GroupIdx, Vec<(super::LocalIdx, u64, u64)>)>, String> {
++    ) -> Result<super::type_aliases::GroupAttentionCounts, String> {
+         self.world
+             .collect_group_attention()
+             .map_err(|e| format!("注意力收集失败：{e:?}"))
+@@ -2487,13 +2471,7 @@ impl RuntimeDriver {
+     /// P2-1a：随附 dirty 掩码（读面一般忽略；同源校验可用）。
+     pub fn collect_belief(
+         &self,
+-    ) -> Result<
+-        Vec<(
+-            super::GroupIdx,
+-            Vec<Option<super::world::BeliefParticipantSnapshot>>,
+-        )>,
+-        String,
+-    > {
++    ) -> Result<super::type_aliases::GroupOptionalBeliefSnapshots, String> {
+         // P2-2a：读面不经组线程（上行已稀疏化）——由增量缓存承载
+         //（构造期投影基线+每 tick dirty 增量合并，与组端权威同源）。
+         let per = self.accounts_per_group.max(1);
+@@ -2517,13 +2495,7 @@ impl RuntimeDriver {
+     #[cfg(test)]
+     pub fn collect_group_belief_for_test(
+         &mut self,
+-    ) -> Result<
+-        Vec<(
+-            super::GroupIdx,
+-            Vec<(super::LocalIdx, super::world::BeliefParticipantSnapshot)>,
+-        )>,
+-        String,
+-    > {
++    ) -> Result<super::type_aliases::GroupBeliefSnapshots, String> {
+         self.world
+             .collect_group_belief()
+             .map_err(|e| format!("belief 组读面失败：{e:?}"))
+@@ -2562,15 +2534,7 @@ impl RuntimeDriver {
+     /// 开仓派生读面收集（D3a-2c：组线程 observe 直调的派生——红证锚）。
+     pub fn collect_open_derivations(
+         &mut self,
+-    ) -> Result<
+-        Vec<(
+-            super::GroupIdx,
+-            crate::strategy::MarketView,
+-            crate::calendar::CivilInstant,
+-            Vec<super::world::OpenDerivationRecord>,
+-        )>,
+-        String,
+-    > {
++    ) -> Result<super::type_aliases::GroupOpenDerivations, String> {
+         self.world
+             .collect_open_derivations()
+             .map_err(|e| format!("开仓派生收集失败：{e:?}"))
+@@ -2580,16 +2544,7 @@ impl RuntimeDriver {
+     /// 测试面）。
+     pub fn collect_observations(
+         &mut self,
+-    ) -> Result<
+-        Vec<(
+-            super::GroupIdx,
+-            Vec<(
+-                crate::observation::PricePathObservation,
+-                crate::observation::TechnicalObservation,
+-            )>,
+-        )>,
+-        String,
+-    > {
++    ) -> Result<super::type_aliases::GroupObservations, String> {
+         self.world
+             .collect_group_observations()
+             .map_err(|e| format!("观察基收集失败：{e:?}"))
+@@ -3065,14 +3020,8 @@ impl RuntimeDriver {
+     /// Sol 二审修复集 3：收集错误全传播（不吞发送失败/异常消息）。
+     pub(crate) fn world_desk_finals_for_candles(
+         &mut self,
+-    ) -> Result<
+-        Vec<(
+-            super::StockIdx,
+-            Vec<(i64, i64, i64, i64, i64, u64, i64, u64)>,
+-            Option<(i64, i64, i64, i64, i64, u64, i64, u64)>,
+-        )>,
+-        super::protocol::RuntimeError,
+-    > {
++    ) -> Result<Vec<super::type_aliases::StockCandleProjection>, super::protocol::RuntimeError>
++    {
+         self.world.take_candle_projection()
+     }
+ }
+@@ -3264,9 +3213,7 @@ fn resting_order_seeds_from_session(
+ /// ——等价守卫的 fixture 前置断言数据源。
+ #[cfg(test)]
+ thread_local! {
+-    pub static RESTING_DELTA_FACE_COUNTS: std::cell::RefCell<
+-        Option<std::sync::Arc<std::sync::Mutex<(usize, usize, usize)>>>
+-    > = const { std::cell::RefCell::new(None) };
++    pub static RESTING_DELTA_FACE_COUNTS: std::cell::RefCell<Option<std::sync::Arc<std::sync::Mutex<super::type_aliases::RestingDeltaFaceCounts>>>> = const { std::cell::RefCell::new(None) };
+ }
+ 
+ /// 从实际 AccountBook 和目录派生角色能力；不证明公司方案已批准或资金已提交。
+diff --git a/packages/engine/src/runtime/drive/convergence.rs b/packages/engine/src/runtime/drive/convergence.rs
+index 0e88d810..6d620bd4 100644
+--- a/packages/engine/src/runtime/drive/convergence.rs
++++ b/packages/engine/src/runtime/drive/convergence.rs
+@@ -1,3 +1,4 @@
++use super::super::type_aliases::GroupAccountShard;
+ use super::*;
+ use std::collections::BTreeMap;
+ use std::sync::Arc;
+@@ -6,14 +7,7 @@ use std::sync::Arc;
+ #[derive(Clone)]
+ pub(crate) struct PreparedDriverStep {
+     pub calendar: PreparedDriverCalendar,
+-    pub accounts: Vec<
+-        Arc<
+-            Vec<(
+-                super::super::LocalIdx,
+-                Arc<super::super::group::GroupAccount>,
+-            )>,
+-        >,
+-    >,
++    pub accounts: Vec<GroupAccountShard>,
+     pub buy_vwap: BTreeMap<
+         (
+             super::super::GroupIdx,
+@@ -806,13 +800,7 @@ impl RuntimeDriver {
+     pub(crate) fn resting_snapshot_for_prepared(
+         &mut self,
+         day_end: bool,
+-    ) -> Result<
+-        (
+-            Vec<Arc<Vec<crate::runtime::RestingFact>>>,
+-            Arc<Vec<AccountId>>,
+-        ),
+-        String,
+-    > {
++    ) -> Result<super::super::type_aliases::RestingSessionSnapshot, String> {
+         if day_end {
+             let facts = self.collect_resting_facts_live()?;
+             Ok((
+diff --git a/packages/engine/src/runtime/drive_tests.rs b/packages/engine/src/runtime/drive_tests.rs
+index 330e704f..3fabda0c 100644
+--- a/packages/engine/src/runtime/drive_tests.rs
++++ b/packages/engine/src/runtime/drive_tests.rs
+@@ -3010,26 +3010,20 @@ fn p2_4a_arc_shard_cover_check_matches_value_form() {
+         desk_causal: Vec::new(),
+     };
+     // Arc 分片形态（生产形态：组分片条目 Arc 共享——Seal 攻顶 A-1）。
+-    let make_shards = |locals: &[crate::runtime::LocalIdx]| -> Vec<
+-        Arc<
+-            Vec<(
+-                crate::runtime::LocalIdx,
+-                Arc<crate::runtime::group::GroupAccount>,
+-            )>,
+-        >,
+-    > {
+-        vec![Arc::new(
+-            locals
+-                .iter()
+-                .map(|&local| {
+-                    (
+-                        local,
+-                        Arc::new(crate::runtime::group::GroupAccount::new(1_000_000, 1)),
+-                    )
+-                })
+-                .collect(),
+-        )]
+-    };
++    let make_shards =
++        |locals: &[crate::runtime::LocalIdx]| -> super::type_aliases::GroupAccountShards {
++            vec![Arc::new(
++                locals
++                    .iter()
++                    .map(|&local| {
++                        (
++                            local,
++                            Arc::new(crate::runtime::group::GroupAccount::new(1_000_000, 1)),
++                        )
++                    })
++                    .collect(),
++            )]
++        };
+     // 负例：只含 maker local 0——taker local 3 缺项必须显式失败。
+     let partial = make_shards(&[0]);
+     let err_arc = ensure_fact_owners_covered_arc(Some(&record), &partial, 8)
+diff --git a/packages/engine/src/runtime/group.rs b/packages/engine/src/runtime/group.rs
+index 15b0b13f..f6fb64b2 100644
+--- a/packages/engine/src/runtime/group.rs
++++ b/packages/engine/src/runtime/group.rs
+@@ -790,10 +790,7 @@ pub struct GroupFinalState {
+ 
+ /// 组线程私有状态。
+ pub struct GroupState {
+-    calendar_owner: Option<(
+-        Arc<crate::session::market_calendar_context::MarketCalendarSource>,
+-        Vec<(crate::StockId, crate::calendar::CalendarExchange)>,
+-    )>,
++    calendar_owner: Option<super::type_aliases::CalendarOwner>,
+     admin_pending: Option<admin_transaction::PendingAdmin>,
+     admin_last_id: u64,
+     repurchase_projections: std::collections::BTreeMap<
+@@ -3332,14 +3329,7 @@ impl GroupState {
+                 crate::observation::information_clock::InformationTradingAnchor,
+             >,
+         >,
+-    ) -> Result<
+-        (
+-            super::world::OpenDerivationRecord,
+-            Vec<(crate::PlanId, super::decision::PendingOp)>,
+-            Vec<(LocalIdx, StockIdx, u64)>,
+-        ),
+-        RuntimeError,
+-    > {
++    ) -> Result<super::type_aliases::OpenDerivationPlanResult, RuntimeError> {
+         let group = self.group;
+         let company_facts = Arc::clone(self.current_company_facts()?);
+         let (projection, snapshot) = match (self.root_projection.clone(), self.snapshot.clone()) {
+@@ -4095,13 +4085,7 @@ impl GroupState {
+         personal: &crate::session::PlanPersonalState,
+         snapshot: &std::sync::Arc<TickSnapshot>,
+         existing_before: &[crate::plans::PlanId],
+-    ) -> Result<
+-        (
+-            Vec<(crate::PlanId, super::decision::PendingOp)>,
+-            Vec<(LocalIdx, StockIdx, u64)>,
+-        ),
+-        RuntimeError,
+-    > {
++    ) -> Result<super::type_aliases::GroupPlanOperations, RuntimeError> {
+         let group = self.group;
+         let mut ops = Vec::new();
+         // D3b 件 3：定向撤单目标（local, stock, desk serial）——
+diff --git a/packages/engine/src/runtime/group/admin_transaction.rs b/packages/engine/src/runtime/group/admin_transaction.rs
+index 032f4ee3..67a9d9cf 100644
+--- a/packages/engine/src/runtime/group/admin_transaction.rs
++++ b/packages/engine/src/runtime/group/admin_transaction.rs
+@@ -41,15 +41,7 @@ impl GroupState {
+     pub(super) fn capture_information_handover(
+         &self,
+         source: crate::runtime::source::WorldMirrorSource,
+-    ) -> Result<
+-        (
+-            crate::runtime::information_handover::GroupInformationHandover,
+-            Arc<crate::information::PublicLibrary>,
+-            Arc<crate::company::CompanyReadFacts>,
+-            Vec<(crate::AccountId, u64, u64)>,
+-        ),
+-        RuntimeError,
+-    > {
++    ) -> Result<super::super::type_aliases::InformationHandoverCapture, RuntimeError> {
+         use crate::runtime::information_handover::{
+             GroupInformationHandover, InformationHandoverMaterial, InformationHandoverSignature,
+         };
+diff --git a/packages/engine/src/runtime/mod.rs b/packages/engine/src/runtime/mod.rs
+index 608ecc1c..2fe51f1f 100644
+--- a/packages/engine/src/runtime/mod.rs
++++ b/packages/engine/src/runtime/mod.rs
+@@ -42,6 +42,8 @@ pub fn set_step_runtime_override(enabled: bool) -> Result<(), &'static str> {
+     wasm_step_override::set_step_runtime_override(&STEP_RUNTIME_OVERRIDE, enabled)
+ }
+ 
++pub mod type_aliases;
++
+ mod entities;
+ mod facts;
+ mod protocol;
+diff --git a/packages/engine/src/runtime/personal_full_validation.rs b/packages/engine/src/runtime/personal_full_validation.rs
+index ada4f0e0..3f1b482c 100644
+--- a/packages/engine/src/runtime/personal_full_validation.rs
++++ b/packages/engine/src/runtime/personal_full_validation.rs
+@@ -1,4 +1,3 @@
+-use super::world::BeliefParticipantSnapshot;
+ use super::{GroupIdx, LocalIdx};
+ use crate::AccountId;
+ use std::collections::{BTreeMap, BTreeSet};
+@@ -62,11 +61,8 @@ pub(crate) enum PersonalFullError {
+ }
+ 
+ pub(crate) fn validate_personal_full(
+-    expected: &[(GroupIdx, Vec<(AccountId, PersonalPresence)>)],
+-    replies: &[(
+-        GroupIdx,
+-        Vec<(LocalIdx, AccountId, Option<BeliefParticipantSnapshot>)>,
+-    )],
++    expected: &[super::type_aliases::PersonalPresenceGroup],
++    replies: &[super::type_aliases::PersonalFullGroup],
+ ) -> Result<(), PersonalFullError> {
+     let mut roster = BTreeMap::new();
+     let mut owners = BTreeSet::new();
+diff --git a/packages/engine/src/runtime/protocol.rs b/packages/engine/src/runtime/protocol.rs
+index 860c871a..a3c2a01f 100644
+--- a/packages/engine/src/runtime/protocol.rs
++++ b/packages/engine/src/runtime/protocol.rs
+@@ -7,7 +7,9 @@
+ //! 同一批次（及同一 channel 先后批次）FIFO：同 NPC 的 `CancelAll`/`Cancel` 恒先于其
+ //! `Place`（对齐撤单语义）。
+ 
++use super::type_aliases::CandleProjection;
+ use super::{DeskReceipt, Entity, FillFact, OrderRef, Owner, StockIdx};
++
+ use crate::orderbook::Side;
+ 
+ /// 价格符号：组端看不到目标股活簿，符号在**交易部受理时**解析。
+@@ -1427,9 +1429,9 @@ pub enum UpMsg {
+         /// 股索引。
+         stock: StockIdx,
+         /// 已完成日 K（time, O, H, L, C, volume）。
+-        history: Vec<(i64, i64, i64, i64, i64, u64, i64, u64)>,
++        history: Vec<CandleProjection>,
+         /// 活动 K。
+-        active: Option<(i64, i64, i64, i64, i64, u64, i64, u64)>,
++        active: Option<CandleProjection>,
+     },
+     /// 投递完成回执（Belief-1b·下：组内纯函数推进后的注意力态——
+     /// 驱动器**仅回写 information 域**，不触碰 candidate/heap）。
+diff --git a/packages/engine/src/runtime/type_aliases.rs b/packages/engine/src/runtime/type_aliases.rs
+new file mode 100644
+index 00000000..5525e774
+--- /dev/null
++++ b/packages/engine/src/runtime/type_aliases.rs
+@@ -0,0 +1,140 @@
++//! runtime 内复用的纯类型别名；均与原容器、tuple 和回调类型完全相同。
++
++use std::sync::Arc;
++
++use super::{GroupIdx, LocalIdx};
++
++/// K 线记录（time、open、high、low、close、volume、turnover、trade_count）。
++/// 价格与 turnover 使用分，volume 使用股；字段顺序与原协议保持一致。
++pub type CandleProjection = (i64, i64, i64, i64, i64, u64, i64, u64);
++
++/// 单个组账户分片中的名册位置与账户共享句柄。
++pub(crate) type GroupAccountShardEntry = (LocalIdx, Arc<super::group::GroupAccount>);
++/// 单个组的账户分片；Arc 层级保留发布快照的共享所有权。
++pub(crate) type GroupAccountShard = Arc<Vec<GroupAccountShardEntry>>;
++/// 全组账户分片集合。
++pub(crate) type GroupAccountShards = Vec<GroupAccountShard>;
++
++/// Session 到 runtime 的账户矩阵投影，顺序为现金、持仓、投入、回收、冻结、曾持有、账户身份。
++pub type SessionAccountProjection = (
++    Vec<i64>,
++    Vec<Vec<u32>>,
++    Vec<Vec<i64>>,
++    Vec<Vec<i64>>,
++    Vec<Vec<u32>>,
++    Vec<Vec<bool>>,
++    Vec<crate::AccountId>,
++);
++
++/// 组权益计算器。
++pub type RightsComputer = Box<dyn Fn(u32, GroupIdx) -> Vec<super::protocol::AdminRight> + Send>;
++/// 计划链工厂。
++pub type PlanFactory = Box<dyn Fn(GroupIdx) -> Vec<Box<dyn super::plans::PlanChain>> + Send>;
++
++/// 单只股票的完整 K 线投影。
++pub type StockCandleProjection = (
++    super::StockIdx,
++    Vec<CandleProjection>,
++    Option<CandleProjection>,
++);
++/// 深度档位及其价格、数量。
++pub type DepthLevels = Vec<(i64, u64)>;
++/// 单个组内账户的注意力调度计数。
++pub type LocalAttentionCount = (LocalIdx, u64, u64);
++/// 按组收集的注意力调度计数。
++pub type GroupAttentionCounts = Vec<(GroupIdx, Vec<LocalAttentionCount>)>;
++/// 按组收集的完整个人信念快照。
++pub type GroupBeliefSnapshots = Vec<(
++    GroupIdx,
++    Vec<(LocalIdx, super::world::BeliefParticipantSnapshot)>,
++)>;
++/// 按组收集的可缺失个人信念快照。
++pub type GroupOptionalBeliefSnapshots = Vec<(
++    GroupIdx,
++    Vec<Option<super::world::BeliefParticipantSnapshot>>,
++)>;
++/// 单条开仓观察与技术分析事实。
++pub type ObservationPair = (
++    crate::observation::PricePathObservation,
++    crate::observation::TechnicalObservation,
++);
++/// 按组收集的开仓观察事实。
++pub type GroupObservations = Vec<(GroupIdx, Vec<ObservationPair>)>;
++/// 按组收集的开仓派生事实。
++pub type GroupOpenDerivations = Vec<(
++    GroupIdx,
++    crate::strategy::MarketView,
++    crate::calendar::CivilInstant,
++    Vec<super::world::OpenDerivationRecord>,
++)>;
++/// 单个组的个人完整读面。
++pub(crate) type PersonalFullGroup = (
++    GroupIdx,
++    Vec<(
++        LocalIdx,
++        crate::AccountId,
++        Option<super::world::BeliefParticipantSnapshot>,
++    )>,
++);
++/// 按组组织的个人完整读面。
++pub(crate) type PersonalFullGroups = Vec<PersonalFullGroup>;
++
++/// 保存当前在途事实与账户身份映射的共享快照。
++pub type RestingSessionSnapshot = (
++    Vec<Arc<Vec<super::protocol::RestingFact>>>,
++    Arc<Vec<crate::AccountId>>,
++);
++/// 外部意图按组组织的操作和撤单队列。
++pub(crate) type RoutedExternalIntents = (
++    Vec<Vec<super::decision::PendingOp>>,
++    Vec<Vec<(LocalIdx, super::StockIdx, u64)>>,
++);
++/// 日历来源及其交易所映射。
++pub(crate) type CalendarOwner = (
++    Arc<crate::session::market_calendar_context::MarketCalendarSource>,
++    Vec<(crate::StockId, crate::calendar::CalendarExchange)>,
++);
++/// 行情日线种子（OHLC 与成交量）。
++pub(crate) type DailyBarSeed = (i64, i64, i64, i64, u64);
++/// 按组收集的已交付注意力状态。
++pub type GroupAttentionUpdates =
++    Vec<(GroupIdx, Vec<(LocalIdx, crate::session::NpcAttentionState)>)>;
++/// 个人完整读面中的账户身份与 presence。
++pub(crate) type PersonalPresenceEntry = (
++    crate::AccountId,
++    super::personal_full_validation::PersonalPresence,
++);
++/// 按组组织的个人 presence。
++pub(crate) type PersonalPresenceGroup = (GroupIdx, Vec<PersonalPresenceEntry>);
++/// 按组组织的个人 presence 集合。
++pub(crate) type GroupPersonalPresence = Vec<PersonalPresenceGroup>;
++/// 管理权交接捕获及其公共资料、公司事实和个人计数。
++pub(crate) type InformationHandoverCapture = (
++    super::information_handover::GroupInformationHandover,
++    Arc<crate::information::PublicLibrary>,
++    Arc<crate::company::CompanyReadFacts>,
++    Vec<(crate::AccountId, u64, u64)>,
++);
++/// 分组行政阶段请求及其原始阶段布局。
++pub(crate) type PreparedAdminStageRequests = (
++    Vec<(GroupIdx, Vec<super::protocol::AdminOperation>)>,
++    std::collections::BTreeMap<GroupIdx, super::protocol::AdminStageLayout>,
++);
++/// 用户观察的公开行情深度视图。
++pub type MarketDepthLevels = (i64, DepthLevels, DepthLevels);
++/// 模拟诊断中 Added、Removed、Changed 三类计数。
++#[cfg(test)]
++pub(crate) type RestingDeltaFaceCounts = (usize, usize, usize);
++
++/// 单组计划操作与定向撤单队列。
++pub(crate) type GroupPlanOperations = (
++    Vec<(crate::PlanId, super::decision::PendingOp)>,
++    Vec<(LocalIdx, super::StockIdx, u64)>,
++);
++
++/// 单次开仓派生及其计划操作、定向撤单结果。
++pub(crate) type OpenDerivationPlanResult = (
++    super::world::OpenDerivationRecord,
++    Vec<(crate::PlanId, super::decision::PendingOp)>,
++    Vec<(LocalIdx, super::StockIdx, u64)>,
++);
+diff --git a/packages/engine/src/runtime/world.rs b/packages/engine/src/runtime/world.rs
+index 9ac313d1..7a8149cb 100644
+--- a/packages/engine/src/runtime/world.rs
++++ b/packages/engine/src/runtime/world.rs
+@@ -56,10 +56,10 @@ use super::coordinator::{
+ use super::decision::DecisionSetup;
+ use super::desk::{desk_main, DeskFinalState, DeskSetup};
+ use super::group::{group_main, GroupAccount, GroupFinalState, GroupScript};
+-use super::plans::PlanChain;
++use super::protocol::DayEndDirective;
+ use super::protocol::StockPublic;
+-use super::protocol::{AdminRight, DayEndDirective};
+ use super::protocol::{DeskMsg, GroupIn, RuntimeError, UpMsg, WorkerId};
++use super::type_aliases::{PlanFactory, RightsComputer};
+ use super::watchdog::{recv_deadline, Phase, WatchdogConfig};
+ use super::DeskReceipt;
+ use super::{GroupIdx, StockIdx};
+@@ -141,14 +141,7 @@ pub struct GroupInformationPayload {
+ /// 一次完整个人读面的真实槽；None 是明确缺乏能力，不代表缺少真实名册成员。
+ pub(crate) struct PersonalFullSnapshot {
+     pub source: super::source::WorldMirrorSource,
+-    pub groups: Vec<(
+-        GroupIdx,
+-        Vec<(
+-            super::LocalIdx,
+-            crate::AccountId,
+-            Option<BeliefParticipantSnapshot>,
+-        )>,
+-    )>,
++    pub groups: super::type_aliases::PersonalFullGroups,
+ }
+ 
+ /// 信念个人态快照（D3a-2b Belief-1：watchlist/价格记忆/信息态/信念书
+@@ -287,11 +280,11 @@ pub struct WorldSpec {
+     /// 内联决策装配（Some=decide_data 路径；None=测试脚本路径）。
+     pub decision: Option<DecisionSetup>,
+     /// 公司域权益产出（日结 AdminBatch 注入；None=无权益）。
+-    pub rights_computer: Option<Box<dyn Fn(u32, GroupIdx) -> Vec<AdminRight> + Send>>,
++    pub rights_computer: Option<RightsComputer>,
+     /// 按账户现金重建（存档候选往返；None=用 initial_cash 均一初始化）。
+     pub initial_cash_override: Option<Vec<Vec<i64>>>,
+     /// 计划链工厂（批 6：跨股多步计划经 Continue 轮排空）。
+-    pub plan_factory: Option<Box<dyn Fn(GroupIdx) -> Vec<Box<dyn PlanChain>> + Send>>,
++    pub plan_factory: Option<PlanFactory>,
+     /// D3a-2b：信念个人态种子（组 0 按下标承接——None=非机构位；
+     /// 构造期一次性投影，日结披露驱动随 Belief-1b 下沉）。
+     pub belief_seeds: Vec<Option<super::world::BeliefParticipantSnapshot>>,
+@@ -484,15 +477,7 @@ pub struct World {
+     mirror_day_end_stage: super::source::MirrorDayEndStage,
+     /// 仅身份元数据，用于核对信息候选回执的组内 local/AccountId；不保存个人态。
+     information_roster: Vec<Vec<crate::AccountId>>,
+-    personal_presence: Option<
+-        Vec<(
+-            GroupIdx,
+-            Vec<(
+-                crate::AccountId,
+-                super::personal_full_validation::PersonalPresence,
+-            )>,
+-        )>,
+-    >,
++    personal_presence: Option<super::type_aliases::GroupPersonalPresence>,
+     #[cfg(test)]
+     admin_send_fault_for_test: Option<(super::protocol::AdminPhase, GroupIdx)>,
+     /// 全局域权威（已收敛态）。
+@@ -549,7 +534,7 @@ pub struct World {
+     /// 成功日结的广播基撤销记录；下一真实 Start 关闭窗口，不参与 PublishedTick。
+     day_end_prior_public_views: Option<Vec<StockPublic>>,
+     /// 公司域权益产出（日结注入）。
+-    rights_computer: Option<Box<dyn Fn(u32, GroupIdx) -> Vec<AdminRight> + Send>>,
++    rights_computer: Option<RightsComputer>,
+     /// 每交易日 tick 数（日界判定）。
+     ticks_per_day: u64,
+     /// 日结候选校验器（F §6.2 步骤 4：候选组装与全部可失败校验成功后才提交）。
+@@ -991,7 +976,7 @@ impl World {
+         let mut prepared_plans = prepared_plans.into_iter();
+         let library_seed: std::sync::Arc<crate::information::PublicLibrary> =
+             library.unwrap_or_default();
+-        let mut stock_seed_bars: Vec<Vec<(i64, i64, i64, i64, u64)>> = stocks
++        let mut stock_seed_bars: Vec<Vec<super::type_aliases::DailyBarSeed>> = stocks
+             .iter()
+             .map(|spec| spec.initial_daily_bars.clone())
+             .collect();
+@@ -1775,14 +1760,7 @@ impl World {
+     /// 并返回部分数据——部分 K 安装=静默语义丢失）。
+     pub fn take_candle_projection(
+         &mut self,
+-    ) -> Result<
+-        Vec<(
+-            super::StockIdx,
+-            Vec<(i64, i64, i64, i64, i64, u64, i64, u64)>,
+-            Option<(i64, i64, i64, i64, i64, u64, i64, u64)>,
+-        )>,
+-        RuntimeError,
+-    > {
++    ) -> Result<Vec<super::type_aliases::StockCandleProjection>, RuntimeError> {
+         // Sol 三审阻断 2：通道面一致性守卫——sever/死亡后 txs 清空而
+         // 期望响应数不变，收集会空等 watchdog（30s）才失败。断连形态
+         // 立即显式报错（防御式：不静默等待）。
+@@ -2080,15 +2058,7 @@ impl World {
+     /// 开仓派生读面收集（D3a-2c：EchoOpenDerivation 广播→收齐）。
+     pub fn collect_open_derivations(
+         &mut self,
+-    ) -> Result<
+-        Vec<(
+-            GroupIdx,
+-            crate::strategy::MarketView,
+-            crate::calendar::CivilInstant,
+-            Vec<super::world::OpenDerivationRecord>,
+-        )>,
+-        RuntimeError,
+-    > {
++    ) -> Result<super::type_aliases::GroupOpenDerivations, RuntimeError> {
+         if self.group_txs.len() != self.n_groups {
+             return Err(RuntimeError::Disconnected {
+                 who: None,
+@@ -2135,16 +2105,7 @@ impl World {
+     /// 观察基收集（D3a-1：EchoObservations 广播→收齐——计划链端读面）。
+     pub fn collect_group_observations(
+         &mut self,
+-    ) -> Result<
+-        Vec<(
+-            GroupIdx,
+-            Vec<(
+-                crate::observation::PricePathObservation,
+-                crate::observation::TechnicalObservation,
+-            )>,
+-        )>,
+-        RuntimeError,
+-    > {
++    ) -> Result<super::type_aliases::GroupObservations, RuntimeError> {
+         if self.group_txs.len() != self.n_groups {
+             return Err(RuntimeError::Disconnected {
+                 who: None,
+@@ -2191,13 +2152,7 @@ impl World {
+     pub fn deliver_information(
+         &mut self,
+         payload: GroupInformationPayload,
+-    ) -> Result<
+-        Vec<(
+-            GroupIdx,
+-            Vec<(super::LocalIdx, crate::session::NpcAttentionState)>,
+-        )>,
+-        RuntimeError,
+-    > {
++    ) -> Result<super::type_aliases::GroupAttentionUpdates, RuntimeError> {
+         if self.group_txs.len() != self.n_groups {
+             return Err(RuntimeError::Disconnected {
+                 who: None,
+@@ -2331,8 +2286,7 @@ impl World {
+ 
+     pub fn collect_group_belief(
+         &mut self,
+-    ) -> Result<Vec<(GroupIdx, Vec<(super::LocalIdx, BeliefParticipantSnapshot)>)>, RuntimeError>
+-    {
++    ) -> Result<super::type_aliases::GroupBeliefSnapshots, RuntimeError> {
+         if self.group_txs.len() != self.n_groups {
+             return Err(RuntimeError::Disconnected {
+                 who: None,
+@@ -2384,7 +2338,7 @@ impl World {
+     /// 读面 collect_group_attention 不变，构造恢复/Abort 测试锚）。
+     pub fn collect_group_attention_sparse(
+         &mut self,
+-    ) -> Result<Vec<(GroupIdx, Vec<(super::LocalIdx, u64, u64)>)>, RuntimeError> {
++    ) -> Result<super::type_aliases::GroupAttentionCounts, RuntimeError> {
+         if self.group_txs.len() != self.n_groups {
+             return Err(RuntimeError::Disconnected {
+                 who: None,
+@@ -2427,7 +2381,7 @@ impl World {
+     /// 会话 npc_attention 的真实状态源）。
+     pub fn collect_group_attention(
+         &mut self,
+-    ) -> Result<Vec<(GroupIdx, Vec<(super::LocalIdx, u64, u64)>)>, RuntimeError> {
++    ) -> Result<super::type_aliases::GroupAttentionCounts, RuntimeError> {
+         if self.group_txs.len() != self.n_groups {
+             return Err(RuntimeError::Disconnected {
+                 who: None,
+diff --git a/packages/engine/src/runtime/world/admin_transaction/stages.rs b/packages/engine/src/runtime/world/admin_transaction/stages.rs
+index 6320c460..d74cf5fc 100644
+--- a/packages/engine/src/runtime/world/admin_transaction/stages.rs
++++ b/packages/engine/src/runtime/world/admin_transaction/stages.rs
+@@ -248,13 +248,7 @@ fn prepare_stage_requests(
+     stages: &[AdminOperationStage],
+     n_groups: usize,
+     has_information: bool,
+-) -> Result<
+-    (
+-        Vec<(GroupIdx, Vec<AdminOperation>)>,
+-        BTreeMap<GroupIdx, AdminStageLayout>,
+-    ),
+-    RuntimeError,
+-> {
++) -> Result<crate::runtime::type_aliases::PreparedAdminStageRequests, RuntimeError> {
+     let mut grouped = BTreeMap::<GroupIdx, Vec<AdminOperation>>::new();
+     let mut counts = BTreeMap::<GroupIdx, Vec<usize>>::new();
+     let mut tax_stages = BTreeSet::new();
+diff --git a/packages/engine/src/runtime/world/shutdown_completion.rs b/packages/engine/src/runtime/world/shutdown_completion.rs
+index 0a961b58..d80ec3f0 100644
+--- a/packages/engine/src/runtime/world/shutdown_completion.rs
++++ b/packages/engine/src/runtime/world/shutdown_completion.rs
+@@ -36,7 +36,7 @@ pub struct ShutdownCompletion {
+ pub struct ShutdownFailure {
+     pub primary: ShutdownIssue,
+     pub secondary: Vec<ShutdownIssue>,
+-    pub completion: Option<ShutdownCompletion>,
++    pub completion: Option<Box<ShutdownCompletion>>,
+ }
+ 
+ impl World {
+@@ -52,7 +52,7 @@ impl World {
+                     detail: reason,
+                 },
+                 secondary,
+-                completion: Some(completion),
++                completion: Some(Box::new(completion)),
+             });
+         }
+         let mut stage = "shutdown_state";
+@@ -67,7 +67,7 @@ impl World {
+                 Err(ShutdownFailure {
+                     primary,
+                     secondary,
+-                    completion: Some(completion),
++                    completion: Some(Box::new(completion)),
+                 })
+             }
+         }
+@@ -167,7 +167,7 @@ fn complete_shutdown_report(
+         Err(ShutdownFailure {
+             primary,
+             secondary: issues,
+-            completion: Some(completion),
++            completion: Some(Box::new(completion)),
+         })
+     }
+ }
+diff --git a/packages/engine/src/runtime/world/shutdown_completion/tests.rs b/packages/engine/src/runtime/world/shutdown_completion/tests.rs
+index 305901ce..b54354ad 100644
+--- a/packages/engine/src/runtime/world/shutdown_completion/tests.rs
++++ b/packages/engine/src/runtime/world/shutdown_completion/tests.rs
+@@ -3,6 +3,15 @@ use super::*;
+ use crate::runtime::protocol::GroupIn;
+ use std::sync::Arc;
+ 
++#[test]
++fn shutdown_failure_stays_within_the_error_layout_budget() {
++    assert!(
++        std::mem::size_of::<ShutdownFailure>() <= 128,
++        "ShutdownFailure embeds its potentially large completion: size={}",
++        std::mem::size_of::<ShutdownFailure>()
++    );
++}
++
+ fn world() -> World {
+     let spec = crate::runtime::skeleton_tests::basic_spec(
+         2,
+@@ -146,6 +155,7 @@ fn active_shutdown_rejects_worker_errors_and_keeps_every_real_join_failure() {
+     assert!(failure.primary.detail.contains("Drain 广播失败"));
+     let completion = failure
+         .completion
++        .as_ref()
+         .expect("正常流程失败仍需全员真实唤醒和 join 后给出事实");
+     assert_eq!(completion.owned_workers, 4);
+     assert_eq!(completion.joined_workers, 4);
+@@ -169,6 +179,44 @@ fn active_shutdown_rejects_worker_errors_and_keeps_every_real_join_failure() {
+             "主错和全部次错必须保留 worker 身份与原错误"
+         );
+     }
++
++    assert_eq!((completion.group_finals, completion.desk_finals), (0, 0));
++    let expected_issues = std::iter::once(&failure.primary)
++        .chain(&failure.secondary)
++        .map(|issue| {
++            serde_json::json!({
++                "stage": issue.stage,
++                "worker": issue.worker,
++                "detail": issue.detail,
++            })
++        })
++        .collect::<Vec<_>>();
++    let expected_workers = completion
++        .worker_results
++        .iter()
++        .map(|worker| {
++            let result = match &worker.result {
++                Ok(()) => serde_json::json!({ "Ok": null }),
++                Err(detail) => serde_json::json!({ "Err": detail }),
++            };
++            serde_json::json!({ "worker": worker.worker, "result": result })
++        })
++        .collect::<Vec<_>>();
++    assert_eq!(
++        serde_json::to_value(&failure).expect("ShutdownFailure 应可完整序列化"),
++        serde_json::json!({
++            "primary": expected_issues[0],
++            "secondary": &expected_issues[1..],
++            "completion": {
++                "owned_workers": 4,
++                "joined_workers": 4,
++                "worker_results": expected_workers,
++                "group_finals": 0,
++                "desk_finals": 0,
++            },
++        }),
++        "SHUTDOWN_FAILURE_JSON_TRUNCATED: primary、secondary 与真实 partial completion 必须完整保留"
++    );
+ }
+ 
+ fn wait_group0_exit(world: &World) {
+diff --git a/packages/engine/src/runtime/world/wasm_shutdown.rs b/packages/engine/src/runtime/world/wasm_shutdown.rs
+index 4d15a19d..ad912c5d 100644
+--- a/packages/engine/src/runtime/world/wasm_shutdown.rs
++++ b/packages/engine/src/runtime/world/wasm_shutdown.rs
+@@ -39,6 +39,8 @@ pub(super) fn permanent_stop<G, D>(shutdown: &AtomicBool, wake: &mut Option<Wake
+     }
+ }
+ 
++pub(super) type ConstructionGuardTransfer<G, D, I, H> = (Option<WakeSenders<G, D>>, Vec<(I, H)>);
++
+ pub(super) struct ConstructionGuard<G, D, I: std::fmt::Display, H> {
+     shutdown: Arc<AtomicBool>,
+     wake: Option<WakeSenders<G, D>>,
+@@ -91,7 +93,7 @@ impl<G, D, I: std::fmt::Display, H> ConstructionGuard<G, D, I, H> {
+         }
+     }
+ 
+-    pub(super) fn transfer(mut self) -> (Option<WakeSenders<G, D>>, Vec<(I, H)>) {
++    pub(super) fn transfer(mut self) -> ConstructionGuardTransfer<G, D, I, H> {
+         (self.wake.take(), std::mem::take(&mut self.handles))
+     }
+ }
+diff --git a/packages/engine/src/session.rs b/packages/engine/src/session.rs
+index fd147301..4591ec81 100644
+--- a/packages/engine/src/session.rs
++++ b/packages/engine/src/session.rs
+@@ -4,6 +4,9 @@
+ //! 设计见 docs/superpowers/specs/2026-06-29-session-design.md。
+ //! 纯逻辑、无 I/O、无全局可变状态（联机预留：实例即隔离）。
+ 
++/// 每只股票的日 K 行情历史与累计成交日数。
++pub type RuntimeDailyHistory = (Vec<(i64, i64, i64, i64, u64)>, u64);
++
+ mod account_book;
+ mod account_paged_map;
+ mod attention;
+@@ -62,6 +65,8 @@ mod company_state;
+ pub use company_state::SavedSessionCompanies;
+ use company_state::SessionCompanies;
+ mod company_capital_restore;
++#[cfg(test)]
++mod error_transport_tests;
+ mod report_correction_day_end;
+ pub use report_correction_day_end::ReportCorrectionDayEndError;
+ mod continuous_cancellation;
+@@ -4895,10 +4900,10 @@ impl GameSession {
+                             .flatten(),
+                     },
+                 )?;
+-                SessionCompanies::CompanySystem(company_state::SystemCompanyState {
++                SessionCompanies::CompanySystem(Box::new(company_state::SystemCompanyState {
+                     system: std::sync::Arc::new(system.export_state()),
+                     corporate_actions: corporate_actions.clone(),
+-                })
++                }))
+             }
+             _ => return Err(SessionError::InvalidSave(ValidationFault::bare(1064))),
+         };
+diff --git a/packages/engine/src/session/company_assembly.rs b/packages/engine/src/session/company_assembly.rs
+index ee515d82..67d947e1 100644
+--- a/packages/engine/src/session/company_assembly.rs
++++ b/packages/engine/src/session/company_assembly.rs
+@@ -209,10 +209,10 @@ pub(super) fn assemble_selected(
+             )
+             .map_err(|error| SessionError::Information(Box::new(error)))?;
+             Ok((
+-                SessionCompanies::CompanySystem(SystemCompanyState {
++                SessionCompanies::CompanySystem(Box::new(SystemCompanyState {
+                     system: Arc::new(system),
+                     corporate_actions: super::SessionCorporateActions::default(),
+-                }),
++                })),
+                 library,
+             ))
+         }
+diff --git a/packages/engine/src/session/company_capital_restore.rs b/packages/engine/src/session/company_capital_restore.rs
+index 1787c9dc..1961173b 100644
+--- a/packages/engine/src/session/company_capital_restore.rs
++++ b/packages/engine/src/session/company_capital_restore.rs
+@@ -51,7 +51,8 @@ pub(crate) struct CapitalRestoreContext {
+ pub(crate) enum CompanyCapitalRestoreError {
+     #[error("资本恢复公司事实校验失败：{context:?}：{source}")]
+     System {
+-        context: CapitalRestoreContext,
++        // 仅间接存放上下文，保留原 typed source 与 downcast 身份。
++        context: Box<CapitalRestoreContext>,
+         #[source]
+         source: CompanySystemError,
+     },
+@@ -131,7 +132,7 @@ pub(crate) enum CompanyCapitalRestoreError {
+     MissingReceipt { context: CapitalRestoreContext },
+     #[error("资本恢复拆缩股账簿无效：{context:?}：{source}")]
+     ShareSplit {
+-        context: CapitalRestoreContext,
++        context: Box<CapitalRestoreContext>,
+         #[source]
+         source: crate::company::share_split::ShareSplitError,
+     },
+@@ -190,7 +191,7 @@ pub(crate) fn validate_company_capital_restore(
+         .system
+         .validate_restored()
+         .map_err(|source| CompanyCapitalRestoreError::System {
+-            context: CapitalRestoreContext::default(),
++            context: Box::default(),
+             source,
+         })?;
+     validate_stable_issuers(&input)?;
+@@ -258,7 +259,7 @@ pub(crate) fn validate_company_capital_restore(
+             .system
+             .dividend_legal_facts(company)
+             .map_err(|source| CompanyCapitalRestoreError::System {
+-                context: context.clone(),
++                context: Box::new(context.clone()),
+                 source,
+             })?
+             .map(|facts| facts.registered_capital);
+@@ -368,7 +369,7 @@ pub(crate) fn validate_company_capital_restore(
+                         working_capital =
+                             Some(before.add(movement.capital_delta).map_err(|source| {
+                                 CompanyCapitalRestoreError::System {
+-                                    context: receipt_context.clone(),
++                                    context: Box::new(receipt_context.clone()),
+                                     source: CompanySystemError::Accounting(source),
+                                 }
+                             })?);
+@@ -693,7 +694,7 @@ fn prepare_stock_distributions(
+             .system
+             .stock_distribution_facts(company)
+             .map_err(|source| CompanyCapitalRestoreError::System {
+-                context: context.clone(),
++                context: Box::new(context.clone()),
+                 source,
+             })?;
+         for fact in facts {
+@@ -848,10 +849,10 @@ fn prepare_stock_distributions(
+         .system
+         .validate_stock_distribution_books(&input.actions.stock_distributions)
+         .map_err(|source| CompanyCapitalRestoreError::System {
+-            context: CapitalRestoreContext {
++            context: Box::new(CapitalRestoreContext {
+                 kind: Some(CorporateCapitalKind::StockDistribution),
+                 ..Default::default()
+-            },
++            }),
+             source,
+         })?;
+     Ok(bindings)
+@@ -875,7 +876,7 @@ fn prepare_share_splits(
+         };
+         for fact in input.system.share_split_facts(company).map_err(|source| {
+             CompanyCapitalRestoreError::System {
+-                context: context.clone(),
++                context: Box::new(context.clone()),
+                 source,
+             }
+         })? {
+@@ -904,7 +905,7 @@ fn prepare_share_splits(
+         }
+         book.validate_with_calendar(input.calendar)
+             .map_err(|source| CompanyCapitalRestoreError::ShareSplit {
+-                context: context.clone(),
++                context: Box::new(context.clone()),
+                 source,
+             })?;
+         let fact = facts
+@@ -1074,10 +1075,10 @@ fn prepare_share_splits(
+         .system
+         .validate_share_split_books(&input.actions.share_splits)
+         .map_err(|source| CompanyCapitalRestoreError::System {
+-            context: CapitalRestoreContext {
++            context: Box::new(CapitalRestoreContext {
+                 kind: Some(CorporateCapitalKind::ShareReDenomination),
+                 ..Default::default()
+-            },
++            }),
+             source,
+         })?;
+     Ok(())
+@@ -1103,7 +1104,7 @@ fn prepare_rights_offerings(
+             .system
+             .rights_offering_facts(company)
+             .map_err(|source| CompanyCapitalRestoreError::System {
+-                context: context.clone(),
++                context: Box::new(context.clone()),
+                 source,
+             })?
+         {
+@@ -1313,10 +1314,10 @@ fn prepare_rights_offerings(
+         .system
+         .validate_rights_offering_books(&input.actions.rights_offerings)
+         .map_err(|source| CompanyCapitalRestoreError::System {
+-            context: CapitalRestoreContext {
++            context: Box::new(CapitalRestoreContext {
+                 kind: Some(CorporateCapitalKind::RightsOffering),
+                 ..Default::default()
+-            },
++            }),
+             source,
+         })?;
+     Ok(())
+@@ -1342,7 +1343,7 @@ fn prepare_repurchase_cancellations(
+             .system
+             .issuer_repurchase_facts(company)
+             .map_err(|source| CompanyCapitalRestoreError::System {
+-                context: context.clone(),
++                context: Box::new(context.clone()),
+                 source,
+             })?
+         {
+@@ -1628,10 +1629,10 @@ fn prepare_repurchase_cancellations(
+         .system
+         .validate_issuer_repurchase_books(&input.actions.issuer_repurchases)
+         .map_err(|source| CompanyCapitalRestoreError::System {
+-            context: CapitalRestoreContext {
++            context: Box::new(CapitalRestoreContext {
+                 kind: Some(CorporateCapitalKind::IssuerRepurchaseCancellation),
+                 ..Default::default()
+-            },
++            }),
+             source,
+         })?;
+     Ok(())
+@@ -1766,7 +1767,7 @@ fn validate_redenomination_holders(
+             let restriction =
+                 holder_inherited_restriction(holder, receipt.request.day).map_err(|source| {
+                     CompanyCapitalRestoreError::ShareSplit {
+-                        context: context.clone(),
++                        context: Box::new(context.clone()),
+                         source,
+                     }
+                 })?;
+diff --git a/packages/engine/src/session/company_command_candidates.rs b/packages/engine/src/session/company_command_candidates.rs
+index 5336c879..ecedbb24 100644
+--- a/packages/engine/src/session/company_command_candidates.rs
++++ b/packages/engine/src/session/company_command_candidates.rs
+@@ -67,15 +67,34 @@ pub(crate) enum CompanyCommandCause {
+ }
+ 
+ /// Rust 内部错误保留原 typed source；宿主数值错误转换仍属后续独立边界。
+-#[derive(Debug, thiserror::Error)]
+-#[error("现金分红候选失败：公司 {company}，证券 {stock:?}，计划 {plan_id}，日期 {day}：{cause}")]
++#[derive(Debug)]
+ pub(crate) struct CompanyCommandError {
+     pub company: CompanyId,
+     pub stock: StockCode,
+     pub plan_id: String,
+     pub day: CivilDate,
+-    #[source]
+-    pub cause: CompanyCommandCause,
++    pub cause: Box<CompanyCommandCause>,
++}
++
++impl std::fmt::Display for CompanyCommandError {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        write!(
++            f,
++            "现金分红候选失败：公司 {company}，证券 {stock:?}，计划 {plan_id}，日期 {day}：{cause}",
++            company = self.company,
++            stock = self.stock,
++            plan_id = self.plan_id,
++            day = self.day,
++            cause = self.cause
++        )
++    }
++}
++
++impl std::error::Error for CompanyCommandError {
++    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
++        // 返回原 cause，避免把 Box 本身变成 source 的动态类型。
++        Some(self.cause.as_ref())
++    }
+ }
+ 
+ pub(crate) fn prepare_cash_dividend_approval(
+@@ -86,7 +105,7 @@ pub(crate) fn prepare_cash_dividend_approval(
+         stock: input.plan.stock.clone(),
+         plan_id: input.plan.plan_id.clone(),
+         day: input.day,
+-        cause,
++        cause: Box::new(cause),
+     };
+     let invalid = |issue| fail(CompanyCommandCause::Validation(issue));
+     input.plan.validate().map_err(|cause| fail(cause.into()))?;
+diff --git a/packages/engine/src/session/company_state.rs b/packages/engine/src/session/company_state.rs
+index 1d0190a1..295392df 100644
+--- a/packages/engine/src/session/company_state.rs
++++ b/packages/engine/src/session/company_state.rs
+@@ -9,7 +9,7 @@ use std::sync::Arc;
+ #[derive(Clone)]
+ pub(crate) enum SessionCompanies {
+     LegacyOperations(LegacyCompanyState),
+-    CompanySystem(SystemCompanyState),
++    CompanySystem(Box<SystemCompanyState>),
+ }
+ 
+ #[derive(Clone)]
+diff --git a/packages/engine/src/session/company_state_tests.rs b/packages/engine/src/session/company_state_tests.rs
+index ca758b96..dd72f2f0 100644
+--- a/packages/engine/src/session/company_state_tests.rs
++++ b/packages/engine/src/session/company_state_tests.rs
+@@ -11,6 +11,15 @@ fn date() -> CivilDate {
+     CivilDate::from_iso("2030-06-03").unwrap()
+ }
+ 
++#[test]
++fn selected_company_state_keeps_a_compact_session_envelope() {
++    let size = std::mem::size_of::<SessionCompanies>();
++    assert!(
++        size <= 128,
++        "SessionCompanies 占 {size} 字节，超过 128 字节运输预算"
++    );
++}
++
+ fn system_state() -> SessionCompanies {
+     let system = CompanySystem::create(
+         vec![],
+@@ -34,10 +43,10 @@ fn system_state() -> SessionCompanies {
+     )
+     .unwrap();
+     system.validate_restored().unwrap();
+-    SessionCompanies::CompanySystem(SystemCompanyState {
++    SessionCompanies::CompanySystem(Box::new(SystemCompanyState {
+         system: Arc::new(system),
+         corporate_actions: SessionCorporateActions::default(),
+-    })
++    }))
+ }
+ 
+ fn legacy_state() -> SessionCompanies {
+diff --git a/packages/engine/src/session/corporate_actions/distributions_day_end.rs b/packages/engine/src/session/corporate_actions/distributions_day_end.rs
+index d14907df..494cbf62 100644
+--- a/packages/engine/src/session/corporate_actions/distributions_day_end.rs
++++ b/packages/engine/src/session/corporate_actions/distributions_day_end.rs
+@@ -112,15 +112,33 @@ pub(crate) enum DistributionSource {
+     },
+ }
+ 
+-#[derive(Debug, thiserror::Error)]
+-#[error("公司权益候选失败：日期{day}，事件{event_id}，证券{stock:?}，账户{account:?}：{source}")]
++#[derive(Debug)]
+ pub(crate) struct DistributionsDayEndError {
+     pub day: CivilDate,
+     pub event_id: String,
+     pub stock: Option<StockId>,
+     pub account: Option<AccountId>,
+-    #[source]
+-    pub source: DistributionsDayEndFailure,
++    pub source: Box<DistributionsDayEndFailure>,
++}
++
++impl std::fmt::Display for DistributionsDayEndError {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        write!(
++            f,
++            "公司权益候选失败：日期{day}，事件{event_id}，证券{stock:?}，账户{account:?}：{source}",
++            day = self.day,
++            event_id = self.event_id,
++            stock = self.stock,
++            account = self.account,
++            source = self.source
++        )
++    }
++}
++
++impl std::error::Error for DistributionsDayEndError {
++    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
++        Some(self.source.as_ref())
++    }
+ }
+ 
+ /// 保留领域错误的数值变体，日终包装不得只留下字符串或日期。
+@@ -182,7 +200,7 @@ impl Context {
+             event_id: self.event_id.clone(),
+             stock: self.stock,
+             account: self.account,
+-            source: source.into(),
++            source: Box::new(source.into()),
+         }
+     }
+ }
+diff --git a/packages/engine/src/session/corporate_actions/distributions_day_end_tests.rs b/packages/engine/src/session/corporate_actions/distributions_day_end_tests.rs
+index de1391a0..24c8e59c 100644
+--- a/packages/engine/src/session/corporate_actions/distributions_day_end_tests.rs
++++ b/packages/engine/src/session/corporate_actions/distributions_day_end_tests.rs
+@@ -518,13 +518,16 @@ fn missing_account_and_overflow_abort_whole_candidate() {
+         .unwrap_err();
+         if !bad.contains_key(&AccountId(2)) {
+             assert!(matches!(
+-                error.source,
++                *error.source,
+                 DistributionsDayEndFailure::MissingAvailableCash {
+                     account: AccountId(2)
+                 }
+             ));
+         } else {
+-            assert!(matches!(error.source, DistributionsDayEndFailure::Money(_)));
++            assert!(matches!(
++                *error.source,
++                DistributionsDayEndFailure::Money(_)
++            ));
+         }
+ 
+         assert_eq!((reg.actions.clone(), reg.company_system.clone()), before);
+@@ -705,7 +708,7 @@ fn personal_bonus_rejects_missing_original_registered_equity_tax_basis_atomicall
+         assert_eq!(error.stock, Some(crate::stock::StockId(0)));
+         assert_eq!(error.event_id, "stock");
+         assert!(matches!(
+-            error.source,
++            *error.source,
+             DistributionsDayEndFailure::UnsupportedPersonalStockBonus
+         ));
+         assert_eq!((held, registered.company_system), before);
+@@ -869,7 +872,7 @@ fn negative_available_cash_error_keeps_account_and_actual_cents() {
+     assert_eq!(error.account, Some(AccountId(2)));
+     assert!(error.to_string().contains("-17"), "{error}");
+     assert!(
+-        matches!(error.source, DistributionsDayEndFailure::NegativeAvailableCash { account: AccountId(2), actual } if actual.cents() == -17)
++        matches!(*error.source, DistributionsDayEndFailure::NegativeAvailableCash { account: AccountId(2), actual } if actual.cents() == -17)
+     );
+ }
+ 
+@@ -937,19 +940,19 @@ fn personal_capital_reserve_conversion_requires_complete_premium_source_fact() {
+         assert_eq!(error.event_id, "stock");
+         match case {
+             0 => assert!(matches!(
+-                error.source,
++                *error.source,
+                 DistributionsDayEndFailure::MissingCapitalReserveTaxSource
+             )),
+             1 => assert!(matches!(
+-                error.source,
++                *error.source,
+                 DistributionsDayEndFailure::NonPremiumCapitalReserveUnsupported { .. }
+             )),
+             2 => assert!(matches!(
+-                error.source,
++                *error.source,
+                 DistributionsDayEndFailure::EmptyPremiumEvidence
+             )),
+             3 => assert!(
+-                matches!(error.source, DistributionsDayEndFailure::PremiumCapitalMismatch { expected, actual } if expected == amount(500) && actual == amount(499))
++                matches!(*error.source, DistributionsDayEndFailure::PremiumCapitalMismatch { expected, actual } if expected == amount(500) && actual == amount(499))
+             ),
+             _ => unreachable!("固定四种来源边界"),
+         }
+diff --git a/packages/engine/src/session/deferred_drop.rs b/packages/engine/src/session/deferred_drop.rs
+index 41ad0fcf..4ce01c46 100644
+--- a/packages/engine/src/session/deferred_drop.rs
++++ b/packages/engine/src/session/deferred_drop.rs
+@@ -59,9 +59,11 @@ pub(super) mod controlled {
+     use std::sync::atomic::{AtomicBool, Ordering};
+     use std::sync::mpsc::SyncSender;
+ 
++    type AnyObserver = Box<dyn FnMut(&dyn Any)>;
++
+     struct Installed {
+         backend: Backend,
+-        observe: Option<Box<dyn FnMut(&dyn Any)>>,
++        observe: Option<AnyObserver>,
+     }
+ 
+     thread_local! {
+@@ -94,7 +96,7 @@ pub(super) mod controlled {
+         }
+     }
+ 
+-    fn install(backend: Backend, observe: Option<Box<dyn FnMut(&dyn Any)>>) -> Reset {
++    fn install(backend: Backend, observe: Option<AnyObserver>) -> Reset {
+         BACKEND.with(|slot| {
+             assert!(slot.borrow().is_none(), "controlled backend 不支持嵌套");
+             *slot.borrow_mut() = Some(Installed { backend, observe });
+diff --git a/packages/engine/src/session/error_transport_tests.rs b/packages/engine/src/session/error_transport_tests.rs
+new file mode 100644
+index 00000000..2604a841
+--- /dev/null
++++ b/packages/engine/src/session/error_transport_tests.rs
+@@ -0,0 +1,199 @@
++//! 错误运输保持原 typed source、诊断上下文与紧凑 Result；不执行领域事务。
++
++use super::capital_approval_context::{CapitalApprovalContext, CapitalApprovalError};
++use super::company_capital_restore::{CapitalRestoreContext, CompanyCapitalRestoreError};
++use super::company_command_candidates::{CompanyCommandCause, CompanyCommandError};
++use super::company_commands_types::PlayerProposalKind;
++use super::corporate_actions::distributions_day_end::{
++    DistributionsDayEndError, DistributionsDayEndFailure,
++};
++use super::player_company_command_candidates::{PlayerCommandCause, PlayerCommandError};
++use super::stock_distribution_command_candidate::{
++    StockDistributionApprovalCause, StockDistributionApprovalError,
++};
++use crate::company::{CompanyId, CompanySystemError};
++use crate::{AccountId, CivilDate, StockCode, StockId};
++use std::error::Error;
++
++fn date() -> CivilDate {
++    CivilDate::from_iso("2030-06-03").unwrap()
++}
++
++fn source_as<T: Error + 'static>(error: &dyn Error) -> &T {
++    error
++        .source()
++        .expect("包装错误必须保留原 source")
++        .downcast_ref::<T>()
++        .expect("装箱不能改变 source 的原具体错误类型")
++}
++
++macro_rules! compact_error {
++    ($name:ident, $error:ty) => {
++        #[test]
++        fn $name() {
++            let size = std::mem::size_of::<$error>();
++            assert!(
++                size <= 128,
++                "{} 占 {size} 字节，超过 Result 错误运输的 128 字节预算",
++                stringify!($error)
++            );
++        }
++    };
++}
++
++compact_error!(capital_restore_error_is_compact, CompanyCapitalRestoreError);
++compact_error!(capital_approval_error_is_compact, CapitalApprovalError);
++compact_error!(cash_approval_error_is_compact, CompanyCommandError);
++compact_error!(
++    stock_approval_error_is_compact,
++    StockDistributionApprovalError
++);
++compact_error!(player_candidate_error_is_compact, PlayerCommandError);
++compact_error!(distributions_error_is_compact, DistributionsDayEndError);
++
++fn cash_error() -> CompanyCommandError {
++    CompanyCommandError {
++        company: CompanyId(7),
++        stock: StockCode("600101".into()),
++        plan_id: "cash-plan-3".into(),
++        day: date(),
++        cause: CompanyCommandCause::Company(CompanySystemError::SystemState(
++            "原始公司事实缺失".into(),
++        ))
++        .into(),
++    }
++}
++
++#[test]
++fn player_cash_error_keeps_the_complete_typed_chain_and_display() {
++    let cash = cash_error();
++    assert_eq!(
++        cash.to_string(),
++        "现金分红候选失败：公司 7，证券 StockCode(\"600101\")，计划 cash-plan-3，日期 2030-06-03：公司系统输入非法：原始公司事实缺失"
++    );
++    let error = PlayerCommandError {
++        account: AccountId(23),
++        company: CompanyId(7),
++        kind: PlayerProposalKind::CashDividend,
++        day: date(),
++        cause: PlayerCommandCause::Approval(cash).into(),
++    };
++    let player_cause = source_as::<PlayerCommandCause>(&error);
++    let original_cash = source_as::<CompanyCommandError>(player_cause);
++    let cash_cause = source_as::<CompanyCommandCause>(original_cash);
++    assert!(matches!(
++        source_as::<CompanySystemError>(cash_cause),
++        CompanySystemError::SystemState(detail) if detail == "原始公司事实缺失"
++    ));
++    assert!(error.to_string().starts_with(
++        "玩家公司候选失败：账户 AccountId(23)，公司 7，类别 CashDividend，日期 2030-06-03：现金分红候选失败："
++    ));
++}
++
++#[test]
++fn stock_approval_error_keeps_the_original_company_source() {
++    let error = StockDistributionApprovalError {
++        company: CompanyId(7),
++        stock: StockCode("600101".into()),
++        event_id: "stock-event-4".into(),
++        day: date(),
++        cause: StockDistributionApprovalCause::Company(CompanySystemError::SystemState(
++            "原始送转事实缺失".into(),
++        ))
++        .into(),
++    };
++    assert_eq!(
++        error.to_string(),
++        "送转候选失败：公司 7，证券 StockCode(\"600101\")，事件 stock-event-4，日期 2030-06-03：公司系统输入非法：原始送转事实缺失"
++    );
++    let cause = source_as::<StockDistributionApprovalCause>(&error);
++    assert!(matches!(
++        source_as::<CompanySystemError>(cause),
++        CompanySystemError::SystemState(detail) if detail == "原始送转事实缺失"
++    ));
++}
++
++#[test]
++fn distributions_error_keeps_numeric_operands_and_original_source_type() {
++    let error = DistributionsDayEndError {
++        day: date(),
++        event_id: "payment-5".into(),
++        stock: Some(StockId(2)),
++        account: Some(AccountId(23)),
++        source: DistributionsDayEndFailure::NegativeAvailableCash {
++            account: AccountId(23),
++            actual: crate::Money::from_cents(-17),
++        }
++        .into(),
++    };
++    assert!(matches!(
++        source_as::<DistributionsDayEndFailure>(&error),
++        DistributionsDayEndFailure::NegativeAvailableCash { account: AccountId(23), actual }
++            if actual.cents() == -17
++    ));
++    let message = error.to_string();
++    assert!(message.contains("payment-5"), "{message}");
++    assert!(message.contains("StockId(2)"), "{message}");
++    assert!(message.contains("-17"), "{message}");
++}
++
++#[test]
++fn capital_restore_context_and_typed_source_survive_approval_conversion() {
++    let context = CapitalRestoreContext {
++        company: Some(CompanyId(7)),
++        stock: Some(StockId(2)),
++        event_id: Some("capital-event-6".into()),
++        receipt_index: Some(11),
++        day: Some(date()),
++        ..CapitalRestoreContext::default()
++    };
++    let replay = CompanyCapitalRestoreError::System {
++        context: context.clone().into(),
++        source: CompanySystemError::SystemState("原始资本事实缺失".into()),
++    };
++    assert_eq!(
++        replay.to_string(),
++        format!("资本恢复公司事实校验失败：{context:?}：公司系统输入非法：原始资本事实缺失")
++    );
++    let error: CapitalApprovalError = replay.into();
++    let replay = source_as::<CompanyCapitalRestoreError>(&error);
++    assert!(matches!(
++        source_as::<CompanySystemError>(replay),
++        CompanySystemError::SystemState(detail) if detail == "原始资本事实缺失"
++    ));
++    // 原 prepare 的 Result 类型不因内部布局调整而改变。
++    let _prepare: fn(
++        &super::GameSession,
++        CompanyId,
++    ) -> Result<CapitalApprovalContext, CapitalApprovalError> = CapitalApprovalContext::prepare;
++}
++
++#[test]
++fn capital_restore_keeps_original_share_split_source() {
++    let error = CompanyCapitalRestoreError::ShareSplit {
++        context: CapitalRestoreContext {
++            company: Some(CompanyId(7)),
++            event_id: Some("split-event-7".into()),
++            ..CapitalRestoreContext::default()
++        }
++        .into(),
++        source: crate::company::share_split::ShareSplitError::ZeroIssuedShares {
++            event_id: "split-event-7".into(),
++            stock: StockCode("600101".into()),
++            direction: crate::company::share_split::ShareSplitDirection::Consolidate,
++            ratio: 100,
++            issued_shares_before: 1,
++            issued_shares_after: 0,
++        },
++    };
++    assert!(matches!(
++        source_as::<crate::company::share_split::ShareSplitError>(&error),
++        crate::company::share_split::ShareSplitError::ZeroIssuedShares {
++            issued_shares_before: 1,
++            issued_shares_after: 0,
++            ratio: 100,
++            ..
++        }
++    ));
++    assert!(error.to_string().contains("split-event-7"));
++}
+diff --git a/packages/engine/src/session/failure.rs b/packages/engine/src/session/failure.rs
+index a07bb5a6..dedbb9e9 100644
+--- a/packages/engine/src/session/failure.rs
++++ b/packages/engine/src/session/failure.rs
+@@ -1,4 +1,4 @@
+-use super::{Event, GameSession, SaveSlot, SessionError};
++use super::{Event, GameSession, RuntimeDailyHistory, SaveSlot, SessionError};
+ 
+ #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, thiserror::Error)]
+ pub enum StepFatal {
+@@ -1769,7 +1769,7 @@ impl GameSession {
+     /// 侧分流）。
+     pub fn runtime_daily_histories(
+         &self,
+-    ) -> std::collections::BTreeMap<crate::StockId, (Vec<(i64, i64, i64, i64, u64)>, u64)> {
++    ) -> std::collections::BTreeMap<crate::StockId, RuntimeDailyHistory> {
+         self.state
+             .candle_book
+             .histories()
+diff --git a/packages/engine/src/session/pipeline/npc_decisions.rs b/packages/engine/src/session/pipeline/npc_decisions.rs
+index a54cafbc..c0dca1dc 100644
+--- a/packages/engine/src/session/pipeline/npc_decisions.rs
++++ b/packages/engine/src/session/pipeline/npc_decisions.rs
+@@ -6,6 +6,9 @@ use crate::{AccountId, SplitMix64};
+ use std::collections::BTreeSet;
+ use std::sync::{mpsc, Arc};
+ 
++#[cfg(any(test, feature = "verification-harness"))]
++pub(in crate::session) type DecidePostSendHold = Arc<dyn Fn(AccountId) + Send + Sync>;
++
+ /// NPC raw intent 携带身份；候选 composition 必须保留该身份。
+ #[derive(Clone, Debug, serde::Serialize)]
+ pub(in crate::session) struct NpcDecisionIntent {
+@@ -289,9 +292,8 @@ pub(in crate::session) fn decide_npc_account_from_shared(
+ /// 之前调用——用于确定性钉住「send 已发生、Drop 未发生」窗口（d2）与
+ /// spawn/inline 分计探针（d3/d4）。阻塞回调会钉住该任务的 guard 持有期。
+ #[cfg(any(test, feature = "verification-harness"))]
+-static DECIDE_POST_SEND_HOLD: std::sync::Mutex<
+-    Option<std::sync::Arc<dyn Fn(AccountId) + Send + Sync>>,
+-> = std::sync::Mutex::new(None);
++static DECIDE_POST_SEND_HOLD: std::sync::Mutex<Option<DecidePostSendHold>> =
++    std::sync::Mutex::new(None);
+ 
+ /// 测试/验证钩子：命中账户的 decide 任务在计算前 panic（p1/p2 原 payload
+ /// 重抛验收；payload 为 &'static str 便于 downcast 判等）。
+@@ -301,9 +303,7 @@ static DECIDE_PANIC_ACCOUNTS: std::sync::Mutex<std::collections::BTreeSet<Accoun
+ 
+ /// 安装 send 后 guard 前的 hold 钩子（仅测试/验证构建）。
+ #[cfg(any(test, feature = "verification-harness"))]
+-pub(in crate::session) fn set_decide_post_send_hold(
+-    hold: Option<std::sync::Arc<dyn Fn(AccountId) + Send + Sync>>,
+-) {
++pub(in crate::session) fn set_decide_post_send_hold(hold: Option<DecidePostSendHold>) {
+     *DECIDE_POST_SEND_HOLD.lock().expect("hold 钩子锁被 poison") = hold;
+ }
+ 
+diff --git a/packages/engine/src/session/pipeline/npc_tick_preparation.rs b/packages/engine/src/session/pipeline/npc_tick_preparation.rs
+index 6014fd0a..9afca74a 100644
+--- a/packages/engine/src/session/pipeline/npc_tick_preparation.rs
++++ b/packages/engine/src/session/pipeline/npc_tick_preparation.rs
+@@ -31,6 +31,14 @@ use crate::compute::join;
+ use crate::session::plan_chain_candidates::PlanChainOperationBatch;
+ use crate::{AccountId, AccountKind, GameSession, Intent, StockId};
+ use std::collections::BTreeMap;
++
++#[cfg(test)]
++pub(in crate::session::pipeline) type NpcDecisionHandoverParts = (
++    u64,
++    Vec<AccountId>,
++    Vec<crate::ReceiptBearingIntent>,
++    Vec<(usize, usize)>,
++);
+ #[cfg(test)]
+ use std::sync::Arc;
+ 
+@@ -1720,14 +1728,7 @@ impl NpcDecisionHandover {
+ 
+     /// 解构（cfg(test)：测试适配器装回跨 tick pending 用）。
+     #[cfg(test)]
+-    pub(in crate::session::pipeline) fn into_parts(
+-        self,
+-    ) -> (
+-        u64,
+-        Vec<AccountId>,
+-        Vec<crate::ReceiptBearingIntent>,
+-        Vec<(usize, usize)>,
+-    ) {
++    pub(in crate::session::pipeline) fn into_parts(self) -> NpcDecisionHandoverParts {
+         (
+             self.observed_tick,
+             self.observed_accounts,
+diff --git a/packages/engine/src/session/pipeline/plan_continuation_domain_tests.rs b/packages/engine/src/session/pipeline/plan_continuation_domain_tests.rs
+index 8cd9cf7c..73a3fe5c 100644
+--- a/packages/engine/src/session/pipeline/plan_continuation_domain_tests.rs
++++ b/packages/engine/src/session/pipeline/plan_continuation_domain_tests.rs
+@@ -26,6 +26,22 @@ use crate::session::plan_continuation_domain::PlanContinuationDomain;
+ use crate::session::PlanExecutionRequest;
+ use crate::{AccountId, GameSession};
+ 
++type AdvanceWitness<'d> = fn(
++    &mut AdaptivePlanChainCoordinator,
++    &mut PlanContinuationDomain<'d>,
++    &[CandidateValidationOutcome],
++    Option<&mut ContinuousExecutionRound>,
++) -> Result<(), StepFatal>;
++type ProjectWitness<'d> = fn(
++    &mut AdaptivePlanChainCoordinator,
++    &mut PlanContinuationDomain<'d>,
++    &mut ContinuousExecutionRound,
++) -> Result<(), StepFatal>;
++type NextBatchWitness<'d> = fn(
++    &mut AdaptivePlanChainCoordinator,
++    &mut PlanContinuationDomain<'d>,
++) -> Result<Vec<IntentCandidate>, StepFatal>;
++
+ fn fixture() -> (GameSession, PlanExecutionRequest) {
+     crate::session::plan_chain_candidates_tests::execution_fixture()
+ }
+@@ -70,21 +86,9 @@ fn coordinator(
+ #[test]
+ fn continuation_entry_points_take_only_the_narrow_write_domain() {
+     fn witness<'d>(
+-        _advance: fn(
+-            &mut AdaptivePlanChainCoordinator,
+-            &mut PlanContinuationDomain<'d>,
+-            &[CandidateValidationOutcome],
+-            Option<&mut ContinuousExecutionRound>,
+-        ) -> Result<(), StepFatal>,
+-        _project: fn(
+-            &mut AdaptivePlanChainCoordinator,
+-            &mut PlanContinuationDomain<'d>,
+-            &mut ContinuousExecutionRound,
+-        ) -> Result<(), StepFatal>,
+-        _next: fn(
+-            &mut AdaptivePlanChainCoordinator,
+-            &mut PlanContinuationDomain<'d>,
+-        ) -> Result<Vec<IntentCandidate>, StepFatal>,
++        _advance: AdvanceWitness<'d>,
++        _project: ProjectWitness<'d>,
++        _next: NextBatchWitness<'d>,
+     ) {
+     }
+     witness(
+diff --git a/packages/engine/src/session/plan_chain_candidates.rs b/packages/engine/src/session/plan_chain_candidates.rs
+index bb437764..9be3580a 100644
+--- a/packages/engine/src/session/plan_chain_candidates.rs
++++ b/packages/engine/src/session/plan_chain_candidates.rs
+@@ -3,6 +3,9 @@ use super::*;
+ use crate::plans::{CandidateAssessment, PlanEvent, PlanId, PlanRevision};
+ use std::collections::VecDeque;
+ use std::sync::{mpsc, Arc};
++
++#[cfg(any(test, feature = "verification-harness"))]
++pub(in crate::session) type PlanRootAccountProbe = Arc<dyn Fn(AccountId) + Send + Sync>;
+ mod adaptive;
+ use super::decision_chain::{DecisionChainObservation, InstitutionDecisionRoot, RootReadContext};
+ pub(in crate::session) use adaptive::FrozenPlanChainObservation;
+@@ -256,15 +259,12 @@ pub(in crate::session) fn set_plan_root_drop_empty_probe(
+ /// `sender.send(RootMessage::Prepared)` **成功后**以账户回调——F 已执行且
+ /// 结果已发布的保持位锚点（早于协调者消费）。
+ #[cfg(any(test, feature = "verification-harness"))]
+-static PLAN_ROOT_PREPARED_PROBE: std::sync::Mutex<
+-    Option<std::sync::Arc<dyn Fn(AccountId) + Send + Sync>>,
+-> = std::sync::Mutex::new(None);
++static PLAN_ROOT_PREPARED_PROBE: std::sync::Mutex<Option<PlanRootAccountProbe>> =
++    std::sync::Mutex::new(None);
+ 
+ /// 安装/清除 Prepared 发布探针（None=清除）。
+ #[cfg(any(test, feature = "verification-harness"))]
+-pub(in crate::session) fn set_plan_root_prepared_probe(
+-    probe: Option<std::sync::Arc<dyn Fn(AccountId) + Send + Sync>>,
+-) {
++pub(in crate::session) fn set_plan_root_prepared_probe(probe: Option<PlanRootAccountProbe>) {
+     *PLAN_ROOT_PREPARED_PROBE
+         .lock()
+         .expect("Prepared 发布探针锁被 poison") = probe;
+@@ -304,15 +304,12 @@ pub(in crate::session) fn clear_plan_root_published() {
+ /// 账户入口探针（测试/验证专用；六审「账户身份明确化」）：bound 开头以
+ /// 账户回调——观察点编排不再依赖无账户身份的 ordinal。
+ #[cfg(any(test, feature = "verification-harness"))]
+-static PLAN_ROOT_ACCOUNT_ENTRY_PROBE: std::sync::Mutex<
+-    Option<std::sync::Arc<dyn Fn(AccountId) + Send + Sync>>,
+-> = std::sync::Mutex::new(None);
++static PLAN_ROOT_ACCOUNT_ENTRY_PROBE: std::sync::Mutex<Option<PlanRootAccountProbe>> =
++    std::sync::Mutex::new(None);
+ 
+ /// 安装/清除账户入口探针。
+ #[cfg(any(test, feature = "verification-harness"))]
+-pub(in crate::session) fn set_plan_root_account_entry_probe(
+-    probe: Option<std::sync::Arc<dyn Fn(AccountId) + Send + Sync>>,
+-) {
++pub(in crate::session) fn set_plan_root_account_entry_probe(probe: Option<PlanRootAccountProbe>) {
+     *PLAN_ROOT_ACCOUNT_ENTRY_PROBE
+         .lock()
+         .expect("账户入口探针锁被 poison") = probe;
+@@ -474,14 +471,14 @@ enum AccountSource {
+ 
+ /// bound 段的运输结果：观察载荷，或 unwind 的原 panic payload（仅运输）。
+ enum RootOutcome {
+-    Prepared(PreparedRoot),
++    Prepared(Box<PreparedRoot>),
+     Died(Box<dyn std::any::Any + Send>),
+ }
+ 
+ /// spawned root 任务的消息：观察载荷（含 observe 的 Option 语义），或 unwind
+ /// 的原 panic payload（TaskDied，绑定释放后由 finish 段发布）。
+ enum RootMessage {
+-    Prepared(PreparedRoot),
++    Prepared(Box<PreparedRoot>),
+     TaskDied(Box<dyn std::any::Any + Send>),
+ }
+ 
+@@ -489,10 +486,35 @@ enum RootMessage {
+ /// 暂无），或池外协调者的容量上提信号（drive 循环层 `wait_for_spawn_capacity`
+ /// 后重入）。
+ pub(super) enum RootPoll {
+-    Delivered(Option<PlanChainOperationBatch>),
++    Delivered(Option<ReadyRootOperations>),
+     PendingCapacity,
+ }
+ 
++pub(super) struct ReadyRootOperations {
++    operations: VecDeque<PlanChainOperation>,
++    existing_plan_ids: BTreeSet<PlanId>,
++}
++
++impl ReadyRootOperations {
++    fn from_batch(batch: PlanChainOperationBatch) -> Self {
++        let PlanChainOperationBatch {
++            roots,
++            operations,
++            candidate_source,
++            routes,
++            reports,
++            existing_plan_ids,
++        } = batch;
++        // observe 从空 batch 开始且只填这两个输出；其余空容器与 EmptyRootCoordinator
++        // 不持有 guard，按原 batch 离开 consumer 时的析构语义提前释放。
++        drop((roots, candidate_source, routes, reports));
++        Self {
++            operations,
++            existing_plan_ids,
++        }
++    }
++}
++
+ /// `PlanChainOperationBatch::prepare_ready_accounts` 的包装回复。
+ pub(in crate::session) enum PrepareReady {
+     Progress(bool),
+@@ -506,6 +528,22 @@ type PreparedRoot = (
+     super::decision_chain::PlanRootDiagnostics,
+ );
+ 
++#[cfg(test)]
++mod transport_layout_tests {
++    use super::{RootMessage, RootOutcome, RootPoll};
++
++    #[test]
++    fn root_replies_keep_compact_transport_envelopes() {
++        for (name, size) in [
++            ("RootOutcome", std::mem::size_of::<RootOutcome>()),
++            ("RootMessage", std::mem::size_of::<RootMessage>()),
++            ("RootPoll", std::mem::size_of::<RootPoll>()),
++        ] {
++            assert!(size <= 128, "{name} 占 {size} 字节，超过 128 字节运输预算");
++        }
++    }
++}
++
+ enum PlanChainOperation {
+     ExecutionRoute(Box<PlanExecutionRoute>),
+     QuotePlans(QuotePlans),
+@@ -847,7 +885,7 @@ impl PlanRootCoordinator {
+                             }
+                         })
+                     })) {
+-                        Ok(payload) => RootOutcome::Prepared(payload),
++                        Ok(payload) => RootOutcome::Prepared(Box::new(payload)),
+                         Err(panic_payload) => RootOutcome::Died(panic_payload),
+                     }
+                 },
+@@ -956,7 +994,7 @@ impl PlanRootCoordinator {
+                         }
+                         continue;
+                     }
+-                    let (account, personal, generated, diagnostics) = result;
++                    let (account, personal, generated, diagnostics) = *result;
+                     #[cfg(test)]
+                     session
+                         .compute
+@@ -971,7 +1009,9 @@ impl PlanRootCoordinator {
+                     if *remaining == 0 && pending.is_empty() {
+                         self.source = AccountSource::Empty;
+                     }
+-                    return Ok(RootPoll::Delivered(Some(generated)));
++                    return Ok(RootPoll::Delivered(Some(ReadyRootOperations::from_batch(
++                        generated,
++                    ))));
+                 }
+                 Ok(RootMessage::TaskDied(payload)) => {
+                     // 接收探针：收到 TaskDied 的当场（协调者线程）回调——
+@@ -1082,7 +1122,9 @@ impl PlanRootCoordinator {
+                         if pending.is_empty() {
+                             self.source = AccountSource::Empty;
+                         }
+-                        return Ok(RootPoll::Delivered(Some(generated)));
++                        return Ok(RootPoll::Delivered(Some(ReadyRootOperations::from_batch(
++                            generated,
++                        ))));
+                     } else {
+                         // 池外：容量上提信号（drive 循环层 wait_for_spawn_capacity
+                         // 后重入本循环，重入从 4a 起）。
+diff --git a/packages/engine/src/session/player_company_command_candidates.rs b/packages/engine/src/session/player_company_command_candidates.rs
+index 767aa176..de472810 100644
+--- a/packages/engine/src/session/player_company_command_candidates.rs
++++ b/packages/engine/src/session/player_company_command_candidates.rs
+@@ -78,15 +78,25 @@ pub(crate) enum PlayerCommandCause {
+     RepurchasePlan(#[from] crate::company::issuer_repurchase::IssuerRepurchaseError),
+ }
+ 
+-#[derive(Debug, thiserror::Error)]
+-#[error("玩家公司候选失败：账户 {account:?}，公司 {company}，类别 {kind:?}，日期 {day}：{cause}")]
++#[derive(Debug)]
+ pub(crate) struct PlayerCommandError {
+     pub account: AccountId,
+     pub company: CompanyId,
+     pub kind: PlayerProposalKind,
+     pub day: CivilDate,
+-    #[source]
+-    pub cause: PlayerCommandCause,
++    pub cause: Box<PlayerCommandCause>,
++}
++
++impl std::fmt::Display for PlayerCommandError {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        write!(f, "玩家公司候选失败：账户 {account:?}，公司 {company}，类别 {kind:?}，日期 {day}：{cause}", account = self.account, company = self.company, kind = self.kind, day = self.day, cause = self.cause)
++    }
++}
++
++impl std::error::Error for PlayerCommandError {
++    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
++        Some(self.cause.as_ref())
++    }
+ }
+ 
+ pub(super) fn player_holding_context(
+@@ -99,7 +109,7 @@ pub(super) fn player_holding_context(
+         company,
+         kind,
+         day: input.day,
+-        cause,
++        cause: Box::new(cause),
+     };
+     let invalid = |issue| fail(PlayerCommandCause::Validation(issue));
+     let issuer = input
+@@ -144,7 +154,7 @@ pub(crate) fn prepare_player_cash_dividend(
+         company,
+         kind,
+         day: input.day,
+-        cause,
++        cause: Box::new(cause),
+     };
+     let invalid = |issue| fail(PlayerCommandCause::Validation(issue));
+     let PlayerCompanyProposal::CashDividend {
+@@ -220,7 +230,7 @@ pub(crate) fn prepare_player_stock_distribution(
+         company,
+         kind,
+         day: input.day,
+-        cause,
++        cause: Box::new(cause),
+     };
+     let invalid = |issue| fail(PlayerCommandCause::Validation(issue));
+     let PlayerCompanyProposal::StockDistribution {
+@@ -307,7 +317,7 @@ pub(crate) fn build_player_rights_plan(
+         company,
+         kind,
+         day: input.day,
+-        cause,
++        cause: Box::new(cause),
+     };
+     let invalid = |issue| fail(PlayerCommandCause::Validation(issue));
+     let (price_per_share, mode, payment_days) = match &input.proposal {
+@@ -398,7 +408,7 @@ pub(super) fn build_player_split_plan(
+         company,
+         kind,
+         day: input.day,
+-        cause,
++        cause: Box::new(cause),
+     };
+     let PlayerCompanyProposal::ShareSplit {
+         direction, ratio, ..
+@@ -451,7 +461,7 @@ pub(super) fn build_player_repurchase_plan(
+         company,
+         kind,
+         day: input.day,
+-        cause,
++        cause: Box::new(cause),
+     };
+     let PlayerCompanyProposal::IssuerRepurchase {
+         price_cap_per_share,
+diff --git a/packages/engine/src/session/player_company_command_classification.rs b/packages/engine/src/session/player_company_command_classification.rs
+index cd7c593e..ddc4c892 100644
+--- a/packages/engine/src/session/player_company_command_classification.rs
++++ b/packages/engine/src/session/player_company_command_classification.rs
+@@ -29,7 +29,7 @@ pub(super) fn command_issue(issue: PlayerCompanyCommandIssue) -> CompanyErrorCla
+ 
+ pub(super) fn player(error: &PlayerCommandError) -> CompanyErrorClass {
+     use PlayerCommandCause::*;
+-    match &error.cause {
++    match error.cause.as_ref() {
+         Validation(issue) => match issue {
+             PlayerCommandIssue::UnknownIssuer
+             | PlayerCommandIssue::NotListed
+@@ -92,7 +92,7 @@ fn cash(error: &crate::company::cash_dividend::CashDividendError) -> CompanyErro
+ }
+ 
+ fn cash_approval(error: &CompanyCommandError) -> CompanyErrorClass {
+-    match &error.cause {
++    match error.cause.as_ref() {
+         CompanyCommandCause::Company(error) => error.classification(),
+         CompanyCommandCause::Plan(error) => cash(error),
+         CompanyCommandCause::Validation(issue) => match issue {
+@@ -118,7 +118,7 @@ fn cash_approval(error: &CompanyCommandError) -> CompanyErrorClass {
+ }
+ 
+ fn stock_approval(error: &StockDistributionApprovalError) -> CompanyErrorClass {
+-    match &error.cause {
++    match error.cause.as_ref() {
+         StockDistributionApprovalCause::Company(error) => error.classification(),
+         StockDistributionApprovalCause::CapitalTransition(error) => capital(error),
+         StockDistributionApprovalCause::Validation(issue) => match issue {
+diff --git a/packages/engine/src/session/player_company_commands.rs b/packages/engine/src/session/player_company_commands.rs
+index d7e65498..f1cbc640 100644
+--- a/packages/engine/src/session/player_company_commands.rs
++++ b/packages/engine/src/session/player_company_commands.rs
+@@ -359,10 +359,10 @@ impl GameSession {
+             approved_on: day,
+         };
+         // 所有分配及可失败的模型检查都在首 Commit 前完成；成功尾仅移动预备值。
+-        let companies = SessionCompanies::CompanySystem(SystemCompanyState {
++        let companies = SessionCompanies::CompanySystem(Box::new(SystemCompanyState {
+             system: Arc::new(candidate_system),
+             corporate_actions: candidate_actions,
+-        });
++        }));
+         if crate::runtime::step_runtime_enabled() {
+             let outcome = (|| {
+                 let cell = self.runtime_driver.as_ref().expect("驱动器已经构造");
+diff --git a/packages/engine/src/session/shutdown.rs b/packages/engine/src/session/shutdown.rs
+index 94bd513a..39b6ce35 100644
+--- a/packages/engine/src/session/shutdown.rs
++++ b/packages/engine/src/session/shutdown.rs
+@@ -47,7 +47,7 @@ impl GameSession {
+                     Err(failure) => {
+                         issues.push(failure.primary);
+                         issues.extend(failure.secondary);
+-                        completion = failure.completion;
++                        completion = failure.completion.map(|report| *report);
+                     }
+                 }
+             } else {
+@@ -65,7 +65,7 @@ impl GameSession {
+             Err(ShutdownFailure {
+                 primary,
+                 secondary: issues,
+-                completion,
++                completion: completion.map(Box::new),
+             })
+         }
+     }
+diff --git a/packages/engine/src/session/stock_distribution_command_candidate.rs b/packages/engine/src/session/stock_distribution_command_candidate.rs
+index 7c740a79..1361bab3 100644
+--- a/packages/engine/src/session/stock_distribution_command_candidate.rs
++++ b/packages/engine/src/session/stock_distribution_command_candidate.rs
+@@ -71,15 +71,33 @@ pub(crate) enum StockDistributionApprovalCause {
+     Accounting(#[from] AccountingError),
+ }
+ 
+-#[derive(Debug, thiserror::Error)]
+-#[error("送转候选失败：公司 {company}，证券 {stock:?}，事件 {event_id}，日期 {day}：{cause}")]
++#[derive(Debug)]
+ pub(crate) struct StockDistributionApprovalError {
+     pub company: CompanyId,
+     pub stock: StockCode,
+     pub event_id: String,
+     pub day: CivilDate,
+-    #[source]
+-    pub cause: StockDistributionApprovalCause,
++    pub cause: Box<StockDistributionApprovalCause>,
++}
++
++impl std::fmt::Display for StockDistributionApprovalError {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        write!(
++            f,
++            "送转候选失败：公司 {company}，证券 {stock:?}，事件 {event_id}，日期 {day}：{cause}",
++            company = self.company,
++            stock = self.stock,
++            event_id = self.event_id,
++            day = self.day,
++            cause = self.cause
++        )
++    }
++}
++
++impl std::error::Error for StockDistributionApprovalError {
++    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
++        Some(self.cause.as_ref())
++    }
+ }
+ 
+ pub(crate) fn prepare_stock_distribution_approval(
+@@ -90,7 +108,7 @@ pub(crate) fn prepare_stock_distribution_approval(
+         stock: input.plan.stock.clone(),
+         event_id: input.plan.event_id.clone(),
+         day: input.day,
+-        cause,
++        cause: Box::new(cause),
+     };
+     let invalid = |issue| fail(StockDistributionApprovalCause::Validation(issue));
+     if input.capital.company() != input.plan.issuer
+diff --git a/packages/engine/src/strategy/fundamental/update.rs b/packages/engine/src/strategy/fundamental/update.rs
+index 6f872eac..debf826e 100644
+--- a/packages/engine/src/strategy/fundamental/update.rs
++++ b/packages/engine/src/strategy/fundamental/update.rs
+@@ -20,6 +20,9 @@ use super::{
+ 
+ use crate::strategy::beliefs::{BeliefBook, BeliefEntry, BeliefError, BeliefInputs};
+ 
++type OwnKnownAnnualPriority = (AccountingPeriod, bool, u8, u32);
++type OwnKnownAnnualCandidate = (PublicationId, CivilInstant, OwnKnownAnnualPriority);
++
+ /// 信念更新因果（唯一变更入口；携带事件/公布 id 供追溯）。
+ #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+ pub enum BeliefCause {
+@@ -447,11 +450,7 @@ impl BeliefBook {
+         inputs: &BeliefInputs<'_, impl Sized>,
+         scope: Option<&crate::accounting::consolidation::ScopeId>,
+     ) -> Result<Option<(PublicationId, CivilInstant)>, BeliefError> {
+-        let mut best: Option<(
+-            PublicationId,
+-            CivilInstant,
+-            (AccountingPeriod, bool, u8, u32),
+-        )> = None;
++        let mut best: Option<OwnKnownAnnualCandidate> = None;
+         for entry in inputs.ctx.acquired_reports() {
+             if entry.company != inputs.company {
+                 continue;

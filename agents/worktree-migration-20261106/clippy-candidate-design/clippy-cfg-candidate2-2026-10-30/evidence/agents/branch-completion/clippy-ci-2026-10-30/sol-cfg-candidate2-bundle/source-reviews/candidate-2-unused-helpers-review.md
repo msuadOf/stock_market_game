@@ -1,0 +1,5 @@
+# 无消费者 helper 独立源码复核
+
+reviewer未参与d64619a1实现，阅读完整6文件diff，逐全仓src/tests/examples/apps检索真实调用。Market/OrderBook两个owner快照wrapper无consumer，通用resting_orders_matching与真正self_views借读仍在；apply_auction_price只定义无consumer；record_filled_order只有pipeline/book_auction_boundary_tests，pub(crate)无外部feature/integration消费，准确cfg(test)。Desk note_accepted已由rest_inner实际返回的Accepted事实代替且无调用，top5_imbalance/count_qty从未被正式engine调用，原型独立实现不动。attention wrapper、retail固定tick wrapper均零调用，真实pop_due及带target_tick的_at路径保留，注释仅改为真实owner。
+
+A股撮合/竞价/整手/T+1/资金释放时点与分股单位均不变，未删测试/弱断言，没有泛allow/伪调用/扩API。源码复核无阻断；实际Clippy/编译/测试仍待统一窗口。此片合入独callsite-fix树，不漂移candidate1。

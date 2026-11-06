@@ -1,0 +1,223 @@
+diff --git a/packages/engine/src/session/corporate_actions/registry_day_end.rs b/packages/engine/src/session/corporate_actions/registry_day_end.rs
+index e74b251a..bd402c2b 100644
+--- a/packages/engine/src/session/corporate_actions/registry_day_end.rs
++++ b/packages/engine/src/session/corporate_actions/registry_day_end.rs
+@@ -2,15 +2,21 @@
+ 
+ use super::*;
+ use crate::calendar::CivilDate;
++#[cfg(test)]
+ use crate::company::cash_dividend_tax::CashDividendTaxBook;
++#[cfg(test)]
+ use crate::company::share_registry::{
+     AcquisitionSource, DayNetChange, MovementScope, NetAcquisition, ShareDayRequest,
+     ShareRestriction,
+ };
++#[cfg(test)]
+ use crate::session::PersonalTradeConfirmation;
+-use crate::stock::{StockCatalog, StockId};
++#[cfg(test)]
++use crate::stock::StockCatalog;
++use crate::stock::StockId;
+ 
+ /// 输入必须是普通撮合与收盘集合竞价全部完成后的最终持仓事实。
++#[cfg(test)]
+ pub(crate) struct RegistryDayEndInput<'a> {
+     pub day: CivilDate,
+     pub catalog: &'a StockCatalog,
+@@ -23,11 +29,13 @@ pub(crate) struct RegistryDayEndInput<'a> {
+ 
+ /// 仅包含本相位计算出的候选事实；调用者决定是否安装。
+ #[derive(Clone, Debug, Eq, PartialEq)]
++#[cfg(test)]
+ pub(crate) struct RegistryDayEndCandidate {
+     pub registries: Vec<ShareRegistry>,
+     pub dividend_tax_books: Vec<CashDividendTaxBook>,
+ }
+ 
++#[cfg(test)]
+ impl SessionCorporateActions {
+     /// 历史名册与税账须已通过整链校验；这里只新增 PublicMarket 日结事实。
+     /// 不推进分红付款、回购 fill/cancel、除权或真实账户，尚无生产调用。
+@@ -88,6 +96,7 @@ impl SessionCorporateActions {
+     }
+ }
+ 
++#[cfg(test)]
+ impl RegistryDayEndCandidate {
+     /// 日终推进股东名册。`late_holder_tax_accounts` 是「后入股东自动开税账」
+     /// 的资格集合（N2a，2026-10-08 决策）：仅 `AShareIndividual` 模式由 Session
+@@ -391,6 +400,7 @@ impl RegistryDayEndCandidate {
+ fn invalid(reason: impl Into<String>) -> SessionCorporateActionsError {
+     SessionCorporateActionsError::Invalid(reason.into())
+ }
++#[cfg(test)]
+ fn resolve_stock_id(
+     catalog: &StockCatalog,
+     stock: &StockCode,
+@@ -399,6 +409,7 @@ fn resolve_stock_id(
+         .id(&stock.0)
+         .ok_or_else(|| invalid(format!("名册未知证券 {}", stock.0)))
+ }
++#[cfg(test)]
+ fn treasury_market_lot_id(stock: &StockCode, day: CivilDate) -> String {
+     format!("market:{}:issuer-treasury:{}", stock.0, day)
+ }
+diff --git a/packages/engine/src/session/corporate_actions/rights_offering_day_end.rs b/packages/engine/src/session/corporate_actions/rights_offering_day_end.rs
+index 15494ae7..8070cac6 100644
+--- a/packages/engine/src/session/corporate_actions/rights_offering_day_end.rs
++++ b/packages/engine/src/session/corporate_actions/rights_offering_day_end.rs
+@@ -1,26 +1,38 @@
+ //! 配股／增发的日终纯候选。所有 paid/refunded 数值都表示待提交事实，不能冒充组端执行回执。
+ 
++#[cfg(test)]
+ use super::{QueuedRightsSubscription, RejectedRightsSubscription, SessionCorporateActions};
++#[cfg(test)]
+ use crate::account::{AccountKind, StockCode};
+-use crate::calendar::{CivilDate, TradingCalendar};
++use crate::calendar::CivilDate;
++#[cfg(test)]
++use crate::calendar::TradingCalendar;
++#[cfg(test)]
+ use crate::company::cash_dividend_tax::CashDividendTaxBook;
+ use crate::company::rights_offering::{
+-    DirectedPlacementTarget, HolderRightsSettlement, RightsOfferingBook, RightsOfferingError,
+-    RightsOfferingEventPlan, RightsOfferingMode, RightsOfferingStatus, RightsSettlementReceipt,
++    DirectedPlacementTarget, RightsOfferingError, RightsOfferingEventPlan, RightsOfferingMode,
++};
++#[cfg(test)]
++use crate::company::rights_offering::{
++    HolderRightsSettlement, RightsOfferingBook, RightsOfferingStatus, RightsSettlementReceipt,
+     RightsSubscriptionRecord, SubscriptionOrigin,
+ };
++#[cfg(test)]
+ use crate::company::share_registry::{
+     AcquisitionSource, DayNetChange, HolderId, MovementScope, NetAcquisition, ShareDayRequest,
+     ShareRegistry, ShareRestriction,
+ };
++#[cfg(test)]
+ use crate::company::CompanyId;
+ use crate::money::Money;
+ use crate::orderbook::AccountId;
++#[cfg(test)]
+ use std::collections::{BTreeMap, BTreeSet};
+ use thiserror::Error;
+ 
+ /// 真实日终组账户资源；available_cash 已扣在途占用，不得使用镜像总现金代替。
+ #[derive(Clone, Copy, Debug, Eq, PartialEq)]
++#[cfg(test)]
+ pub(crate) struct RightsFinalResources {
+     pub available_cash: Money,
+     pub kind: AccountKind,
+@@ -28,6 +40,7 @@ pub(crate) struct RightsFinalResources {
+ 
+ /// 现有队列的一账户一净申请身份；不得把受理成功解释成缴款完成。
+ #[derive(Clone, Debug, Eq, PartialEq)]
++#[cfg(test)]
+ pub(crate) struct RightsRequestKey {
+     pub event_id: String,
+     pub account: AccountId,
+@@ -35,6 +48,7 @@ pub(crate) struct RightsRequestKey {
+ }
+ 
+ #[derive(Clone, Debug, Eq, PartialEq)]
++#[cfg(test)]
+ pub(crate) enum RightsAccountDisposition {
+     PreparedSubscription,
+     PreparedSettlement,
+@@ -42,6 +56,7 @@ pub(crate) enum RightsAccountDisposition {
+ }
+ 
+ #[derive(Clone, Debug, Eq, PartialEq)]
++#[cfg(test)]
+ pub(crate) struct RightsAccountResult {
+     pub request: RightsRequestKey,
+     pub origin: SubscriptionOrigin,
+@@ -55,6 +70,7 @@ pub(crate) struct RightsAccountResult {
+ 
+ /// 独立的配股领域意图。D1a 既有股利／税款操作不能替代这些语义。
+ #[derive(Clone, Debug, Eq, PartialEq)]
++#[cfg(test)]
+ pub(crate) enum RightsOfferingIntent {
+     PaymentDebit {
+         request: RightsRequestKey,
+@@ -74,6 +90,7 @@ pub(crate) enum RightsOfferingIntent {
+ }
+ 
+ #[derive(Clone, Debug, Eq, PartialEq)]
++#[cfg(test)]
+ pub(crate) struct RightsFinanceSettlement {
+     pub issuer: CompanyId,
+     pub event_id: String,
+@@ -84,6 +101,7 @@ pub(crate) struct RightsFinanceSettlement {
+ 
+ /// 仅本簇会变化的候选字段；调用方在全部组回执勾稽后才可安装。
+ #[derive(Clone, Debug, Eq, PartialEq)]
++#[cfg(test)]
+ pub(crate) struct RightsOfferingDayEndCandidate {
+     pub registries: Vec<ShareRegistry>,
+     pub dividend_tax_books: Vec<CashDividendTaxBook>,
+@@ -150,6 +168,7 @@ pub(crate) fn validate_rights_offering_capability(
+     Ok(())
+ }
+ 
++#[cfg(test)]
+ fn invalid(
+     plan: &RightsOfferingEventPlan,
+     day: CivilDate,
+@@ -161,6 +180,7 @@ fn invalid(
+         detail: detail.into(),
+     }
+ }
++#[cfg(test)]
+ fn domain(
+     plan: &RightsOfferingEventPlan,
+     day: CivilDate,
+@@ -172,6 +192,7 @@ fn domain(
+         source,
+     }
+ }
++#[cfg(test)]
+ fn request(
+     plan: &RightsOfferingEventPlan,
+     account: AccountId,
+@@ -183,6 +204,7 @@ fn request(
+         submitted_on,
+     }
+ }
++#[cfg(test)]
+ fn available(
+     balances: &BTreeMap<AccountId, RightsFinalResources>,
+     plan: &RightsOfferingEventPlan,
+@@ -210,6 +232,7 @@ fn available(
+ 
+ /// 在最终市场资源上计算；personal_tax_accounts 必须来自 AShareIndividual 的个人资格集。
+ /// 同一账户跨事件按 rights_offerings 的冻结顺序共享余额；不修改任何调用方对象。
++#[cfg(test)]
+ pub(crate) fn rights_offering_day_end_candidate(
+     actions: &SessionCorporateActions,
+     day: CivilDate,
+@@ -399,6 +422,7 @@ pub(crate) fn rights_offering_day_end_candidate(
+     Ok(candidate)
+ }
+ 
++#[cfg(test)]
+ #[allow(clippy::too_many_arguments)]
+ fn prepare_subscription(
+     candidate: &mut RightsOfferingDayEndCandidate,
+@@ -488,6 +512,7 @@ fn prepare_subscription(
+     Ok(())
+ }
+ 
++#[cfg(test)]
+ fn prepare_settlement(
+     candidate: &mut RightsOfferingDayEndCandidate,
+     index: usize,
+@@ -645,6 +670,7 @@ fn prepare_settlement(
+     Ok(())
+ }
+ 
++#[cfg(test)]
+ fn prepare_tax_credit(
+     candidate: &mut RightsOfferingDayEndCandidate,
+     plan: &RightsOfferingEventPlan,

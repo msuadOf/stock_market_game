@@ -1,0 +1,16 @@
+agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/applied-source-context.patch
+agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/candidate-2-complete-source.patch
+agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/paths.txt
+agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/source-patches/candidate-2-corporate-candidates.patch
+agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/source-patches/candidate-2-crate-test-helpers.patch
+agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/source-patches/candidate-2-facade-reviewed.patch
+agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/source-patches/candidate-2-npc-reviewed.patch
+agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/source-patches/candidate-2-runtime-refs.patch
+agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/source-patches/candidate-2-unused-helpers.patch
+agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/source-reviews/candidate-2-corporate-review.md
+agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/source-reviews/candidate-2-crate-test-helpers.md
+agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/source-reviews/candidate-2-facade-review.md
+agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/source-reviews/candidate-2-npc-review.md
+agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/source-reviews/candidate-2-runtime-refs-review.md
+agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/source-reviews/candidate-2-unused-helpers-review.md
+agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/交接.md

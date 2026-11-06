@@ -1,0 +1,46 @@
+ M packages/engine/src/facade_slot/arena.rs
+ M packages/engine/src/facade_slot/roles.rs
+ M packages/engine/src/facade_slot/test_supervisor.rs
+ M packages/engine/src/facade_slot/tests/exhaustion_tests.rs
+ M packages/engine/src/facade_slot/tests/interleave_tests.rs
+ M packages/engine/src/facade_slot/tests/lifecycle_tests.rs
+ M packages/engine/src/market.rs
+ M packages/engine/src/orderbook.rs
+ M packages/engine/src/plans/mod.rs
+ M packages/engine/src/runtime/desk.rs
+ M packages/engine/src/runtime/drive.rs
+ M packages/engine/src/runtime/drive/convergence.rs
+ M packages/engine/src/runtime/group.rs
+ M packages/engine/src/session/administrative_mirror.rs
+ M packages/engine/src/session/attention.rs
+ M packages/engine/src/session/civil_information.rs
+ M packages/engine/src/session/company_state.rs
+ M packages/engine/src/session/corporate_actions/registry_day_end.rs
+ M packages/engine/src/session/corporate_actions/rights_offering_day_end.rs
+ M packages/engine/src/session/decision_chain.rs
+ M packages/engine/src/session/execution/reconcile_plan.rs
+ M packages/engine/src/session/failure.rs
+ M packages/engine/src/session/pipeline/decision_snapshot_capture.rs
+ M packages/engine/src/session/pipeline/decision_snapshot_capture_tests.rs
+ M packages/engine/src/session/pipeline/npc_decisions.rs
+ M packages/engine/src/session/pipeline/npc_state_projection.rs
+ M packages/engine/src/session/pipeline/npc_tick_preparation.rs
+ M packages/engine/src/session/retail_lifecycle.rs
+ M packages/engine/src/session/self_views.rs
+ M packages/engine/src/thread_facade.rs
+?? agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/applied-source-context.patch
+?? agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/candidate-2-complete-source.patch
+?? agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/paths.txt
+?? agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/source-patches/candidate-2-corporate-candidates.patch
+?? agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/source-patches/candidate-2-crate-test-helpers.patch
+?? agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/source-patches/candidate-2-facade-reviewed.patch
+?? agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/source-patches/candidate-2-npc-reviewed.patch
+?? agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/source-patches/candidate-2-runtime-refs.patch
+?? agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/source-patches/candidate-2-unused-helpers.patch
+?? agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/source-reviews/candidate-2-corporate-review.md
+?? agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/source-reviews/candidate-2-crate-test-helpers.md
+?? agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/source-reviews/candidate-2-facade-review.md
+?? agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/source-reviews/candidate-2-npc-review.md
+?? agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/source-reviews/candidate-2-runtime-refs-review.md
+?? agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/source-reviews/candidate-2-unused-helpers-review.md
+?? "agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/\344\272\244\346\216\245.md"

@@ -1,0 +1,187 @@
+{
+  "workers": 8,
+  "files": 30,
+  "elapsed_ms": 370,
+  "结果": [
+    {
+      "path": "packages/engine/src/facade_slot/arena.rs",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "path": "packages/engine/src/facade_slot/roles.rs",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "path": "packages/engine/src/facade_slot/test_supervisor.rs",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "path": "packages/engine/src/facade_slot/tests/exhaustion_tests.rs",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "path": "packages/engine/src/facade_slot/tests/interleave_tests.rs",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "path": "packages/engine/src/facade_slot/tests/lifecycle_tests.rs",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "path": "packages/engine/src/market.rs",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "path": "packages/engine/src/orderbook.rs",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "path": "packages/engine/src/plans/mod.rs",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "path": "packages/engine/src/runtime/desk.rs",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "path": "packages/engine/src/runtime/drive.rs",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "path": "packages/engine/src/runtime/drive/convergence.rs",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "path": "packages/engine/src/runtime/group.rs",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "path": "packages/engine/src/session/administrative_mirror.rs",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "path": "packages/engine/src/session/attention.rs",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "path": "packages/engine/src/session/civil_information.rs",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "path": "packages/engine/src/session/company_state.rs",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "path": "packages/engine/src/session/corporate_actions/registry_day_end.rs",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "path": "packages/engine/src/session/corporate_actions/rights_offering_day_end.rs",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "path": "packages/engine/src/session/decision_chain.rs",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "path": "packages/engine/src/session/execution/reconcile_plan.rs",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "path": "packages/engine/src/session/failure.rs",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/decision_snapshot_capture.rs",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/decision_snapshot_capture_tests.rs",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/npc_decisions.rs",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/npc_state_projection.rs",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/npc_tick_preparation.rs",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "path": "packages/engine/src/session/retail_lifecycle.rs",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "path": "packages/engine/src/session/self_views.rs",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "path": "packages/engine/src/thread_facade.rs",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ]
+}

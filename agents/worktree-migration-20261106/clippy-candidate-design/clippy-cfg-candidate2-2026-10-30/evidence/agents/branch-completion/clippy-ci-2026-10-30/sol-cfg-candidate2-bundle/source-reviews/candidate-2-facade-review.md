@@ -1,0 +1,7 @@
+# Facade 残余片源码复核与两个冗余 cfg 修正
+
+已读56072448全部7源码diff；原capacity/shared_words_addr只有thread_facade wasm真实调用，cfg(wasm)正确。无使用getter与重复测试错误文字映射删除不移除实际共享字、计数或错误信息。Ran.worker_id仅冗余返回载荷，真实worker_exit身份发送原样；所有单元测试仍断言Ran/Superseded分支。生命周期正测实际join_typed读取handle.arena，比原用外部arena更符合真实wasm join合同，不是伪调用。
+
+唯一发现：叶给arena字段/初始化额外加any(test,wasm)完全重复父facade_slot模块的编译集合；并无native非测试模块可以让这字段独自编译，增加属性没有必要。reviewer在独立callsite-fix树只移除这两个冗余属性，Arc保活字段及初始化在所有既有实际编译集合原样存在。其余叶净diff保留。该2属性修正及最终完整patch仍交上级未实施者复核，未自认最终独审通过。
+
+没有修改A股规则/单位/阶段/资产；没有Cargo/target。源码patchSHA256=`46c5e6e007b979c657331bdaf397c17f4c922c65dd4bb98da4a566111c9eaa76`。

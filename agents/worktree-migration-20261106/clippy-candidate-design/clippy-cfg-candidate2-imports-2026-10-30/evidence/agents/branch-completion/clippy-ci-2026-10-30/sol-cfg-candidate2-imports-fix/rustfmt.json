@@ -1,0 +1,24 @@
+{
+  "workers": 3,
+  "elapsed_ms": 102,
+  "files": [
+    {
+      "path": "packages/engine/src/orderbook.rs",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/npc_decisions.rs",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/npc_tick_preparation.rs",
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ]
+}

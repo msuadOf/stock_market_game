@@ -1,0 +1,189 @@
+diff --git a/packages/engine/src/facade_slot/arena.rs b/packages/engine/src/facade_slot/arena.rs
+index 76c4ba75..88d98a89 100644
+--- a/packages/engine/src/facade_slot/arena.rs
++++ b/packages/engine/src/facade_slot/arena.rs
+@@ -237,10 +237,12 @@ impl SlotArena {
+         arena
+     }
+ 
++    #[cfg(target_family = "wasm")]
+     pub fn capacity(&self) -> u32 {
+         self.capacity
+     }
+     /// 共享字区首地址（宿主建 Int32Array 视图的锚；wasm32 上为 u32 域）。
++    #[cfg(target_family = "wasm")]
+     pub fn shared_words_addr(&self) -> usize {
+         self.raw.as_ptr() as usize
+     }
+@@ -334,9 +336,6 @@ impl SlotArena {
+     pub fn facade_ra_total_word(&self) -> &AtomicU32 {
+         self.word(FACADE_RA_TOTAL)
+     }
+-    pub fn facade_rb_total_word(&self) -> &AtomicU32 {
+-        self.word(FACADE_RB_TOTAL)
+-    }
+     pub fn timeout_hit_answering_word(&self) -> &AtomicU32 {
+         self.word(TIMEOUT_HIT_ANSWERING)
+     }
+diff --git a/packages/engine/src/facade_slot/roles.rs b/packages/engine/src/facade_slot/roles.rs
+index 1678ca9d..85b6d8e5 100644
+--- a/packages/engine/src/facade_slot/roles.rs
++++ b/packages/engine/src/facade_slot/roles.rs
+@@ -339,7 +339,7 @@ pub fn engine_cancel<P: FacadePlatform>(
+ #[derive(Debug)]
+ pub enum TrampolineExit {
+     /// W1 闭包已消费、W2 join DONE 已写、退出意图已记录；真实 W3 由 JS 收尾发出。
+-    Ran { worker_id: u32 },
++    Ran,
+     /// 决策读非 (g,OK)（CANCELLED@旧代或换代）——不解引用载荷、退出意图照常记录。
+     Superseded,
+ }
+@@ -432,7 +432,7 @@ pub fn trampoline_run<P: FacadePlatform>(
+     }
+     // 仅记录退出意图；须返回 JS 后 raw destroy，才能发真实 W3 并 close。
+     platform.worker_exit(worker_id, slot, gen);
+-    TrampolineExit::Ran { worker_id }
++    TrampolineExit::Ran
+ }
+ 
+ /// JoinHandle::join（§9.2.3 消费面）：终态读取 → CONSUMED；死亡信号映射
+diff --git a/packages/engine/src/facade_slot/test_supervisor.rs b/packages/engine/src/facade_slot/test_supervisor.rs
+index 9e8a2ca1..f5a8413a 100644
+--- a/packages/engine/src/facade_slot/test_supervisor.rs
++++ b/packages/engine/src/facade_slot/test_supervisor.rs
+@@ -9,7 +9,6 @@ use std::sync::atomic::Ordering;
+ use super::arena::{AnswerField, SlotArena};
+ use super::codec::{decode_gen, decode_join_state, encode_join, encode_w, JoinState, SlotState};
+ use super::platform::FacadePlatform;
+-use super::roles::SpawnFailure;
+ 
+ /// A1-A3 应答结果。
+ #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+@@ -289,17 +288,3 @@ pub fn recover_pending<P: FacadePlatform>(
+     }
+     pushed
+ }
+-
+-/// 兼容面：SpawnFailure 归 io 映射由门面承担（见 thread_facade wasm 段）。
+-pub fn spawn_failure_message(failure: &SpawnFailure) -> String {
+-    match failure {
+-        SpawnFailure::SlotPoolExhausted {
+-            retired_fail_unacked,
+-            retired_gen_exhausted,
+-        } => format!(
+-            "SLOT_POOL_EXHAUSTED{{retired_fail_unacked={retired_fail_unacked},retired_gen_exhausted={retired_gen_exhausted}}}"
+-        ),
+-        SpawnFailure::AckTimeout => "SPAWN_ACK_TIMEOUT".to_owned(),
+-        SpawnFailure::WorkerFailed { errcode } => format!("SPAWN_WORKER_FAILED{{errcode={errcode}}}"),
+-    }
+-}
+diff --git a/packages/engine/src/facade_slot/tests/exhaustion_tests.rs b/packages/engine/src/facade_slot/tests/exhaustion_tests.rs
+index 57d44d90..74f0f2a4 100644
+--- a/packages/engine/src/facade_slot/tests/exhaustion_tests.rs
++++ b/packages/engine/src/facade_slot/tests/exhaustion_tests.rs
+@@ -24,7 +24,7 @@ fn healthy_cycle(
+     let published = publish_spawn(arena, platform, job).expect("健康路径发布应成功");
+     test_supervisor::answer_ok(arena, platform, published.slot, published.gen, worker_id);
+     let out = trampoline_run(arena, platform, published.slot, published.gen, worker_id);
+-    assert!(matches!(out, TrampolineExit::Ran { .. }));
++    assert!(matches!(out, TrampolineExit::Ran));
+     let (): () = join_typed(arena, platform, published.slot, published.gen).expect("join");
+     match test_supervisor::on_worker_exit(arena, platform, sup, published.slot, published.gen) {
+         test_supervisor::RecoveryOutcome::Pushed => {}
+@@ -97,7 +97,7 @@ fn t耗2_全池耗尽显式失败恒等式() {
+                     spawned,
+                 );
+                 let out = trampoline_run(&arena, &platform, published.slot, published.gen, spawned);
+-                assert!(matches!(out, TrampolineExit::Ran { .. }));
++                assert!(matches!(out, TrampolineExit::Ran));
+                 let (): () = join_typed(&arena, &platform, published.slot, published.gen).unwrap();
+                 match test_supervisor::on_worker_exit(
+                     &arena,
+diff --git a/packages/engine/src/facade_slot/tests/interleave_tests.rs b/packages/engine/src/facade_slot/tests/interleave_tests.rs
+index 67a99352..a1629b6d 100644
+--- a/packages/engine/src/facade_slot/tests/interleave_tests.rs
++++ b/packages/engine/src/facade_slot/tests/interleave_tests.rs
+@@ -84,7 +84,7 @@ fn n1_跨代载荷负测() {
+     platform.seams.a.release_once();
+     platform.seams.a.release_once();
+     let new_out = new_child.join().expect("新子不应 panic");
+-    assert!(matches!(new_out, TrampolineExit::Ran { .. }));
++    assert!(matches!(new_out, TrampolineExit::Ran));
+     let (): () = join_typed(&arena, &platform, handle.join_index, handle.gen).expect("g+1 join");
+     assert_eq!(
+         counters1.run.load(Ordering::SeqCst),
+@@ -167,7 +167,7 @@ fn n1b_合法ok载荷窗口() {
+     // 放行：子消费 → DONE → join CONSUMED → 门链闭合 → 回收成功。
+     platform.seams.a2.release_once();
+     let out = child.join().expect("子不应 panic");
+-    assert!(matches!(out, TrampolineExit::Ran { .. }));
++    assert!(matches!(out, TrampolineExit::Ran));
+     let (): () = join_typed(&arena, &platform, handle.join_index, handle.gen).expect("join");
+     match test_supervisor::on_worker_exit(&arena, &platform, &mut sup, 0, 0) {
+         test_supervisor::RecoveryOutcome::Pushed => {}
+@@ -267,7 +267,7 @@ fn n3_迟到应答跨代cas负测() {
+         .expect("请求者不应 panic")
+         .expect("g+1 成功");
+     let out = child.join().expect("子不应 panic");
+-    assert!(matches!(out, TrampolineExit::Ran { .. }));
++    assert!(matches!(out, TrampolineExit::Ran));
+     let (): () = join_typed(&arena, &platform, handle.join_index, handle.gen).expect("join");
+     assert_eq!(counters1.run.load(Ordering::SeqCst), 1);
+     assert_eq!(counters0.run.load(Ordering::SeqCst), 0);
+@@ -335,7 +335,7 @@ fn n3b_写权获取窗口() {
+         .expect("请求者不应 panic")
+         .expect("迟到成功也是成功");
+     let out = child.join().expect("子不应 panic");
+-    assert!(matches!(out, TrampolineExit::Ran { .. }));
++    assert!(matches!(out, TrampolineExit::Ran));
+     let (): () = join_typed(&arena, &platform, handle.join_index, handle.gen).expect("join");
+     assert_eq!(counters.run.load(Ordering::SeqCst), 1);
+     assert_eq!(arena.tombstone_word().load(Ordering::SeqCst), 0);
+diff --git a/packages/engine/src/facade_slot/tests/lifecycle_tests.rs b/packages/engine/src/facade_slot/tests/lifecycle_tests.rs
+index 75c2e13a..223dcaea 100644
+--- a/packages/engine/src/facade_slot/tests/lifecycle_tests.rs
++++ b/packages/engine/src/facade_slot/tests/lifecycle_tests.rs
+@@ -67,9 +67,9 @@ fn 全链ok_闭包恰跑一次join取回结果() {
+         .expect("请求者线程不应 panic")
+         .expect("全链 OK 应返回句柄");
+     let child_out = child.join().expect("trampoline 不应 panic");
+-    assert!(matches!(child_out, TrampolineExit::Ran { .. }));
+-    let (): () =
+-        join_typed(&arena, &platform, handle.join_index, handle.gen).expect("join DONE 应取回结果");
++    assert!(matches!(child_out, TrampolineExit::Ran));
++    let (): () = join_typed(&handle.arena, &platform, handle.join_index, handle.gen)
++        .expect("join DONE 应取回结果");
+     // join 槽 → CONSUMED。
+     assert_eq!(
+         arena.join_word(0).load(Ordering::SeqCst),
+@@ -395,7 +395,7 @@ fn 迟到应答零槽写与terminate卫生() {
+     let outcome1 = test_supervisor::answer_ok(&arena, &platform, 0, 1, 10);
+     assert!(matches!(outcome1, test_supervisor::AnswerOutcome::Answered));
+     let ran = trampoline_run(&arena, &platform, 0, 1, 10);
+-    assert!(matches!(ran, TrampolineExit::Ran { .. }));
++    assert!(matches!(ran, TrampolineExit::Ran));
+     let (): () = join_typed(&arena, &platform, 0, 1).expect("g+1 join");
+     assert_eq!(counters.run.load(Ordering::SeqCst), 1);
+ }
+@@ -550,7 +550,7 @@ fn trampoline输给死亡信号结果恰一释放() {
+         test_supervisor::answer_ok(&arena, &platform, published.slot, published.gen, 1);
+         assert!(matches!(
+             trampoline_run(&arena, &platform, 0, 0, 1),
+-            TrampolineExit::Ran { .. }
++            TrampolineExit::Ran
+         ));
+         assert_eq!(drops.drop.load(Ordering::SeqCst), 1, "D5输家结果恰一次释放");
+         assert_eq!(arena.tombstone_word().load(Ordering::SeqCst), 0);
+diff --git a/packages/engine/src/thread_facade.rs b/packages/engine/src/thread_facade.rs
+index dc09c86a..ffd92614 100644
+--- a/packages/engine/src/thread_facade.rs
++++ b/packages/engine/src/thread_facade.rs
+@@ -80,7 +80,7 @@ mod wasm_impl {
+             "facade_child_trampoline 在 runtime 未初始化时不可达（spawn 先行 ⇒ init 先行）",
+         );
+         match trampoline_run(&**arena, &WasmFacadePlatform, slot, gen, worker_id) {
+-            TrampolineExit::Ran { .. } => 0,
++            TrampolineExit::Ran => 0,
+             TrampolineExit::Superseded => 1,
+         }
+     }

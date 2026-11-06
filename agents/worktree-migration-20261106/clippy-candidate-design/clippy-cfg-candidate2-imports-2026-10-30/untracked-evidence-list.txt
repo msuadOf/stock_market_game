@@ -1,0 +1,4 @@
+agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-imports-fix/candidate-2-imports-supplement.patch
+agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-imports-fix/candidate-2-with-imports-complete.patch
+agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-imports-fix/original-candidate2-tree.txt
+agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-imports-fix/复核交接.md

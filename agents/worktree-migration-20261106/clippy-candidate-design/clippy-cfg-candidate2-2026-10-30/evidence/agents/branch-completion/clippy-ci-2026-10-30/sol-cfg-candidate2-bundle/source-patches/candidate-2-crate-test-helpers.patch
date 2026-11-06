@@ -1,0 +1,92 @@
+diff --git a/packages/engine/src/plans/mod.rs b/packages/engine/src/plans/mod.rs
+index 75f8a2fe..2daf7cb5 100644
+--- a/packages/engine/src/plans/mod.rs
++++ b/packages/engine/src/plans/mod.rs
+@@ -313,6 +313,7 @@ impl PlanBook {
+     }
+ 
+     /// 两类日终共用同一簿；未接真实来源的公司执行腿不能静默跨日或被清空。
++    #[cfg(test)]
+     pub(crate) fn end_trading_day(&mut self, day: u64) -> Result<(), PlanError> {
+         self.end_trading_day_for_stocks(|_| Ok(Some(day)))
+     }
+@@ -755,6 +756,7 @@ impl PlanBook {
+     /// previously terminal plan is invalid. A fact after a completion earlier in
+     /// this same batch is consumed without another transition. A failed transition
+     /// publishes none of the staged changes.
++    #[cfg(test)]
+     pub(crate) fn apply_active_events_atomically(
+         &mut self,
+         events: &[(PlanId, PlanEvent)],
+diff --git a/packages/engine/src/session/administrative_mirror.rs b/packages/engine/src/session/administrative_mirror.rs
+index 6ddf8760..25f7b41a 100644
+--- a/packages/engine/src/session/administrative_mirror.rs
++++ b/packages/engine/src/session/administrative_mirror.rs
+@@ -212,6 +212,7 @@ impl GameSession {
+     }
+ 
+     /// 短借用只持 driver 锁；不进入普通 tick 的 freeze、take 或 inject 玩家意图路径。
++    #[cfg(test)]
+     pub(in crate::session) fn apply_administrative_operations<P>(
+         &mut self,
+         grouped: Vec<(GroupIdx, Vec<AdminOperation>)>,
+diff --git a/packages/engine/src/session/civil_information.rs b/packages/engine/src/session/civil_information.rs
+index fb38d706..64da2b71 100644
+--- a/packages/engine/src/session/civil_information.rs
++++ b/packages/engine/src/session/civil_information.rs
+@@ -65,6 +65,7 @@ impl GameSession {
+             }
+         }
+     }
++    #[cfg(test)]
+     pub(super) fn with_prepared_runtime_civil_day<P>(
+         &mut self,
+         project: impl FnOnce(&GameSession, CivilDayEndReport) -> Result<P, SessionError>,
+diff --git a/packages/engine/src/session/company_state.rs b/packages/engine/src/session/company_state.rs
+index 1d0190a1..ca130efb 100644
+--- a/packages/engine/src/session/company_state.rs
++++ b/packages/engine/src/session/company_state.rs
+@@ -49,6 +49,7 @@ impl SessionCompanies {
+         }
+     }
+ 
++    #[cfg(test)]
+     pub(crate) fn legacy_mut(&mut self) -> Option<&mut LegacyCompanyState> {
+         match self {
+             Self::LegacyOperations(state) => Some(state),
+diff --git a/packages/engine/src/session/decision_chain.rs b/packages/engine/src/session/decision_chain.rs
+index 60014bdb..05455be4 100644
+--- a/packages/engine/src/session/decision_chain.rs
++++ b/packages/engine/src/session/decision_chain.rs
+@@ -1170,6 +1170,7 @@ impl GameSession {
+ 
+     /// 技术面观察只读（D3a-2：runtime 组线程观察同源校验用——与
+     /// build_chain_technical_observations 同一构建器）。
++    #[cfg(test)]
+     pub(crate) fn technical_observations_read(
+         &self,
+     ) -> Result<BTreeMap<StockId, TechnicalObservation>, StepFatal> {
+diff --git a/packages/engine/src/session/failure.rs b/packages/engine/src/session/failure.rs
+index a07bb5a6..1a905641 100644
+--- a/packages/engine/src/session/failure.rs
++++ b/packages/engine/src/session/failure.rs
+@@ -1219,6 +1219,7 @@ impl GameSession {
+     }
+ 
+     /// 手动日结只撤销新增账户投影、经历与个人确认；不承诺回退已发布市场 tick。
++    #[cfg(test)]
+     pub(crate) fn runtime_day_end_mirror_rollback(&self) -> impl FnOnce(&mut Self) {
+         let accounts = self.runtime_accounts_snapshot();
+         let retail = self.state.retail_experience.clone();
+diff --git a/packages/engine/src/session/self_views.rs b/packages/engine/src/session/self_views.rs
+index f36ea909..d442c3d0 100644
+--- a/packages/engine/src/session/self_views.rs
++++ b/packages/engine/src/session/self_views.rs
+@@ -54,6 +54,7 @@ pub(in crate::session) fn working_orders_for_accounts_on(
+ 
+ impl GameSession {
+     /// 按股票并行读取本轮观察账户的工作单，再归并为账户视图。
++    #[cfg(test)]
+     pub(super) fn working_orders_for_accounts(
+         &self,
+         owners: &BTreeSet<AccountId>,

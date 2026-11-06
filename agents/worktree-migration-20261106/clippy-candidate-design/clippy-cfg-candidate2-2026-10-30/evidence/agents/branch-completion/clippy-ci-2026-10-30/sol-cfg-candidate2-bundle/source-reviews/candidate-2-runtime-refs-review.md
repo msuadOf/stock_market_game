@@ -1,0 +1,5 @@
+# Runtime 剩余七个辅助函数 cfg 独立复核
+
+未实施者已读fd6b2f39全部3源码文件diff，并逐对照函数所属类型与外围cfg：group的两个helper只有cfgtest消息arms消费；driver collect_personal_full/prepare_driver_step不可与World同名API混为一谈，所有调用为unit测试，生产self.world.collect_personal_full完整保留；take_pending_receipts与desk candle读面只有unit消费者。committed_calendar_tick保any(test,simulation-diagnostics)，causal.rs:318在feature生产翻译确有调用，故未误收testonly。
+
+方法均crate私有，仓库integration/apps不能越边界调用；既有verification-harness不增加这些入口的消费者。World同名方法、真实prepare_driver_step_with_day_end、时钟认证/日结及原错误传播保留。A股时间/资金/分股单位未改，函数体/断言未动。源码复核无阻断，实际feature/target编译与Clippy等待统一窗口，无Cargo启动。

@@ -1,0 +1,7 @@
+# NPC 旧测试适配链完整 diff 源码复核
+
+reviewer阅读292b5eaf全部5源码diff，并逐对原有引用与生产队列链。whole-snapshot capture/projection/stream适配器确只来自unit tests；正式capture_npc_account_input_on→decide_npc_account_from_shared→plan_npc_account_decision/install_npc_account_patch→stream_npc_account_tasks_with完整保留，包括wasm串行与native消费/停止/错误合并顺序。standalone reconcile与验证市场读面仍生产保留。Keep.order_id仅旧snapshot输出消费，正式Keep分支仍表示不撤换现单，测试字段与断言保持。
+
+发现并修正三项源码收口：叶重复cfgtest移一份；DecisionSnapshot import随仅测试wrapper门控；仅由该wrapper构造/消费的NpcAccountDecision同样cfgtest。这三项由reviewer在独立callsite-fix树实施，待上级未实施者复核最终完整patch，不能套用leaf自审通过。原uses_parent_order_execution等未覆盖诊断不在本片强改，更不删除既有strategy getter求值。
+
+不改RNG、受理/结算先后、T+1/单位、错误展示或任何强断言；无泛allow/伪调用/扩API。指定rustfmt与diffcheck过，未Cargo/target，不能称Clippy绿。

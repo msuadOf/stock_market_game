@@ -1,0 +1,165 @@
+diff --git a/packages/engine/src/market.rs b/packages/engine/src/market.rs
+index d35d0a53..5a31d787 100644
+--- a/packages/engine/src/market.rs
++++ b/packages/engine/src/market.rs
+@@ -295,11 +295,6 @@ impl Market {
+         self.last_close = last_close;
+     }
+ 
+-    /// 竞价 caller 在完成撮合后应用其 clearing price，不重新改变输入接受集。
+-    pub(crate) fn apply_auction_price(&mut self, price: Money) {
+-        self.last_price = price;
+-    }
+-
+     #[cfg(test)]
+     pub(crate) fn fixture_set_last_price(&mut self, price: Money) {
+         self.last_price = price;
+@@ -547,6 +542,7 @@ impl Market {
+         Ok(())
+     }
+ 
++    #[cfg(test)]
+     pub(crate) fn record_filled_order(
+         &mut self,
+         id: OrderId,
+@@ -556,13 +552,6 @@ impl Market {
+         Ok(())
+     }
+ 
+-    pub(crate) fn resting_orders_for_owners(
+-        &self,
+-        owners: &std::collections::BTreeSet<AccountId>,
+-    ) -> Vec<Order> {
+-        self.book.resting_orders_for_owners(owners)
+-    }
+-
+     pub fn resting_order_count(&self) -> usize {
+         self.book.resting_order_count()
+     }
+diff --git a/packages/engine/src/orderbook.rs b/packages/engine/src/orderbook.rs
+index 6ef9b4e7..3e60aff3 100644
+--- a/packages/engine/src/orderbook.rs
++++ b/packages/engine/src/orderbook.rs
+@@ -977,12 +977,6 @@ impl OrderBook {
+         orders
+     }
+ 
+-    /// Snapshot only orders belonging to the accounts observed in this tick.
+-    /// The selected orders keep the same per-stock arrival order as `resting_orders`.
+-    pub(crate) fn resting_orders_for_owners(&self, owners: &BTreeSet<AccountId>) -> Vec<Order> {
+-        self.resting_orders_matching(|order| owners.contains(&order.owner))
+-    }
+-
+     pub fn resting_order_count(&self) -> usize {
+         self.state.bids().len() + self.state.asks().len()
+     }
+diff --git a/packages/engine/src/runtime/desk.rs b/packages/engine/src/runtime/desk.rs
+index de93d788..f7d47e8b 100644
+--- a/packages/engine/src/runtime/desk.rs
++++ b/packages/engine/src/runtime/desk.rs
+@@ -1521,20 +1521,6 @@ impl DeskState {
+         });
+     }
+ 
+-    /// 记录受理事实（Accepted）。
+-    fn note_accepted(&mut self, order: &DeskOrder) {
+-        self.lifecycle_facts
+-            .push(super::protocol::DeskLifecycleFact {
+-                stock: self.setup.stock,
+-                owner: order.owner,
+-                order_serial: (u64::from(order.order_ref.0) << 32) | order.order_ref.1,
+-                remaining: order.qty,
+-                side: order.side,
+-                price: order.price,
+-                kind: super::protocol::LifecycleKind::Accepted,
+-            });
+-    }
+-
+     /// 记录终结事实（Cancelled/Expired）。
+     fn note_terminated(&mut self, order: &DeskOrder, kind: super::protocol::LifecycleKind) {
+         self.retail_facts
+@@ -3008,18 +2994,6 @@ impl DeskState {
+         })
+     }
+ 
+-    /// 前五档买卖失衡（照搬原型 `top5_imbalance`）。
+-    fn top5_imbalance(&self) -> f64 {
+-        let bid: u64 = self.bids.values().rev().take(5).map(count_qty).sum();
+-        let ask: u64 = self.asks.values().take(5).map(count_qty).sum();
+-        let total = bid + ask;
+-        if total == 0 {
+-            0.0
+-        } else {
+-            (bid as f64 - ask as f64) / total as f64
+-        }
+-    }
+-
+     /// 本轮收束：行情收尾（tick 收盘价历史、分钟收盘、零成交 K 占位）→
+     /// 出口缓冲 flush（先于 DeskReport，因果基石）。
+     fn finish_round(&mut self, tick: u64) -> Result<(), RuntimeError> {
+@@ -3372,10 +3346,6 @@ pub fn bound_price(reference: Money, ratio_bps: u32, upward: bool) -> Result<Mon
+     Ok(bound)
+ }
+ 
+-fn count_qty(level: &VecDeque<DeskOrder>) -> u64 {
+-    level.iter().map(|o| o.qty as u64).sum()
+-}
+-
+ fn fnv(state: u64, value: u64) -> u64 {
+     let mut h = state;
+     for b in value.to_le_bytes() {
+diff --git a/packages/engine/src/session/attention.rs b/packages/engine/src/session/attention.rs
+index 60e8a557..ffa3a729 100644
+--- a/packages/engine/src/session/attention.rs
++++ b/packages/engine/src/session/attention.rs
+@@ -324,17 +324,6 @@ impl NpcAttentionScheduler {
+     }
+ }
+ 
+-impl GameSession {
+-    pub(super) fn pop_due_npc_ids(&mut self, tick: u64) -> (Vec<AccountId>, Vec<(u64, AccountId)>) {
+-        let attention = &self.state.npc_attention;
+-        self.state.attention_scheduler.pop_due(tick, |id| {
+-            attention
+-                .get(&id)
+-                .map(|state| state.next_attention_candidate_tick)
+-        })
+-    }
+-}
+-
+ impl NpcAttentionState {
+     pub(super) fn evaluate_candidate_with_signal(
+         &mut self,
+diff --git a/packages/engine/src/session/pipeline/decision_snapshot_capture_tests.rs b/packages/engine/src/session/pipeline/decision_snapshot_capture_tests.rs
+index 88d1be04..478d1a7a 100644
+--- a/packages/engine/src/session/pipeline/decision_snapshot_capture_tests.rs
++++ b/packages/engine/src/session/pipeline/decision_snapshot_capture_tests.rs
+@@ -309,7 +309,7 @@ fn capture_advances_attention_and_seals_owned_views_on_shadow_only() {
+         serde_json::to_vec(&shadow.state.retail_experience[&account]).unwrap()
+     );
+     // 注意力在 shadow 上推进：唯一账户候选刻后移，新候选已入队，且无逾期条目残留
+-    // （重复入队由 pop_due_npc_ids 的 next_attention_candidate_tick 比对过滤，属设计容忍）。
++    // （重复入队由 NpcAttentionScheduler::pop_due 的 next_attention_candidate_tick 比对过滤，属设计容忍）。
+     assert_ne!(shadow.state.npc_attention[&account], attention_before);
+     assert!(shadow.state.npc_attention[&account].next_attention_candidate_tick > shadow.state.tick);
+     let next = shadow.state.npc_attention[&account].next_attention_candidate_tick;
+diff --git a/packages/engine/src/session/retail_lifecycle.rs b/packages/engine/src/session/retail_lifecycle.rs
+index caf31126..66ebc81d 100644
+--- a/packages/engine/src/session/retail_lifecycle.rs
++++ b/packages/engine/src/session/retail_lifecycle.rs
+@@ -9,15 +9,6 @@ pub(crate) struct Candidate {
+ }
+ 
+ impl GameSession {
+-    pub(crate) fn append_runtime_retail_facts(
+-        &self,
+-        driver: &crate::runtime::drive::RuntimeDriver,
+-        candidate: &mut Candidate,
+-        facts: Vec<Fact>,
+-    ) -> Result<(), StepFatal> {
+-        self.append_runtime_retail_facts_at(driver, candidate, facts, self.tick())
+-    }
+-
+     pub(crate) fn append_runtime_retail_facts_at(
+         &self,
+         driver: &crate::runtime::drive::RuntimeDriver,

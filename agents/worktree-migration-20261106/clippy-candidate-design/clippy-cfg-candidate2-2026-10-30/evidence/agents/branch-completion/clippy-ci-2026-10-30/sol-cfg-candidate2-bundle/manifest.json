@@ -1,0 +1,263 @@
+{
+  "冻结基线": "0088897cd82b4474190fbd42431dbae1a8d716ff",
+  "基线tree": "05064dc50e0584e8605fdf670b6a8deb643dcd7a",
+  "工作树": "/data1/baiyifan/workplace/stock_market_game/.worktree/clippy-cfg-candidate2-2026-10-30",
+  "补片": "/data1/baiyifan/workplace/stock_market_game/.worktree/clippy-cfg-candidate2-2026-10-30/agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/candidate-2-complete-source.patch",
+  "补片sha256": "49580bbba9bfcbfd69d254418f7eec89dc83d3805f0ebbb80376f8a3a7c0267d",
+  "补片字节数": 53518,
+  "源码路径数": 30,
+  "来源": [
+    {
+      "路径": "/data1/baiyifan/workplace/stock_market_game/.worktree/clippy-cfg-callsite-fix-2026-10-30/agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-implementation/candidate-2-crate-test-helpers.patch",
+      "副本": "/data1/baiyifan/workplace/stock_market_game/.worktree/clippy-cfg-candidate2-2026-10-30/agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/source-patches/candidate-2-crate-test-helpers.patch",
+      "sha256": "53ff318c9293fa5963bf4883b891c349621249eec38e83d14e954421a8095f52"
+    },
+    {
+      "路径": "/data1/baiyifan/workplace/stock_market_game/.worktree/clippy-cfg-callsite-fix-2026-10-30/agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-implementation/candidate-2-facade-reviewed.patch",
+      "副本": "/data1/baiyifan/workplace/stock_market_game/.worktree/clippy-cfg-candidate2-2026-10-30/agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/source-patches/candidate-2-facade-reviewed.patch",
+      "sha256": "46c5e6e007b979c657331bdaf397c17f4c922c65dd4bb98da4a566111c9eaa76"
+    },
+    {
+      "路径": "/data1/baiyifan/workplace/stock_market_game/.worktree/clippy-cfg-callsite-fix-2026-10-30/agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-implementation/candidate-2-unused-helpers.patch",
+      "副本": "/data1/baiyifan/workplace/stock_market_game/.worktree/clippy-cfg-candidate2-2026-10-30/agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/source-patches/candidate-2-unused-helpers.patch",
+      "sha256": "ce5b1db0346762a900eb6528f08ab2c2d6c3010f2f1db47328a2b8143a87770e"
+    },
+    {
+      "路径": "/data1/baiyifan/workplace/stock_market_game/.worktree/clippy-cfg-callsite-fix-2026-10-30/agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-implementation/candidate-2-runtime-refs.patch",
+      "副本": "/data1/baiyifan/workplace/stock_market_game/.worktree/clippy-cfg-candidate2-2026-10-30/agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/source-patches/candidate-2-runtime-refs.patch",
+      "sha256": "8ce3c176f0a6ed3db51e66c2de4b812bb80e2ec59c99989d91b1210072966c10"
+    },
+    {
+      "路径": "/data1/baiyifan/workplace/stock_market_game/.worktree/clippy-cfg-callsite-fix-2026-10-30/agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-implementation/candidate-2-npc-reviewed.patch",
+      "副本": "/data1/baiyifan/workplace/stock_market_game/.worktree/clippy-cfg-candidate2-2026-10-30/agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/source-patches/candidate-2-npc-reviewed.patch",
+      "sha256": "5f4d02b7cc1743235f03c3b7b19d79b5443ea204e78df60e0fa8d1709dab2a54"
+    },
+    {
+      "路径": "/data1/baiyifan/workplace/stock_market_game/.worktree/clippy-cfg-callsite-fix-2026-10-30/agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-implementation/candidate-2-corporate-candidates.patch",
+      "副本": "/data1/baiyifan/workplace/stock_market_game/.worktree/clippy-cfg-candidate2-2026-10-30/agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/source-patches/candidate-2-corporate-candidates.patch",
+      "sha256": "f1d6d087b7b3d52e2de7d30afd0a97dc704c75441b553e702708500f7bd17c0a"
+    }
+  ],
+  "净增删核对": "30/30路径全部新增、删除行与六个最终片逐字一致",
+  "上下文适配": "仅 runtime/drive.rs::world_desk_finals_for_candles 的 context 返回类型改为 dev 既有 StockCandleProjection alias；不改新增、删除行。原先用户更新把原因概括为中文注释，实查是 alias 签名上下文。保留 dev 全部 alias/comments/Copy。",
+  "checks": {
+    "git_diff_check": "通过",
+    "rustfmt": "30/30通过，workers=8，371ms，外层10秒deadline",
+    "Cargo": "未运行；唯一集成窗口负责",
+    "Clippy": "未运行，不能称绿",
+    "tests": "未运行；未删除或弱化断言",
+    "独立完整审查": "待上级安排未实施者；旧逐片票不替代本包票"
+  },
+  "files": [
+    {
+      "path": "packages/engine/src/facade_slot/arena.rs",
+      "base_git_blob": "76c4ba758713e517656bca0d24b5a8d580dafdd4",
+      "base_sha256": "da757e6552b3b76f8608ad192e6e10d79d358d3a81f5182c99950b8930bbca0e",
+      "git_blob": "88d98a896b37dd85faeff4cbd5dfe2cd6ff55445",
+      "sha256": "7b81934590e08c45d113a90499f7f68be20fffb4d823816d66b63faa005a12a4"
+    },
+    {
+      "path": "packages/engine/src/facade_slot/roles.rs",
+      "base_git_blob": "1678ca9dc180e57416ed105d730a73ffede07c3d",
+      "base_sha256": "45663d36c0e883b8fd86ea810a616358c8bad0c5c88de755c196637f860c1dd7",
+      "git_blob": "85b6d8e5910ce2d57b30b888c6418c15d2ad9025",
+      "sha256": "56ae9f1bf4b5cd73c8f6870250f815cb6d5d933ef8c57c84c8378192d3f36ccf"
+    },
+    {
+      "path": "packages/engine/src/facade_slot/test_supervisor.rs",
+      "base_git_blob": "9e8a2ca1920265014a942822df0c8e17680cd6b9",
+      "base_sha256": "14a4408beb23d17f3ecaead38bdad39bedd88ebede67650124ca050d0015b186",
+      "git_blob": "f5a8413aca95ed4ce16ff07817bb4a0ae2e1cd44",
+      "sha256": "f90d55e02c2ccb5288005c35601797474fcfb32eb6413657d3fcc8a702ee388d"
+    },
+    {
+      "path": "packages/engine/src/facade_slot/tests/exhaustion_tests.rs",
+      "base_git_blob": "57d44d904eb465a54ac36a253b8b793e38a3b8f8",
+      "base_sha256": "fbb71ff1f9c5760c248f9c6917fad6220dd090fcc8e5ae1c52c21bbd9b207120",
+      "git_blob": "74f0f2a44fe390ac33f636a38db65912bb088967",
+      "sha256": "8b4b12cf3ba18f661e7190196f001dd5bd765205b0da9d1509303a78326317e5"
+    },
+    {
+      "path": "packages/engine/src/facade_slot/tests/interleave_tests.rs",
+      "base_git_blob": "67a993521d697b934760fe9861a5ef9c97e3854e",
+      "base_sha256": "4881ad4701ffaa09f1c7756a7cfee4bd3b0792c53928a2598f1366ecfb48c31a",
+      "git_blob": "a1629b6dfe46fe4563d7c912479931b8173e2e2c",
+      "sha256": "6e4800edefb64740da65c12b96449441197881959151e4da66dd469562119e03"
+    },
+    {
+      "path": "packages/engine/src/facade_slot/tests/lifecycle_tests.rs",
+      "base_git_blob": "75c2e13a7a66c61f0cf7182872d432f15454ac61",
+      "base_sha256": "0ca1323ed8f0afc41169ec74b4a7881764bb69c97af320ead36dad7b2875c866",
+      "git_blob": "223dcaeaf4a29866f9905978cc02e0cd4b354cd4",
+      "sha256": "985552b6f553ab4f1d7b7cca9538056ca15e1900a57e5e18ca79534f0cac27c1"
+    },
+    {
+      "path": "packages/engine/src/market.rs",
+      "base_git_blob": "1dbe544e1d60aa1c32a9e4f2dc1a7c60dbe04139",
+      "base_sha256": "149abad5416681c80d912410994a08c328b2b41e73b87f4473ee2637db8f4841",
+      "git_blob": "35ea49f151b541282e7d82f9a68a488bc8518e6a",
+      "sha256": "a7bb458ec4efd00159a2932a3d43cb8d141315c960fff3e834cdf0bfa9e815f2"
+    },
+    {
+      "path": "packages/engine/src/orderbook.rs",
+      "base_git_blob": "6ef9b4e700f34872e75826994b3ead227cb64b92",
+      "base_sha256": "8365dc806137b5eb5fa81c0e9e1f164c01b0e463149f8bc22495d24a701ed58d",
+      "git_blob": "3e60aff39c60b7848eb16dec5fca1bffcfa8b1ab",
+      "sha256": "bb97c09bf49a748bbc8def783e8fcfa7ce83208d29a5c36b12a2bea6a325daac"
+    },
+    {
+      "path": "packages/engine/src/plans/mod.rs",
+      "base_git_blob": "75f8a2fe57e3264fabb87b9e8a1864c549bb18af",
+      "base_sha256": "d1ae85e9b315b72d8c39b7f466a4460da2db5dd563f173b49b47edd2200371ea",
+      "git_blob": "2daf7cb5964003ebaea0548b77293bd9aa9f0217",
+      "sha256": "3188139dcbcece913381ab12bdadd7a636464f470ac846b559256e87dc94c420"
+    },
+    {
+      "path": "packages/engine/src/runtime/desk.rs",
+      "base_git_blob": "1d84a3f6db2e921f70e880c489a028110b3da472",
+      "base_sha256": "f7a48cd8bd438fc597a9a3977b11e5c5dccb22e9c805c2d17c121b0230fcc9b9",
+      "git_blob": "06936429c02ac5ea2ffc3c17a813730d0e4acdca",
+      "sha256": "f92b91d039bb92251af63845b3807a7a58b2dcc87a0fcf964bb8743bf54d3fb8"
+    },
+    {
+      "path": "packages/engine/src/runtime/drive.rs",
+      "base_git_blob": "95e5ba44873e2399c67e25887e4fa60c185d3031",
+      "base_sha256": "9f6c6ecd8d1ecfd806b3c2c1acde06b9f9c10f3098bcaf8801b0369164797d90",
+      "git_blob": "5eb612845610aa0a2dd4b650c9f712de2a230a19",
+      "sha256": "73ea89863070c89dd81a8dff22e0ce21540a99bd74f4f8233e4f17cbeea6a1f0"
+    },
+    {
+      "path": "packages/engine/src/runtime/drive/convergence.rs",
+      "base_git_blob": "4db46889c0362d74abccee344937f856822cb141",
+      "base_sha256": "0aaaa251d9e97b823878140e8b35ea32902440d20f1ef6099f0dfebfb52f4538",
+      "git_blob": "2abdf895d09087c1b9aeffa399522fd722571f32",
+      "sha256": "247c1f51cabd58fc074cee4d0c0291715297020aece6dd6ad9979884aadd2953"
+    },
+    {
+      "path": "packages/engine/src/runtime/group.rs",
+      "base_git_blob": "e3921d9541ac29e508bdbfc6184cd064bcf86817",
+      "base_sha256": "f87038445b4e7fec2a9a7e063d5bad6c7376b45cf83801058d5bef086aec77e0",
+      "git_blob": "1af8e5c7c71a6071c0965257bd081a3941038bf4",
+      "sha256": "8aeddd28f77238e9220ce746a2743f633ff7ff18c10e13a4aa42c179862cb3c0"
+    },
+    {
+      "path": "packages/engine/src/session/administrative_mirror.rs",
+      "base_git_blob": "6ddf87605f430a9f56b51ac7a3a8a73469f48d61",
+      "base_sha256": "36284aca4c2a5790a24b9619de1f4c5391907284afb20fbbdb400eb057ace59c",
+      "git_blob": "25f7b41aa3c389f17e90392a69efbac580b8fba5",
+      "sha256": "e18fbc5374a65bc9b921286a557285f766599a95526601162e1e0c9a19bc9794"
+    },
+    {
+      "path": "packages/engine/src/session/attention.rs",
+      "base_git_blob": "12b162936d9023bfc56d85ba0e78c038ccaff650",
+      "base_sha256": "a391c636235e747ea12a9522734f7a4202a63f1d0a8a8f78c5ecfbe505310ecd",
+      "git_blob": "c1aeb1d9c4ba8888a0e6d98192b7dccd88c094cb",
+      "sha256": "db62c3f82fa772d7867ea3864ca93987c7094d2f8e79a7a2fdc677ea60b06c90"
+    },
+    {
+      "path": "packages/engine/src/session/civil_information.rs",
+      "base_git_blob": "fb38d7061c508ef822fe638c8bbb437480c393d0",
+      "base_sha256": "a60c267c9fc4f69c2614a372f64791359539fbd2ffe7bcb07cf9296a0958c35c",
+      "git_blob": "64da2b71b7ca04abdfc7392f5e1c849da9fed6a5",
+      "sha256": "3da39e23e5d900c98e4dd2c5782f911099df4cf104f112aa1fd95c47001aac11"
+    },
+    {
+      "path": "packages/engine/src/session/company_state.rs",
+      "base_git_blob": "295392df6e65bab50df8c7107596316bfa004adf",
+      "base_sha256": "097aaddc44351df629135357b98b9cbde269ab738151a825ae56fff72d2d7b22",
+      "git_blob": "a66d94c7efaecb1927d10f29d31685e1db2258da",
+      "sha256": "bdc9b96cfe7206b7866a0d44d6e4aad18d938e850e882be9f83bfa08b20207d2"
+    },
+    {
+      "path": "packages/engine/src/session/corporate_actions/registry_day_end.rs",
+      "base_git_blob": "e74b251a333ee349bda89661b8b9c55de323d353",
+      "base_sha256": "fdd2802209f1fbd911b949b48cab07fbc8c26f5974520c5a4e0908d6f0928dbc",
+      "git_blob": "bd402c2b341467c53df5f480f09657062b9685bc",
+      "sha256": "8e3088d71844411d2666414c564230d0ea5c4ee3306624406546cb129220e37d"
+    },
+    {
+      "path": "packages/engine/src/session/corporate_actions/rights_offering_day_end.rs",
+      "base_git_blob": "15494ae74a730ca023f444666c27a0ca3c63f00e",
+      "base_sha256": "74045e6839ecae2b3c20d41cbf3b2c0e74afe8d93d554b708133b19b8f0c54ff",
+      "git_blob": "8070cac697527d43667e1690fcaae005b14ff4d6",
+      "sha256": "1ed3431eafe4290a2423b81db4c69e1131c47b6b75d7a9344a2ed0e07b724168"
+    },
+    {
+      "path": "packages/engine/src/session/decision_chain.rs",
+      "base_git_blob": "beaa2297c132a91870056b61eb9781b3c7571695",
+      "base_sha256": "010d92094d0048ce4f8f8c8fa6d587b0962272166962afb9e1c8ee16aa50ce4e",
+      "git_blob": "9c57a90d067bbb058c1eb60773cdc789353cb1f9",
+      "sha256": "16c942675943baf0e8616ab1967564a83021291e870c23f78c428aef7dd3fb40"
+    },
+    {
+      "path": "packages/engine/src/session/execution/reconcile_plan.rs",
+      "base_git_blob": "4ae5cc24a08becff3513811f3cd980c453f7796e",
+      "base_sha256": "9a69c1868f653e1a70f64b169ae2468822ddbfe0f269756d34d76f2811669fdd",
+      "git_blob": "c13858acb15b515a07f2478ce11bdb7f18f2aafd",
+      "sha256": "5c69cbb2fa0abb0ba6e8b77005e9408655e88ed9568b6b66a57102d7c8d46ae8"
+    },
+    {
+      "path": "packages/engine/src/session/failure.rs",
+      "base_git_blob": "23f6a143f63cdb29305a0eac20833d5bf4100d6b",
+      "base_sha256": "c5a2a99daef9cfae915ea0eaa058f23892e4a9750f87388b5047da2c73281b42",
+      "git_blob": "561157cf8f5d3ca425a279b5c2b7ce54d29b0816",
+      "sha256": "650dbacbb425f0f3aa063457370915e259b2cc433d276aff2e059340917bf19a"
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/decision_snapshot_capture.rs",
+      "base_git_blob": "0614e5b1de0bcbfed58cdf72cfec893c66fc81c4",
+      "base_sha256": "dbf348f6e3b32133f9996bec2a152fafa3f2e25efef084c40c99d6c101c0d256",
+      "git_blob": "ebf687e6b5ee8cd8132b987c6750488a49720f0f",
+      "sha256": "5201030fad64f6792e5316955e74db1b6a8337d27296c1100ec4adab3f31dfe3"
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/decision_snapshot_capture_tests.rs",
+      "base_git_blob": "38b421fc3d22f89fdfb228d5255944813d2a579f",
+      "base_sha256": "40da48481bcc80a105221c0a65ad6f04b5adb4b09b3d8ac04477d74328fa5fd4",
+      "git_blob": "9320dad234c44755b1277308c8251f8e2afe484b",
+      "sha256": "ddd93a5ab8535ce0af0990113251dfa8c5b4d9f726de15a2ff3163ae6ff1d88f"
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/npc_decisions.rs",
+      "base_git_blob": "1dc458696becc22d81d22cce2d4c972f736dfd12",
+      "base_sha256": "252d7fb48179ba017ba06506a3851c14856ac627ee5fbf42feb4e1cd17063ee4",
+      "git_blob": "0965c015a214028bba2c8ce9e83518534c33a873",
+      "sha256": "07a5070d4c903bf589c4e9d9fd113c6581f1d98955c5c6dff0c4bfd4705bd59d"
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/npc_state_projection.rs",
+      "base_git_blob": "6d53bca9695af8cc226e4bf1ffeaf6be0e92cc35",
+      "base_sha256": "a6828ae00ce00d2037eebc5c7e6505b766ee5435cb03d124b2c64c6b71ad02ff",
+      "git_blob": "2ff2ecb6a655b5754c40924f3b6d61e037a579a7",
+      "sha256": "2011a1f23b27599809c1111b97ad6a3ffb18846a484f385c817da4df56864147"
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/npc_tick_preparation.rs",
+      "base_git_blob": "49f331a9821ad0270bdec2f048ce8ffb493f626e",
+      "base_sha256": "261c037d6b545dec933e2b956313099d5753a4f89ec6d1333dac9f0fc326206e",
+      "git_blob": "0dd807bd43398e7373ecb535b47c944b39f0751e",
+      "sha256": "1043a86926ad1e7672ff4df81b8b7e128fcb4e6c63f25ec8e587dddff85cc52a"
+    },
+    {
+      "path": "packages/engine/src/session/retail_lifecycle.rs",
+      "base_git_blob": "caf311265ce00ca903f5b1f3f43b4b514e09768b",
+      "base_sha256": "c14c085155fe066c03863c50b37db50bf512a04f0c717d8e7e3bb1754b033c9a",
+      "git_blob": "66ebc81db4fdeb6f38c432eb42d85ea20bac1679",
+      "sha256": "c8589931c11b2c22a71c6755f7e7149574093339b14507e8ec572df937817f06"
+    },
+    {
+      "path": "packages/engine/src/session/self_views.rs",
+      "base_git_blob": "f36ea9092db62669f9ff9c398bde417030db4b36",
+      "base_sha256": "3f11139ec0e81b720e26d5ba85693e9a3019a16be56deb50ea455249fe3e6519",
+      "git_blob": "d442c3d0ef7b2ab6e778336c2841017b31e82e7f",
+      "sha256": "d9842dad921bcde79c1b45d40846e59b594fc983ecf05884433895dcbfc6628b"
+    },
+    {
+      "path": "packages/engine/src/thread_facade.rs",
+      "base_git_blob": "dc09c86a7ef52670278de561df8fe8f0493486db",
+      "base_sha256": "19c427fdce5cf2b01859cc55d0e18da46c2a3b5124eb7edab3412d364504be16",
+      "git_blob": "ffd92614e1a912f7ee8161b7665382db5ec125f6",
+      "sha256": "7ad80734a521e5d883ff6e85ceab2c313c80338c349e680d6cdfc71187877517"
+    }
+  ]
+}

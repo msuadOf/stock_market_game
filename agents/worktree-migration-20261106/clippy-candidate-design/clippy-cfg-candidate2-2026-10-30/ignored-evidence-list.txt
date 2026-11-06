@@ -1,0 +1,2 @@
+agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/manifest.json
+agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-candidate2-bundle/rustfmt-check.json
