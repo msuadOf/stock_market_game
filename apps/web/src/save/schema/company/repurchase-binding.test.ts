@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { parseSessionCorporateActions } from "./state.ts";
+import { parseCompanySystemState, parseSavedSessionCompanies, parseSessionCorporateActions } from "./state.ts";
 import { parseRawSaveJson } from "../raw-json.ts";
 import { materializeSaveValue } from "../primitives.ts";
 
@@ -67,5 +67,30 @@ test("回购 binding 原始 JSON 重复 event、cursor 或 PlanId 身份键拒�
     const bad = raw.replace(`"${field}":`, `"${field}":null,"${field}":`);
     assert.notEqual(raw, bad);
     assert.throws(() => parseSessionCorporateActions(parseRawSaveJson(bad), "actions"), /重复 JSON 键/);
+  }
+});
+
+// fixture 来自 issuer_repurchase_approval_tests 的 approval_c_session_01 和 _06 的公司状态输出。
+for (const [name, funded] of [["funded-companies.json", true], ["disabled-companies.json", false]] as const) test(`真实 Rust ${name} 公司状态对象/raw 无损`, { timeout: 10_000 }, () => {
+  const bytes = readFileSync(new URL(`../../fixtures/repurchase-binding/${name}`, import.meta.url));
+  const value = JSON.parse(bytes.toString("utf8")) as { CompanySystem: { system: unknown; corporate_actions: unknown } };
+  const system = parseCompanySystemState(value.CompanySystem.system, "companies.CompanySystem.system");
+  const setup = { company_system: { mode: "Simple" as const, config: system.implementation.state.config } };
+  const parsed = parseSavedSessionCompanies(value, setup, "companies");
+  assert.deepEqual(parsed, value);
+  assert.deepEqual(materializeSaveValue(parseSavedSessionCompanies(parseRawSaveJson(bytes.toString("utf8")), setup, "companies")), value);
+  assert.ok("CompanySystem" in parsed);
+  const actions = parsed.CompanySystem.corporate_actions;
+  assert.equal(actions.repurchase_execution_bindings.length, funded ? 1 : 0);
+  assert.equal(actions.issuer_repurchases.length, funded ? 1 : 0);
+  if (funded) {
+    const binding = actions.repurchase_execution_bindings[0];
+    const book = actions.issuer_repurchases[0];
+    assert.deepEqual(binding, { event_id: "批准一", issuer: 0, stock: "000001", account: "3", plan_id: { owner: "3", sequence: "0" }, funding_committed: true, funding_amount: "100000", applied_fact_cursor: "0", closing_state: "Active" });
+    assert.equal(binding.event_id, book.plan.event_id);
+    assert.equal(binding.issuer, book.plan.issuer);
+    assert.equal(binding.stock, book.plan.stock);
+    assert.equal(binding.funding_amount, book.plan.total_budget);
+    assert.equal(book.status, "Approved");
   }
 });
