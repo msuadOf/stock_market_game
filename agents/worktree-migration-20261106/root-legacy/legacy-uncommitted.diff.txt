@@ -1,0 +1,230 @@
+diff --git a/ROLE.md b/ROLE.md
+index a9493fe0..d601ced5 100644
+--- a/ROLE.md
++++ b/ROLE.md
+@@ -2,7 +2,7 @@
+ 
+ > 本文件定义本项目的团队架构、各角色职责与标准工作流。所有成员（人类与 AI agent）开工前必读。
+ 
+-> **当前模型约定（2026-10-25 用户更新）**：由主 agent 组织派遣本会话原生 subagent，不恢复 Claude CLI。以下模型、信任边界与生命周期约定取代 2026-10-23 的“仅用 Opus 4.7”限制及更早的调用流程；历史记录保留，不据角色名反推实际模型。
++> **当前模型约定（2026-10-27 用户更新）**：由主 agent 组织派遣本会话原生 subagent，不恢复 Claude CLI。边界清楚、文件独立的小块代码实现优先使用 fresh `gpt-6-luna`，以控制调用成本；复杂架构、大任务、交易语义判断与可信终审由 `gpt-6.1-sol` 承担。以下模型、信任边界与生命周期约定取代 2026-10-23 的“仅用 Opus 4.7”限制及更早的调用流程；历史记录保留，不据角色名反推实际模型。
+ 
+ ## 角色层级
+ 
+@@ -10,8 +10,8 @@
+ |------|--------|------|
+ | **上司** | 用户 | 方向拍板、资源授权、验收成果 |
+ | **Leader** | 本会话主 agent | 带领员工推进工作；分解任务、分配工作区、协调窗口、核对原始证据；对上司用大白话汇报；自己的工作接受独立复核 |
+-| **审查参谋（同事）** | **Sol**（`gpt-6.1-sol`，不是 `gpt-6-sol`） | 较大任务的可信 reviewer：架构审查、语义复核、性能负结果归因、整树与重大冻结包终审；审查 Leader 的工作 |
+-| **检查员** | **Luna**（`gpt-6-luna`） | 小任务的一次性不可信 reviewer：按窄范围核查到位性、纪律与证据，提供待核实线索；可多次派用，每个任务 fresh 创建，报告后结束 |
++| **审查参谋（同事）** | **Sol**（必须是 `gpt-6.1-sol`，不是 `gpt-6-sol`） | 复杂架构、大任务、交易语义判断与可信终审；负责架构审查、语义复核、性能负结果归因、整树与重大冻结包终审，也审查 Leader 的工作 |
++| **实现员 / 检查员** | **Luna**（`gpt-6-luna`） | 优先承担边界清楚、文件独立的小块代码实现；也可作小任务的一次性不可信 reviewer，按窄范围核查到位性、纪律与证据并提供待核实线索。每项任务 fresh 创建，报告后结束 |
+ | **员工** | subagents（实现类 agent） | 在独占 worktree 内做实现、测试、测量等具体工作 |
+ | **实习生** | Haiku subagent | 由**员工直接管理**的二级子代理；承担只读检索、机械盘点等低价值辅助工作；大多数情况下员工可自行派用，不占用独立 worktree 写权限 |
+ 
+@@ -26,23 +26,24 @@
+ 
+ ## 标准工作流
+ 
+-Sol 与 Luna 搭配使用，按任务范围选择 reviewer；Luna 的报告不能单独构成通过依据：
++Sol 与 Luna 按任务范围分工；Luna 可实现小块工作或提供小范围 review 线索，Luna 的自报结果不能单独构成通过依据：
+ 
+ ```
+-subagent 实现（员工）
+-    → 小范围可派 fresh Luna 快检，报告仅作线索
++fresh Luna 或其他 subagent 实现（员工）
++    → 小范围可派另一名 fresh Luna 快检，报告仅作线索
+     → Leader 或 Sol 逐条核对 Luna 报告涉及的原始证据
+     → 每批由未实施者独立复核完整 diff；较大任务交 Sol 可信审查
+     → 有效发现交回实现层修复，再由未实施者复核
+ ```
+ 
+-- **评审节奏**：小步改动可频繁派 Luna 做窄范围快检，较大批次、架构/语义重写和整树验收交 Sol；不再以无条件的 Sol/Luna 两份 `APPROVED` 作为统一流水线。
+-- **信任边界**：Luna 的发现只是线索，由 Leader 或 Sol 逐条核对源码、diff、日志等原始证据；Luna 报告“通过”也不能替代独立复核或可信验收。独立复核者必须未实施该改动，核查 A 股语义与依据、必要性与最小范围、边界测试和跨层一致性。
++- **任务分工**：边界清楚、文件独立的小块代码实现优先派 fresh Luna；复杂架构、大任务、交易语义工作及需要 `xhigh` 思考强度的任务交 Sol。既有在途 Sol 任务不因本规则重做，后续新任务按此成本分工。
++- **评审节奏**：小步改动可派未参与实现的 fresh Luna 做窄范围快检，较大批次、架构/语义重写和整树验收交 Sol；不再以无条件的 Sol/Luna 两份 `APPROVED` 作为统一流水线。
++- **信任边界**：Luna 的实现、自报结果与 review 发现都不能自动采信；由未参与实现者审查完整 diff，并逐条核对源码、diff、日志等原始证据。Luna 报告“通过”也不能替代独立复核或可信验收。独立复核者必须核查 A 股语义与依据、必要性与最小范围、边界测试和跨层一致性。
+ - **生命周期**：Luna 每个任务新建一个原生 subagent，提交报告后结束；后续任务或修复后复查重新创建，不用 `followup_task` 续用。更换任何 subagent 的模型都必须新建，不能通过 `followup_task` 改变既有模型。
+ 
+ ### 思考强度与原生调用
+ 
+-- 用户要求 Sol/Luna 搭配使用，并按任务选择合适的 `reasoning_effort`。以下是执行建议，不是用户逐字指定的固定强度：Sol 处理复杂架构、整树或合同审查建议 `xhigh`，范围清楚的实现/集成任务建议 `high`；Luna 小范围 review 默认建议 `high`，复杂到需要 `xhigh` 时应交 Sol，不扩大 Luna 的任务范围。
++- 按任务选择合适的 `reasoning_effort`：Luna 小块实现和小范围 review 默认建议 `high`；Sol 范围清楚的实现、集成或复核建议 `high`，复杂架构、重大交易语义或整树终审建议 `xhigh`。这些是执行建议，不是用户逐字指定的固定强度；任务复杂到需要 `xhigh` 时交 Sol。
+ - 使用本会话 `collaboration.spawn_agent`，显式填写实际 `model` 和 `reasoning_effort`；覆盖模型时使用 `fork_turns: "none"`，在 `message` 中给足任务背景、文件范围、规则、证据路径与验收要求。例如：`{task_name: "contract_review", model: "gpt-6.1-sol", reasoning_effort: "xhigh", fork_turns: "none", message: "……"}`。
+ - 只报告调用工具实际指定或返回的模型身份，不以 Sol/Luna 角色名冒充模型；调用失败如实报告，不自动换模型。在用户已授权的模型范围内按任务选择，更换模型时创建新的 subagent。
+ - 不恢复 Claude CLI 或旧 `codex-companion` 派工流程。原生工具没有 `fast mode` 参数时，不能声称已传入该参数；既有“不使用 fast mode”约定保留，不以修改配置代替本轮显式模型与强度选择。
+diff --git a/agents/coordination/current-work.md b/agents/coordination/current-work.md
+index 4c4b120c..171b1043 100644
+--- a/agents/coordination/current-work.md
++++ b/agents/coordination/current-work.md
+@@ -1,5 +1,7 @@
+ # 当前工作总账（防遗忘单一入口）
+ 
++> **2026-10-29 接续入口**：当前已核状态、实际 main 接收与剩余任务见 [resume-2026-10-29.md](resume-2026-10-29.md)。下文 2026-10-17 的运行数字与开关状态属于历史记录，不表示当前实现或在途任务。最终全仓回归、性能验收与整树终审仍未完成。
++
+ > 用途：**所有要做/在做的事的唯一登记处**。任何会话（包括未来的我）接手前必读本文件，完成后更新本文件。
+ > 建立：2026-10-17（用户指示："把目前要做的东西都维护在一个文件里，防止你再忘掉"）。
+ > 规则：开工前先读、有变化就改、完成就勾；数字必须带出处路径。
+diff --git a/agents/coordinator-status-2026-10-22.md b/agents/coordinator-status-2026-10-22.md
+index 3c8bdc33..5cfc16a0 100644
+--- a/agents/coordinator-status-2026-10-22.md
++++ b/agents/coordinator-status-2026-10-22.md
+@@ -1,7 +1,7 @@
+ # 协调者交接：2026-10-22 全天结论清单
+ 
+ > 目的：把今天查清的缺陷、复核结论、待办集中到一处，避免信息散落在对话与
+-> 各批台账中。**看这一份即可知道全貌与下一步。**
++> 各批台账中。**最新核验状态以第八节为准；前文保留当时记录，不代表终验收通过。**
+ 
+ ## 一、已修复并可验证
+ 
+@@ -88,3 +88,28 @@ B4d 的参照基线，等方案定下来再一次性改到位。
+ 
+ **判断优先级必须实测配置，不能凭"常见"下结论**。我用"分 2 组是常见配置"为由
+ 提前派人，实际生产默认 1 组 ⇒ 排序依据错了（结论无害，但推理过程不可取）。
++
++## 八、本轮核验与汇报纠正（2026-10-22）
++
++- **撤回此前多轮“正在回归/变异测试、没有阻塞”的汇报**：截至 21:39，三个工作区
++  都仍是 `5bbcab37`、没有新增 diff；三个员工随后均确认尚无新测试或实现产出。
++  `running` 标记、日志大小、文件时间及低 CPU 均不能证明业务进展。
++- **#121 已出现可核验的新红证，尚未修复验收**：员工写入 3 拍、2 组短 fixture；
++  Leader 已读测试源码与原始日志。收盘竞价成交 1100 后广播仍为上限 1100、下限 900，
++  而次日应为 1210、990；真实 Start241 预留 110501 分、需求 121501 分，
++  `WorkerFailed/Desk(0)`，退出码 101、wall 0.107s。
++  日志：`.worktree/day-end-public-views/.tmp/day-end-public-views/red-highest.log`。
++- **Sol/Luna 设计快审均要求补边界，不等于实现已通过**：Sol 指出日中手动 Drain
++  后下一 Start 才 roll 的漏点，以及 desk 行情/终 K/暂存不随现有 Abort 恢复的缺口；
++  Luna 要求比较真实 prior、旧 publication 内容与 generation，保留唯一发布点。
++  已将两类反例交回 #121 员工先写红测，禁止半安装与混合版本发布。
++- **#118**：员工已写有资产专户与普通 NPC 正控测试；首轮编译失败不是红证。
++  新发现 `attention_entry=Some` 会覆盖 `fallback_due`；仅改后者不充分。
++  《公司法》第 211 条未经核实的引用已撤回，官方规则与适用日期由员工补查。
++- **#117**：仍被 Sol/Luna R2 阻断。员工已写入口级数值测试并进行编译，尚无 mutation
++  结果；工具和无关文档保持原状，不通过 reset/checkout/删除来“清洁”历史。
++  比较器跨 section 引用漏报未解决，因此前文“工具修好”只代表旧反例，不是整体通过。
++- **#122 日内独立运行/可配置日终同步**已单独建任务，先做完整权威读取依赖盘点；
++  #121 恢复可靠跨日基线后才进入实现验收。1268.5 t/s 仅限 B 的 3000 tick 未跨日
++  口径；25.1% 是候选可移成本，不是已实现提速。
++- 本轮未提交、未合并、未推送；尚无新增完成任务。
+diff --git a/agents/engine-max-performance/string-free-inventory.md b/agents/engine-max-performance/string-free-inventory.md
+index f78110f9..da8f294f 100644
+--- a/agents/engine-max-performance/string-free-inventory.md
++++ b/agents/engine-max-performance/string-free-inventory.md
+@@ -70,3 +70,19 @@
+ 3. A-公司 CompanyId + 其余标识（venue/frozen/光标）→ 提交 C
+ 4. server wire + ts_rs 再生成 + web 最小编译修复 + 配置格式 → 提交 D
+ 5. 基准（锚定交错配对）+ findings + ADR 终稿
++
++## 公开身份投影错误码登记（2026-10-26）
++
++本节仅登记本批新增码与相邻在途保留，不改上述历史清点状态。依据是
++`packages/engine/src/error.rs` 的3000–3299协议/session公开投影不变量段和ADR-0041；
++宿主自有diagnostics的1290–1314既有分配不能随意挪用。
++
++| 数值码 | 名称与主体 | 数值context槽位 | 状态／依据 |
++|---|---|---|---|
++| 3018 | `SAVE_TARGET_DAY_NOT_READY`；#122显式请求当前日但最新成功日终候选不匹配目标日 | 由#122实现合同登记；本批不改变、不使用 | 已有在途合同保留；见[convergence-contract](../perf-intraday-independent/convergence-contract.md)、[revision](../perf-intraday-independent/contract-revision-2026-10-25.md)和[可信终裁最新增量](../perf-intraday-independent/sol61-contract-final-2026-10-25.md)，不能因main源码未出现而重占 |
++| **3019** | **`COMPANY_CATALOG_LISTED_STOCK_MISSING`；engine/session公开身份投影中selected上市公司spec无法在同一GameSession的StockCatalog解析证券** | **必须恰为`[CompanyId]`，u32原值无损提升为u64；不是StockId／MemberId** | **root核对main／在途合同／ADR后协调保留，本次正式登记；唯一映射与三宿主传播见[冻结合同](../branch-completion/company-catalog-host-error-contract-2026-10-26.md)** |
++
++3019不是宿主句柄、generation、transport或用户输入错误，也不复用装配期1151／1163。
++A的`CompanyCatalogViewError::UnknownListedStock { company }`保持typed source；共同
++`company_catalog_fault(&CompanyCatalogViewError) -> ValidationFault`唯一映射后，三宿主沿现有
++HostFailure展示壳携`context.fault`传播，不能以Display字符串、null或空目录代替。
+diff --git a/memory/MEMORY.md b/memory/MEMORY.md
+index c1686d1d..06313315 100644
+--- a/memory/MEMORY.md
++++ b/memory/MEMORY.md
+@@ -1,7 +1,7 @@
+ # MEMORY.md
+ 
+ - [协作分工模式](feedback_collaboration_mode.md) — 主 agent 只对话协调，开发交给 subagent，允许二级 agent
+-- [团队角色配置](project_team_operating_model.md) — 角色唯一权威=仓库根ROLE.md（上司/Leader/Astra/Luna/员工/Haiku实习生），勿他处复制
++- [团队角色配置](project_team_operating_model.md) — 角色与模型约定唯一权威为仓库根 ROLE.md，勿他处复制
+ - [engine 1000x 性能主线](project_engine_perf_1000x.md) — 现状：std-thread 迁移已完成+性能恢复战役 A 1358/B 118.7-121.1（~28×）第14任续推；里程碑 tag 链已打；收尾队列在文件内
+ - [不用 /tmp](feedback_no_tmp_dir.md) — 产物放工作区 .tmp/（perf 主线：.worktree/engine-max-performance/.tmp/）
+ - [大白话汇报](feedback_plain_language.md) — 结论要让外行看懂："通过什么方式达成什么结果"，不堆术语
+@@ -26,3 +26,5 @@
+ - [两阶段循环模型](project_two_phase_loop_model.md) — 用户判定：tick=决策∥→撮合∥+commit前同步；多核倒退=并行模型不对；一股一核
+ - [正确架构不能少](feedback_architecture_not_sacrificed.md) — 性能/功能推进不许牺牲架构：分批不混、单一事实源、旧耦合不复生、性能刀破坏边界走设计门
+ - [wasm线程抽象层](project_wasm_thread_abstraction.md) — 废串行回退，std::thread 兼容层跑一份纯净代码全平台（性能优先，Worker+SAB/Atomics），解锁C桶删除
++- [Leader不写代码](feedback_leader_never_writes_code.md) — 业务/测试/脚本一律派 subagent，Leader 只调查派工验收汇报（用户 2026-10-22 批评）
++- [当前模型协作约定](feedback_native_subagent_models.md) — 用户 2026-10-25 更新，执行规则见 ROLE.md；取代历史“只用 Opus 4.7”限制
+diff --git a/packages/engine/src/session/hash.rs b/packages/engine/src/session/hash.rs
+index e0c818c7..d8f08c39 100644
+--- a/packages/engine/src/session/hash.rs
++++ b/packages/engine/src/session/hash.rs
+@@ -1,17 +1,73 @@
+ use super::{GameSession, StepFatal};
+ use serde::Serialize;
+ use std::collections::BTreeMap;
++#[cfg(test)]
++use std::cell::RefCell;
+ 
+ /// FNV-1a over length-delimited canonical JSON fields; not a security digest.
+ #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+ pub struct StateHash(u64);
+ 
++#[cfg(test)]
++thread_local! {
++    static BUSINESS_HASH_TRACE: RefCell<Option<Vec<Vec<u8>>>> = const { RefCell::new(None) };
++}
++
++#[cfg(test)]
++struct BusinessHashTraceGuard;
++
++#[cfg(test)]
++impl BusinessHashTraceGuard {
++    fn begin() -> Self {
++        BUSINESS_HASH_TRACE.with(|trace| {
++            let mut trace = trace.borrow_mut();
++            assert!(trace.is_none(), "business hash trace不允许嵌套");
++            *trace = Some(Vec::new());
++        });
++        Self
++    }
++
++    fn finish(self) -> Vec<Vec<u8>> {
++        let fields = BUSINESS_HASH_TRACE.with(|trace| {
++            trace
++                .borrow_mut()
++                .take()
++                .expect("business hash trace生命周期已损坏")
++        });
++        std::mem::forget(self);
++        fields
++    }
++}
++
++#[cfg(test)]
++impl Drop for BusinessHashTraceGuard {
++    fn drop(&mut self) {
++        BUSINESS_HASH_TRACE.with(|trace| *trace.borrow_mut() = None);
++    }
++}
++
++#[cfg(test)]
++pub(in crate::session) fn capture_business_hash_for_test(
++    session: &GameSession,
++) -> Result<(StateHash, Vec<Vec<u8>>), StepFatal> {
++    let guard = BusinessHashTraceGuard::begin();
++    let hash = session.business_state_hash()?;
++    let fields = guard.finish();
++    Ok((hash, fields))
++}
++
+ impl StateHash {
+     fn field(&mut self, value: &impl Serialize) -> Result<(), StepFatal> {
+         let bytes = serde_json::to_vec(value).map_err(|error| StepFatal::InvariantViolation {
+             description: error.to_string(),
+             location: "state_hash.serialization".to_owned(),
+         })?;
++        #[cfg(test)]
++        BUSINESS_HASH_TRACE.with(|trace| {
++            if let Some(fields) = trace.borrow_mut().as_mut() {
++                fields.push(bytes.clone());
++            }
++        });
+         let length = u64::try_from(bytes.len()).map_err(|error| StepFatal::InvariantViolation {
+             description: error.to_string(),
+             location: "state_hash.length".to_owned(),
