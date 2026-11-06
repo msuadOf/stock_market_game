@@ -1,0 +1,10 @@
+$ node scripts/run-with-deadline.mjs 10000 -- <WORKSPACE>/.tmp/exempt-setup-target/debug/deps/session-75daef09c95d85b4 formal_session_setup_enforces_a_share_baseline_and_category_limits --exact --test-threads=1 --nocapture
+
+running 1 test
+test formal_session_setup_enforces_a_share_baseline_and_category_limits ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 141 filtered out; finished in 0.02s
+
+
+exit=0
+wall_seconds=0.139

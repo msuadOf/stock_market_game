@@ -1,0 +1,25 @@
+{
+  "artifacts": [
+    {
+      "path": "packages/engine/src/session.rs",
+      "sha256": "b591a5dd21f9e0de1c246d0bec51015f77e3669abb52896f07304d74af96aca2"
+    },
+    {
+      "path": "packages/engine/tests/session_company_foundation.rs",
+      "sha256": "1b661c2a75d629749fb914b367eedb980b323a8567b4ee97051f3027fbf60450"
+    },
+    {
+      "path": "docs/trading-rules.md",
+      "sha256": "5a02d070efbde4adf96b8eefecf4ebabc3b44c8ea278c0b9b0cf760750496070"
+    },
+    {
+      "path": "<WORKSPACE>/.tmp/exempt-setup-target/debug/deps/session_company_foundation-c3d45966a29b05a7",
+      "sha256": "6fcf66592c0bc8504026f8569813aac5976eec6818fa72635ba9900f0b074ea0"
+    },
+    {
+      "path": "<WORKSPACE>/.tmp/exempt-setup-target/debug/deps/session-75daef09c95d85b4",
+      "sha256": "b6d40ae101ac5b12138c43ec2570d244315631d39f98ca472e45c2a7ed15fc64"
+    }
+  ],
+  "source_and_binary_unchanged": true
+}

@@ -1,0 +1,22 @@
+[
+  {
+    "path": "packages/engine/src/session.rs",
+    "sha256": "a452d22c20d74da3e5cab228110d8e674e3418c9bfca37580d5cc28195a81f42"
+  },
+  {
+    "path": "packages/engine/tests/session_company_foundation.rs",
+    "sha256": "b24f81e7164348fcb56cfd2bd4c3434c2bb4786836ca8d4675df9dbe150e27b0"
+  },
+  {
+    "path": "docs/trading-rules.md",
+    "sha256": "a02b8d7064f5d32eb10ae103e1e7c57bd2fdb49a4c6cdfc5ad08925e1042fcef"
+  },
+  {
+    "path": "<WORKSPACE>/.tmp/exempt-setup-target/debug/deps/session_company_foundation-c3d45966a29b05a7.d",
+    "sha256": "20896748707f4647685609a62258c4f643459b966bd8cea91bbd27807f4ac268"
+  },
+  {
+    "path": "<WORKSPACE>/.tmp/exempt-setup-target/debug/deps/session_company_foundation-c3d45966a29b05a7",
+    "sha256": "5e0fd4bd082b0bd5f15285c0a0a7cc375240b5247d15ac7ccc411943e599d698"
+  }
+]

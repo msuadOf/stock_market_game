@@ -1,0 +1,118 @@
+{
+  "case_process_concurrency": 8,
+  "case_harness_threads": 1,
+  "case_process_deadline_ms": 10000,
+  "wall_seconds": 3.162,
+  "results": [
+    {
+      "case": "auto_foundation_builds_full_float_registry_and_legal_facts",
+      "exit": 0,
+      "wall_seconds": 0.754
+    },
+    {
+      "case": "company_config_without_company_system_is_rejected",
+      "exit": 0,
+      "wall_seconds": 0.116
+    },
+    {
+      "case": "disabled_foundation_leaves_registry_empty",
+      "exit": 0,
+      "wall_seconds": 0.731
+    },
+    {
+      "case": "exempt_mode_requires_zero_stamp_tax",
+      "exit": 0,
+      "wall_seconds": 0.113
+    },
+    {
+      "case": "flat_withholding_boundary_values_are_accepted",
+      "exit": 0,
+      "wall_seconds": 1.351
+    },
+    {
+      "case": "flat_withholding_three_state_contract",
+      "exit": 0,
+      "wall_seconds": 0.115
+    },
+    {
+      "case": "incomplete_company_config_residue_is_isolated_per_field",
+      "exit": 0,
+      "wall_seconds": 0.111
+    },
+    {
+      "case": "incomplete_company_save_is_rejected",
+      "exit": 0,
+      "wall_seconds": 0.749
+    },
+    {
+      "case": "missing_dividend_tax_mode_with_company_system_is_rejected",
+      "exit": 0,
+      "wall_seconds": 0.115
+    },
+    {
+      "case": "new_game_with_company_opens_repurchase_account_without_float",
+      "exit": 0,
+      "wall_seconds": 0.73
+    },
+    {
+      "case": "new_game_without_repurchase_keeps_roster_unchanged",
+      "exit": 0,
+      "wall_seconds": 0.731
+    },
+    {
+      "case": "par_value_domain_is_enforced",
+      "exit": 0,
+      "wall_seconds": 0.113
+    },
+    {
+      "case": "plain_sessions_restore_identically",
+      "exit": 0,
+      "wall_seconds": 0.503
+    },
+    {
+      "case": "plain_sessions_save_json_carries_no_company_keys",
+      "exit": 0,
+      "wall_seconds": 0.362
+    },
+    {
+      "case": "restore_rejects_company_system_diverging_from_setup_issuers",
+      "exit": 0,
+      "wall_seconds": 2.564
+    },
+    {
+      "case": "save_restore_roundtrips_company_fields_bitwise",
+      "exit": 0,
+      "wall_seconds": 1.404
+    },
+    {
+      "case": "tax_mode_stamp_tax_contract::a_share_individual_accepts_current_a_share_stamp_tax",
+      "exit": 0,
+      "wall_seconds": 0.731
+    },
+    {
+      "case": "tax_mode_stamp_tax_contract::company_modes_reject_mismatched_stamp_tax_with_expected_and_actual_context",
+      "exit": 0,
+      "wall_seconds": 0.122
+    },
+    {
+      "case": "tax_mode_stamp_tax_contract::exempt_accepts_zero_stamp_tax_and_preserves_other_fees_on_restore",
+      "exit": 0,
+      "wall_seconds": 1.385
+    },
+    {
+      "case": "tax_mode_stamp_tax_contract::flat_withholding_accepts_current_a_share_stamp_tax",
+      "exit": 0,
+      "wall_seconds": 0.734
+    },
+    {
+      "case": "tax_mode_stamp_tax_contract::plain_game_still_rejects_zero_stamp_tax_with_actual_context",
+      "exit": 0,
+      "wall_seconds": 0.121
+    },
+    {
+      "case": "formal_session_setup_enforces_a_share_baseline_and_category_limits",
+      "exit": 0,
+      "wall_seconds": 0.137
+    }
+  ]
+}

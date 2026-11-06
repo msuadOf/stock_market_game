@@ -1,0 +1,15 @@
+$ node scripts/run-with-deadline.mjs 10000 -- <WORKSPACE>/.tmp/exempt-setup-target/debug/deps/session_company_foundation-c3d45966a29b05a7 tax_mode_stamp_tax_contract:: --test-threads=8 --nocapture
+
+running 7 tests
+test tax_mode_stamp_tax_contract::company_modes_reject_mismatched_stamp_tax_with_expected_and_actual_context ... ok
+test tax_mode_stamp_tax_contract::exempt_rejects_even_smallest_positive_stamp_tax_at_setup_and_construction ... ok
+test tax_mode_stamp_tax_contract::plain_game_still_rejects_zero_stamp_tax_with_actual_context ... ok
+test tax_mode_stamp_tax_contract::a_share_individual_accepts_current_a_share_stamp_tax ... ok
+test tax_mode_stamp_tax_contract::flat_withholding_accepts_current_a_share_stamp_tax ... ok
+test tax_mode_stamp_tax_contract::exempt_restore_rejects_saved_positive_stamp_tax_including_epsilon ... ok
+test tax_mode_stamp_tax_contract::exempt_accepts_zero_stamp_tax_and_preserves_other_fees_on_restore ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 16 filtered out; finished in 1.27s
+
+
+exit=0
