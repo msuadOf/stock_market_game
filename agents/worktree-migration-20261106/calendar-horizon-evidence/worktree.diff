@@ -1,0 +1,198 @@
+diff --git a/packages/engine/src/session.rs b/packages/engine/src/session.rs
+index 2cb1f8eb..dc6b06d9 100644
+--- a/packages/engine/src/session.rs
++++ b/packages/engine/src/session.rs
+@@ -20,6 +20,8 @@ mod civil_information;
+ mod civil_information_runtime_tests;
+ #[cfg(all(test, not(target_arch = "wasm32")))]
+ mod civil_runtime_ceiling_tests;
++#[cfg(all(test, not(target_arch = "wasm32")))]
++mod civil_due_horizon_runtime_tests;
+ mod company_assembly;
+ mod stock_identity_view;
+ pub use stock_identity_view::StockIdentityEntry;
+@@ -2354,6 +2356,11 @@ fn retained_behavior_daily_closes_history(history: &DailyCandleHistory) -> Vec<C
+         .collect()
+ }
+ 
++enum CivilDayPreparationFailure {
++    Ordinary(SessionError),
++    NewlyScheduledDueBeyondHorizon(SessionError),
++}
++
+ impl GameSession {
+     /// 外部直改计数当前值（X1 新鲜度校验）。
+     pub(crate) fn external_revision(&self) -> u64 {
+@@ -3781,30 +3788,40 @@ impl GameSession {
+             && self.runtime_installed_market_close
+                 == Some((self.runtime_authority_epoch, self.tick(), self.civil_date()));
+         let mut correction_prepare_rejected = false;
++        let mut new_due_horizon_rejected = false;
+         let prepared: Result<_, SessionError> = (|| {
+             let mut candidate = self.clone_for_tick_shadow().map_err(|_error| {
+                 // fault1034：自然日日终 candidate 捕获失败，保持数值错误契约。
+                 SessionError::InvalidSave(ValidationFault::new(1034, vec![0]))
+             })?;
+             let information_anchors = candidate.prepare_information_anchors()?;
+-            let report = candidate.prepare_civil_day_disclosures().map_err(|error| {
+-                // 只标记真实更正 prepare 的业务拒绝；后续 project 同型错误仍须终止。
+-                correction_prepare_rejected = self.poison_reason().is_none()
+-                    && matches!(&error, SessionError::ReportCorrectionDayEnd(cause)
+-                        if matches!(cause.classification(),
+-                            crate::company::CompanyErrorClass::InvalidInput
+-                            | crate::company::CompanyErrorClass::BusinessCondition));
+-                if matches!(&error, SessionError::ReportCorrectionDayEnd(cause)
+-                    if cause.classification() == crate::company::CompanyErrorClass::SystemState)
+-                {
+-                    // 外持 runtime 与串行分支也封存系统首错；首个返回仍保留原 typed cause。
+-                    self.poison_runtime_step(StepFatal::InvariantViolation {
+-                        location: "GameSession::with_prepared_civil_day".to_owned(),
+-                        description: format!("civil authority 无法继续运行：{error}"),
+-                    });
+-                }
+-                error
+-            })?;
++            let report = candidate
++                .prepare_civil_day_disclosures()
++                .map_err(|failure| match failure {
++                    CivilDayPreparationFailure::Ordinary(error) => error,
++                    CivilDayPreparationFailure::NewlyScheduledDueBeyondHorizon(error) => {
++                        new_due_horizon_rejected = true;
++                        error
++                    }
++                })
++                .map_err(|error| {
++                    // 只标记真实更正 prepare 的业务拒绝；后续 project 同型错误仍须终止。
++                    correction_prepare_rejected = self.poison_reason().is_none()
++                        && matches!(&error, SessionError::ReportCorrectionDayEnd(cause)
++                            if matches!(cause.classification(),
++                                crate::company::CompanyErrorClass::InvalidInput
++                                | crate::company::CompanyErrorClass::BusinessCondition));
++                    if matches!(&error, SessionError::ReportCorrectionDayEnd(cause)
++                        if cause.classification() == crate::company::CompanyErrorClass::SystemState)
++                    {
++                        // 外持 runtime 与串行分支也封存系统首错；首个返回仍保留原 typed cause。
++                        self.poison_runtime_step(StepFatal::InvariantViolation {
++                            location: "GameSession::with_prepared_civil_day".to_owned(),
++                            description: format!("civil authority 无法继续运行：{error}"),
++                        });
++                    }
++                    error
++                })?;
+             candidate.deliver_public_information_with_anchors(
+                 report.disclosure_instant,
+                 &information_anchors,
+@@ -3827,6 +3844,14 @@ impl GameSession {
+                 }
+                 return Err(error.into());
+             }
++            Err(error)
++                if new_due_horizon_rejected
++                    && self.poison_reason().is_none()
++                    && self.has_current_external_runtime_authority() =>
++            {
++                // 外持 lease 不授予 F2 恢复资格；保留本次真实 due 拒绝与健康状态。
++                return Err(error.into());
++            }
+             Err(error) if market_installed => {
+                 return Err(self.poison_civil_authority(error).into())
+             }
+@@ -3859,7 +3884,26 @@ impl GameSession {
+     }
+ 
+     /// 公司经营与披露只形成候选；本人 INFO 与裁剪由对应 authority 的同次事务完成。
+-    fn prepare_civil_day_disclosures(&mut self) -> Result<CivilDayEndReport, SessionError> {
++    fn prepare_civil_day_disclosures(
++        &mut self,
++    ) -> Result<CivilDayEndReport, CivilDayPreparationFailure> {
++        let mut newly_scheduled_due_beyond_horizon = false;
++        let result = self.prepare_civil_day_disclosures_inner(
++            &mut newly_scheduled_due_beyond_horizon,
++        );
++        match result {
++            Ok(report) => Ok(report),
++            Err(error) if newly_scheduled_due_beyond_horizon => Err(
++                CivilDayPreparationFailure::NewlyScheduledDueBeyondHorizon(error),
++            ),
++            Err(error) => Err(CivilDayPreparationFailure::Ordinary(error)),
++        }
++    }
++
++    fn prepare_civil_day_disclosures_inner(
++        &mut self,
++        newly_scheduled_due_beyond_horizon: &mut bool,
++    ) -> Result<CivilDayEndReport, SessionError> {
+         let next_work_date = self.next_civil_work_date()?;
+         let mut report = self.state.civil_clock.end_day(next_work_date)?;
+         // private candidate 已进入 next_date，后续 INFO 读视图不能继续复用 settled_date 的缓存。
+@@ -3882,7 +3926,17 @@ impl GameSession {
+                     std::sync::Arc::make_mut(&mut legacy.operations)
+                         .advance_civil_day(report.settled_date)?;
+                     for due in legacy.operations.scheduler().pending() {
+-                        self.state.civil_clock.validate_due_horizon(due.due_date)?;
++                        if let Err(error) =
++                            self.state.civil_clock.validate_due_horizon(due.due_date)
++                        {
++                            *newly_scheduled_due_beyond_horizon = matches!(
++                                error,
++                                CivilClockError::Calendar(
++                                    crate::calendar::CalendarError::AfterRuntimeCeiling { .. }
++                                )
++                            );
++                            return Err(error.into());
++                        }
+                     }
+                     std::sync::Arc::make_mut(&mut legacy.operations)
+                         .close_accounting_periods(
+diff --git a/packages/engine/src/session/civil_information.rs b/packages/engine/src/session/civil_information.rs
+index f1d56e56..f1cad401 100644
+--- a/packages/engine/src/session/civil_information.rs
++++ b/packages/engine/src/session/civil_information.rs
+@@ -104,12 +104,20 @@ impl GameSession {
+             Err(error) => return Err(self.poison_civil_authority(error).into()),
+         };
+         let mut correction_prepare_rejected = false;
++        let mut new_due_horizon_rejected = false;
+         let prepared: Result<_, SessionError> = (|| {
+             let mut shadow = self
+                 .clone_for_tick_shadow()
+                 .map_err(|_| SessionError::InvalidSave(ValidationFault::new(1034, vec![0])))?;
+             let report = shadow
+                 .prepare_civil_day_disclosures()
++                .map_err(|failure| match failure {
++                    CivilDayPreparationFailure::Ordinary(error) => error,
++                    CivilDayPreparationFailure::NewlyScheduledDueBeyondHorizon(error) => {
++                        new_due_horizon_rejected = true;
++                        error
++                    }
++                })
+                 .inspect_err(|error| {
+                     correction_prepare_rejected = self.poison_reason().is_none()
+                         && matches!(error, SessionError::ReportCorrectionDayEnd(cause)
+@@ -210,10 +218,14 @@ impl GameSession {
+                     Ok(value) => value,
+                     Err(error) => return Err(self.poison_civil_authority(error).into()),
+                 };
++                if terminal {
++                    return Err(self.poison_civil_authority(error).into());
++                }
++                if new_due_horizon_rejected && self.poison_reason().is_none() {
++                    return Err(error.into());
++                }
+                 if let SessionError::ReportCorrectionDayEnd(cause) = &error {
+-                    if cause.classification() == crate::company::CompanyErrorClass::SystemState
+-                        || terminal
+-                    {
++                    if cause.classification() == crate::company::CompanyErrorClass::SystemState {
+                         return Err(self.poison_civil_authority(error).into());
+                     }
+                     if correction_prepare_rejected {
+@@ -223,7 +235,7 @@ impl GameSession {
+                         ));
+                     }
+                 }
+-                if terminal || market_installed {
++                if market_installed {
+                     return Err(self.poison_civil_authority(error).into());
+                 }
+                 return Err(error.into());
