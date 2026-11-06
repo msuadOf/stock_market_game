@@ -1,0 +1,7 @@
+f7ff859a5a40fd10db4ed58c773954875be326a7035ee7931122ff18995ca4d9  args-tests/agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-implementation/args-tests/READY.md
+a13e09485cdc6dbd2df94a88055a71e2468d13eaccd7cf8d46e6bd24e699e09f  args-tests/changes.patch
+7e2feffb65e1072cd021ff87442a0a5856761cb8e7afa63deb2a83f6f623c7bc  company/agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-implementation/company/company-dead-code-ledger.md
+c9b15709ff51282c9feaedd217a2d6d46156e978935605098385189945b45cef  company/changes.patch
+44c9f8ed0a58bde132eddfa593caf11f2ee7f41e15f58a13ed27893f8661c140  fixtures/agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-implementation/fixtures/交接.md
+3d8be8aa21d0be8da3356e54d6226ad300c97e95ab89b7f2e7094d52296a4f02  fixtures/agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-implementation/fixtures/源码变更.patch
+3d8be8aa21d0be8da3356e54d6226ad300c97e95ab89b7f2e7094d52296a4f02  fixtures/changes.patch

@@ -1,0 +1,615 @@
+diff --git a/packages/engine/src/company/bank/income_tax.rs b/packages/engine/src/company/bank/income_tax.rs
+index bc20cfae..eb2e0ba3 100644
+--- a/packages/engine/src/company/bank/income_tax.rs
++++ b/packages/engine/src/company/bank/income_tax.rs
+@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
+ use super::{BankBooks, BankError};
+ use crate::accounting::{AccountingAmount, AccountingPeriod, BusinessEventId, IncomeTaxPolicy};
+ use crate::calendar::CivilDate;
+-use crate::company::income_tax::IncomeTaxOwnerError;
+ use crate::company::IncomeTaxOutcome;
++use crate::company::income_tax::IncomeTaxOwnerError;
+ 
+ pub(super) fn map_tax_error(error: IncomeTaxOwnerError) -> BankError {
+     match error {
+@@ -25,6 +25,7 @@ pub(super) fn validate_policy(policy: &IncomeTaxPolicy) -> Result<(), BankError>
+ }
+ 
+ impl BankBooks {
++    #[cfg(test)]
+     pub(crate) fn income_tax_owner(
+         &self,
+     ) -> (
+@@ -41,6 +42,7 @@ impl BankBooks {
+         )
+     }
+ 
++    #[cfg(test)]
+     pub(crate) fn install_income_tax_owner(
+         &mut self,
+         books: crate::accounting::Books,
+@@ -52,6 +54,7 @@ impl BankBooks {
+         self.next_event_id = next_event_id;
+     }
+ 
++    #[cfg(test)]
+     pub(crate) fn validate_owner_state(&self) -> Result<(), BankError> {
+         self.validate_loan_claim_sources()?;
+         self.ecl_policy.validate()?;
+@@ -262,6 +265,7 @@ fn owner_error(detail: String) -> BankError {
+     BankError::OwnershipStateInconsistent { detail }
+ }
+ 
++#[cfg(test)]
+ fn add_balance(
+     balances: &mut BTreeMap<&'static str, AccountingAmount>,
+     code: &'static str,
+diff --git a/packages/engine/src/company/cash_dividend_tax.rs b/packages/engine/src/company/cash_dividend_tax.rs
+index 73481249..a9a7eb79 100644
+--- a/packages/engine/src/company/cash_dividend_tax.rs
++++ b/packages/engine/src/company/cash_dividend_tax.rs
+@@ -788,24 +788,6 @@ impl CashDividendTaxBook {
+     pub fn collections(&self) -> &[TaxCollectionReceipt] {
+         &self.collections
+     }
+-    /// 拆股／缩股核减回执按事件身份查询（与日结回执同一幂等判定入口）。
+-    pub(crate) fn redenomination_by_event(
+-        &self,
+-        event_id: &str,
+-    ) -> Option<&TaxRedenominationReceipt> {
+-        self.redenominations
+-            .iter()
+-            .find(|receipt| receipt.event_id == event_id)
+-    }
+-    /// 送股税基事实只读视图（供 Session 层勾稽与测试断言使用）。
+-    pub(crate) fn stock_bonus_bases(&self) -> &[StockBonusTaxBasis] {
+-        &self.stock_bonus_bases
+-    }
+-    pub(crate) fn stock_bonus_basis_by_event(&self, event_id: &str) -> Option<&StockBonusTaxBasis> {
+-        self.stock_bonus_bases
+-            .iter()
+-            .find(|basis| basis.event_id == event_id)
+-    }
+     /// 按批次身份解析其取得日与税类：创建事实（日结回执 acquisition）永久留存，
+     /// 优先于仍持有中的当前批次快照；两者都缺属结构损坏，显式失败。
+     fn resolve_lot_facts(&self, lot_id: &str) -> Result<&DividendTaxLot, DividendTaxError> {
+@@ -817,20 +799,10 @@ impl CashDividendTaxBook {
+             .ok_or_else(|| invalid("tax lot facts cannot be resolved from day receipts"))
+     }
+ 
+-    pub(crate) fn receipt_by_event(&self, event_id: &str) -> Option<&TaxDayReceipt> {
+-        self.days
+-            .iter()
+-            .find(|receipt| receipt.event_id == event_id)
+-    }
+     /// 日结回执只读视图（含同日续记的完整顺序），供 Session 层勾稽与测试断言使用。
+     pub(crate) fn tax_day_receipts(&self) -> &[TaxDayReceipt] {
+         &self.days
+     }
+-    pub(crate) fn dividend_event_by_id(&self, event_id: &str) -> Option<&RegisteredTaxDividend> {
+-        self.dividends
+-            .iter()
+-            .find(|dividend| dividend.event_id == event_id)
+-    }
+     pub(crate) fn payment_by_id(&self, payment_id: &str) -> Option<&DividendCashReceipt> {
+         self.dividends
+             .iter()
+@@ -1060,7 +1032,9 @@ impl CashDividendTaxBook {
+                     day.acquisition.as_ref(),
+                 )?;
+                 if dispositions != day.dispositions {
+-                    return Err(invalid("tax disposal identities, metadata or FIFO quantities contradict held facts"));
++                    return Err(invalid(
++                        "tax disposal identities, metadata or FIFO quantities contradict held facts",
++                    ));
+                 }
+             }
+             if let Some(reduction) = self
+@@ -1089,7 +1063,9 @@ impl CashDividendTaxBook {
+                 .find(|dividend| dividend.operation_seq == *sequence)
+             {
+                 if dividend.lots != replayed {
+-                    return Err(invalid("registered dividend tax lots contradict actual holding facts at registration"));
++                    return Err(invalid(
++                        "registered dividend tax lots contradict actual holding facts at registration",
++                    ));
+                 }
+             }
+             if let Some(basis) = self
+diff --git a/packages/engine/src/company/correction.rs b/packages/engine/src/company/correction.rs
+index 6ffa3b30..c82a039d 100644
+--- a/packages/engine/src/company/correction.rs
++++ b/packages/engine/src/company/correction.rs
+@@ -291,6 +291,7 @@ impl<'a> PreparedSimpleDisclosureCorrection<'a> {
+ }
+ 
+ impl super::CompanySystem {
++    #[cfg(test)]
+     pub(crate) fn prepare_disclosure_correction<'a>(
+         &self,
+         company: &CompanyId,
+diff --git a/packages/engine/src/company/disclosure_correction_proof.rs b/packages/engine/src/company/disclosure_correction_proof.rs
+index 50985c4f..c9cc14e1 100644
+--- a/packages/engine/src/company/disclosure_correction_proof.rs
++++ b/packages/engine/src/company/disclosure_correction_proof.rs
+@@ -1,7 +1,7 @@
+ //! 从一次真实 owner 私有结果抽取完整更正授权；临时 PublicationId 不离开构造器。
+ 
+-use crate::accounting::reports::ReportSet;
+ use crate::accounting::BusinessEventId;
++use crate::accounting::reports::ReportSet;
+ use crate::company::CompanyId;
+ use crate::information::{PublicLibrary, PublicationId, PublicationRequest, PublicationSource};
+ 
+@@ -213,6 +213,7 @@ impl<'a> ConfirmedDisclosureCorrections<'a> {
+     }
+ 
+     /// Legacy 缺少完整返回列表时仍从同一私有库差集提取，不收紧空 entries 政策。
++    #[cfg(test)]
+     pub(in crate::company) fn from_owner_result(
+         base: &'a PublicLibrary,
+         private_library: PublicLibrary,
+diff --git a/packages/engine/src/company/industrial/chart.rs b/packages/engine/src/company/industrial/chart.rs
+index a14c1219..de387974 100644
+--- a/packages/engine/src/company/industrial/chart.rs
++++ b/packages/engine/src/company/industrial/chart.rs
+@@ -56,7 +56,7 @@ pub fn industrial_account_chart() -> AccountChart {
+         acc("6401", AccountDef::new("主营业务成本", Expense)),
+         acc("6602", AccountDef::new("管理费用", Expense)),
+         acc("6603", AccountDef::new("财务费用", Expense)),
+-        acc("6801", AccountDef::new("所得税费用", Expense)),
++        acc(acct::TAX_EXP, AccountDef::new("所得税费用", Expense)),
+         // —— 工业扩充 ——
+         acc(
+             acct::BAD_DEBT_ALLOW,
+diff --git a/packages/engine/src/company/industrial/income_tax.rs b/packages/engine/src/company/industrial/income_tax.rs
+index 41b2d9b0..ee6b9657 100644
+--- a/packages/engine/src/company/industrial/income_tax.rs
++++ b/packages/engine/src/company/industrial/income_tax.rs
+@@ -73,6 +73,7 @@ impl IndustrialBooks {
+         self.next_event_id = next_event_id;
+     }
+ 
++    #[cfg(test)]
+     pub(crate) fn validate_income_tax_state(&self) -> Result<(), IndustrialError> {
+         self.income_tax_position
+             .validate(&self.tax_policy().income_tax)
+diff --git a/packages/engine/src/company/insurance/income_tax.rs b/packages/engine/src/company/insurance/income_tax.rs
+index da7e5380..76372fca 100644
+--- a/packages/engine/src/company/insurance/income_tax.rs
++++ b/packages/engine/src/company/insurance/income_tax.rs
+@@ -1,13 +1,13 @@
+ use std::collections::BTreeMap;
+ 
+-use super::{chart, InsuranceBooks, InsuranceError};
++use super::{InsuranceBooks, InsuranceError, chart};
+ use crate::accounting::{
+     AccountingAmount, AccountingPeriod, Books, BusinessEventId, BusinessKind, CashFlowClass,
+     IncomeTaxPolicy, JournalEntry, LedgerAccountId, LossEntry, PostingSide,
+ };
+ use crate::calendar::CivilDate;
+-use crate::company::income_tax::{preview_tax_cascade, IncomeTaxOwnerError, IncomeTaxPosition};
+ use crate::company::IncomeTaxOutcome;
++use crate::company::income_tax::{IncomeTaxOwnerError, IncomeTaxPosition, preview_tax_cascade};
+ 
+ pub(super) fn map_tax_error(error: IncomeTaxOwnerError) -> InsuranceError {
+     match error {
+@@ -40,6 +40,7 @@ impl InsuranceBooks {
+         self.income_tax_position.restatements()
+     }
+ 
++    #[cfg(test)]
+     pub(crate) fn income_tax_owner(&self) -> (&Books, &IncomeTaxPosition, &IncomeTaxPolicy, u64) {
+         (
+             &self.books,
+@@ -49,6 +50,7 @@ impl InsuranceBooks {
+         )
+     }
+ 
++    #[cfg(test)]
+     pub(crate) fn install_income_tax_owner(
+         &mut self,
+         books: Books,
+diff --git a/packages/engine/src/company/operations.rs b/packages/engine/src/company/operations.rs
+index 1feaa272..c2371dfa 100644
+--- a/packages/engine/src/company/operations.rs
++++ b/packages/engine/src/company/operations.rs
+@@ -30,14 +30,16 @@ mod state;
+ pub use bank::BankFlowParams;
+ pub use closing::CompanyCloseError;
+ pub use config::{CompanyOperationsConfig, FlowParams, IndustryBooks, OperatingCompanyConfig};
++#[cfg(test)]
++pub(crate) use core::LegacyDisclosureCorrectionCtx;
+ pub use core::OperatingReportCorrection;
++pub(crate) use core::PreparedLegacyDisclosureCorrection;
+ pub use core::{
+     ActivatedShockRecord, CompanyDayReport, CompanyOperations, ExpiredShockRecord,
+     OperatingCompany, PaymentFailureRecord,
+ };
+-pub(crate) use core::{LegacyDisclosureCorrectionCtx, PreparedLegacyDisclosureCorrection};
+ pub use error::OperationsError;
+-pub use history::{generate_history, HistoryMeta};
++pub use history::{HistoryMeta, generate_history};
+ pub use industrial::IndustrialFlowParams;
+ pub use insurance::InsuranceFlowParams;
+ pub use real_estate::RealEstateFlowParams;
+diff --git a/packages/engine/src/company/operations/config.rs b/packages/engine/src/company/operations/config.rs
+index 3c297cfb..8d66b32d 100644
+--- a/packages/engine/src/company/operations/config.rs
++++ b/packages/engine/src/company/operations/config.rs
+@@ -1,11 +1,11 @@
+ //! 经营编排装配输入：公司（规格 + 行业账套 + 流参数）与全局（seed + 冲击参数）。
+ 
+-use crate::accounting::{
+-    AccountingAmount, AccountingPeriod, Books, BusinessEventId, IncomeTaxPolicy,
+-};
+-use crate::calendar::CivilDate;
++use crate::accounting::Books;
++#[cfg(test)]
++use crate::accounting::{AccountingPeriod, BusinessEventId, IncomeTaxPolicy};
+ use crate::company::bank::BankBooks;
+ use crate::company::events::ShockParams;
++#[cfg(test)]
+ use crate::company::income_tax::IncomeTaxPosition;
+ use crate::company::industrial::IndustrialBooks;
+ use crate::company::insurance::InsuranceBooks;
+@@ -86,6 +86,7 @@ impl IndustryBooks {
+         }
+     }
+ 
++    #[cfg(test)]
+     pub(crate) fn income_tax_owner(&self) -> (&Books, &IncomeTaxPosition, &IncomeTaxPolicy, u64) {
+         match self {
+             Self::Industrial(owner) => owner.income_tax_owner(),
+@@ -95,6 +96,7 @@ impl IndustryBooks {
+         }
+     }
+ 
++    #[cfg(test)]
+     pub(crate) fn install_income_tax_owner(
+         &mut self,
+         books: Books,
+@@ -115,6 +117,7 @@ impl IndustryBooks {
+         }
+     }
+ 
++    #[cfg(test)]
+     pub(crate) fn validate_income_tax_state(&self) -> Result<(), OperationsError> {
+         match self {
+             Self::Industrial(owner) => owner.validate_income_tax_state().map_err(Into::into),
+@@ -124,6 +127,7 @@ impl IndustryBooks {
+         }
+     }
+ 
++    #[cfg(test)]
+     pub(crate) fn validate_owner_state(&self) -> Result<(), OperationsError> {
+         match self {
+             Self::Industrial(owner) => {
+@@ -138,42 +142,6 @@ impl IndustryBooks {
+             Self::RealEstate(owner) => owner.validate_owner_state().map_err(Into::into),
+         }
+     }
+-
+-    pub(crate) fn income_tax_restatements(
+-        &self,
+-    ) -> &std::collections::BTreeMap<BusinessEventId, AccountingPeriod> {
+-        match self {
+-            Self::Industrial(owner) => owner.income_tax_restatements(),
+-            Self::Bank(owner) => owner.income_tax_restatements(),
+-            Self::Insurance(owner) => owner.income_tax_restatements(),
+-            Self::RealEstate(owner) => owner.income_tax_restatements(),
+-        }
+-    }
+-
+-    pub(crate) fn accrue_income_tax(
+-        &mut self,
+-        date: CivilDate,
+-    ) -> Result<crate::company::IncomeTaxOutcome, OperationsError> {
+-        match self {
+-            Self::Industrial(owner) => owner.accrue_income_tax(date).map_err(Into::into),
+-            Self::Bank(owner) => owner.accrue_income_tax(date).map_err(Into::into),
+-            Self::Insurance(owner) => owner.accrue_income_tax(date).map_err(Into::into),
+-            Self::RealEstate(owner) => owner.accrue_income_tax(date).map_err(Into::into),
+-        }
+-    }
+-
+-    pub(crate) fn pay_income_tax(
+-        &mut self,
+-        amount: AccountingAmount,
+-        date: CivilDate,
+-    ) -> Result<BusinessEventId, OperationsError> {
+-        match self {
+-            Self::Industrial(owner) => owner.pay_income_tax(amount, date).map_err(Into::into),
+-            Self::Bank(owner) => owner.pay_income_tax(amount, date).map_err(Into::into),
+-            Self::Insurance(owner) => owner.pay_income_tax(amount, date).map_err(Into::into),
+-            Self::RealEstate(owner) => owner.pay_income_tax(amount, date).map_err(Into::into),
+-        }
+-    }
+ }
+ 
+ /// 行业经营流参数（与 `IndustryBooks` 变体一一对应；装配时校验匹配）。
+diff --git a/packages/engine/src/company/operations/core.rs b/packages/engine/src/company/operations/core.rs
+index a2895cdc..cbf6c354 100644
+--- a/packages/engine/src/company/operations/core.rs
++++ b/packages/engine/src/company/operations/core.rs
+@@ -157,6 +157,7 @@ pub struct CompanyOperations {
+ }
+ 
+ impl CompanyOperations {
++    #[cfg(test)]
+     pub(crate) fn correct_company_report_for_session(
+         &mut self,
+         id: &CompanyId,
+@@ -168,8 +169,8 @@ impl CompanyOperations {
+         ),
+         crate::company::CompanyCorrectionError,
+     > {
+-        use crate::company::report_correction::{prepare_correction, CompanyCorrectionInput};
+         use crate::company::CompanyCorrectionError;
++        use crate::company::report_correction::{CompanyCorrectionInput, prepare_correction};
+         let reason = request.correction.reason.clone();
+         let invalid = |detail: String| CompanyCorrectionError::InvalidInput {
+             reason: reason.clone(),
+@@ -560,6 +561,7 @@ impl CompanyOperations {
+ }
+ 
+ /// 单次 Legacy owner 更正的只读基线与正式操作请求。
++#[cfg(test)]
+ pub(crate) struct LegacyDisclosureCorrectionCtx<'a> {
+     pub closing: &'a crate::accounting::closing::ClosingEngine,
+     pub base: &'a crate::information::PublicLibrary,
+@@ -589,6 +591,7 @@ impl<'a> PreparedLegacyDisclosureCorrection<'a> {
+     ) -> &crate::company::report_correction::ConfirmedDisclosureCorrections<'a> {
+         &self.proof
+     }
++    #[cfg(test)]
+     pub(crate) fn into_source(
+         self,
+     ) -> (CompanyOperations, crate::accounting::closing::ClosingEngine) {
+@@ -597,6 +600,7 @@ impl<'a> PreparedLegacyDisclosureCorrection<'a> {
+ }
+ 
+ impl CompanyOperations {
++    #[cfg(test)]
+     pub(crate) fn prepare_disclosure_correction<'a>(
+         &self,
+         company: &CompanyId,
+diff --git a/packages/engine/src/company/real_estate/income_tax.rs b/packages/engine/src/company/real_estate/income_tax.rs
+index 2f2e845f..83f65f85 100644
+--- a/packages/engine/src/company/real_estate/income_tax.rs
++++ b/packages/engine/src/company/real_estate/income_tax.rs
+@@ -1,13 +1,13 @@
+ use std::collections::BTreeMap;
+ 
+-use super::{chart::acct, line, RealEstateBooks, RealEstateError};
++use super::{RealEstateBooks, RealEstateError, chart::acct, line};
+ use crate::accounting::{
+     AccountingAmount, AccountingPeriod, Books, BusinessEventId, BusinessKind, CashFlowClass,
+     IncomeTaxPolicy, JournalEntry, PostingSide,
+ };
+ use crate::calendar::CivilDate;
+-use crate::company::income_tax::{IncomeTaxOwnerError, IncomeTaxPosition};
+ use crate::company::IncomeTaxOutcome;
++use crate::company::income_tax::{IncomeTaxOwnerError, IncomeTaxPosition};
+ 
+ pub(super) fn map_tax_error(error: IncomeTaxOwnerError) -> RealEstateError {
+     match error {
+@@ -36,6 +36,7 @@ impl RealEstateBooks {
+         self.income_tax_position.restatements()
+     }
+ 
++    #[cfg(test)]
+     pub(crate) fn income_tax_owner(&self) -> (&Books, &IncomeTaxPosition, &IncomeTaxPolicy, u64) {
+         (
+             &self.books,
+@@ -45,6 +46,7 @@ impl RealEstateBooks {
+         )
+     }
+ 
++    #[cfg(test)]
+     pub(crate) fn install_income_tax_owner(
+         &mut self,
+         books: Books,
+@@ -56,6 +58,7 @@ impl RealEstateBooks {
+         self.next_event_id = next_event_id;
+     }
+ 
++    #[cfg(test)]
+     pub(crate) fn validate_income_tax_state(&self) -> Result<(), RealEstateError> {
+         validate_policy(self.income_tax_policy())?;
+         self.income_tax_position
+diff --git a/packages/engine/src/company/real_estate/mod.rs b/packages/engine/src/company/real_estate/mod.rs
+index c9450a89..51fa8d5b 100644
+--- a/packages/engine/src/company/real_estate/mod.rs
++++ b/packages/engine/src/company/real_estate/mod.rs
+@@ -33,6 +33,7 @@ mod impairment;
+ mod income_tax;
+ mod land;
+ mod loans;
++#[cfg(test)]
+ mod owner_state;
+ mod presales;
+ mod projects;
+@@ -54,7 +55,7 @@ pub use projects::{Interruption, ProjectId, ProjectState};
+ use std::collections::BTreeMap;
+ 
+ use crate::accounting::reports::real_estate::{
+-    real_estate_presentation_lines, RealEstatePresentationLines,
++    RealEstatePresentationLines, real_estate_presentation_lines,
+ };
+ use crate::accounting::{
+     AccountingAmount, AccountingError, Books, JournalLine, LedgerAccountId, TradeOpenLedger,
+diff --git a/packages/engine/src/company/simple/preferences.rs b/packages/engine/src/company/simple/preferences.rs
+index 038eacce..bee1752c 100644
+--- a/packages/engine/src/company/simple/preferences.rs
++++ b/packages/engine/src/company/simple/preferences.rs
+@@ -12,18 +12,27 @@
+ //! 每类别至多评估一次，全部为 O(偏好项) 的整数比较与少量既有事实扫描；
+ //! 不引入每 tick 的堆分配或全量克隆。
+ 
++#[cfg(test)]
++use crate::account::StockCode;
++#[cfg(test)]
+ use crate::accounting::AccountingAmount;
+-use crate::calendar::{CalendarExchange, CivilDate, TradingCalendar};
++use crate::calendar::CivilDate;
++#[cfg(test)]
++use crate::calendar::{CalendarExchange, TradingCalendar};
++use crate::company::CompanyId;
++#[cfg(test)]
+ use crate::company::dividend::DistributableProfit;
+-use crate::company::{CompanyId, DividendDeclaration};
++#[cfg(test)]
++use crate::company::{DividendDeclaration, cash_dividend::CashDividendPlan};
+ use crate::money::Money;
+-use crate::{account::StockCode, company::cash_dividend::CashDividendPlan};
+ 
+ /// 送转比例的分母：比例字段以「百万分之一股/股」表达（与
+ /// `StockDistributionEventPlan::shares_per_existing_share_micros` 同单位）。
++#[cfg(test)]
+ pub(crate) const SHARE_RATIO_DENOMINATOR: u64 = 1_000_000;
+ 
+ /// 基点分母（1bp = 万分之一 = 0.01%），与既有 `persistence_bp` 等字段同约定。
++#[cfg(test)]
+ pub(crate) const BASIS_POINT_DENOMINATOR: i128 = 10_000;
+ 
+ /// 每公司行为偏好配置。严格持久化字段：无 serde 默认，旧档缺失显式拒绝。
+@@ -255,6 +264,7 @@ impl SimplePreferenceLedger {
+ }
+ 
+ /// 相邻自然月的月差：`(later - earlier)` 的整月数（要求 earlier <= later）。
++#[cfg(test)]
+ fn months_between(earlier: CivilDate, later: CivilDate) -> i32 {
+     i32::from(later.year()) * 12 + i32::from(later.month())
+         - (i32::from(earlier.year()) * 12 + i32::from(earlier.month()))
+@@ -262,6 +272,7 @@ fn months_between(earlier: CivilDate, later: CivilDate) -> i32 {
+ 
+ /// 频率判定：自最近一次提案（接受或被拒）所属周期末日起，是否已满足
+ /// `cycles_between_proposals` 个完整结算周期的间隔。
++#[cfg(test)]
+ pub(crate) fn proposal_due(
+     last_proposal_period_end: Option<CivilDate>,
+     evaluated_on: CivilDate,
+@@ -276,11 +287,13 @@ pub(crate) fn proposal_due(
+ }
+ 
+ /// 偏好自动提案的确定性现金分红计划 id（同公司同周期唯一，幂等键）。
++#[cfg(test)]
+ pub(crate) fn cash_dividend_plan_id(company: &CompanyId, period_end: CivilDate) -> String {
+     format!("simple-preference:{}:dividend:{}", company.0, period_end)
+ }
+ 
+ /// 偏好自动提案的确定性送转事件 id（同公司同周期唯一，幂等键）。
++#[cfg(test)]
+ pub(crate) fn stock_distribution_event_id(company: &CompanyId, period_end: CivilDate) -> String {
+     format!(
+         "simple-preference:{}:stock-distribution:{}",
+@@ -290,6 +303,7 @@ pub(crate) fn stock_distribution_event_id(company: &CompanyId, period_end: Civil
+ 
+ /// 现金分红提案封顶的行情敞口上下文（游戏化保护，非官方规则；口径登记于
+ /// `docs/trading-rules.md`「公司行为偏好自动提案」）。
++#[cfg(test)]
+ pub(crate) struct SimpleCashDividendExposure {
+     /// 提案时点最新收盘价 = 周期末最后一个交易日的收盘（跌停余量推导的锚）。
+     pub last_close: Money,
+@@ -305,6 +319,7 @@ pub(crate) struct SimpleCashDividendExposure {
+ }
+ 
+ /// 现金分红偏好评估输入：全部为既有事实的只读快照，评估本身不产生副作用。
++#[cfg(test)]
+ pub(crate) struct SimpleCashDividendEvaluation<'a> {
+     pub preference: &'a SimpleCashDividendPreference,
+     pub company: &'a CompanyId,
+@@ -337,6 +352,7 @@ pub(crate) struct SimpleCashDividendEvaluation<'a> {
+ 
+ /// 现金分红偏好评估结论。
+ #[derive(Debug)]
++#[cfg(test)]
+ pub(crate) enum SimpleCashDividendOutcome {
+     /// 触发条件不满足或本周期已处理：不提案（不是拒绝，无需记录）。
+     Skip,
+@@ -350,6 +366,7 @@ pub(crate) enum SimpleCashDividendOutcome {
+ }
+ 
+ /// 现金分红偏好评估：纯整数/定点计算，O(1)。
++#[cfg(test)]
+ pub(crate) fn evaluate_cash_dividend_preference(
+     input: &SimpleCashDividendEvaluation<'_>,
+ ) -> SimpleCashDividendOutcome {
+@@ -523,6 +540,7 @@ pub(crate) fn evaluate_cash_dividend_preference(
+ 
+ /// 送转提案的行情敞口上下文（游戏化保护；与现金分红封顶同口径推导，登记于
+ /// `docs/trading-rules.md`「公司行为偏好自动提案」）。
++#[cfg(test)]
+ pub(crate) struct SimpleStockDistributionExposure {
+     /// 提案时点最新收盘价 = 周期末最后一个交易日的收盘（跌停余量推导的锚）。
+     pub last_close: Money,
+@@ -547,6 +565,7 @@ pub(crate) struct SimpleStockDistributionExposure {
+ }
+ 
+ /// 送转偏好评估输入。
++#[cfg(test)]
+ pub(crate) struct SimpleStockDistributionEvaluation<'a> {
+     pub preference: &'a SimpleStockDistributionPreference,
+     pub company: &'a CompanyId,
+@@ -572,6 +591,7 @@ pub(crate) struct SimpleStockDistributionEvaluation<'a> {
+ 
+ /// 送转偏好评估结论。
+ #[derive(Debug)]
++#[cfg(test)]
+ pub(crate) enum SimpleStockDistributionOutcome {
+     Skip,
+     Proposal {
+@@ -583,6 +603,7 @@ pub(crate) enum SimpleStockDistributionOutcome {
+ }
+ 
+ /// 送转偏好评估：纯整数/定点计算，O(1)。
++#[cfg(test)]
+ pub(crate) fn evaluate_stock_distribution_preference(
+     input: &SimpleStockDistributionEvaluation<'_>,
+ ) -> SimpleStockDistributionOutcome {
+@@ -794,6 +815,7 @@ pub(crate) fn preference_ex_dates(
+ /// 批准日开市前，锚即该区间前最后一个交易日的收盘价；区间内每个交易日的
+ /// 收盘相对前一收盘最多再跌一个跌停幅度。按日程逐日推导，不拍脑袋固定
+ /// 天数（公告日为交易日时 n=2：公告日与登记日；公告日休市时 n=1）。
++#[cfg(test)]
+ pub(crate) fn exposure_trading_days(
+     calendar: &TradingCalendar,
+     exchange: CalendarExchange,
+@@ -829,6 +851,7 @@ pub(crate) fn exposure_trading_days(
+ /// 链每步恒 ≥ 一个价位，故锚为正时返回值恒 ≥ tick，不存在「余量耗尽」；
+ /// `None` 仅表示输入非法（锚/价位非正、limit_bps > 10000）或推导溢出，
+ /// 由调用方如实拒绝（铁律二）。
++#[cfg(test)]
+ pub(crate) fn limit_down_margin_floor_cents(
+     last_close_cents: i64,
+     limit_bps: u32,
+@@ -851,6 +874,7 @@ pub(crate) fn limit_down_margin_floor_cents(
+ /// 现金红利」的分子必须 ≥ ceil((10^6 + ratio_micros)/10^6) 分：参考价 =
+ /// 分子 × 10^6 / (10^6 + ratio) 银行家舍入到分，商为 0 时舍入无法保证 ≥1。
+ /// 纯现金组（ratio = 0）即熟悉的「至少留 1 分」。
++#[cfg(test)]
+ pub(crate) fn combined_group_required_positive_cents(ratio_micros: u64) -> i128 {
+     1 + i128::from((ratio_micros + SHARE_RATIO_DENOMINATOR - 1) / SHARE_RATIO_DENOMINATOR)
+ }
+diff --git a/packages/engine/src/company/system.rs b/packages/engine/src/company/system.rs
+index 929e7caa..de0fdd52 100644
+--- a/packages/engine/src/company/system.rs
++++ b/packages/engine/src/company/system.rs
+@@ -1,6 +1,6 @@
+ use super::{
+-    api::*, config::CompanySystemConfig, identity::IssuerRegistry, simple::SimpleFundamentals,
+-    CompanyId, CompanySpec,
++    CompanyId, CompanySpec, api::*, config::CompanySystemConfig, identity::IssuerRegistry,
++    simple::SimpleFundamentals,
+ };
+ use crate::calendar::CivilDate;
+ 
+@@ -1095,6 +1095,7 @@ impl CompanySystem {
+         }
+         result
+     }
++    #[cfg(test)]
+     pub(crate) fn history(&self) -> &[SimpleDisclosureCandidate] {
+         match &self.implementation {
+             CompanyImplementation::Simple(state) => &state.history,

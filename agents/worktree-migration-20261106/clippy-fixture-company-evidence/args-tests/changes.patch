@@ -1,0 +1,745 @@
+diff --git a/packages/engine/src/runtime/group.rs b/packages/engine/src/runtime/group.rs
+index 15b0b13f..abbcc960 100644
+--- a/packages/engine/src/runtime/group.rs
++++ b/packages/engine/src/runtime/group.rs
+@@ -788,6 +788,20 @@ pub struct GroupFinalState {
+     pub observed: Vec<Observed>,
+ }
+ 
++/// 新建组测试使用的完整初始事实。
++#[cfg(test)]
++pub(super) struct GroupSetup {
++    pub(super) group: GroupIdx,
++    pub(super) accounts: Vec<GroupAccount>,
++    pub(super) chunk: usize,
++    pub(super) lot: u32,
++    pub(super) config: Arc<GameConfig>,
++    pub(super) ticks_per_day: u64,
++    pub(super) decision: Option<(Vec<NpcProfile>, u32)>,
++    pub(super) plans: Vec<Box<dyn PlanChain>>,
++    pub(super) script: GroupScript,
++}
++
+ /// 组线程私有状态。
+ pub struct GroupState {
+     calendar_owner: Option<(
+@@ -1127,33 +1141,24 @@ impl GroupState {
+     }
+ 
+     /// 构造组状态（全新世界：tick 0 起步）。
+-    pub fn new(
+-        group: GroupIdx,
+-        accounts: Vec<GroupAccount>,
+-        chunk: usize,
+-        lot: u32,
+-        config: Arc<GameConfig>,
+-        ticks_per_day: u64,
+-        decision: Option<(Vec<NpcProfile>, u32)>,
+-        plans: Vec<Box<dyn PlanChain>>,
+-        script: GroupScript,
+-    ) -> Self {
++    #[cfg(test)]
++    pub(super) fn new(setup: GroupSetup) -> Self {
+         Self::new_with_initial_tick(
+-            group,
+-            accounts,
++            setup.group,
++            setup.accounts,
+             Vec::new(),
+             std::sync::Arc::new(crate::information::PublicLibrary::default()),
+-            chunk,
+-            lot,
+-            config,
+-            ticks_per_day,
++            setup.chunk,
++            setup.lot,
++            setup.config,
++            setup.ticks_per_day,
+             0,
+             0,
+             0,
+-            decision,
+-            plans,
++            setup.decision,
++            setup.plans,
+             None,
+-            script,
++            setup.script,
+         )
+     }
+ 
+@@ -7661,17 +7666,17 @@ mod v5_shutdown_idle_window_tests {
+         let capture = Arc::new(std::sync::Mutex::new(
+             crate::verification_evidence::current_phase_timing_binding(),
+         ));
+-        let mut state = GroupState::new(
+-            0,
+-            vec![GroupAccount::new(10_000_000, 1)],
+-            8,
+-            100,
+-            Arc::new(crate::config::GameConfig::proposed_defaults()),
+-            240,
+-            None,
+-            Vec::new(),
+-            Box::new(|_t, _r| TickPlan::default()),
+-        );
++        let mut state = GroupState::new(GroupSetup {
++            group: 0,
++            accounts: vec![GroupAccount::new(10_000_000, 1)],
++            chunk: 8,
++            lot: 100,
++            config: Arc::new(crate::config::GameConfig::proposed_defaults()),
++            ticks_per_day: 240,
++            decision: None,
++            plans: Vec::new(),
++            script: Box::new(|_t, _r| TickPlan::default()),
++        });
+         state.cur_tick = 1;
+         state.cur_round = 0;
+         let handle = {
+@@ -7830,17 +7835,17 @@ mod sol_recheck3_tests {
+     /// 同 chain_harness，但计划目标/执行腿/子单量可变（terminal fixture
+     /// 用小目标 100——全额成交即 Completed，不依赖巨量成交）。
+     fn chain_harness_target(side: Side, target: u32) -> GroupState {
+-        let mut state = GroupState::new(
+-            0,
+-            vec![GroupAccount::new(10_000_000, 1)],
+-            8,
+-            100,
+-            std::sync::Arc::new(crate::config::GameConfig::proposed_defaults()),
+-            240,
+-            None,
+-            Vec::new(),
+-            Box::new(|_t, _r| TickPlan::default()),
+-        );
++        let mut state = GroupState::new(GroupSetup {
++            group: 0,
++            accounts: vec![GroupAccount::new(10_000_000, 1)],
++            chunk: 8,
++            lot: 100,
++            config: std::sync::Arc::new(crate::config::GameConfig::proposed_defaults()),
++            ticks_per_day: 240,
++            decision: None,
++            plans: Vec::new(),
++            script: Box::new(|_t, _r| TickPlan::default()),
++        });
+         state.root_projection = Some(std::sync::Arc::new(crate::runtime::world::RootProjection {
+             catalog: crate::stock::StockCatalog::from_metas(vec![crate::stock::StockMeta::new(
+                 "600000",
+@@ -8450,17 +8455,17 @@ mod sol_recheck1_tests {
+     /// 优先级决定谁挂出子单（NewOpportunity=2 让位 ExistingPlan=1，
+     /// 平手按信心倒序）。
+     fn competing_plans_state() -> GroupState {
+-        let mut state = GroupState::new(
+-            0,
+-            vec![GroupAccount::new(120_000, 2)],
+-            8,
+-            100,
+-            std::sync::Arc::new(crate::config::GameConfig::proposed_defaults()),
+-            240,
+-            None,
+-            Vec::new(),
+-            Box::new(|_t, _r| TickPlan::default()),
+-        );
++        let mut state = GroupState::new(GroupSetup {
++            group: 0,
++            accounts: vec![GroupAccount::new(120_000, 2)],
++            chunk: 8,
++            lot: 100,
++            config: std::sync::Arc::new(crate::config::GameConfig::proposed_defaults()),
++            ticks_per_day: 240,
++            decision: None,
++            plans: Vec::new(),
++            script: Box::new(|_t, _r| TickPlan::default()),
++        });
+         let account = crate::AccountId(9);
+         let chain_params = crate::strategy::BeliefChainParams {
+             position_step_bp: 1_000,
+@@ -8689,17 +8694,17 @@ mod eager_domain_tests {
+         a1.shares[2] = 80;
+         a1.buy_purse_held_cents = 60_000;
+         a1.ever_held[0] = true;
+-        GroupState::new(
+-            0,
+-            vec![a0, a1],
+-            8,
+-            100,
+-            Arc::new(crate::config::GameConfig::proposed_defaults()),
+-            240,
+-            None,
+-            Vec::new(),
+-            Box::new(|_t, _r| TickPlan::default()),
+-        )
++        GroupState::new(GroupSetup {
++            group: 0,
++            accounts: vec![a0, a1],
++            chunk: 8,
++            lot: 100,
++            config: Arc::new(crate::config::GameConfig::proposed_defaults()),
++            ticks_per_day: 240,
++            decision: None,
++            plans: Vec::new(),
++            script: Box::new(|_t, _r| TickPlan::default()),
++        })
+     }
+ 
+     /// 卖腿成交事实（owner=组 0 位 0；经历转移/成本基的 Sell 路径素材）。
+@@ -9025,17 +9030,17 @@ mod seal_failed_injection_tests {
+         let capture = Arc::new(Mutex::new(
+             crate::verification_evidence::current_phase_timing_binding(),
+         ));
+-        let mut state = GroupState::new(
+-            0,
+-            vec![GroupAccount::new(1_000_000, 1)],
+-            8,
+-            100,
+-            Arc::new(crate::config::GameConfig::proposed_defaults()),
+-            240,
+-            None,
+-            Vec::new(),
+-            Box::new(|_t, _r| TickPlan::default()),
+-        );
++        let mut state = GroupState::new(GroupSetup {
++            group: 0,
++            accounts: vec![GroupAccount::new(1_000_000, 1)],
++            chunk: 8,
++            lot: 100,
++            config: Arc::new(crate::config::GameConfig::proposed_defaults()),
++            ticks_per_day: 240,
++            decision: None,
++            plans: Vec::new(),
++            script: Box::new(|_t, _r| TickPlan::default()),
++        });
+         state.cur_tick = 1;
+         state.cur_round = 0;
+         let handle = {
+@@ -9103,17 +9108,17 @@ mod seal_failed_injection_tests {
+         let capture = Arc::new(Mutex::new(
+             crate::verification_evidence::current_phase_timing_binding(),
+         ));
+-        let mut state = GroupState::new(
+-            0,
+-            vec![GroupAccount::new(1_000_000, 1)],
+-            8,
+-            100,
+-            Arc::new(crate::config::GameConfig::proposed_defaults()),
+-            240,
+-            None,
+-            Vec::new(),
+-            Box::new(|_t, _r| TickPlan::default()),
+-        );
++        let mut state = GroupState::new(GroupSetup {
++            group: 0,
++            accounts: vec![GroupAccount::new(1_000_000, 1)],
++            chunk: 8,
++            lot: 100,
++            config: Arc::new(crate::config::GameConfig::proposed_defaults()),
++            ticks_per_day: 240,
++            decision: None,
++            plans: Vec::new(),
++            script: Box::new(|_t, _r| TickPlan::default()),
++        });
+         state.cur_tick = 1;
+         state.cur_round = 0;
+         // 先入队 Seal（匹配 cur_tick/cur_round——进入 drain），紧随真外来
+@@ -9228,17 +9233,17 @@ mod roster_offset_tests {
+         let mine = crate::AccountId(9);
+         let other = crate::AccountId(7);
+         let code = crate::StockId(0);
+-        let mut state = GroupState::new(
+-            1,
+-            vec![GroupAccount::new(10_000_000, 1)],
+-            8,
+-            100,
+-            std::sync::Arc::new(crate::config::GameConfig::proposed_defaults()),
+-            240,
+-            None,
+-            Vec::new(),
+-            Box::new(|_t, _r| TickPlan::default()),
+-        );
++        let mut state = GroupState::new(GroupSetup {
++            group: 1,
++            accounts: vec![GroupAccount::new(10_000_000, 1)],
++            chunk: 8,
++            lot: 100,
++            config: std::sync::Arc::new(crate::config::GameConfig::proposed_defaults()),
++            ticks_per_day: 240,
++            decision: None,
++            plans: Vec::new(),
++            script: Box::new(|_t, _r| TickPlan::default()),
++        });
+         // 本组在全局名册的偏移=1（组 1）。
+         state.roster_offset = 1;
+         state.root_projection = Some(std::sync::Arc::new(crate::runtime::world::RootProjection {
+diff --git a/packages/engine/src/runtime/group/admin_transaction.rs b/packages/engine/src/runtime/group/admin_transaction.rs
+index 032f4ee3..89dab2ed 100644
+--- a/packages/engine/src/runtime/group/admin_transaction.rs
++++ b/packages/engine/src/runtime/group/admin_transaction.rs
+@@ -989,17 +989,17 @@ mod tests {
+     fn state() -> GroupState {
+         let mut a = GroupAccount::new(1_000_000, 1);
+         a.shares[0] = 1000;
+-        GroupState::new(
+-            0,
+-            vec![a],
+-            8,
+-            100,
+-            Arc::new(GameConfig::proposed_defaults()),
+-            100,
+-            None,
+-            Vec::new(),
+-            Box::new(|_, _| TickPlan::default()),
+-        )
++        GroupState::new(GroupSetup {
++            group: 0,
++            accounts: vec![a],
++            chunk: 8,
++            lot: 100,
++            config: Arc::new(GameConfig::proposed_defaults()),
++            ticks_per_day: 100,
++            decision: None,
++            plans: Vec::new(),
++            script: Box::new(|_, _| TickPlan::default()),
++        })
+     }
+     fn credit() -> Vec<AdminOperation> {
+         vec![AdminOperation::CashDividend {
+diff --git a/packages/engine/src/runtime/group/admin_transaction/information_tests.rs b/packages/engine/src/runtime/group/admin_transaction/information_tests.rs
+index 990bad79..4d1cc321 100644
+--- a/packages/engine/src/runtime/group/admin_transaction/information_tests.rs
++++ b/packages/engine/src/runtime/group/admin_transaction/information_tests.rs
+@@ -7,17 +7,17 @@ use crate::{AccountId, StockId};
+ use fixture::*;
+ 
+ fn state(ids: &[AccountId]) -> GroupState {
+-    let mut s = GroupState::new(
+-        2,
+-        vec![GroupAccount::new(100_000, 2); ids.len()],
+-        8,
+-        100,
+-        Arc::new(GameConfig::proposed_defaults()),
+-        100,
+-        None,
+-        Vec::new(),
+-        Box::new(|_, _| TickPlan::default()),
+-    );
++    let mut s = GroupState::new(super::GroupSetup {
++        group: 2,
++        accounts: vec![GroupAccount::new(100_000, 2); ids.len()],
++        chunk: 8,
++        lot: 100,
++        config: Arc::new(GameConfig::proposed_defaults()),
++        ticks_per_day: 100,
++        decision: None,
++        plans: Vec::new(),
++        script: Box::new(|_, _| TickPlan::default()),
++    });
+     s.bind_calendar(calendar_source(), calendar_bindings());
+     s.belief_states = ids.iter().map(|&id| Some(personal(id))).collect();
+     s.belief_dirty = vec![false; ids.len()];
+diff --git a/packages/engine/src/runtime/group/admin_transaction/repurchase_approval_tests.rs b/packages/engine/src/runtime/group/admin_transaction/repurchase_approval_tests.rs
+index 2e985b36..f8797997 100644
+--- a/packages/engine/src/runtime/group/admin_transaction/repurchase_approval_tests.rs
++++ b/packages/engine/src/runtime/group/admin_transaction/repurchase_approval_tests.rs
+@@ -11,17 +11,17 @@ use crate::{AccountId, Money, StockId};
+ mod fixture;
+ 
+ fn fixture_state() -> GroupState {
+-    let mut state = GroupState::new(
+-        1,
+-        vec![GroupAccount::new(0, 2); 2],
+-        8,
+-        100,
+-        Arc::new(GameConfig::proposed_defaults()),
+-        100,
+-        None,
+-        Vec::new(),
+-        Box::new(|_, _| TickPlan::default()),
+-    );
++    let mut state = GroupState::new(super::GroupSetup {
++        group: 1,
++        accounts: vec![GroupAccount::new(0, 2); 2],
++        chunk: 8,
++        lot: 100,
++        config: Arc::new(GameConfig::proposed_defaults()),
++        ticks_per_day: 100,
++        decision: None,
++        plans: Vec::new(),
++        script: Box::new(|_, _| TickPlan::default()),
++    });
+     state.bind_calendar(fixture::calendar_source(), fixture::calendar_bindings());
+     state.root_projection = Some(fixture::projection(
+         [11, 37, 51, 79, 113].map(AccountId).to_vec(),
+diff --git a/packages/engine/src/runtime/group/admin_transaction/repurchase_funds_tests.rs b/packages/engine/src/runtime/group/admin_transaction/repurchase_funds_tests.rs
+index 237e86b1..6ce4e9c3 100644
+--- a/packages/engine/src/runtime/group/admin_transaction/repurchase_funds_tests.rs
++++ b/packages/engine/src/runtime/group/admin_transaction/repurchase_funds_tests.rs
+@@ -9,17 +9,17 @@ use crate::runtime::protocol::AdminTreasuryBinding;
+ use crate::{AccountId, StockId};
+ 
+ fn state() -> (GroupState, [PlanId; 2]) {
+-    let mut s = GroupState::new(
+-        1,
+-        vec![GroupAccount::new(700, 2); 2],
+-        8,
+-        100,
+-        Arc::new(GameConfig::proposed_defaults()),
+-        100,
+-        None,
+-        Vec::new(),
+-        Box::new(|_, _| TickPlan::default()),
+-    );
++    let mut s = GroupState::new(super::GroupSetup {
++        group: 1,
++        accounts: vec![GroupAccount::new(700, 2); 2],
++        chunk: 8,
++        lot: 100,
++        config: Arc::new(GameConfig::proposed_defaults()),
++        ticks_per_day: 100,
++        decision: None,
++        plans: Vec::new(),
++        script: Box::new(|_, _| TickPlan::default()),
++    });
+     s.root_projection = Some(fixture::projection(
+         [11, 37, 51, 79, 113].map(AccountId).to_vec(),
+     ));
+diff --git a/packages/engine/src/runtime/group/admin_transaction/repurchase_source_tests.rs b/packages/engine/src/runtime/group/admin_transaction/repurchase_source_tests.rs
+index 1957d12e..470454e8 100644
+--- a/packages/engine/src/runtime/group/admin_transaction/repurchase_source_tests.rs
++++ b/packages/engine/src/runtime/group/admin_transaction/repurchase_source_tests.rs
+@@ -71,17 +71,17 @@ fn state(price: i64, qty: u32) -> (GroupState, SourceDesk, RepurchaseRequestKey,
+         )
+         .unwrap();
+     let desk = SourceDesk::new(Arc::clone(&config), Arc::clone(&calendar));
+-    let mut state = GroupState::new(
+-        1,
+-        vec![GroupAccount::new(0, 4); 2],
+-        8,
+-        100,
+-        Arc::clone(&config),
+-        100,
+-        None,
+-        Vec::new(),
+-        Box::new(|_, _| TickPlan::default()),
+-    );
++    let mut state = GroupState::new(super::GroupSetup {
++        group: 1,
++        accounts: vec![GroupAccount::new(0, 4); 2],
++        chunk: 8,
++        lot: 100,
++        config: Arc::clone(&config),
++        ticks_per_day: 100,
++        decision: None,
++        plans: Vec::new(),
++        script: Box::new(|_, _| TickPlan::default()),
++    });
+     let facts = Arc::new(
+         CompanyReadFacts::new(
+             (0..4)
+diff --git a/packages/engine/src/runtime/group/origin_consumer_tests.rs b/packages/engine/src/runtime/group/origin_consumer_tests.rs
+index 4cfc0852..3f0ecc4e 100644
+--- a/packages/engine/src/runtime/group/origin_consumer_tests.rs
++++ b/packages/engine/src/runtime/group/origin_consumer_tests.rs
+@@ -16,17 +16,17 @@ fn company_book() -> PlanBook {
+ }
+ 
+ fn state(book: PlanBook) -> GroupState {
+-    let mut state = GroupState::new(
+-        1,
+-        vec![GroupAccount::new(0, 1)],
+-        8,
+-        100,
+-        Arc::new(GameConfig::proposed_defaults()),
+-        240,
+-        None,
+-        Vec::new(),
+-        Box::new(|_, _| TickPlan::default()),
+-    );
++    let mut state = GroupState::new(super::GroupSetup {
++        group: 1,
++        accounts: vec![GroupAccount::new(0, 1)],
++        chunk: 8,
++        lot: 100,
++        config: Arc::new(GameConfig::proposed_defaults()),
++        ticks_per_day: 240,
++        decision: None,
++        plans: Vec::new(),
++        script: Box::new(|_, _| TickPlan::default()),
++    });
+     state.plan_book = book;
+     state
+ }
+@@ -198,17 +198,17 @@ fn origin_mixed_stock_day_end_uses_real_group_and_rejects_closed_company_executi
+     accounts[0].shares[1] = 100;
+     accounts[0].frozen_today[0] = 100;
+     accounts[0].frozen_today[1] = 100;
+-    let mut group = GroupState::new(
+-        0,
++    let mut group = GroupState::new(super::GroupSetup {
++        group: 0,
+         accounts,
+-        8,
+-        100,
+-        Arc::new(GameConfig::proposed_defaults()),
+-        2,
+-        None,
+-        Vec::new(),
+-        Box::new(|_, _| TickPlan::default()),
+-    );
++        chunk: 8,
++        lot: 100,
++        config: Arc::new(GameConfig::proposed_defaults()),
++        ticks_per_day: 2,
++        decision: None,
++        plans: Vec::new(),
++        script: Box::new(|_, _| TickPlan::default()),
++    });
+     group.bind_calendar(Arc::clone(&source), bindings);
+     group.plan_book = book.clone();
+     group.cur_tick = 9;
+diff --git a/packages/engine/src/session/day_boundary_kline_tests.rs b/packages/engine/src/session/day_boundary_kline_tests.rs
+index 48a48958..0d06beb8 100644
+--- a/packages/engine/src/session/day_boundary_kline_tests.rs
++++ b/packages/engine/src/session/day_boundary_kline_tests.rs
+@@ -146,30 +146,63 @@ fn desk_day0_candle(
+     (time, o, h, l, c, v, turnover, count)
+ }
+ 
+-/// 日 K 逐位断言（量/额/笔/OHLC——三面共用的期望形态）。
+-#[track_caller]
+-fn assert_day_k(
+-    context: &str,
++/// 日 K 断言使用具名期望字段，逐项核对成交与 OHLC。
++struct ExpectedDayK {
++    context: &'static str,
+     volume: u64,
+-    turnover: i64,
++    turnover_cents: i64,
+     trade_count: u64,
+-    o: i64,
+-    h: i64,
+-    l: i64,
+-    c: i64,
+-    candle: &crate::session::DailyCandle,
+-) {
+-    assert_eq!(candle.volume, volume, "{context}: volume");
++    open_cents: i64,
++    high_cents: i64,
++    low_cents: i64,
++    close_cents: i64,
++}
++
++#[track_caller]
++fn assert_day_k(expected: ExpectedDayK, candle: &crate::session::DailyCandle) {
++    assert_eq!(
++        candle.volume, expected.volume,
++        "{}: volume",
++        expected.context
++    );
+     let stats = candle
+         .trade_stats
+         .as_ref()
+-        .unwrap_or_else(|| panic!("{context}: 日 K 必带成交统计"));
+-    assert_eq!(stats.turnover_cents, turnover as u64, "{context}: turnover");
+-    assert_eq!(stats.trade_count, trade_count, "{context}: trade_count");
+-    assert_eq!(candle.open.cents(), o, "{context}: open");
+-    assert_eq!(candle.high.cents(), h, "{context}: high");
+-    assert_eq!(candle.low.cents(), l, "{context}: low");
+-    assert_eq!(candle.close.cents(), c, "{context}: close");
++        .unwrap_or_else(|| panic!("{}: 日 K 必带成交统计", expected.context));
++    assert_eq!(
++        stats.turnover_cents, expected.turnover_cents as u64,
++        "{}: turnover",
++        expected.context
++    );
++    assert_eq!(
++        stats.trade_count, expected.trade_count,
++        "{}: trade_count",
++        expected.context
++    );
++    assert_eq!(
++        candle.open.cents(),
++        expected.open_cents,
++        "{}: open",
++        expected.context
++    );
++    assert_eq!(
++        candle.high.cents(),
++        expected.high_cents,
++        "{}: high",
++        expected.context
++    );
++    assert_eq!(
++        candle.low.cents(),
++        expected.low_cents,
++        "{}: low",
++        expected.context
++    );
++    assert_eq!(
++        candle.close.cents(),
++        expected.close_cents,
++        "{}: close",
++        expected.context
++    );
+ }
+ 
+ /// 场景一（占位/全丢形态）：全日仅收盘竞价成交——install 面旧提交
+@@ -182,7 +215,19 @@ fn closing_only_trades_reach_day_kline_and_receipts() {
+ 
+     // install 面：日 0 K = 收盘段真实值（量 200/额 200000/笔 2/OHLC 1000）。
+     let install = install_day0_candle(&session);
+-    assert_day_k("install", 200, 200_000, 2, 1000, 1000, 1000, 1000, &install);
++    assert_day_k(
++        ExpectedDayK {
++            context: "install",
++            volume: 200,
++            turnover_cents: 200_000,
++            trade_count: 2,
++            open_cents: 1000,
++            high_cents: 1000,
++            low_cents: 1000,
++            close_cents: 1000,
++        },
++        &install,
++    );
+     // desk 面：归档 K 与 install 面 逐位一致（desk 侧 K 无时间戳——
+     // 投影 time 恒 0，量/额/笔/OHLC 为对账面）。
+     let (_, o, h, l, c, v, _turnover, _count) = desk_day0_candle(&mut driver);
+@@ -204,14 +249,16 @@ fn closing_only_trades_reach_day_kline_and_receipts() {
+         .get(&StockId(0))
+         .expect("DayBoundary 必含股 0 日 K");
+     assert_day_k(
+-        "DayBoundary",
+-        200,
+-        200_000,
+-        2,
+-        1000,
+-        1000,
+-        1000,
+-        1000,
++        ExpectedDayK {
++            context: "DayBoundary",
++            volume: 200,
++            turnover_cents: 200_000,
++            trade_count: 2,
++            open_cents: 1000,
++            high_cents: 1000,
++            low_cents: 1000,
++            close_cents: 1000,
++        },
+         event_candle,
+     );
+     // 保留快照：日 0 bars 总量=200，含 900（收盘竞价）桶。
+@@ -295,7 +342,19 @@ fn intraday_plus_closing_day_kline_matches_bars_and_desk() {
+     );
+     // install 面：日内 300 + 收盘 200。
+     let install = install_day0_candle(&session);
+-    assert_day_k("install", 500, 500_000, 5, 1000, 1000, 1000, 1000, &install);
++    assert_day_k(
++        ExpectedDayK {
++            context: "install",
++            volume: 500,
++            turnover_cents: 500_000,
++            trade_count: 5,
++            open_cents: 1000,
++            high_cents: 1000,
++            low_cents: 1000,
++            close_cents: 1000,
++        },
++        &install,
++    );
+     // desk 面 逐位一致（desk 侧 K 无时间戳——量/额/笔/OHLC 对账）。
+     let (_, o, h, l, c, v, _turnover, _count) = desk_day0_candle(&mut driver);
+     assert_eq!((o, h, l, c, v), (1000, 1000, 1000, 1000, 500));
+@@ -311,14 +370,16 @@ fn intraday_plus_closing_day_kline_matches_bars_and_desk() {
+         })
+         .expect("DayBoundary");
+     assert_day_k(
+-        "DayBoundary",
+-        500,
+-        500_000,
+-        5,
+-        1000,
+-        1000,
+-        1000,
+-        1000,
++        ExpectedDayK {
++            context: "DayBoundary",
++            volume: 500,
++            turnover_cents: 500_000,
++            trade_count: 5,
++            open_cents: 1000,
++            high_cents: 1000,
++            low_cents: 1000,
++            close_cents: 1000,
++        },
+         boundary.get(&StockId(0)).expect("股 0 日 K"),
+     );
+     // 保留快照：bars 总量=500 与日 K 逐位（冻结对账在全对账分支通过）。
+@@ -385,25 +446,29 @@ fn second_day_boundary_keeps_days_independent() {
+     // install 面：末条=日 1 终 K；其前=日 0 终 K（不被覆盖）。
+     let hist = session.candle_book_histories_for_runtime(&StockId(0));
+     assert_day_k(
+-        "install 日 1",
+-        400,
+-        400_000,
+-        4,
+-        1000,
+-        1000,
+-        1000,
+-        1000,
++        ExpectedDayK {
++            context: "install 日 1",
++            volume: 400,
++            turnover_cents: 400_000,
++            trade_count: 4,
++            open_cents: 1000,
++            high_cents: 1000,
++            low_cents: 1000,
++            close_cents: 1000,
++        },
+         hist.last().expect("日 1 K"),
+     );
+     assert_day_k(
+-        "install 日 0",
+-        200,
+-        200_000,
+-        2,
+-        1000,
+-        1000,
+-        1000,
+-        1000,
++        ExpectedDayK {
++            context: "install 日 0",
++            volume: 200,
++            turnover_cents: 200_000,
++            trade_count: 2,
++            open_cents: 1000,
++            high_cents: 1000,
++            low_cents: 1000,
++            close_cents: 1000,
++        },
+         &hist[hist.len() - 2],
+     );
+     // 日 2 活动 K 零量（第二日收盘段不跨日残留）。
+@@ -442,7 +507,19 @@ fn closing_only_candle_opens_at_clearing_price_not_anchor() {
+             .unwrap_or_else(|e| panic!("tick{t} 步进失败：{e}"));
+     }
+     let install = install_day0_candle(&session);
+-    assert_day_k("install", 200, 201_000, 2, 1005, 1005, 1005, 1005, &install);
++    assert_day_k(
++        ExpectedDayK {
++            context: "install",
++            volume: 200,
++            turnover_cents: 201_000,
++            trade_count: 2,
++            open_cents: 1005,
++            high_cents: 1005,
++            low_cents: 1005,
++            close_cents: 1005,
++        },
++        &install,
++    );
+     // 次日昨收=官方收盘价 1005（涨跌停基准随 reroll 归正——读面抽查）。
+     let views = driver.world_public_views();
+     assert!(

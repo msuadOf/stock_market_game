@@ -1,0 +1,423 @@
+diff --git a/packages/engine/src/company/disclosure_correction_batch_proof_tests.rs b/packages/engine/src/company/disclosure_correction_batch_proof_tests.rs
+index a7aec9b1..c11d93ce 100644
+--- a/packages/engine/src/company/disclosure_correction_batch_proof_tests.rs
++++ b/packages/engine/src/company/disclosure_correction_batch_proof_tests.rs
+@@ -1,7 +1,6 @@
+ use super::*;
+-#[path = "disclosure_correction_test_fixture.rs"]
+-mod fixture;
+ use crate::calendar::{CivilDate, CivilInstant};
++use crate::company::disclosure_correction_test_fixture as fixture;
+ use crate::information::{MonthlyReportDelay, MonthlyReportSchedule, ReportFrequency};
+ use fixture::*;
+ 
+diff --git a/packages/engine/src/company/disclosure_correction_batch_tests.rs b/packages/engine/src/company/disclosure_correction_batch_tests.rs
+index 3cf68643..593a8944 100644
+--- a/packages/engine/src/company/disclosure_correction_batch_tests.rs
++++ b/packages/engine/src/company/disclosure_correction_batch_tests.rs
+@@ -1,6 +1,5 @@
+ use super::*;
+-#[path = "disclosure_correction_test_fixture.rs"]
+-mod fixture;
++use crate::company::disclosure_correction_test_fixture as fixture;
+ use crate::company::report_correction::{
+     DisclosureCorrectionPrepareError, DisclosureCorrectionProofError,
+ };
+diff --git a/packages/engine/src/company/disclosure_correction_owner_tests.rs b/packages/engine/src/company/disclosure_correction_owner_tests.rs
+index d58a7a0e..b989c40a 100644
+--- a/packages/engine/src/company/disclosure_correction_owner_tests.rs
++++ b/packages/engine/src/company/disclosure_correction_owner_tests.rs
+@@ -1,6 +1,5 @@
+ use super::*;
+-#[path = "disclosure_correction_test_fixture.rs"]
+-mod fixture;
++use crate::company::disclosure_correction_test_fixture as fixture;
+ use crate::information::{MonthlyReportDelay, MonthlyReportSchedule, ReportFrequency};
+ use fixture::*;
+ 
+diff --git a/packages/engine/src/company/disclosure_correction_proof_tests.rs b/packages/engine/src/company/disclosure_correction_proof_tests.rs
+index 986ff156..eab70f14 100644
+--- a/packages/engine/src/company/disclosure_correction_proof_tests.rs
++++ b/packages/engine/src/company/disclosure_correction_proof_tests.rs
+@@ -1,6 +1,5 @@
+ use super::*;
+-#[path = "disclosure_correction_test_fixture.rs"]
+-mod fixture;
++use crate::company::disclosure_correction_test_fixture as fixture;
+ use fixture::*;
+ 
+ #[test]
+diff --git a/packages/engine/src/company/disclosure_correction_test_fixture.rs b/packages/engine/src/company/disclosure_correction_test_fixture.rs
+index f0d24fa3..e09b8989 100644
+--- a/packages/engine/src/company/disclosure_correction_test_fixture.rs
++++ b/packages/engine/src/company/disclosure_correction_test_fixture.rs
+@@ -5,14 +5,14 @@ use crate::information::{
+     MonthlyReportDelay, MonthlyReportSchedule, PublicLibrary, PublicationId, ReportFrequency,
+ };
+ 
+-pub(super) fn simple_model(prehistory_periods: u16) -> crate::company::CompanySystem {
++pub(crate) fn simple_model(prehistory_periods: u16) -> crate::company::CompanySystem {
+     simple_model_with_cycle(
+         prehistory_periods,
+         crate::company::simple::period::SettlementCycle::Monthly,
+     )
+ }
+ 
+-pub(super) fn simple_model_with_cycle(
++pub(crate) fn simple_model_with_cycle(
+     prehistory_periods: u16,
+     settlement_cycle: crate::company::simple::period::SettlementCycle,
+ ) -> crate::company::CompanySystem {
+@@ -115,7 +115,7 @@ pub(super) fn simple_model_with_cycle(
+     system
+ }
+ 
+-pub(super) fn simple_models(prehistory_periods: u16, count: u32) -> CompanySystem {
++pub(crate) fn simple_models(prehistory_periods: u16, count: u32) -> CompanySystem {
+     let template = simple_model(prehistory_periods);
+     let crate::company::config::CompanySystemConfig::Simple(mut config) = template.config() else {
+         panic!("fixture 必须来自真实 Simple 配置");
+@@ -143,7 +143,7 @@ pub(super) fn simple_models(prehistory_periods: u16, count: u32) -> CompanySyste
+     .unwrap()
+ }
+ 
+-pub(super) fn correction_operation(
++pub(crate) fn correction_operation(
+     source: u64,
+     date: CivilDate,
+ ) -> crate::accounting::closing::CorrectionRequest {
+@@ -174,7 +174,7 @@ pub(super) fn correction_operation(
+     }
+ }
+ 
+-pub(super) fn owner_result() -> (PublicLibrary, PublicLibrary, Vec<PublicationId>) {
++pub(crate) fn owner_result() -> (PublicLibrary, PublicLibrary, Vec<PublicationId>) {
+     let mut system = simple_model(1);
+     let date = CivilDate::from_iso("2030-01-01").unwrap();
+     let frequency = ReportFrequency::Monthly {
+@@ -214,7 +214,7 @@ use crate::accounting::consolidation::{MemberId, ScopeId};
+ use crate::accounting::reports::{ReportKind, ReportVersion, VersionKind};
+ use crate::accounting::AccountingPeriod;
+ use crate::company::operations::CompanyOperations;
+-pub(super) fn legacy_fixture() -> (CompanyOperations, ClosingEngine) {
++pub(crate) fn legacy_fixture() -> (CompanyOperations, ClosingEngine) {
+     use crate::accounting::consolidation::{ConsolidationRequest, GroupMember, MemberSpec};
+     use crate::accounting::reports::{
+         generate_report_set, IndustryPresentation, ReportRequest, ReportSource,
+diff --git a/packages/engine/src/company/mod.rs b/packages/engine/src/company/mod.rs
+index 598b5cae..b88f3a8a 100644
+--- a/packages/engine/src/company/mod.rs
++++ b/packages/engine/src/company/mod.rs
+@@ -64,6 +64,10 @@ pub use dividend::{
+ pub use income_tax::{IncomeTaxOutcome, IncomeTaxOwnerError};
+ pub use report_correction::CompanyCorrectionError;
+ 
++#[cfg(test)]
++#[path = "disclosure_correction_test_fixture.rs"]
++pub(crate) mod disclosure_correction_test_fixture;
++
+ #[cfg(test)]
+ mod capabilities_tests;
+ #[cfg(test)]
+diff --git a/packages/engine/src/company/operations/disclosure_correction_legacy_tests.rs b/packages/engine/src/company/operations/disclosure_correction_legacy_tests.rs
+index d9535f82..6b730224 100644
+--- a/packages/engine/src/company/operations/disclosure_correction_legacy_tests.rs
++++ b/packages/engine/src/company/operations/disclosure_correction_legacy_tests.rs
+@@ -1,6 +1,4 @@
+ use super::*;
+-#[path = "../disclosure_correction_test_fixture.rs"]
+-mod fixture;
+ use crate::accounting::closing::{ClosingEngine, CorrectionRequest};
+ use crate::accounting::consolidation::{MemberId, ScopeId};
+ use crate::accounting::reports::ReportKind;
+@@ -9,6 +7,7 @@ use crate::accounting::{
+     JournalLine, LedgerAccountId, PostingSide,
+ };
+ use crate::calendar::CivilInstant;
++use crate::company::disclosure_correction_test_fixture as fixture;
+ use crate::information::{
+     AccountingPolicyRef, MonthlyReportDelay, MonthlyReportSchedule, PublicLibrary,
+     PublicationOrigin, PublicationRequest,
+diff --git a/packages/engine/src/runtime/calendar_public_restore_tests.rs b/packages/engine/src/runtime/calendar_public_restore_tests.rs
+index c9c5f4fd..a185e7ad 100644
+--- a/packages/engine/src/runtime/calendar_public_restore_tests.rs
++++ b/packages/engine/src/runtime/calendar_public_restore_tests.rs
+@@ -1,8 +1,7 @@
+ //! V12：真实 mixed 日结后严格 SaveSlot restore 与下一复市日续行。
+ //! direct-engine GameSession 公共API；合成休市不代表官方未来安排。
+ 
+-#[path = "calendar_public_restore_fixture.rs"]
+-mod fixture;
++use crate::runtime::calendar_public_restore_fixture as fixture;
+ 
+ use crate::calendar::CalendarExchange;
+ use crate::session::{MarketHistoryAvailability, MarketHistoryRequest};
+diff --git a/packages/engine/src/runtime/group/admin_transaction/information_tests.rs b/packages/engine/src/runtime/group/admin_transaction/information_tests.rs
+index 990bad79..8b1cc79a 100644
+--- a/packages/engine/src/runtime/group/admin_transaction/information_tests.rs
++++ b/packages/engine/src/runtime/group/admin_transaction/information_tests.rs
+@@ -1,7 +1,6 @@
+ use super::*;
+-#[path = "../../information_fixture.rs"]
+-mod fixture;
+ use crate::calendar::CivilInstant;
++use crate::runtime::information_fixture as fixture;
+ use crate::runtime::protocol::{InformationPrepareError, InformationPreparePayload};
+ use crate::{AccountId, StockId};
+ use fixture::*;
+diff --git a/packages/engine/src/runtime/group/admin_transaction/repurchase_approval_tests.rs b/packages/engine/src/runtime/group/admin_transaction/repurchase_approval_tests.rs
+index 2e985b36..a905dfaa 100644
+--- a/packages/engine/src/runtime/group/admin_transaction/repurchase_approval_tests.rs
++++ b/packages/engine/src/runtime/group/admin_transaction/repurchase_approval_tests.rs
+@@ -2,13 +2,12 @@
+ use super::*;
+ use crate::company::CompanyId;
+ use crate::plans::{PlanId, RepurchaseExecutionOpen};
++use crate::runtime::information_fixture as fixture;
+ use crate::runtime::protocol::{
+     AdminPlanReference, AdminTreasuryBinding, RepurchaseExecutionProjection,
+     RepurchaseMaterialRestriction, RepurchaseProjectionInput,
+ };
+ use crate::{AccountId, Money, StockId};
+-#[path = "../../information_fixture.rs"]
+-mod fixture;
+ 
+ fn fixture_state() -> GroupState {
+     let mut state = GroupState::new(
+diff --git a/packages/engine/src/runtime/group/admin_transaction/repurchase_funds_tests.rs b/packages/engine/src/runtime/group/admin_transaction/repurchase_funds_tests.rs
+index 237e86b1..aa1ce5df 100644
+--- a/packages/engine/src/runtime/group/admin_transaction/repurchase_funds_tests.rs
++++ b/packages/engine/src/runtime/group/admin_transaction/repurchase_funds_tests.rs
+@@ -1,10 +1,9 @@
+ //! P2 真实 PendingAdmin 短 fixture；数值正控不冒充公司批准或逐计划预算来源证明。
+ 
+ use super::*;
+-#[path = "../../information_fixture.rs"]
+-mod fixture;
+ use crate::company::CompanyId;
+ use crate::plans::{PlanId, RepurchaseExecutionOpen};
++use crate::runtime::information_fixture as fixture;
+ use crate::runtime::protocol::AdminTreasuryBinding;
+ use crate::{AccountId, StockId};
+ 
+diff --git a/packages/engine/src/runtime/group/admin_transaction/repurchase_source_tests.rs b/packages/engine/src/runtime/group/admin_transaction/repurchase_source_tests.rs
+index 1957d12e..9591f966 100644
+--- a/packages/engine/src/runtime/group/admin_transaction/repurchase_source_tests.rs
++++ b/packages/engine/src/runtime/group/admin_transaction/repurchase_source_tests.rs
+@@ -4,14 +4,13 @@ use super::*;
+ use crate::company::{CompanyId, CompanyKind, CompanyReadFacts};
+ use crate::plans::{PlanId, RepurchaseExecutionStatus};
+ use crate::runtime::desk::repurchase_group_fixture::SourceDesk;
++use crate::runtime::information_fixture as fixture;
+ use crate::runtime::protocol::{
+     AdminPlanReference, AdminTreasuryBinding, RepurchaseExecutionProjection,
+     RepurchaseMaterialRestriction, RepurchaseProjectionInput,
+ };
+ use crate::runtime::{RepurchaseRequestKey, RepurchaseSourceKind};
+ use crate::{AccountId, StockId};
+-#[path = "../../information_fixture.rs"]
+-mod fixture;
+ 
+ const FUNDING: i64 = 1_000_000;
+ const ACCOUNT: AccountId = AccountId(79);
+diff --git a/packages/engine/src/runtime/mod.rs b/packages/engine/src/runtime/mod.rs
+index 608ecc1c..b2f4fbc5 100644
+--- a/packages/engine/src/runtime/mod.rs
++++ b/packages/engine/src/runtime/mod.rs
+@@ -28,6 +28,14 @@ pub type StockIdx = u16;
+ /// 复合标识。
+ pub type OrderRef = (StockIdx, u64);
+ 
++#[cfg(test)]
++#[path = "calendar_public_restore_fixture.rs"]
++pub(crate) mod calendar_public_restore_fixture;
++
++#[cfg(test)]
++#[path = "information_fixture.rs"]
++pub(crate) mod information_fixture;
++
+ pub(crate) mod admin_tax_projection;
+ 
+ #[cfg(any(target_arch = "wasm32", test))]
+diff --git a/packages/engine/src/runtime/world/admin_transaction/calendar_information_intersection_tests.rs b/packages/engine/src/runtime/world/admin_transaction/calendar_information_intersection_tests.rs
+index a36f8d42..0bcca368 100644
+--- a/packages/engine/src/runtime/world/admin_transaction/calendar_information_intersection_tests.rs
++++ b/packages/engine/src/runtime/world/admin_transaction/calendar_information_intersection_tests.rs
+@@ -1,14 +1,13 @@
+ //! V10 工作草案：真实 Calendar mask 与既有 INFO/Admin 机制交集。
+ //! 应作为 world::admin_transaction 后代模块注册；不冒生产 civil dispatcher 验收。
+ use super::*;
+-#[path = "../../information_fixture.rs"]
+-mod fixture;
+ use crate::calendar::{
+     CalendarExchange, CalendarPolicy, CivilDate, CivilInstant, OfficialCoverageEntry,
+     TradingCalendar,
+ };
+ use crate::observation::information_clock::InformationTradingAnchor;
+ use crate::runtime::group::TickPlan;
++use crate::runtime::information_fixture as fixture;
+ use crate::runtime::protocol::{InformationObservation, InformationPreparePayload};
+ use crate::runtime::skeleton_tests::basic_spec;
+ use crate::{AccountId, StockExchange, StockId};
+diff --git a/packages/engine/src/runtime/world/admin_transaction/funds_cost_tests.rs b/packages/engine/src/runtime/world/admin_transaction/funds_cost_tests.rs
+index 578e8095..d135a327 100644
+--- a/packages/engine/src/runtime/world/admin_transaction/funds_cost_tests.rs
++++ b/packages/engine/src/runtime/world/admin_transaction/funds_cost_tests.rs
+@@ -338,8 +338,7 @@ fn funds_p1_08_same_local_debit_before_refund_cannot_be_netted_or_reordered() {
+     world.shutdown().unwrap();
+ }
+ 
+-#[path = "../../information_fixture.rs"]
+-mod information_fixture;
++use crate::runtime::information_fixture;
+ 
+ fn information_world() -> World {
+     use crate::AccountId;
+diff --git a/packages/engine/src/runtime/world/admin_transaction/information_tests.rs b/packages/engine/src/runtime/world/admin_transaction/information_tests.rs
+index 142ac4e4..813e55d0 100644
+--- a/packages/engine/src/runtime/world/admin_transaction/information_tests.rs
++++ b/packages/engine/src/runtime/world/admin_transaction/information_tests.rs
+@@ -1,7 +1,6 @@
+ use super::*;
+-#[path = "../../information_fixture.rs"]
+-mod fixture;
+ use crate::runtime::group::TickPlan;
++use crate::runtime::information_fixture as fixture;
+ use crate::runtime::protocol::{AdminFault, InformationPreparePayload};
+ use crate::runtime::skeleton_tests::basic_spec;
+ use crate::{AccountId, StockId};
+diff --git a/packages/engine/src/runtime/world/admin_transaction/repurchase_approval_tests.rs b/packages/engine/src/runtime/world/admin_transaction/repurchase_approval_tests.rs
+index 002dcfbe..59fe679b 100644
+--- a/packages/engine/src/runtime/world/admin_transaction/repurchase_approval_tests.rs
++++ b/packages/engine/src/runtime/world/admin_transaction/repurchase_approval_tests.rs
+@@ -2,14 +2,13 @@
+ use super::*;
+ use crate::company::CompanyId;
+ use crate::runtime::group::TickPlan;
++use crate::runtime::information_fixture as fixture;
+ use crate::runtime::protocol::{
+     AdminFault, AdminPlanReference, AdminTreasuryBinding, RepurchaseExecutionProjection,
+     RepurchaseMaterialRestriction, RepurchasePreparePayload, RepurchaseProjectionInput,
+ };
+ use crate::runtime::skeleton_tests::basic_spec;
+ use crate::{AccountId, Money};
+-#[path = "../../information_fixture.rs"]
+-mod fixture;
+ fn world() -> World {
+     let mut spec = basic_spec(3, 2, 2, Box::new(|_| Box::new(|_, _| TickPlan::default())));
+     spec.civil_start_date = fixture::at(9, 0).date();
+diff --git a/packages/engine/src/runtime/world/admin_transaction/repurchase_funds_tests.rs b/packages/engine/src/runtime/world/admin_transaction/repurchase_funds_tests.rs
+index 47a6ad26..1957c2b5 100644
+--- a/packages/engine/src/runtime/world/admin_transaction/repurchase_funds_tests.rs
++++ b/packages/engine/src/runtime/world/admin_transaction/repurchase_funds_tests.rs
+@@ -1,10 +1,9 @@
+ //! P2 真实多组行政事务；方案资金来源仍由同一次 inspect 勾稽。
+ use super::*;
+-#[path = "../../information_fixture.rs"]
+-mod fixture;
+ use crate::company::CompanyId;
+ use crate::plans::{PlanId, RepurchaseExecutionOpen};
+ use crate::runtime::group::{GroupAccount, TickPlan};
++use crate::runtime::information_fixture as fixture;
+ use crate::runtime::protocol::AdminTreasuryBinding;
+ use crate::runtime::skeleton_tests::basic_spec;
+ use crate::{AccountId, StockId};
+diff --git a/packages/engine/src/runtime/world/admin_transaction/stage_information_tests.rs b/packages/engine/src/runtime/world/admin_transaction/stage_information_tests.rs
+index 166d6474..db9d0bff 100644
+--- a/packages/engine/src/runtime/world/admin_transaction/stage_information_tests.rs
++++ b/packages/engine/src/runtime/world/admin_transaction/stage_information_tests.rs
+@@ -8,8 +8,7 @@ use fixture::*;
+ use std::sync::Arc;
+ use std::time::Duration;
+ 
+-#[path = "../../information_fixture.rs"]
+-mod fixture;
++use crate::runtime::information_fixture as fixture;
+ 
+ fn world() -> World {
+     let ids = [11, 37, 51, 79, 113].map(AccountId);
+diff --git a/packages/engine/src/runtime/world/information_handover.rs b/packages/engine/src/runtime/world/information_handover.rs
+index 171bb4bb..3645284d 100644
+--- a/packages/engine/src/runtime/world/information_handover.rs
++++ b/packages/engine/src/runtime/world/information_handover.rs
+@@ -434,8 +434,7 @@ impl World {
+ }
+ 
+ #[cfg(test)]
+-#[path = "../information_fixture.rs"]
+-mod fixture;
++use crate::runtime::information_fixture as fixture;
+ 
+ #[cfg(test)]
+ mod tests {
+diff --git a/packages/engine/src/session/calendar_entry_cache_tests.rs b/packages/engine/src/session/calendar_entry_cache_tests.rs
+index 88be7b35..d0621e5d 100644
+--- a/packages/engine/src/session/calendar_entry_cache_tests.rs
++++ b/packages/engine/src/session/calendar_entry_cache_tests.rs
+@@ -1,9 +1,8 @@
+ //! V1 工作草案：真实入口Calendar前置、cache提交与派生域排除；已安装；未编译/运行。
+ //! 计数只接到真实 freeze/take/Start/Drain 发送前，默认关闭且仅 caller 线程 scope 生效。
+ use super::*;
+-#[path = "../runtime/calendar_public_restore_fixture.rs"]
+-mod fixture;
+ use crate::calendar::CalendarExchange;
++use crate::runtime::calendar_public_restore_fixture as fixture;
+ use crate::session::protocol::ProtocolSession;
+ use std::cell::Cell;
+ use std::sync::Arc;
+diff --git a/packages/engine/src/session/calendar_final_boundary_tests.rs b/packages/engine/src/session/calendar_final_boundary_tests.rs
+index afba19da..d88891b9 100644
+--- a/packages/engine/src/session/calendar_final_boundary_tests.rs
++++ b/packages/engine/src/session/calendar_final_boundary_tests.rs
+@@ -2,9 +2,8 @@
+ //! 已注册；尚未编译或运行，不把注入失败等同生产通过。
+ 
+ use super::*;
+-#[path = "../runtime/calendar_public_restore_fixture.rs"]
+-mod fixture;
+ use crate::calendar::CalendarExchange;
++use crate::runtime::calendar_public_restore_fixture as fixture;
+ use crate::runtime::drive::RuntimeDriver;
+ use crate::{StockExchange, StockId};
+ 
+diff --git a/packages/engine/src/session/calendar_nonzero_plan_parity_tests.rs b/packages/engine/src/session/calendar_nonzero_plan_parity_tests.rs
+index d725ecfb..e7b66fec 100644
+--- a/packages/engine/src/session/calendar_nonzero_plan_parity_tests.rs
++++ b/packages/engine/src/session/calendar_nonzero_plan_parity_tests.rs
+@@ -1,9 +1,8 @@
+ //! V7 工作草案：同一完整SaveSlot的native组/镜像与生产serial纯迁移；已注册；未编译/运行。
+ //! serial使用既有step_pipeline_contract；不冒actual wasm32、serial civil或真实collector Create。
+ use super::*;
+-#[path = "../runtime/calendar_public_restore_fixture.rs"]
+-mod fixture;
+ use crate::calendar::CalendarExchange;
++use crate::runtime::calendar_public_restore_fixture as fixture;
+ 
+ fn assert_phase_save_projection(
+     native: &SaveSlot,
+diff --git a/packages/engine/src/session/disclosure_batch_candidate_tests.rs b/packages/engine/src/session/disclosure_batch_candidate_tests.rs
+index 9f07136a..eff88ceb 100644
+--- a/packages/engine/src/session/disclosure_batch_candidate_tests.rs
++++ b/packages/engine/src/session/disclosure_batch_candidate_tests.rs
+@@ -1,6 +1,5 @@
+ use super::*;
+-#[path = "../company/disclosure_correction_test_fixture.rs"]
+-mod fixture;
++use crate::company::disclosure_correction_test_fixture as fixture;
+ use crate::company::SimpleDisclosureCorrectionInput;
+ use crate::information::{MonthlyReportDelay, MonthlyReportSchedule};
+ use fixture::*;
+diff --git a/packages/engine/src/session/disclosure_candidate_tests.rs b/packages/engine/src/session/disclosure_candidate_tests.rs
+index 1c5079d7..8785bfe4 100644
+--- a/packages/engine/src/session/disclosure_candidate_tests.rs
++++ b/packages/engine/src/session/disclosure_candidate_tests.rs
+@@ -301,8 +301,7 @@ fn civil_scan_does_not_turn_publication_instants_into_personal_observation_hooks
+     );
+ }
+ 
+-#[path = "../company/disclosure_correction_test_fixture.rs"]
+-mod shared_owner_fixture;
++use crate::company::disclosure_correction_test_fixture as shared_owner_fixture;
+ use shared_owner_fixture::legacy_fixture;
+ 
+ #[test]
