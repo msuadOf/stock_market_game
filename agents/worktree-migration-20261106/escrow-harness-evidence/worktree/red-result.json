@@ -1,0 +1,19 @@
+{
+  "argv": [
+    "node",
+    "scripts/run-with-deadline.mjs",
+    "10000",
+    "--",
+    "node",
+    "--test",
+    "--test-timeout=10000",
+    "--test-isolation=none",
+    "--test-concurrency=2",
+    "scripts/simulation/escrow-performance-harness.test.mjs"
+  ],
+  "exit_code": 1,
+  "wall_ms": 866.391,
+  "TMPDIR": "<WORKSPACE>/.worktree/escrow-harness-contract/.tmp/escrow-harness-contract",
+  "available_cpus": 128,
+  "test_concurrency": 2
+}

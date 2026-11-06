@@ -1,0 +1,55 @@
+▶ performance harness
+  ✔ records actual paired samples and ratios without a preset speed threshold (11.529297ms)
+  ✔ rejects incomparable tick counts, source fingerprints and absent new-engine instrumentation (2.54667ms)
+  ✔ treats explicit BLOCKED/FAIL samples as failures and never emits a ratio (0.355269ms)
+  ✔ rejects malformed or decorated command stdout instead of guessing a sample (0.377021ms)
+  ✔ does not produce a report or comparison when a measured condition drifts (1.320606ms)
+  ✔ fails closed when source bytes do not match or drift during a sample (1.507471ms)
+  ✔ rejects invalid, overflowing, or non-finite measurement numbers (0.482433ms)
+  ✖ rejects hidden environment differences and invalid sample-count shortcuts in config (3.297881ms)
+  ✔ stops measured wall time at child close instead of charging the sampler sleep (195.545151ms)
+  ✔ fails loudly when the benchmark command exits non-zero (87.142963ms)
+  ✔ uses the fixed perf-report.json name and writes identical evidence idempotently (2.157549ms)
+  ✔ parses a config file once and reuses a matching PASS report without rerunning commands (7.762393ms)
+✖ performance harness (316.156264ms)
+ℹ tests 12
+ℹ suites 1
+ℹ pass 11
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 357.637043
+
+✖ failing tests:
+
+test at ../../../../scripts/simulation/escrow-performance-harness.test.mjs:310:3
+✖ rejects hidden environment differences and invalid sample-count shortcuts in config (3.297881ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /inside the workspace root/. Input:
+  
+  'Error: performance config before.cwd does not exist: <WORKSPACE>/.worktree/escrow-harness-contract/.tmp/escrow-harness-contract/green/outside'
+  
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.test.mjs:335:12)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Suite.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: performance config before.cwd does not exist: <WORKSPACE>/.worktree/escrow-harness-contract/.tmp/escrow-harness-contract/green/outside
+        at fail (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:28:9)
+        at validateWorkspacePath (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:58:51)
+        at validateEndpoint (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:104:18)
+        at validatePerformanceConfig (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:139:3)
+        at file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.test.mjs:335:25
+        at getActual (node:assert:586:5)
+        at strict.throws (node:assert:734:24)
+        at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.test.mjs:335:12)
+        at Test.runInAsyncScope (node:async_hooks:226:14)
+        at Test.run (node:internal/test_runner/test:1201:25),
+    expected: /inside the workspace root/,
+    operator: 'throws',
+    diff: 'simple'
+  }

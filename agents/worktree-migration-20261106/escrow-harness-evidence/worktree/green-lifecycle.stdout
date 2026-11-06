@@ -1,0 +1,26 @@
+▶ PerformanceComparisonRun 生命周期
+  ✔ 配置快照与不同 run 的样本独立，失败不能形成 PASS 报告 (8.623081ms)
+✔ PerformanceComparisonRun 生命周期 (9.748932ms)
+▶ ProcessSampleRun 失败边界
+  ✔ 真实 sampler 失败终止仍运行的 child 并收敛其 close (57.340298ms)
+  ✔ sampler 提前失败即时终止 child，等待 close 后保留采样错误 (0.894015ms)
+  ✔ spawn 失败显式传播，零 RSS 样本不生成测量结果 (113.220005ms)
+✔ ProcessSampleRun 失败边界 (171.931012ms)
+▶ PerformanceComparisonRun report reuse
+  ✔ 所有已有 comparison key、endpoint 和测量条件变化均拒绝复用 (4.931458ms)
+✔ PerformanceComparisonRun report reuse (5.134943ms)
+▶ PerformanceComparisonRun 证据所有权
+  ✔ 外部 sample 不能绕过成功的配对测量生成 PASS (0.702229ms)
+  ✔ 消费者修改报告的嵌套证据不会污染 run 后续报告 (1.983465ms)
+✔ PerformanceComparisonRun 证据所有权 (2.986183ms)
+▶ runProcessSample 异步 facade
+  ✔ 缺少或空 options 仍返回 rejected Promise (0.289878ms)
+✔ runProcessSample 异步 facade (0.420001ms)
+ℹ tests 8
+ℹ suites 5
+ℹ pass 8
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 234.132105

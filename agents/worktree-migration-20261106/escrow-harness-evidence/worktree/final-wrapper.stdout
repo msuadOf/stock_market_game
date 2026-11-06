@@ -1,0 +1,47 @@
+{
+  "wall_ms": 570.775,
+  "available_cpus": 128,
+  "concurrent_shards": 2,
+  "case_timeout_ms": 10000,
+  "supervisor_timeout_ms": 10000,
+  "outer_timeout_ms": 10000,
+  "cwd": "<WORKSPACE>/.worktree/escrow-harness-contract",
+  "TMPDIR": "<WORKSPACE>/.tmp/escrow-harness-contract-external",
+  "fixture_residue": [],
+  "shards": [
+    {
+      "name": "harness",
+      "exit_code": 0,
+      "argv": [
+        "node",
+        "<WORKSPACE>/.worktree/escrow-harness-contract/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-isolation=none",
+        "--test-concurrency=2",
+        "--test-name-pattern=^performance harness",
+        "<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.test.mjs"
+      ]
+    },
+    {
+      "name": "lifecycle",
+      "exit_code": 0,
+      "argv": [
+        "node",
+        "<WORKSPACE>/.worktree/escrow-harness-contract/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-isolation=none",
+        "--test-concurrency=2",
+        "--test-name-pattern=^(PerformanceComparisonRun|ProcessSampleRun|runProcessSample)",
+        "<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.test.mjs"
+      ]
+    }
+  ]
+}

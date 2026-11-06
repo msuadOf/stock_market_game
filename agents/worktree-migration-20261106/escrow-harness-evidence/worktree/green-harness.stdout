@@ -1,0 +1,22 @@
+▶ performance harness
+  ✔ records actual paired samples and ratios without a preset speed threshold (7.004405ms)
+  ✔ rejects incomparable tick counts, source fingerprints and absent new-engine instrumentation (3.57995ms)
+  ✔ treats explicit BLOCKED/FAIL samples as failures and never emits a ratio (0.34111ms)
+  ✔ rejects malformed or decorated command stdout instead of guessing a sample (0.34957ms)
+  ✔ does not produce a report or comparison when a measured condition drifts (1.170262ms)
+  ✔ fails closed when source bytes do not match or drift during a sample (1.280296ms)
+  ✔ rejects invalid, overflowing, or non-finite measurement numbers (0.441212ms)
+  ✔ rejects hidden environment differences and invalid sample-count shortcuts in config (1.664186ms)
+  ✔ stops measured wall time at child close instead of charging the sampler sleep (190.046597ms)
+  ✔ fails loudly when the benchmark command exits non-zero (93.98737ms)
+  ✔ uses the fixed perf-report.json name and writes identical evidence idempotently (1.717588ms)
+  ✔ parses a config file once and reuses a matching PASS report without rerunning commands (6.149971ms)
+✔ performance harness (309.64597ms)
+ℹ tests 12
+ℹ suites 1
+ℹ pass 12
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 351.021733

@@ -1,0 +1,1333 @@
+{
+  "wall_ms": 653.57,
+  "available_cpus": 128,
+  "concurrent_shards": 2,
+  "case_timeout_ms": 10000,
+  "supervisor_timeout_ms": 10000,
+  "shared_outer_deadline_ms": 10000,
+  "shards": [
+    {
+      "name": "harness",
+      "exit_code": 1,
+      "argv": [
+        "node",
+        "<WORKSPACE>/.worktree/escrow-harness-contract/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-isolation=none",
+        "--test-concurrency=2",
+        "--test-name-pattern=^performance harness",
+        "<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.test.mjs"
+      ],
+      "cwd": "<WORKSPACE>/.worktree/escrow-harness-contract/.tmp/escrow-harness-contract/green/harness",
+      "fixture_cleaned": true
+    },
+    {
+      "name": "lifecycle",
+      "exit_code": 0,
+      "argv": [
+        "node",
+        "<WORKSPACE>/.worktree/escrow-harness-contract/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-isolation=none",
+        "--test-concurrency=2",
+        "--test-name-pattern=^(PerformanceComparisonRun|ProcessSampleRun|runProcessSample)",
+        "<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.test.mjs"
+      ],
+      "cwd": "<WORKSPACE>/.worktree/escrow-harness-contract/.tmp/escrow-harness-contract/green/lifecycle",
+      "fixture_cleaned": true
+    }
+  ],
+  "observations": [
+    {
+      "wall_ms": 3.118,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [],
+          "utime_ticks": "0",
+          "stime_ticks": "0"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [],
+          "utime_ticks": "0",
+          "stime_ticks": "0"
+        }
+      ]
+    },
+    {
+      "wall_ms": 13.347,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [],
+          "utime_ticks": "0",
+          "stime_ticks": "0"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [],
+          "utime_ticks": "0",
+          "stime_ticks": "0"
+        }
+      ]
+    },
+    {
+      "wall_ms": 23.755,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [],
+          "utime_ticks": "1",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [],
+          "utime_ticks": "1",
+          "stime_ticks": "0"
+        }
+      ]
+    },
+    {
+      "wall_ms": 34.011,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [],
+          "utime_ticks": "1",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [],
+          "utime_ticks": "2",
+          "stime_ticks": "0"
+        }
+      ]
+    },
+    {
+      "wall_ms": 44.231,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [],
+          "utime_ticks": "2",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [],
+          "utime_ticks": "3",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 54.619,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [],
+          "utime_ticks": "3",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [],
+          "utime_ticks": "4",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 65.009,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [],
+          "utime_ticks": "4",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [],
+          "utime_ticks": "5",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 75.395,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [],
+          "utime_ticks": "5",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [],
+          "utime_ticks": "6",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 85.776,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [],
+          "utime_ticks": "7",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [],
+          "utime_ticks": "7",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 96.164,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 106.438,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [],
+          "utime_ticks": "9",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 116.733,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [
+            1582340
+          ],
+          "utime_ticks": "9",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 127.229,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [
+            1582340
+          ],
+          "utime_ticks": "9",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 137.497,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [
+            1582340
+          ],
+          "utime_ticks": "9",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 147.784,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [
+            1582340
+          ],
+          "utime_ticks": "9",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 158.308,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [
+            1582340
+          ],
+          "utime_ticks": "9",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 168.6,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [
+            1582340
+          ],
+          "utime_ticks": "9",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 179.138,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [
+            1582340
+          ],
+          "utime_ticks": "9",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 189.451,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [
+            1582340
+          ],
+          "utime_ticks": "9",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 199.913,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [
+            1582340
+          ],
+          "utime_ticks": "9",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 210.224,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [
+            1582340
+          ],
+          "utime_ticks": "9",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 220.506,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [
+            1582340
+          ],
+          "utime_ticks": "9",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 231.021,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [
+            1582340
+          ],
+          "utime_ticks": "9",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 241.264,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [
+            1582340
+          ],
+          "utime_ticks": "9",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 251.544,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [
+            1582340
+          ],
+          "utime_ticks": "9",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 261.869,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [
+            1582340
+          ],
+          "utime_ticks": "9",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 272.345,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [
+            1582340,
+            1582359
+          ],
+          "utime_ticks": "9",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 282.715,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339,
+            1582360
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [
+            1582340,
+            1582359
+          ],
+          "utime_ticks": "9",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 293.083,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339,
+            1582360
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [
+            1582340,
+            1582359
+          ],
+          "utime_ticks": "9",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 303.483,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339,
+            1582360
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [
+            1582340,
+            1582359
+          ],
+          "utime_ticks": "9",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 313.859,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339,
+            1582360
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [
+            1582340,
+            1582359
+          ],
+          "utime_ticks": "9",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 324.237,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339,
+            1582360
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [
+            1582340,
+            1582359
+          ],
+          "utime_ticks": "9",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 334.565,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339,
+            1582360
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [
+            1582340
+          ],
+          "utime_ticks": "9",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 344.943,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339,
+            1582360
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [
+            1582340,
+            1582384
+          ],
+          "utime_ticks": "9",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 355.319,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339,
+            1582360
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [
+            1582340,
+            1582384
+          ],
+          "utime_ticks": "9",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 365.687,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339,
+            1582360
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [
+            1582340,
+            1582384
+          ],
+          "utime_ticks": "9",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 376.009,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339,
+            1582360
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [
+            1582340,
+            1582384
+          ],
+          "utime_ticks": "9",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 386.334,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339,
+            1582360
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [
+            1582340,
+            1582384
+          ],
+          "utime_ticks": "9",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 396.706,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339,
+            1582360
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [
+            1582340,
+            1582384
+          ],
+          "utime_ticks": "9",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 407.1,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339,
+            1582360
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [
+            1582340,
+            1582384
+          ],
+          "utime_ticks": "9",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 417.497,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339,
+            1582360
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [
+            1582340,
+            1582384
+          ],
+          "utime_ticks": "9",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 428.084,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339,
+            1582360
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [
+            1582340,
+            1582384
+          ],
+          "utime_ticks": "9",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 438.398,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339,
+            1582360
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [
+            1582340,
+            1582384
+          ],
+          "utime_ticks": "9",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 448.733,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339,
+            1582360
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [
+            1582340
+          ],
+          "utime_ticks": "9",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 459.025,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339,
+            1582360
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [
+            1582340
+          ],
+          "utime_ticks": "9",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 469.385,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339,
+            1582397
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        },
+        {
+          "shard": "lifecycle",
+          "supervisor_pid": 1582326,
+          "children": [],
+          "utime_ticks": "9",
+          "stime_ticks": "2"
+        }
+      ]
+    },
+    {
+      "wall_ms": 479.752,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339,
+            1582397
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 489.972,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339,
+            1582397
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 500.199,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339,
+            1582397
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 510.416,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339,
+            1582397
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 520.65,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339,
+            1582397
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 530.883,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339,
+            1582397
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 541.2,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339,
+            1582397
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 551.434,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339,
+            1582397
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 561.612,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 571.81,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 582.139,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [
+            1582339
+          ],
+          "utime_ticks": "8",
+          "stime_ticks": "1"
+        }
+      ]
+    },
+    {
+      "wall_ms": 592.387,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [],
+          "utime_ticks": "9",
+          "stime_ticks": "2"
+        }
+      ]
+    },
+    {
+      "wall_ms": 602.535,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [],
+          "utime_ticks": "9",
+          "stime_ticks": "3"
+        }
+      ]
+    },
+    {
+      "wall_ms": 612.695,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [],
+          "utime_ticks": "10",
+          "stime_ticks": "4"
+        }
+      ]
+    },
+    {
+      "wall_ms": 622.934,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [],
+          "utime_ticks": "11",
+          "stime_ticks": "4"
+        }
+      ]
+    },
+    {
+      "wall_ms": 633.166,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [],
+          "utime_ticks": "11",
+          "stime_ticks": "5"
+        }
+      ]
+    },
+    {
+      "wall_ms": 643.326,
+      "running": [
+        {
+          "shard": "harness",
+          "supervisor_pid": 1582325,
+          "children": [],
+          "utime_ticks": "11",
+          "stime_ticks": "6"
+        }
+      ]
+    }
+  ]
+}

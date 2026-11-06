@@ -1,0 +1,1754 @@
+{
+  "wall_ms": 570.775,
+  "available_cpus": 128,
+  "concurrent_shards": 2,
+  "case_timeout_ms": 10000,
+  "supervisor_timeout_ms": 10000,
+  "outer_timeout_ms": 10000,
+  "cwd": "<WORKSPACE>/.worktree/escrow-harness-contract",
+  "TMPDIR": "<WORKSPACE>/.tmp/escrow-harness-contract-external",
+  "fixture_residue": [],
+  "shards": [
+    {
+      "name": "harness",
+      "exit_code": 0,
+      "argv": [
+        "node",
+        "<WORKSPACE>/.worktree/escrow-harness-contract/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-isolation=none",
+        "--test-concurrency=2",
+        "--test-name-pattern=^performance harness",
+        "<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.test.mjs"
+      ]
+    },
+    {
+      "name": "lifecycle",
+      "exit_code": 0,
+      "argv": [
+        "node",
+        "<WORKSPACE>/.worktree/escrow-harness-contract/scripts/run-with-deadline.mjs",
+        "10000",
+        "--",
+        "node",
+        "--test",
+        "--test-timeout=10000",
+        "--test-isolation=none",
+        "--test-concurrency=2",
+        "--test-name-pattern=^(PerformanceComparisonRun|ProcessSampleRun|runProcessSample)",
+        "<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.test.mjs"
+      ]
+    }
+  ],
+  "observations": [
+    {
+      "wall_ms": 2.782,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 0,
+              "threads": 1
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 0,
+              "threads": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 13.113,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 0,
+              "threads": 1
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 0,
+              "threads": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 23.767,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 1,
+              "threads": 6
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 1,
+              "threads": 6
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 34.626,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 3,
+              "threads": 7
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 2,
+              "threads": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 45.248,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 4,
+              "threads": 7
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 3,
+              "threads": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 55.989,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 5,
+              "threads": 7
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 4,
+              "threads": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 66.731,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 6,
+              "threads": 7
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 6,
+              "threads": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 77.324,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 7,
+              "threads": 7
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 7,
+              "threads": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 87.89,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 8,
+              "threads": 7
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 8,
+              "threads": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 98.488,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 9,
+              "threads": 7
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 9,
+              "threads": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 109.405,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 0,
+              "threads": 1
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601556,
+              "cpu_ticks": 0,
+              "threads": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 120.48,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 0,
+              "threads": 6
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601556,
+              "cpu_ticks": 1,
+              "threads": 6
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 131.532,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 2,
+              "threads": 7
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601556,
+              "cpu_ticks": 2,
+              "threads": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 142.676,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 3,
+              "threads": 7
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601556,
+              "cpu_ticks": 3,
+              "threads": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 154.462,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 5,
+              "threads": 7
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601556,
+              "cpu_ticks": 4,
+              "threads": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 165.806,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 6,
+              "threads": 7
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601556,
+              "cpu_ticks": 5,
+              "threads": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 177.412,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 7,
+              "threads": 7
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601556,
+              "cpu_ticks": 8,
+              "threads": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 188.537,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 8,
+              "threads": 7
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601556,
+              "cpu_ticks": 9,
+              "threads": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 199.641,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 9,
+              "threads": 7
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601556,
+              "cpu_ticks": 10,
+              "threads": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 210.638,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 10,
+              "threads": 7
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601556,
+              "cpu_ticks": 11,
+              "threads": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 221.75,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 12,
+              "threads": 7
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601556,
+              "cpu_ticks": 12,
+              "threads": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 232.931,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 13,
+              "threads": 7
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601556,
+              "cpu_ticks": 13,
+              "threads": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 244.156,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 14,
+              "threads": 7
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601556,
+              "cpu_ticks": 14,
+              "threads": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 255.816,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 16,
+              "threads": 7
+            },
+            {
+              "pid": 1601572,
+              "cpu_ticks": 0,
+              "threads": 1
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601556,
+              "cpu_ticks": 16,
+              "threads": 7
+            },
+            {
+              "pid": 1601571,
+              "cpu_ticks": 0,
+              "threads": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 267.765,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 16,
+              "threads": 11
+            },
+            {
+              "pid": 1601572,
+              "cpu_ticks": 0,
+              "threads": 1
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601556,
+              "cpu_ticks": 17,
+              "threads": 7
+            },
+            {
+              "pid": 1601571,
+              "cpu_ticks": 0,
+              "threads": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 279.453,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 16,
+              "threads": 11
+            },
+            {
+              "pid": 1601572,
+              "cpu_ticks": 1,
+              "threads": 6
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601556,
+              "cpu_ticks": 18,
+              "threads": 7
+            },
+            {
+              "pid": 1601571,
+              "cpu_ticks": 2,
+              "threads": 6
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 291.187,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 16,
+              "threads": 11
+            },
+            {
+              "pid": 1601572,
+              "cpu_ticks": 3,
+              "threads": 7
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601556,
+              "cpu_ticks": 20,
+              "threads": 7
+            },
+            {
+              "pid": 1601571,
+              "cpu_ticks": 3,
+              "threads": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 303.11,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 16,
+              "threads": 11
+            },
+            {
+              "pid": 1601572,
+              "cpu_ticks": 4,
+              "threads": 7
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601556,
+              "cpu_ticks": 22,
+              "threads": 7
+            },
+            {
+              "pid": 1601571,
+              "cpu_ticks": 4,
+              "threads": 2
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 314.568,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 16,
+              "threads": 11
+            },
+            {
+              "pid": 1601572,
+              "cpu_ticks": 5,
+              "threads": 7
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601556,
+              "cpu_ticks": 23,
+              "threads": 7
+            },
+            {
+              "pid": 1601592,
+              "cpu_ticks": 0,
+              "threads": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 326.092,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 16,
+              "threads": 11
+            },
+            {
+              "pid": 1601572,
+              "cpu_ticks": 6,
+              "threads": 7
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601556,
+              "cpu_ticks": 23,
+              "threads": 7
+            },
+            {
+              "pid": 1601592,
+              "cpu_ticks": 0,
+              "threads": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 337.659,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 16,
+              "threads": 11
+            },
+            {
+              "pid": 1601572,
+              "cpu_ticks": 7,
+              "threads": 7
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601556,
+              "cpu_ticks": 23,
+              "threads": 7
+            },
+            {
+              "pid": 1601592,
+              "cpu_ticks": 2,
+              "threads": 6
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 349.281,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 16,
+              "threads": 11
+            },
+            {
+              "pid": 1601572,
+              "cpu_ticks": 7,
+              "threads": 7
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601556,
+              "cpu_ticks": 23,
+              "threads": 7
+            },
+            {
+              "pid": 1601592,
+              "cpu_ticks": 3,
+              "threads": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 360.996,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 16,
+              "threads": 11
+            },
+            {
+              "pid": 1601572,
+              "cpu_ticks": 7,
+              "threads": 7
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601556,
+              "cpu_ticks": 23,
+              "threads": 7
+            },
+            {
+              "pid": 1601592,
+              "cpu_ticks": 3,
+              "threads": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 373.145,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 16,
+              "threads": 11
+            },
+            {
+              "pid": 1601572,
+              "cpu_ticks": 7,
+              "threads": 7
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601556,
+              "cpu_ticks": 23,
+              "threads": 7
+            },
+            {
+              "pid": 1601592,
+              "cpu_ticks": 5,
+              "threads": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 384.702,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 16,
+              "threads": 11
+            },
+            {
+              "pid": 1601572,
+              "cpu_ticks": 7,
+              "threads": 7
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601556,
+              "cpu_ticks": 23,
+              "threads": 7
+            },
+            {
+              "pid": 1601592,
+              "cpu_ticks": 6,
+              "threads": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 396.231,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 16,
+              "threads": 11
+            },
+            {
+              "pid": 1601572,
+              "cpu_ticks": 7,
+              "threads": 7
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601556,
+              "cpu_ticks": 23,
+              "threads": 7
+            },
+            {
+              "pid": 1601592,
+              "cpu_ticks": 8,
+              "threads": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 407.713,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 16,
+              "threads": 11
+            },
+            {
+              "pid": 1601572,
+              "cpu_ticks": 7,
+              "threads": 7
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601556,
+              "cpu_ticks": 23,
+              "threads": 7
+            },
+            {
+              "pid": 1601592,
+              "cpu_ticks": 8,
+              "threads": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 419.167,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 16,
+              "threads": 11
+            },
+            {
+              "pid": 1601572,
+              "cpu_ticks": 7,
+              "threads": 7
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601556,
+              "cpu_ticks": 23,
+              "threads": 7
+            },
+            {
+              "pid": 1601592,
+              "cpu_ticks": 8,
+              "threads": 2
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 430.449,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 16,
+              "threads": 11
+            },
+            {
+              "pid": 1601572,
+              "cpu_ticks": 7,
+              "threads": 7
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601556,
+              "cpu_ticks": 24,
+              "threads": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 441.385,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 16,
+              "threads": 11
+            }
+          ]
+        },
+        {
+          "shard": "lifecycle",
+          "processes": [
+            {
+              "pid": 1601541,
+              "cpu_ticks": 10,
+              "threads": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 452.219,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 18,
+              "threads": 11
+            },
+            {
+              "pid": 1601604,
+              "cpu_ticks": 0,
+              "threads": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 462.942,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 19,
+              "threads": 11
+            },
+            {
+              "pid": 1601604,
+              "cpu_ticks": 1,
+              "threads": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 473.771,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 19,
+              "threads": 11
+            },
+            {
+              "pid": 1601604,
+              "cpu_ticks": 2,
+              "threads": 6
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 484.672,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 20,
+              "threads": 11
+            },
+            {
+              "pid": 1601604,
+              "cpu_ticks": 3,
+              "threads": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 495.56,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 21,
+              "threads": 11
+            },
+            {
+              "pid": 1601604,
+              "cpu_ticks": 5,
+              "threads": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 506.403,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 22,
+              "threads": 11
+            },
+            {
+              "pid": 1601604,
+              "cpu_ticks": 6,
+              "threads": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 517.33,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 23,
+              "threads": 11
+            },
+            {
+              "pid": 1601604,
+              "cpu_ticks": 7,
+              "threads": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 528.365,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 25,
+              "threads": 11
+            },
+            {
+              "pid": 1601604,
+              "cpu_ticks": 8,
+              "threads": 7
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 539.38,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 27,
+              "threads": 11
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 550.224,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            },
+            {
+              "pid": 1601557,
+              "cpu_ticks": 28,
+              "threads": 11
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "wall_ms": 560.623,
+      "running": [
+        {
+          "shard": "harness",
+          "processes": [
+            {
+              "pid": 1601540,
+              "cpu_ticks": 10,
+              "threads": 7
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

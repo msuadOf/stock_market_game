@@ -1,0 +1,22 @@
+[
+  {
+    "path": "scripts/simulation/escrow-performance-harness.test.mjs",
+    "sha256": "c8a2ddcd4bb2a34ddede0ada914e647af0b8cedcd249fdb8cd31b5dd0e8385db",
+    "bytes": 25735
+  },
+  {
+    "path": "scripts/simulation/escrow-performance-harness.mjs",
+    "sha256": "9a7b769811169fd83dd668f322803b509a0d06fa136091966103e79f356090b6",
+    "bytes": 35757
+  },
+  {
+    "path": "scripts/simulation/escrow-source-manifest.mjs",
+    "sha256": "d610094dab9014d53927f000a389af3724a9b1c3ba5c9076fa6c5f1416cb3939",
+    "bytes": 2748
+  },
+  {
+    "path": "scripts/run-with-deadline.mjs",
+    "sha256": "3f391c87ab5032c3c9acfea70a131a8d1694c0f94a27d1e3f69c1b43412f3233",
+    "bytes": 12307
+  }
+]

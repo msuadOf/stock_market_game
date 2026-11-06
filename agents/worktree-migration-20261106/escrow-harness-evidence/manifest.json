@@ -1,0 +1,205 @@
+[
+  {
+    "source": ".worktree/escrow-harness-contract/agents/escrow-harness-contract/README.md",
+    "archive": "worktree/README.md",
+    "source_sha256": "7f43cea3910687788b5ffe24f0e602261ac8d86620e67800fb5ce59c4195d4c4",
+    "archive_sha256": "7f43cea3910687788b5ffe24f0e602261ac8d86620e67800fb5ce59c4195d4c4",
+    "path_replacements": 0
+  },
+  {
+    "source": ".worktree/escrow-harness-contract/agents/escrow-harness-contract/attempt1-green-harness.stderr",
+    "archive": "worktree/attempt1-green-harness.stderr",
+    "source_sha256": "d0ebb86e275cd92eb1d6df203cd2616b61cfe02d0cbdadfe0b71ebae146ec6e4",
+    "archive_sha256": "d0ebb86e275cd92eb1d6df203cd2616b61cfe02d0cbdadfe0b71ebae146ec6e4",
+    "path_replacements": 0
+  },
+  {
+    "source": ".worktree/escrow-harness-contract/agents/escrow-harness-contract/attempt1-green-harness.stdout",
+    "archive": "worktree/attempt1-green-harness.stdout",
+    "source_sha256": "df44caba5cf1223f69bdbd7801e32d4e2e1db4eda0a489651f55a755dfc019e9",
+    "archive_sha256": "e8c329a1f6ae692999b235aab586f55f953f70dba3db8b910bffc9e81477f1fe",
+    "path_replacements": 9
+  },
+  {
+    "source": ".worktree/escrow-harness-contract/agents/escrow-harness-contract/attempt1-green-lifecycle.stderr",
+    "archive": "worktree/attempt1-green-lifecycle.stderr",
+    "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "archive_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "path_replacements": 0
+  },
+  {
+    "source": ".worktree/escrow-harness-contract/agents/escrow-harness-contract/attempt1-green-lifecycle.stdout",
+    "archive": "worktree/attempt1-green-lifecycle.stdout",
+    "source_sha256": "d09d5bb898adc6b2c931333d00eb978a47d61098ce7617e4f62f4e80e547efd9",
+    "archive_sha256": "d09d5bb898adc6b2c931333d00eb978a47d61098ce7617e4f62f4e80e547efd9",
+    "path_replacements": 0
+  },
+  {
+    "source": ".worktree/escrow-harness-contract/agents/escrow-harness-contract/attempt1-green-result.json",
+    "archive": "worktree/attempt1-green-result.json",
+    "source_sha256": "871e6a34a202f7791a884280f8a15161c789d2763ff751a6b67c3e20454a9fa8",
+    "archive_sha256": "0e7b5d3072b4e7e326c18ab17013c9a212ce3795a68875bd109d8940c29dcb2b",
+    "path_replacements": 6
+  },
+  {
+    "source": ".worktree/escrow-harness-contract/agents/escrow-harness-contract/final-wrapper.stderr",
+    "archive": "worktree/final-wrapper.stderr",
+    "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "archive_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "path_replacements": 0
+  },
+  {
+    "source": ".worktree/escrow-harness-contract/agents/escrow-harness-contract/final-wrapper.stdout",
+    "archive": "worktree/final-wrapper.stdout",
+    "source_sha256": "77419aa74499e1352d2108762829e016f36d501a1b6b4e770819e44efd912792",
+    "archive_sha256": "0e1f2b57ccc2433d2b77fb07589703a3164397772fbc08bfd44694a29dd56dd3",
+    "path_replacements": 6
+  },
+  {
+    "source": ".worktree/escrow-harness-contract/agents/escrow-harness-contract/fix.patch",
+    "archive": "worktree/fix.patch",
+    "source_sha256": "571d243d563b6106dc795bb4abe81b38e9d4ecce7a6cd4e60f09fbb0c4f0e7b0",
+    "archive_sha256": "571d243d563b6106dc795bb4abe81b38e9d4ecce7a6cd4e60f09fbb0c4f0e7b0",
+    "path_replacements": 0
+  },
+  {
+    "source": ".worktree/escrow-harness-contract/agents/escrow-harness-contract/green-harness.stderr",
+    "archive": "worktree/green-harness.stderr",
+    "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "archive_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "path_replacements": 0
+  },
+  {
+    "source": ".worktree/escrow-harness-contract/agents/escrow-harness-contract/green-harness.stdout",
+    "archive": "worktree/green-harness.stdout",
+    "source_sha256": "8ce1a1950bb0c7ea0c6b96011fb1293331b5532b90e85e81b71cbc941dbff7ab",
+    "archive_sha256": "8ce1a1950bb0c7ea0c6b96011fb1293331b5532b90e85e81b71cbc941dbff7ab",
+    "path_replacements": 0
+  },
+  {
+    "source": ".worktree/escrow-harness-contract/agents/escrow-harness-contract/green-lifecycle.stderr",
+    "archive": "worktree/green-lifecycle.stderr",
+    "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "archive_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "path_replacements": 0
+  },
+  {
+    "source": ".worktree/escrow-harness-contract/agents/escrow-harness-contract/green-lifecycle.stdout",
+    "archive": "worktree/green-lifecycle.stdout",
+    "source_sha256": "db6191ed8d26f63ee22a38a43b24b51522b59ac60bae61148e6d04a911b2ef3e",
+    "archive_sha256": "db6191ed8d26f63ee22a38a43b24b51522b59ac60bae61148e6d04a911b2ef3e",
+    "path_replacements": 0
+  },
+  {
+    "source": ".worktree/escrow-harness-contract/agents/escrow-harness-contract/green-result.json",
+    "archive": "worktree/green-result.json",
+    "source_sha256": "8567be36d9b0d9647c9c9bce7213c11fce8851bdf0408ac178263a40548a7f98",
+    "archive_sha256": "15e5c2bd50754d261835a0590cf212413a397697897815364bf5649512502c9c",
+    "path_replacements": 6
+  },
+  {
+    "source": ".worktree/escrow-harness-contract/agents/escrow-harness-contract/previous-gnu-green-harness.stderr",
+    "archive": "worktree/previous-gnu-green-harness.stderr",
+    "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "archive_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "path_replacements": 0
+  },
+  {
+    "source": ".worktree/escrow-harness-contract/agents/escrow-harness-contract/previous-gnu-green-harness.stdout",
+    "archive": "worktree/previous-gnu-green-harness.stdout",
+    "source_sha256": "6d33363c07bd7a7b007782a0aa2c6f533e5cee4571524418407c942b715e1531",
+    "archive_sha256": "6d33363c07bd7a7b007782a0aa2c6f533e5cee4571524418407c942b715e1531",
+    "path_replacements": 0
+  },
+  {
+    "source": ".worktree/escrow-harness-contract/agents/escrow-harness-contract/previous-gnu-green-lifecycle.stderr",
+    "archive": "worktree/previous-gnu-green-lifecycle.stderr",
+    "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "archive_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "path_replacements": 0
+  },
+  {
+    "source": ".worktree/escrow-harness-contract/agents/escrow-harness-contract/previous-gnu-green-lifecycle.stdout",
+    "archive": "worktree/previous-gnu-green-lifecycle.stdout",
+    "source_sha256": "c6e8fde458d8fb07688810c2d0d225f31ac474fd8cbfdb3df35e7f08e2decdf5",
+    "archive_sha256": "c6e8fde458d8fb07688810c2d0d225f31ac474fd8cbfdb3df35e7f08e2decdf5",
+    "path_replacements": 0
+  },
+  {
+    "source": ".worktree/escrow-harness-contract/agents/escrow-harness-contract/previous-gnu-green-result.json",
+    "archive": "worktree/previous-gnu-green-result.json",
+    "source_sha256": "ae8149822b3313c9e469c8326609e7b64f8ca510ca774779c3b674b3630a14e5",
+    "archive_sha256": "0c9190695b2df347f146d080617990e579a4a1d8a168dc4f0234d844cca73397",
+    "path_replacements": 6
+  },
+  {
+    "source": ".worktree/escrow-harness-contract/agents/escrow-harness-contract/previous-gnu-verification-receipt.json",
+    "archive": "worktree/previous-gnu-verification-receipt.json",
+    "source_sha256": "36e8e4e1e7ac548f4f407f2c5e2046fb52f44f9ed77c972ff032c2cc5756f74e",
+    "archive_sha256": "5c39ef53a34915a186cd6bf49349cde418fb7a17ce6fdf5c3ee0c02900db994b",
+    "path_replacements": 1
+  },
+  {
+    "source": ".worktree/escrow-harness-contract/agents/escrow-harness-contract/red-result.json",
+    "archive": "worktree/red-result.json",
+    "source_sha256": "dc7bf73d90f5799598cd68bc9f4fbb27a220b5f033231df8984a75deed632f31",
+    "archive_sha256": "f3819bbdc15bb2d2dda6950965d9fe612a29d8c14cca073d05e43f4538177631",
+    "path_replacements": 1
+  },
+  {
+    "source": ".worktree/escrow-harness-contract/agents/escrow-harness-contract/red.stderr",
+    "archive": "worktree/red.stderr",
+    "source_sha256": "d0ebb86e275cd92eb1d6df203cd2616b61cfe02d0cbdadfe0b71ebae146ec6e4",
+    "archive_sha256": "d0ebb86e275cd92eb1d6df203cd2616b61cfe02d0cbdadfe0b71ebae146ec6e4",
+    "path_replacements": 0
+  },
+  {
+    "source": ".worktree/escrow-harness-contract/agents/escrow-harness-contract/red.stdout",
+    "archive": "worktree/red.stdout",
+    "source_sha256": "981a53e771ead09e787a08983051bc3a0ab44bc92a2574068188b0909a2595e4",
+    "archive_sha256": "d3cd0f7d71ce38a72b032f660c4bf498ebfa9cedfb61d64c782f47698b14b4c4",
+    "path_replacements": 61
+  },
+  {
+    "source": ".worktree/escrow-harness-contract/agents/escrow-harness-contract/retirement-commit.txt",
+    "archive": "worktree/retirement-commit.txt",
+    "source_sha256": "3bed1fcd02efa35eadd05d27d5169962116f01fcfe8bb993555eba8152f1ad4a",
+    "archive_sha256": "3bed1fcd02efa35eadd05d27d5169962116f01fcfe8bb993555eba8152f1ad4a",
+    "path_replacements": 0
+  },
+  {
+    "source": ".worktree/escrow-harness-contract/agents/escrow-harness-contract/source-lock-after.json",
+    "archive": "worktree/source-lock-after.json",
+    "source_sha256": "7216127b2f87913785819dd8777186de51094c38a3c67a02a3a94b3976e6a21c",
+    "archive_sha256": "7216127b2f87913785819dd8777186de51094c38a3c67a02a3a94b3976e6a21c",
+    "path_replacements": 0
+  },
+  {
+    "source": ".worktree/escrow-harness-contract/agents/escrow-harness-contract/source-lock-before.json",
+    "archive": "worktree/source-lock-before.json",
+    "source_sha256": "6f7699f1766b681651df1952a56d95690abeec58c67c93a08ddf5fc1be4d11e8",
+    "archive_sha256": "6f7699f1766b681651df1952a56d95690abeec58c67c93a08ddf5fc1be4d11e8",
+    "path_replacements": 0
+  },
+  {
+    "source": ".worktree/escrow-harness-contract/agents/escrow-harness-contract/verification-receipt.json",
+    "archive": "worktree/verification-receipt.json",
+    "source_sha256": "4ec268ef63a599616276db46505c8f936cdf9118c194ef36bd40db7dbc42ff8e",
+    "archive_sha256": "0aeb65a85e5725d5df32d65b4760392965954a932971ff949cbb69a72d7dc27f",
+    "path_replacements": 1
+  },
+  {
+    "source": ".worktree/escrow-harness-contract/agents/escrow-harness-contract/verify.py",
+    "archive": "worktree/verify.py",
+    "source_sha256": "8e997f583d7d86a2fe036932fb1b2f951b750dd7c4057f92b86b609767529289",
+    "archive_sha256": "8e997f583d7d86a2fe036932fb1b2f951b750dd7c4057f92b86b609767529289",
+    "path_replacements": 0
+  },
+  {
+    "source": "agents/escrow-harness-contract/sol-review.md",
+    "archive": "root-workspace/sol-review.md",
+    "source_sha256": "674e9f54d0fb6148bd49f3feac6594e9c3a46ac723d2da9eca34b91a00059588",
+    "archive_sha256": "674e9f54d0fb6148bd49f3feac6594e9c3a46ac723d2da9eca34b91a00059588",
+    "path_replacements": 0
+  }
+]

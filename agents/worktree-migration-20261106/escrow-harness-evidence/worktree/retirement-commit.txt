@@ -1,0 +1,78 @@
+commit f86684ad615132d89afb8a29496ec2698ce878c5
+Author: msuad <1445617868@qq.com>
+Date:   Sun Oct 18 17:29:27 2026 +0800
+
+    fix(engine): 再复核六阻断闭合——DayBoundary seq 序/缓冲守卫/隔离消费面/性能链退役/预算链贯通
+    
+    收官再复核（closing-independent 第二轮）六阻断+两建议全修：
+    
+    1. DayBoundary seq 序（阻断 3 最终形态）：collect_drained_events 拆
+       两段——竞价事件段立即编号（DayBoundary 前输出）；
+       collect_drained_lifecycle_after_boundary 新段在 DayBoundary 序号
+       分配后由 failure.rs 撤单位编号（编号序=输出序全链成立：
+       auction→DayBoundary→cancel）。driver 直调路径
+       （day_end_with_runtime_market_day 无 DayBoundary）两段连续调用。
+    2. run_day_end 全失败路径清空事实缓冲（阻断 4 最终形态）：外层
+       result.is_err() 守卫（Drain/组翻/校验任一失败都清——此前仅
+       abort_day_end 清，内部失败绕过使缓冲 2→4 双载实测）。
+    3. Order.seq 保留本地 serial（建议 1）：save 投影 seq=
+       desk_order_serial(serial)（每股时间序域——orderbook 恢复约束
+       seq<next_seq 同基）；id 才是 wire 编码身份。
+    4. market-ui-report 跨源隔离前置检查退役（阻断 6 最后消费者）。
+    5. .cargo 注释修正（阻断 7）：如实登记 rustflags 跨目录链**合并**
+       非替换——空数组不屏蔽上级参数；RUSTFLAGS="" 实证全绿；合并
+       main 后主仓配置更新即消（环境待合并项）。
+    6. 性能验证链退役收口（阻断 8）：escrow-performance-harness 的
+       rayon_threads 键/rayon_registry_capacity_samples 产出/容量对照
+       断言退役（与 matrix schema 同步）；prepare-config 端点构建腿
+       显式失败指引（端点已随 A6 删除——测试改断言退役门禁）；
+       matrix 测试 fixture 同步。
+    7. C 桶预算链贯通（阻断 9 最终形态）：新增
+       restore_verification_checkpoint_with_compute（与
+       from_game_for_verification 对偶）；harness 全部 checkpoint
+       restore 点（negative_control 两处/restore_slot/initial 分配
+       恢复）与 capture_runtime_with_session 链均穿 compute——
+       构造→保存→恢复全链预算隔离成立（此前恢复点重绑
+       shared_default 128 池实测）。
+    
+    红证：再复核报告实测（DayBoundary(24) 晚于撤单(23)/缓冲 2→4/
+    harness 恢复后 workers 128/E0425）；绿证：lib 1661/0、batch4
+    14/14、step_skeleton 7/7、scripts 165/0（matrix 17/17）。
+
+diff --git a/scripts/simulation/escrow-performance-harness.mjs b/scripts/simulation/escrow-performance-harness.mjs
+index 8395defa..e5fcf6b9 100644
+--- a/scripts/simulation/escrow-performance-harness.mjs
++++ b/scripts/simulation/escrow-performance-harness.mjs
+@@ -120,10 +120,11 @@ export function validatePerformanceWorkload(workload) {
+ }
+ 
+ export function validateEnvironmentContract(environmentContract) {
+-  exactKeys(environmentContract, ["cargo", "rustc", "target", "rustflags", "cargo_jobs", "rayon_threads"], "performance environment contract");
++  // 批 9 A7/A10 收尾：rayon_threads 键退役（与 baseline-run/prepare-config 同步）。
++  exactKeys(environmentContract, ["cargo", "rustc", "target", "rustflags", "cargo_jobs"], "performance environment contract");
+   for (const field of ["cargo", "rustc", "target", "rustflags"]) if (typeof environmentContract[field] !== "string") fail(`performance environment contract ${field} must be a string`);
+   if (!Number.isSafeInteger(environmentContract.cargo_jobs) || environmentContract.cargo_jobs <= 0) fail("performance environment contract cargo_jobs must be positive");
+-  if (!Number.isSafeInteger(environmentContract.rayon_threads) || environmentContract.rayon_threads <= 0) fail("performance environment contract rayon_threads must be positive");
++  // rayon_threads 校验随键退役。
+   return environmentContract;
+ }
+ 
+@@ -300,9 +301,7 @@ export function validateMeasuredSample(measured, endpoint, workload, label, isAf
+   if (sample.source_fingerprint !== endpoint.source_fingerprint) fail(`${label} source fingerprint differs from the configured endpoint`);
+   if (isAfter && (sample.phase_wall_ns === null || sample.runnable_samples === null)) fail(`${label} new engine sample must include phase wall and runnable samples`);
+   if (isAfter && JSON.stringify(Object.keys(sample.phase_wall_ns).sort()) !== JSON.stringify([...REQUIRED_PHASES].sort())) fail(`${label} new engine phase wall must include all PhaseTimingPhase names exactly once`);
+-  if (isAfter && !sample.runnable_samples.every((capacity) => capacity === environmentContract.rayon_threads)) {
+-    fail(`${label} Rayon registry-capacity samples differ from the configured pool size`);
+-  }
++  // 批 9 A7 收尾：Rayon registry-capacity 对照退役（垫片无全局注册表）。
+   const ticksPerSecond = sample.completed_ticks * 1_000_000_000 / Number(wallNs);
+   if (!Number.isFinite(ticksPerSecond) || ticksPerSecond <= 0) fail(`${label} ticks_per_second is not finite and positive`);
+   return {
+@@ -314,7 +313,6 @@ export function validateMeasuredSample(measured, endpoint, workload, label, isAf
+     ticks_per_second: ticksPerSecond,
+     phase_wall_ns: sample.phase_wall_ns,
+     process_tree_thread_state: measured.process_tree_thread_state,
+-    rayon_registry_capacity_samples: sample.runnable_samples,
+     stderr: measured.stderr,
+   };
+ }

@@ -1,0 +1,28 @@
+{
+  "command": "node scripts/run-with-deadline.mjs 10000 -- python3 agents/escrow-harness-contract/verify.py",
+  "cwd": "<WORKSPACE>/.worktree/escrow-harness-contract",
+  "exit_code": 0,
+  "tool_exec_wall_seconds": 0.568809603,
+  "driver_batch_wall_ms": 570.775,
+  "shared_process_tree_supervisor_ms": 10000,
+  "per_shard_supervisor_ms": 10000,
+  "per_case_timeout_ms": 10000,
+  "observed_process_pids": [
+    1601540,
+    1601541,
+    1601556,
+    1601557,
+    1601571,
+    1601572,
+    1601592,
+    1601604
+  ],
+  "observed_pids_still_present": [],
+  "fixture_residue": [],
+  "shard_exit_codes": [
+    0,
+    0
+  ],
+  "test_sha256": "5b2794905c3a8746720344532291d6607916faa708d75102d293bfedacf7eabe",
+  "patch_sha256": "571d243d563b6106dc795bb4abe81b38e9d4ecce7a6cd4e60f09fbb0c4f0e7b0"
+}

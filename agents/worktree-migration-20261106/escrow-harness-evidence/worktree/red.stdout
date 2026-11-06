@@ -1,0 +1,229 @@
+▶ performance harness
+  ✖ records actual paired samples and ratios without a preset speed threshold (2.667062ms)
+  ✖ rejects incomparable tick counts, source fingerprints and absent new-engine instrumentation (3.864216ms)
+  ✔ treats explicit BLOCKED/FAIL samples as failures and never emits a ratio (0.489643ms)
+  ✔ rejects malformed or decorated command stdout instead of guessing a sample (0.39371ms)
+  ✖ does not produce a report or comparison when a measured condition drifts (1.534962ms)
+  ✖ fails closed when source bytes do not match or drift during a sample (0.463562ms)
+  ✔ rejects invalid, overflowing, or non-finite measurement numbers (2.669052ms)
+  ✖ rejects hidden environment differences and invalid sample-count shortcuts in config (0.460322ms)
+  ✔ stops measured wall time at child close instead of charging the sampler sleep (185.763325ms)
+  ✔ fails loudly when the benchmark command exits non-zero (93.510985ms)
+  ✔ uses the fixed perf-report.json name and writes identical evidence idempotently (2.047446ms)
+  ✖ parses a config file once and reuses a matching PASS report without rerunning commands (2.419266ms)
+✖ performance harness (298.388361ms)
+▶ PerformanceComparisonRun 生命周期
+  ✖ 配置快照与不同 run 的样本独立，失败不能形成 PASS 报告 (0.311249ms)
+✖ PerformanceComparisonRun 生命周期 (0.465273ms)
+▶ ProcessSampleRun 失败边界
+  ✔ 真实 sampler 失败终止仍运行的 child 并收敛其 close (73.240941ms)
+  ✔ sampler 提前失败即时终止 child，等待 close 后保留采样错误 (0.789471ms)
+  ✔ spawn 失败显式传播，零 RSS 样本不生成测量结果 (111.096545ms)
+✔ ProcessSampleRun 失败边界 (185.603881ms)
+▶ PerformanceComparisonRun report reuse
+  ✖ 所有已有 comparison key、endpoint 和测量条件变化均拒绝复用 (0.654338ms)
+✖ PerformanceComparisonRun report reuse (0.849734ms)
+▶ PerformanceComparisonRun 证据所有权
+  ✖ 外部 sample 不能绕过成功的配对测量生成 PASS (0.36337ms)
+  ✖ 消费者修改报告的嵌套证据不会污染 run 后续报告 (0.276847ms)
+✖ PerformanceComparisonRun 证据所有权 (0.808952ms)
+▶ runProcessSample 异步 facade
+  ✔ 缺少或空 options 仍返回 rejected Promise (0.331269ms)
+✔ runProcessSample 异步 facade (0.456292ms)
+ℹ tests 20
+ℹ suites 6
+ℹ pass 10
+ℹ fail 10
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 529.192626
+
+✖ failing tests:
+
+test at scripts/simulation/escrow-performance-harness.test.mjs:95:3
+✖ records actual paired samples and ratios without a preset speed threshold (2.667062ms)
+  Error: performance environment contract keys mismatch
+      at fail (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:28:9)
+      at exactKeys (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:39:58)
+      at validateEnvironmentContract (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:124:3)
+      at validatePerformanceConfig (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:135:3)
+      at new PerformanceComparisonRun (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:496:5)
+      at runPerformanceHarness (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:610:15)
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.test.mjs:97:26)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.start (node:internal/test_runner/test:1096:17)
+
+test at scripts/simulation/escrow-performance-harness.test.mjs:129:3
+✖ rejects incomparable tick counts, source fingerprints and absent new-engine instrumentation (3.864216ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.test.mjs:149:12)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Suite.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Promise.all (index 0)
+      at async Suite.run (node:internal/test_runner/test:1619:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /registry-capacity/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at scripts/simulation/escrow-performance-harness.test.mjs:215:3
+✖ does not produce a report or comparison when a measured condition drifts (1.534962ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /workload.*differ/. Input:
+  
+  'Error: performance environment contract keys mismatch'
+  
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.test.mjs:217:5)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: performance environment contract keys mismatch
+        at fail (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:28:9)
+        at exactKeys (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:39:58)
+        at validateEnvironmentContract (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:124:3)
+        at validatePerformanceConfig (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:135:3)
+        at new PerformanceComparisonRun (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:496:5)
+        at runPerformanceHarness (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:610:15)
+        at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.test.mjs:218:7)
+        at Test.runInAsyncScope (node:async_hooks:226:14)
+        at Test.run (node:internal/test_runner/test:1201:25)
+        at Suite.processPendingSubtests (node:internal/test_runner/test:831:18),
+    expected: /workload.*differ/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at scripts/simulation/escrow-performance-harness.test.mjs:234:3
+✖ fails closed when source bytes do not match or drift during a sample (0.463562ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /source bytes.*fingerprint/. Input:
+  
+  'Error: performance environment contract keys mismatch'
+  
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.test.mjs:236:5)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: performance environment contract keys mismatch
+        at fail (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:28:9)
+        at exactKeys (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:39:58)
+        at validateEnvironmentContract (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:124:3)
+        at validatePerformanceConfig (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:135:3)
+        at new PerformanceComparisonRun (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:496:5)
+        at runPerformanceHarness (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:610:15)
+        at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.test.mjs:237:7)
+        at Test.runInAsyncScope (node:async_hooks:226:14)
+        at Test.run (node:internal/test_runner/test:1201:25)
+        at Suite.processPendingSubtests (node:internal/test_runner/test:831:18),
+    expected: /source bytes.*fingerprint/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at scripts/simulation/escrow-performance-harness.test.mjs:290:3
+✖ rejects hidden environment differences and invalid sample-count shortcuts in config (0.460322ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /sample_count/. Input:
+  
+  'Error: performance environment contract keys mismatch'
+  
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.test.mjs:297:12)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Suite.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: Error: performance environment contract keys mismatch
+        at fail (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:28:9)
+        at exactKeys (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:39:58)
+        at validateEnvironmentContract (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:124:3)
+        at validatePerformanceConfig (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:135:3)
+        at file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.test.mjs:297:25
+        at getActual (node:assert:586:5)
+        at strict.throws (node:assert:734:24)
+        at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.test.mjs:297:12)
+        at Test.runInAsyncScope (node:async_hooks:226:14)
+        at Test.run (node:internal/test_runner/test:1201:25),
+    expected: /sample_count/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at scripts/simulation/escrow-performance-harness.test.mjs:362:3
+✖ parses a config file once and reuses a matching PASS report without rerunning commands (2.419266ms)
+  Error: performance environment contract keys mismatch
+      at fail (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:28:9)
+      at exactKeys (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:39:58)
+      at validateEnvironmentContract (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:124:3)
+      at validatePerformanceConfig (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:135:3)
+      at main (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:669:3)
+      at async TestContext.<anonymous> (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.test.mjs:378:19)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Suite.processPendingSubtests (node:internal/test_runner/test:831:7)
+
+test at scripts/simulation/escrow-performance-harness.test.mjs:392:3
+✖ 配置快照与不同 run 的样本独立，失败不能形成 PASS 报告 (0.311249ms)
+  Error: performance environment contract keys mismatch
+      at fail (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:28:9)
+      at exactKeys (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:39:58)
+      at validateEnvironmentContract (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:124:3)
+      at validatePerformanceConfig (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:135:3)
+      at new PerformanceComparisonRun (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:496:5)
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.test.mjs:395:19)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.start (node:internal/test_runner/test:1096:17)
+      at node:internal/test_runner/test:1617:71
+
+test at scripts/simulation/escrow-performance-harness.test.mjs:441:3
+✖ 所有已有 comparison key、endpoint 和测量条件变化均拒绝复用 (0.654338ms)
+  Error: performance environment contract keys mismatch
+      at fail (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:28:9)
+      at exactKeys (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:39:58)
+      at validateEnvironmentContract (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:124:3)
+      at validatePerformanceConfig (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:135:3)
+      at new PerformanceComparisonRun (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:496:5)
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.test.mjs:442:17)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.start (node:internal/test_runner/test:1096:17)
+      at node:internal/test_runner/test:1617:71
+
+test at scripts/simulation/escrow-performance-harness.test.mjs:466:3
+✖ 外部 sample 不能绕过成功的配对测量生成 PASS (0.36337ms)
+  Error: performance environment contract keys mismatch
+      at fail (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:28:9)
+      at exactKeys (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:39:58)
+      at validateEnvironmentContract (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:124:3)
+      at validatePerformanceConfig (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:135:3)
+      at new PerformanceComparisonRun (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:496:5)
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.test.mjs:467:17)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.start (node:internal/test_runner/test:1096:17)
+      at node:internal/test_runner/test:1617:71
+
+test at scripts/simulation/escrow-performance-harness.test.mjs:473:3
+✖ 消费者修改报告的嵌套证据不会污染 run 后续报告 (0.276847ms)
+  Error: performance environment contract keys mismatch
+      at fail (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:28:9)
+      at exactKeys (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:39:58)
+      at validateEnvironmentContract (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:124:3)
+      at validatePerformanceConfig (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:135:3)
+      at new PerformanceComparisonRun (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.mjs:496:5)
+      at TestContext.<anonymous> (file://<WORKSPACE>/.worktree/escrow-harness-contract/scripts/simulation/escrow-performance-harness.test.mjs:474:17)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Suite.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
