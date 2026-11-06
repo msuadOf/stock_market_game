@@ -1,0 +1,41 @@
+diff --git a/agents/branch-completion/r4-production/run-clock-fixture.mjs b/agents/branch-completion/r4-production/run-clock-fixture.mjs
+index b36df627..8d693836 100644
+--- a/agents/branch-completion/r4-production/run-clock-fixture.mjs
++++ b/agents/branch-completion/r4-production/run-clock-fixture.mjs
+@@ -5,17 +5,21 @@ import { createHash } from "node:crypto";
+ const root = "<WORKSPACE_ROOT>";
+ const helper = `${root}/.worktree/main-merge-2026-10-25/scripts/run-with-deadline.mjs`;
+ const { runWithDeadline } = await import(helper);
+-const [batch, phase] = process.argv.slice(2);
++const [batch, phase, suite = "clock"] = process.argv.slice(2);
+ if (!/^(red|green)[0-9]+$/.test(batch) || !["build", "tests"].includes(phase)) throw Error("批次或阶段非法");
++if (!["clock", "stage"].includes(suite)) throw Error("未知私有fixture");
+ const hash = (path) => {
+   const digest = createHash("sha256"), descriptor = openSync(path, "r"), buffer = Buffer.alloc(4 * 1024 * 1024);
+   try { let size; while ((size = readSync(descriptor, buffer, 0, buffer.length, null)) > 0) digest.update(buffer.subarray(0, size)); return digest.digest("hex"); }
+   finally { closeSync(descriptor); }
+ };
+ if (hash(helper) !== "de7fd2a82bc66e7a62fbc487002727b71ad28b69c1e645f82fa84bbfdb068916") throw Error("main v3 supervisor 漂移");
+-const prefix = `agents/branch-completion/r4-production/logs/clock-anchor-${batch}`;
++const label = suite === "clock" ? "clock-anchor" : "stage-evidence";
++const prefix = `agents/branch-completion/r4-production/logs/${label}-${batch}`;
+ if (existsSync(`${prefix}-${phase}.json`) || existsSync(`${prefix}-${phase}.log`)) throw Error("禁止覆盖旧证据");
+-const sources = ["agents/branch-completion/r4-production/clock-anchor-fixture.rs", "packages/engine/src/session/r4_clock_anchor.rs", "packages/engine/src/session/exchange_calendar_model.rs", "packages/engine/src/observation/information_clock.rs"];
++const sources = suite === "clock"
++  ? ["agents/branch-completion/r4-production/clock-anchor-fixture.rs", "packages/engine/src/session/r4_clock_anchor.rs", "packages/engine/src/session/exchange_calendar_model.rs", "packages/engine/src/observation/information_clock.rs"]
++  : ["agents/branch-completion/r4-production/stage-evidence-fixture.rs", "packages/engine/src/runtime/admin_stage_evidence.rs"];
+ const snapshot = () => Object.fromEntries(sources.map((path) => [path, hash(path)]));
+ const bindingPath = `${root}/agents/branch-completion/main-current-normal-rlib-2026-10-26/artifact-binding.json`;
+ const binding = JSON.parse(readFileSync(bindingPath, "utf8")), library = binding.artifacts.find((entry) => entry.normal_rlib);
+@@ -23,9 +27,9 @@ if (binding.head !== "6ac167e1d98d1a56b1307822f311d0277d624003" || hash(library.
+ const deps = `${root}/.tmp/main-current-normal-rlib-2026-10-26/target/debug/deps`;
+ const thiserror = `${deps}/libthiserror-ba5f344727a28423.rlib`;
+ const dependencies = () => ({ engine: hash(library.sealed), thiserror: hash(thiserror), binding: hash(bindingPath), supervisor: hash(helper) });
+-const binary = `${root}/.tmp/company-r4-production/clock-anchor-${batch}`;
++const binary = `${root}/.tmp/company-r4-production/${label}-${batch}`;
+ const command = phase === "build" ? "rustc" : binary;
+-const args = phase === "build" ? ["--edition=2021", "--test", sources[0], "--extern", `engine=${library.sealed}`, "--extern", `thiserror=${deps}/libthiserror-ba5f344727a28423.rlib`, "-L", `dependency=${deps}`, "-C", "codegen-units=8", "-C", "debuginfo=0", "-C", "link-arg=-fuse-ld=lld", "-A", "dead_code", "-o", binary] : ["r4_anchor_", "--test-threads=8", "--nocapture"];
++const args = phase === "build" ? ["--edition=2021", "--test", sources[0], "--extern", `engine=${library.sealed}`, "--extern", `thiserror=${deps}/libthiserror-ba5f344727a28423.rlib`, "-L", `dependency=${deps}`, "-C", "codegen-units=8", "-C", "debuginfo=0", "-C", "link-arg=-fuse-ld=lld", "-A", "dead_code", "-o", binary] : [suite === "clock" ? "r4_anchor_" : "stage_identity_", "--test-threads=8", "--nocapture"];
+ const record = { command, args, timeout_ms: 10000, supervisor_sha256: hash(helper), runner_sha256: hash(fileURLToPath(import.meta.url)), engine_binding_sha256: hash(bindingPath), actual_engine_sha256: hash(library.sealed), dependencies_before: dependencies(), source_before: snapshot(), started_at: new Date().toISOString() };
+ if (phase === "tests") {
+   const built = JSON.parse(readFileSync(`${prefix}-build.json`, "utf8"));
