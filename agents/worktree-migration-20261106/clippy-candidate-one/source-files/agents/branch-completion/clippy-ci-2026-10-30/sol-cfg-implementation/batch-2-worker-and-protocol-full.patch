@@ -1,0 +1,389 @@
+diff --git a/packages/engine/src/runtime/coordinator.rs b/packages/engine/src/runtime/coordinator.rs
+index 499a800f..ee518a56 100644
+--- a/packages/engine/src/runtime/coordinator.rs
++++ b/packages/engine/src/runtime/coordinator.rs
+@@ -135,7 +135,7 @@ pub enum RoundOutcome {
+ }
+ 
+ /// 收束一轮：收齐 G 个 `GroupReport` + N 个 `DeskReport`。
+-pub fn converge_round(
++pub(crate) fn converge_round(
+     up_rx: &Receiver<UpMsg>,
+     n_groups: usize,
+     n_stocks: usize,
+@@ -363,7 +363,7 @@ pub fn converge_round(
+ }
+ 
+ /// 广播 Start（每股/每组的下行 channel 逐个 send，无锁无惊群）。
+-pub fn broadcast_start(
++pub(crate) fn broadcast_start(
+     group_txs: &[Sender<super::protocol::GroupIn>],
+     tick: u64,
+     calendar: Arc<super::MarketTickContext>,
+@@ -396,7 +396,7 @@ pub fn broadcast_start(
+ }
+ 
+ /// 广播 Continue（仅组；交易部经组的新一轮 Ops 感知轮次）。
+-pub fn broadcast_continue(
++pub(crate) fn broadcast_continue(
+     group_txs: &[Sender<super::protocol::GroupIn>],
+     tick: u64,
+     round: u32,
+diff --git a/packages/engine/src/runtime/desk.rs b/packages/engine/src/runtime/desk.rs
+index de93d788..463a6a5f 100644
+--- a/packages/engine/src/runtime/desk.rs
++++ b/packages/engine/src/runtime/desk.rs
+@@ -21,7 +21,7 @@ use super::fees::{buy_purse_limit, buyer_charge, seller_charge, FeeQuote};
+ use super::protocol::{
+     DeskBatch, DeskIn, DeskMsg, DeskReport, RoutedPrice, RuntimeError, UpMsg, WorkerId,
+ };
+-use super::watchdog::{worker_recv, WatchdogConfig};
++use super::watchdog::worker_recv;
+ use super::{DeskReceipt, Entity, FillFact, OrderRef, Owner, ReceiptKind, StockIdx};
+ use crate::config::GameConfig;
+ use crate::money::Money;
+@@ -30,7 +30,7 @@ use crate::orderbook::auction_clearing::{select_clearing, ClearingOrder};
+ use crate::orderbook::Side;
+ use crate::StockExchange;
+ use std::collections::{BTreeMap, VecDeque};
+-use std::sync::atomic::{AtomicBool, Ordering};
++use std::sync::atomic::Ordering;
+ use std::sync::mpsc::{Receiver, Sender};
+ use std::sync::Arc;
+ mod repurchase;
+@@ -3415,18 +3415,21 @@ fn build_resting_facts(state: &DeskState) -> Vec<super::protocol::RestingFact> {
+     orders
+ }
+ 
+-pub fn desk_main(
++pub(crate) fn desk_main(
+     mut setup: DeskSetup,
+     n_groups: usize,
+     config: Arc<GameConfig>,
+     rx: Receiver<DeskMsg>,
+     group_txs: Vec<Sender<super::protocol::GroupIn>>,
+-    up_tx: Sender<UpMsg>,
+-    abort: Arc<AtomicBool>,
+-    shutdown: Arc<AtomicBool>,
+-    watchdog: WatchdogConfig,
+-    capture: Arc<std::sync::Mutex<crate::verification_evidence::PhaseTimingBinding>>,
++    context: super::worker_context::WorkerContext,
+ ) -> Result<(), RuntimeError> {
++    let super::worker_context::WorkerContext {
++        up_tx,
++        abort,
++        shutdown,
++        watchdog,
++        capture,
++    } = context;
+     /// D4：消息处理期安装捕获绑定（无捕获零开销；上报在绑定释放后）。
+     fn with_capture<R>(
+         capture: &Arc<std::sync::Mutex<crate::verification_evidence::PhaseTimingBinding>>,
+diff --git a/packages/engine/src/runtime/drive.rs b/packages/engine/src/runtime/drive.rs
+index f62464d4..76f316f9 100644
+--- a/packages/engine/src/runtime/drive.rs
++++ b/packages/engine/src/runtime/drive.rs
+@@ -1926,7 +1926,7 @@ impl RuntimeDriver {
+     /// 清簿撤单事实收集进 drained 缓冲（调用方 take_drained_events 取走）。
+     /// 日界批：收盘竞价成交随 Drain 应答上行——事件/个人确认在此消费
+     /// （civil_date=当日；receipts 返回调用方即时入账）。
+-    pub fn world_day_end_for_step(
++    pub(crate) fn world_day_end_for_step(
+         &mut self,
+         session: &mut GameSession,
+     ) -> Result<Vec<crate::session::personal_trade_history::PendingTradeReceipt>, String> {
+diff --git a/packages/engine/src/runtime/group.rs b/packages/engine/src/runtime/group.rs
+index 15b0b13f..4dd0a2f2 100644
+--- a/packages/engine/src/runtime/group.rs
++++ b/packages/engine/src/runtime/group.rs
+@@ -16,12 +16,14 @@ use super::protocol::{
+     AdminRight, DayEndDirective, DeskBatch, DeskIn, GroupIn, GroupReport, RoutedPrice,
+     RuntimeError, UpMsg, WorkerId,
+ };
+-use super::watchdog::{spin_config, worker_recv_spin, WatchdogConfig};
++use super::watchdog::{spin_config, worker_recv_spin};
+ use super::{Entity, FillFact, GroupIdx, LocalIdx, OrderRef, StockIdx};
+ use crate::config::GameConfig;
+ use crate::money::Money;
+ use crate::orderbook::Side;
+-use std::sync::atomic::{AtomicBool, Ordering};
++#[cfg(test)]
++use std::sync::atomic::AtomicBool;
++use std::sync::atomic::Ordering;
+ use std::sync::mpsc::{Receiver, Sender};
+ use std::sync::Arc;
+ use std::time::Duration;
+@@ -6116,16 +6118,19 @@ fn fnv(state: u64, value: u64) -> u64 {
+ 
+ /// 组线程主循环（骨架）。panic 运输：处理体 `catch_unwind` 捕获 → 回滚自身
+ /// overlay → `TaskDied`（原 payload）→ Final 上交 → 退出。
+-pub fn group_main(
++pub(crate) fn group_main(
+     state: GroupState,
+     desk_txs: Vec<Sender<super::protocol::DeskMsg>>,
+     rx: Receiver<GroupIn>,
+-    up_tx: Sender<UpMsg>,
+-    abort: Arc<AtomicBool>,
+-    shutdown: Arc<AtomicBool>,
+-    watchdog: WatchdogConfig,
+-    capture: Arc<std::sync::Mutex<crate::verification_evidence::PhaseTimingBinding>>,
++    context: super::worker_context::WorkerContext,
+ ) -> Result<(), RuntimeError> {
++    let super::worker_context::WorkerContext {
++        up_tx,
++        abort,
++        shutdown,
++        watchdog,
++        capture,
++    } = context;
+     /// D4：每条消息处理期安装当前捕获绑定（无捕获=None 零开销；完成
+     /// 信号在作用域退出（绑定释放）后发出——沿用旧协议保证）。
+     fn with_capture<R>(
+@@ -7683,14 +7688,16 @@ mod v5_shutdown_idle_window_tests {
+                     state,
+                     vec![desk_tx],
+                     group_rx,
+-                    up_tx,
+-                    abort,
+-                    shutdown_flag,
+-                    crate::runtime::watchdog::WatchdogConfig {
+-                        normal: std::time::Duration::from_secs(30),
+-                        long: std::time::Duration::from_secs(120),
++                    crate::runtime::worker_context::WorkerContext {
++                        up_tx,
++                        abort,
++                        shutdown: shutdown_flag,
++                        watchdog: crate::runtime::watchdog::WatchdogConfig {
++                            normal: std::time::Duration::from_secs(30),
++                            long: std::time::Duration::from_secs(120),
++                        },
++                        capture,
+                     },
+-                    capture,
+                 )
+             })
+         };
+@@ -9049,14 +9056,16 @@ mod seal_failed_injection_tests {
+                     state,
+                     vec![_desk_tx],
+                     group_rx,
+-                    up_tx,
+-                    abort,
+-                    shutdown_flag,
+-                    crate::runtime::watchdog::WatchdogConfig {
+-                        normal: std::time::Duration::from_secs(30),
+-                        long: std::time::Duration::from_secs(120),
++                    crate::runtime::worker_context::WorkerContext {
++                        up_tx,
++                        abort,
++                        shutdown: shutdown_flag,
++                        watchdog: crate::runtime::watchdog::WatchdogConfig {
++                            normal: std::time::Duration::from_secs(30),
++                            long: std::time::Duration::from_secs(120),
++                        },
++                        capture,
+                     },
+-                    capture,
+                 )
+             })
+         };
+@@ -9138,14 +9147,16 @@ mod seal_failed_injection_tests {
+                     state,
+                     vec![_desk_tx],
+                     group_rx,
+-                    up_tx,
+-                    abort,
+-                    shutdown_flag,
+-                    crate::runtime::watchdog::WatchdogConfig {
+-                        normal: std::time::Duration::from_secs(30),
+-                        long: std::time::Duration::from_secs(120),
++                    crate::runtime::worker_context::WorkerContext {
++                        up_tx,
++                        abort,
++                        shutdown: shutdown_flag,
++                        watchdog: crate::runtime::watchdog::WatchdogConfig {
++                            normal: std::time::Duration::from_secs(30),
++                            long: std::time::Duration::from_secs(120),
++                        },
++                        capture,
+                     },
+-                    capture,
+                 )
+             })
+         };
+diff --git a/packages/engine/src/runtime/mod.rs b/packages/engine/src/runtime/mod.rs
+index 608ecc1c..29bf37ef 100644
+--- a/packages/engine/src/runtime/mod.rs
++++ b/packages/engine/src/runtime/mod.rs
+@@ -45,6 +45,7 @@ pub fn set_step_runtime_override(enabled: bool) -> Result<(), &'static str> {
+ mod entities;
+ mod facts;
+ mod protocol;
++mod worker_context;
+ #[cfg(test)]
+ pub(crate) use protocol::LifecycleKind;
+ pub(crate) use protocol::{RepurchasePreparePayload, RepurchaseProjectionInput, RuntimeError};
+diff --git a/packages/engine/src/runtime/protocol.rs b/packages/engine/src/runtime/protocol.rs
+index 860c871a..9b1aca53 100644
+--- a/packages/engine/src/runtime/protocol.rs
++++ b/packages/engine/src/runtime/protocol.rs
+@@ -905,7 +905,7 @@ pub struct GroupFlushWitnessForTest {
+ 
+ /// 组线程收件消息（coordinator 的控制消息与交易部的实体批次共用一个 mpsc；
+ /// FIFO + 收束因果序保证批次先于下一 Start 被处理）。
+-pub enum GroupIn {
++pub(crate) enum GroupIn {
+     /// 行政静点操作；事务生命周期不进入普通 tick 日志。
+     AdminPrepare {
+         id: AdminTransactionId,
+@@ -1345,7 +1345,7 @@ pub struct PendingStartRejection {
+ }
+ 
+ /// worker → 协调者的上行消息；panic payload 的 Debug 不展开载荷。
+-pub enum UpMsg {
++pub(crate) enum UpMsg {
+     /// 仅 pending 门在分派 Start 前产生；该组尚未发送本轮任何 Ops 或 final。
+     PendingStartRejected(PendingStartRejection),
+     /// 三阶段显式回执；Prepare 业务拒绝不终止 worker。
+diff --git a/packages/engine/src/runtime/world.rs b/packages/engine/src/runtime/world.rs
+index 9ac313d1..0926e52a 100644
+--- a/packages/engine/src/runtime/world.rs
++++ b/packages/engine/src/runtime/world.rs
+@@ -180,9 +180,9 @@ pub struct OpenDerivationRecord {
+     /// 账户。
+     pub account: crate::AccountId,
+     /// observe 输入个人态（红证同输入锚）。
+-    pub personal_in: crate::session::PlanPersonalState,
++    pub(crate) personal_in: crate::session::PlanPersonalState,
+     /// observe 输出个人态（演进后）。
+-    pub personal_out: crate::session::PlanPersonalState,
++    pub(crate) personal_out: crate::session::PlanPersonalState,
+     /// Lifecycle 携带的候选评估（账户序单元素）。
+     pub assessments: Vec<(crate::StockId, crate::plans::CandidateAssessment)>,
+     /// D3a-2c 件4：组内 Lifecycle 开仓消费产物（PlanOpen——红证锚；
+@@ -1197,7 +1197,16 @@ impl World {
+                     let capture = std::sync::Arc::clone(&capture_slot);
+                     move || {
+                         group_main(
+-                            state, desk_txs, rx, up_tx, abort, shutdown, watchdog, capture,
++                            state,
++                            desk_txs,
++                            rx,
++                            super::worker_context::WorkerContext {
++                                up_tx,
++                                abort,
++                                shutdown,
++                                watchdog,
++                                capture,
++                            },
+                         )
+                     }
+                 });
+@@ -1281,8 +1290,18 @@ impl World {
+                     let capture = std::sync::Arc::clone(&capture_slot);
+                     move || {
+                         desk_main(
+-                            setup, n_groups, config, rx, group_txs, up_tx, abort, shutdown,
+-                            watchdog, capture,
++                            setup,
++                            n_groups,
++                            config,
++                            rx,
++                            group_txs,
++                            super::worker_context::WorkerContext {
++                                up_tx,
++                                abort,
++                                shutdown,
++                                watchdog,
++                                capture,
++                            },
+                         )
+                     }
+                 });
+@@ -1568,7 +1587,7 @@ impl World {
+     }
+ 
+     #[cfg(test)]
+-    pub fn swap_group_sender_for_test(
++    pub(crate) fn swap_group_sender_for_test(
+         &mut self,
+         group: usize,
+         sender: Sender<GroupIn>,
+@@ -1652,7 +1671,7 @@ impl World {
+     }
+ 
+     #[cfg(test)]
+-    pub fn set_start_cleanup_message_for_test(&mut self, message: UpMsg) {
++    pub(crate) fn set_start_cleanup_message_for_test(&mut self, message: UpMsg) {
+         self.start_cleanup_message_for_test = Some(message);
+     }
+ 
+@@ -2369,7 +2388,10 @@ impl World {
+     }
+ 
+     /// D4：挂当前相位计时捕获（world 运行期组/部 worker 读取安装）。
+-    pub fn set_tick_capture(&mut self, binding: crate::verification_evidence::PhaseTimingBinding) {
++    pub(crate) fn set_tick_capture(
++        &mut self,
++        binding: crate::verification_evidence::PhaseTimingBinding,
++    ) {
+         *self.capture_slot.lock().expect("capture 槽锁被 poison") = binding;
+     }
+ 
+diff --git a/packages/engine/src/session/failure.rs b/packages/engine/src/session/failure.rs
+index a07bb5a6..72fd08e5 100644
+--- a/packages/engine/src/session/failure.rs
++++ b/packages/engine/src/session/failure.rs
+@@ -954,7 +954,7 @@ impl GameSession {
+     }
+ 
+     /// 协调逻辑在调用线程；各并行 burst 经会话上下文进入其池（架构项 14）。
+-    pub(crate) fn step_on_context(
++    pub(super) fn step_on_context(
+         &mut self,
+         capture_commit_evidence: bool,
+     ) -> Result<super::pipeline::AuthoritativeTickCommit, StepFatal> {
+@@ -1551,7 +1551,7 @@ impl GameSession {
+     /// `capture_decision_chain_roots` 的能力探针：只有暴露链参数的信念
+     /// 机构策略进链（retail 位无 frozen policy——误投影导致 observe
+     /// panic，D3a-3 接线显红后收口）。
+-    pub fn runtime_personal_states(
++    pub(crate) fn runtime_personal_states(
+         &self,
+     ) -> std::collections::BTreeMap<
+         crate::AccountId,
+diff --git a/packages/engine/src/session/pipeline/retail_projection.rs b/packages/engine/src/session/pipeline/retail_projection.rs
+index 7463e98c..23b5aa85 100644
+--- a/packages/engine/src/session/pipeline/retail_projection.rs
++++ b/packages/engine/src/session/pipeline/retail_projection.rs
+@@ -93,7 +93,7 @@ impl RetailProjectionSeen {
+ 
+     /// 插入一条收据身份（任务65 #11：由 account_settlement 的 canonical 单遍调用；
+     /// 投影自身不再触碰 seen）。
+-    pub(in crate::session) fn insert(
++    pub(super) fn insert(
+         &mut self,
+         index: u64,
+         local_key: ReceiptLocalKey,
+diff --git a/packages/engine/src/runtime/worker_context.rs b/packages/engine/src/runtime/worker_context.rs
+new file mode 100644
+index 00000000..e96754ed
+--- /dev/null
++++ b/packages/engine/src/runtime/worker_context.rs
+@@ -0,0 +1,16 @@
++//! worker 独占的协调通道、停止信号与诊断绑定；不持有业务权威状态。
++
++use super::protocol::UpMsg;
++use super::watchdog::WatchdogConfig;
++use crate::verification_evidence::PhaseTimingBinding;
++use std::sync::atomic::AtomicBool;
++use std::sync::mpsc::Sender;
++use std::sync::{Arc, Mutex};
++
++pub(crate) struct WorkerContext {
++    pub(crate) up_tx: Sender<UpMsg>,
++    pub(crate) abort: Arc<AtomicBool>,
++    pub(crate) shutdown: Arc<AtomicBool>,
++    pub(crate) watchdog: WatchdogConfig,
++    pub(crate) capture: Arc<Mutex<PhaseTimingBinding>>,
++}

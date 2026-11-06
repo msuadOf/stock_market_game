@@ -1,0 +1,78 @@
+diff --git a/packages/engine/src/runtime/admin_tax_projection.rs b/packages/engine/src/runtime/admin_tax_projection.rs
+index f8d8bd8a..e30733f6 100644
+--- a/packages/engine/src/runtime/admin_tax_projection.rs
++++ b/packages/engine/src/runtime/admin_tax_projection.rs
+@@ -49,7 +49,8 @@ fn invalid(
+     }
+ }
+ 
+-/// 只供真实 tax-only 整事务；混合事务须由 R4 实际阶段 producer 调用同一 core。
++/// 只供测试验证 tax-only 整事务；生产混合事务由 R4 实际阶段 producer 调用同一 core。
++#[cfg(test)]
+ pub(crate) fn inspect_tax_only(
+     before: &[(GroupIdx, Vec<GroupAccount>)],
+     grouped: &[(GroupIdx, Vec<AdminOperation>)],
+diff --git a/packages/engine/src/runtime/drive.rs b/packages/engine/src/runtime/drive.rs
+index f62464d4..29d168ab 100644
+--- a/packages/engine/src/runtime/drive.rs
++++ b/packages/engine/src/runtime/drive.rs
+@@ -129,6 +129,7 @@ pub(crate) fn ensure_fact_owners_covered_arc(
+     )
+ }
+ 
++#[cfg(test)]
+ pub(crate) fn ensure_fact_owners_covered(
+     fact_rec: Option<&super::world::TickRecord>,
+     snapshots: &[Vec<(super::LocalIdx, super::group::GroupAccount)>],
+diff --git a/packages/engine/src/runtime/group.rs b/packages/engine/src/runtime/group.rs
+index 15b0b13f..c81e94ff 100644
+--- a/packages/engine/src/runtime/group.rs
++++ b/packages/engine/src/runtime/group.rs
+@@ -9458,6 +9458,7 @@ mod admin_funds_cost;
+ #[cfg(test)]
+ mod origin_consumer_tests;
+ 
++#[cfg(test)]
+ mod repurchase_funds_candidate;
+ 
+ mod admin_repurchase_funds;
+diff --git a/packages/engine/src/runtime/group/admin_transaction.rs b/packages/engine/src/runtime/group/admin_transaction.rs
+index 032f4ee3..30102367 100644
+--- a/packages/engine/src/runtime/group/admin_transaction.rs
++++ b/packages/engine/src/runtime/group/admin_transaction.rs
+@@ -372,6 +372,7 @@ impl GroupState {
+             .ok_or_else(|| invalid("组缺少 current CompanyReadFacts"))
+     }
+ 
++    #[cfg(test)]
+     fn prepare_admin(
+         &mut self,
+         id: AdminTransactionId,
+@@ -395,6 +396,7 @@ impl GroupState {
+         self.prepare_admin_with_information_clock(id, operations, information, proof)
+     }
+ 
++    #[cfg(test)]
+     fn prepare_admin_with_information_clock(
+         &mut self,
+         id: AdminTransactionId,
+@@ -421,6 +423,7 @@ impl GroupState {
+         self.prepare_admin_scope_with_clock(id, operations, information, repurchase, proof)
+     }
+ 
++    #[cfg(test)]
+     fn prepare_admin_scope_with_clock(
+         &mut self,
+         id: AdminTransactionId,
+diff --git a/packages/engine/src/runtime/information_clock_context.rs b/packages/engine/src/runtime/information_clock_context.rs
+index c41bc6c0..b414490c 100644
+--- a/packages/engine/src/runtime/information_clock_context.rs
++++ b/packages/engine/src/runtime/information_clock_context.rs
+@@ -151,6 +151,7 @@ impl InformationClockContext {
+             InformationClockSource::Static { day, .. } => day,
+         }
+     }
++    #[cfg(test)]
+     pub(crate) fn date(&self) -> CivilDate {
+         self.day().day_model().current_date()
+     }

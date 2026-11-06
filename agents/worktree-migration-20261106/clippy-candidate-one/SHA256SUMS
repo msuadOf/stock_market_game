@@ -1,0 +1,17 @@
+3abe1370e1922f223fd93edb1b902e045b6e4b5e5d5f17440a7ba7d35ecf0f47  HEAD.txt
+55e34c1f7ac74423cd212969c1341bff2d511d7d5ca1a847e3a81d746ce398bc  README.md
+b36007da773632137c60f51da4ee7f3186aee057b6f6f23dbe5e3e24f44916a9  combined.patch
+4d2fa4c1a301aeb14d3f3464a7ebae55448ca6955d73bcdc1d5699b15197affa  source-files/agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-implementation/batch-1-visibility.md
+04038debdf6f621507879dfd5ccb2f9f4fd882861208cadbdb35a6c324c3c0b2  source-files/agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-implementation/batch-1-visibility.patch
+0046bbfb4e427724298996fadd9b581b5272c8f2085cc665c5d291fdcaf3e405  source-files/agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-implementation/batch-2-worker-and-protocol-full.patch
+2af0f8335383d8671d4b3ce6658ea2db7775bd7f4943b020bc3202b896601b22  source-files/agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-implementation/batch-3-runtime-test-cfg.patch
+83f30dd3b471286fc2a93ad56f3c54d83ea415ec6c2d3cf3f63d24813b565835  source-files/agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-implementation/candidate-1-READY.md
+7cf421edd92ee181ab61cebf872c0dcc2c1767046339c9dfc846e2d694a68509  source-files/agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-implementation/candidate-1-source-manifest.json
+5ec0f34c33bba021f9762dbb1cdf4543c164e3c81b966fff89218c7b9fd42941  source-files/agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-implementation/candidate-1-source.patch
+115ef23e7d4787e6c0afbcee5b102d413768444eb749874bb94e6fd8d2bdf675  source-files/agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-implementation/combined-independent-reviews.md
+7f9c481f8bd9ae22cde4c04fec92836cb5fd876fe4b58c44594bb9cbf6a21b5e  source-files/agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-implementation/fixtures-independent-review.md
+812656637fbefc3983be5f3af43eff998ee6d8335a985e175501157736821eb3  source-files/agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-implementation/leaf-cfg-independent-review.md
+0d687ca74031bc8868432efd72fc438b4cefaaf459410c76246175b86a96953a  source-files/packages/engine/src/runtime/worker_context.rs
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  staged.patch
+a1d592b6ef07f0c18b8e7438bf26ea99feaae87f4e227f1eb83ef48d197d08be  status.txt
+b36007da773632137c60f51da4ee7f3186aee057b6f6f23dbe5e3e24f44916a9  unstaged.patch

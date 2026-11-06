@@ -1,0 +1,424 @@
+{
+  "base": "50d493701aa0fbb7d62563855a84dc07c89c29b0",
+  "branch": "codex/clippy-cfg-20261030",
+  "state": "READY_FOR_INDEPENDENT_REVIEW_AND_COMPILE_NOT_VALIDATED",
+  "files": [
+    {
+      "path": "packages/engine/src/company/bank/income_tax.rs",
+      "size": 10013,
+      "sha256": "df1683375d0fc371135d327911d9fc95964c5760862b2fea3fceb95d860951a2"
+    },
+    {
+      "path": "packages/engine/src/company/cash_dividend.rs",
+      "size": 32645,
+      "sha256": "601051b663afd93484b9c18f55abca6f924c84252971580009755f948b46b9ca"
+    },
+    {
+      "path": "packages/engine/src/company/cash_dividend_tax.rs",
+      "size": 66981,
+      "sha256": "47081528d5d476d77a2453432e3368bf1aa0f0070350e8b798f209f0a49f9ae3"
+    },
+    {
+      "path": "packages/engine/src/company/correction.rs",
+      "size": 12042,
+      "sha256": "2f7316ded506378c3f7002e5b2fce8f3f5409572b3e8fc2f1cf0ec0cc2f7b3ab"
+    },
+    {
+      "path": "packages/engine/src/company/disclosure_correction_batch_proof_tests.rs",
+      "size": 4111,
+      "sha256": "338cb6e7b92ffa080489e2f4e7e75931c342e542f904505fb6891d0b19a955f9"
+    },
+    {
+      "path": "packages/engine/src/company/disclosure_correction_batch_tests.rs",
+      "size": 9603,
+      "sha256": "188881d3ec2715cdb81cc4f9e044fd3b5d7d497f14624b8707f3d78b338d205c"
+    },
+    {
+      "path": "packages/engine/src/company/disclosure_correction_owner_tests.rs",
+      "size": 5165,
+      "sha256": "e1a53d1d26682da44666de1afe57f7805277972b53aecfe360e5d08373454629"
+    },
+    {
+      "path": "packages/engine/src/company/disclosure_correction_proof.rs",
+      "size": 10513,
+      "sha256": "0db1b11cdd8e3cea8ab881bd02432ba3f61a19f3d862f9242c831b51a260aead"
+    },
+    {
+      "path": "packages/engine/src/company/disclosure_correction_proof_tests.rs",
+      "size": 6510,
+      "sha256": "824311c1a2d848ce0a105cb9bbd4a367813872ce5b917a1f4912fe76ac94c962"
+    },
+    {
+      "path": "packages/engine/src/company/disclosure_correction_test_fixture.rs",
+      "size": 15548,
+      "sha256": "1259a43e1801d8d7cd7b77f4a835012973007e98ca2f9bf01becae34c996985a"
+    },
+    {
+      "path": "packages/engine/src/company/industrial/chart.rs",
+      "size": 5098,
+      "sha256": "df44b2f80a83d9398094a98185ddf060a9479a26c7842af6ae206307fb0e4dc9"
+    },
+    {
+      "path": "packages/engine/src/company/industrial/income_tax.rs",
+      "size": 8240,
+      "sha256": "1755814e13fc40454da7d84fdf727e9ffa24e9d7d53789da7e07d370a1985c9c"
+    },
+    {
+      "path": "packages/engine/src/company/industrial/inventory_sources.rs",
+      "size": 4331,
+      "sha256": "0969db01d73ad13f9f2842367a0cf4f4337aedf1152baf8c972933daa9cd9f4f"
+    },
+    {
+      "path": "packages/engine/src/company/insurance/income_tax.rs",
+      "size": 4912,
+      "sha256": "5cb811687726e0e712229fb31ef7c5ac2ce8e55c938da1fd8efc2b28eb5395cd"
+    },
+    {
+      "path": "packages/engine/src/company/mod.rs",
+      "size": 13994,
+      "sha256": "ba972be5f5b1f9aa0b7d62c552a873751c517b438a9786aefb2ec61df5c50d63"
+    },
+    {
+      "path": "packages/engine/src/company/operations.rs",
+      "size": 1955,
+      "sha256": "53ad261c1cb786035d9177f1ed444d5d666477da9dbc1d5434a095ec7cbf169a"
+    },
+    {
+      "path": "packages/engine/src/company/operations/config.rs",
+      "size": 10172,
+      "sha256": "fe78f18f84c515519fcc6b7fa70979a68f7434c29ea8a1a9bb36493f58bf99b9"
+    },
+    {
+      "path": "packages/engine/src/company/operations/core.rs",
+      "size": 24300,
+      "sha256": "6a8fca870ddb67f8be3383c3b9b0a67f9af68a0d1e4b9a307b79acd89c94b8e6"
+    },
+    {
+      "path": "packages/engine/src/company/operations/disclosure_correction_legacy_tests.rs",
+      "size": 4265,
+      "sha256": "0d59dfdaba58d1769a4ebb1775752ed291b5effed9fb26e4e0ba2d37b4880132"
+    },
+    {
+      "path": "packages/engine/src/company/real_estate/income_tax.rs",
+      "size": 5175,
+      "sha256": "a6d1d829a3568660f4b10a8579d5417ae789380fb310d6293ef8629ae36ce1ae"
+    },
+    {
+      "path": "packages/engine/src/company/real_estate/mod.rs",
+      "size": 10406,
+      "sha256": "1bd5e489ba60ec4bc30e575ef6961a3408579e6afc4fcad18f1ef69585a18435"
+    },
+    {
+      "path": "packages/engine/src/company/simple/preferences.rs",
+      "size": 39815,
+      "sha256": "08662494464974205c1569f6e07ceeba7fa3001a3729fe2f8ad5e71a0aee8239"
+    },
+    {
+      "path": "packages/engine/src/company/system.rs",
+      "size": 56068,
+      "sha256": "889f024947e3cb2623c432edd32986dfa673d43cba9e2ed342a8634e048301e1"
+    },
+    {
+      "path": "packages/engine/src/runtime/admin_tax_projection.rs",
+      "size": 7879,
+      "sha256": "f5e83b98cb7f2a72e89dcd321de6060bce3df518d6bd45dce4838700ac25bce4"
+    },
+    {
+      "path": "packages/engine/src/runtime/calendar_public_restore_tests.rs",
+      "size": 16794,
+      "sha256": "58cd68656e552c8c653f256606a654aa1c24fc7f52bf57d2870450377482ebf1"
+    },
+    {
+      "path": "packages/engine/src/runtime/coordinator.rs",
+      "size": 17614,
+      "sha256": "f0ef152781bfe6e41cf776e86159f98a1eada14bcc130048325b0e920f6c72bb"
+    },
+    {
+      "path": "packages/engine/src/runtime/desk.rs",
+      "size": 171701,
+      "sha256": "a04929deaaf3299d2a8fa25d1fd4ed4076e7c9811b36957f67e41d8490dc644c"
+    },
+    {
+      "path": "packages/engine/src/runtime/drive.rs",
+      "size": 158378,
+      "sha256": "bbe243b70d4cd7081f6aa7e29b2a55297b533b9190492baaa12781f6267699c8"
+    },
+    {
+      "path": "packages/engine/src/runtime/group.rs",
+      "size": 433973,
+      "sha256": "99c350061fa1620765cdd1f4e4bdbaba7a52413cc72c23609c413f9634c1071f"
+    },
+    {
+      "path": "packages/engine/src/runtime/group/admin_transaction.rs",
+      "size": 45640,
+      "sha256": "4795b308363b3a250304f097d26b664bc5b2ca7a5fdc0a747b0b8d80635f346b"
+    },
+    {
+      "path": "packages/engine/src/runtime/group/admin_transaction/information.rs",
+      "size": 15613,
+      "sha256": "cc51969865fcfc20649e7cac25e749848dd90d125b5e2a6fe3d4c59e5e339dcc"
+    },
+    {
+      "path": "packages/engine/src/runtime/group/admin_transaction/information_tests.rs",
+      "size": 45144,
+      "sha256": "2af1ffd9b3aced18ad795740939d02f82659cd23539e348dcac468d6826afc85"
+    },
+    {
+      "path": "packages/engine/src/runtime/group/admin_transaction/repurchase_approval_tests.rs",
+      "size": 30176,
+      "sha256": "6da3ad269d00fc7233f8fb3ffa44fc6ded69742f97d293c05bda17d548dc4a14"
+    },
+    {
+      "path": "packages/engine/src/runtime/group/admin_transaction/repurchase_funds_tests.rs",
+      "size": 12779,
+      "sha256": "89f3a01d352ab09b5e3ebc4ced09ebfda1b757d75789972173b50f60c9dabbfb"
+    },
+    {
+      "path": "packages/engine/src/runtime/group/admin_transaction/repurchase_source_tests.rs",
+      "size": 38459,
+      "sha256": "1c1b7ebb7c7230e0ec4d27c930d440ba856735545377dbc1eb12fa493acafbed"
+    },
+    {
+      "path": "packages/engine/src/runtime/group/origin_consumer_tests.rs",
+      "size": 15275,
+      "sha256": "2cecfc125a629edaeb101fea93194253d732d7c0cd0d82eb3608c3c45960bdad"
+    },
+    {
+      "path": "packages/engine/src/runtime/group/repurchase_funds_candidate.rs",
+      "size": 23066,
+      "sha256": "f8048f8f82a305f0e2b43f32f70fc092da09c5a3ab242ae8b8bf1b2f97e9edb8"
+    },
+    {
+      "path": "packages/engine/src/runtime/information_clock_context.rs",
+      "size": 9701,
+      "sha256": "929bb1df9fabf7a3c6a59681c27501189240acf5ef48618dd088c7f3cf0176c3"
+    },
+    {
+      "path": "packages/engine/src/runtime/information_clock_context/tests.rs",
+      "size": 6495,
+      "sha256": "eeed664811d0eec2d570e471792e8d01b39079fb2faf208bc640ca24dbbb8f6a"
+    },
+    {
+      "path": "packages/engine/src/runtime/mod.rs",
+      "size": 9920,
+      "sha256": "60f1003858061cb55399800d406f890ad9d53fd8c9a698401859b1ef1241d107"
+    },
+    {
+      "path": "packages/engine/src/runtime/protocol.rs",
+      "size": 82002,
+      "sha256": "cc17b9fee53b9767118997e0741e45e68a7b680b1715a818279953e73b13013a"
+    },
+    {
+      "path": "packages/engine/src/runtime/worker_context.rs",
+      "size": 561,
+      "sha256": "0d687ca74031bc8868432efd72fc438b4cefaaf459410c76246175b86a96953a"
+    },
+    {
+      "path": "packages/engine/src/runtime/world.rs",
+      "size": 211865,
+      "sha256": "5d38f63578ac8d6f56c11d84825b6dda755d1384a78a07e979906456184539d0"
+    },
+    {
+      "path": "packages/engine/src/runtime/world/admin_transaction.rs",
+      "size": 82476,
+      "sha256": "707f77a8947d0e0c6c3afc28e7a7b2706fe472a090a7b16e7be1fd376117687f"
+    },
+    {
+      "path": "packages/engine/src/runtime/world/admin_transaction/calendar_information_intersection_tests.rs",
+      "size": 43002,
+      "sha256": "3214c81f0e7ac96b56e97965d8a59b8db6d798561a21d5361e475e331400da1d"
+    },
+    {
+      "path": "packages/engine/src/runtime/world/admin_transaction/funds_cost_tests.rs",
+      "size": 18390,
+      "sha256": "905bb0c083f6397dfbfb314775a2bc0f049a2d367f3a156dfe1649eb639add12"
+    },
+    {
+      "path": "packages/engine/src/runtime/world/admin_transaction/information_tests.rs",
+      "size": 18929,
+      "sha256": "5cb2265f246547fba0fe330152d45dd8c9d1cb292c55261b42dd98f69c8c6a70"
+    },
+    {
+      "path": "packages/engine/src/runtime/world/admin_transaction/repurchase_approval_tests.rs",
+      "size": 10316,
+      "sha256": "a3a6c77f0d0a88fc8f6d0e6a20f0487e2a281e253c9c13b1329ca9861b560e77"
+    },
+    {
+      "path": "packages/engine/src/runtime/world/admin_transaction/repurchase_funds_tests.rs",
+      "size": 7928,
+      "sha256": "b0db20a18a8d68d365b55d1e564dd5c2e1ef7d4ce3a17eb69017b2f8459c2769"
+    },
+    {
+      "path": "packages/engine/src/runtime/world/admin_transaction/stage_information_tests.rs",
+      "size": 7373,
+      "sha256": "fb548cf0b885322db4e4721b3ca651d96f09f2d5c77d5dd3bf3ca4ee19ea9b16"
+    },
+    {
+      "path": "packages/engine/src/runtime/world/information_handover.rs",
+      "size": 42239,
+      "sha256": "36645a2709907b1ebafbef13211d4693456d665d88b58f91a0e4a9b8c6969e3d"
+    },
+    {
+      "path": "packages/engine/src/session.rs",
+      "size": 355118,
+      "sha256": "6a642680cfe6956cefd4cf945d22ede097d613f077f0fcc3e66d3fa43e2205c7"
+    },
+    {
+      "path": "packages/engine/src/session/account_book.rs",
+      "size": 22882,
+      "sha256": "646c995ed523622dd19dea2f1f324da28c1fa653c41e198b9397f80905bfba7d"
+    },
+    {
+      "path": "packages/engine/src/session/attention.rs",
+      "size": 29097,
+      "sha256": "0295851a59c402076daed259a71d3b0e8a5908736b2bc6b00d0cec8277ed124a"
+    },
+    {
+      "path": "packages/engine/src/session/calendar_entry_cache_tests.rs",
+      "size": 17505,
+      "sha256": "669c98f3dca45f7cf7f299a8f61f86ad61d53c0264798150a7eb42c6e106bb2d"
+    },
+    {
+      "path": "packages/engine/src/session/calendar_final_boundary_tests.rs",
+      "size": 12553,
+      "sha256": "d229f3e9bb0d352195d7f7eab068b6ae536cc50c93a12bd126273a8b03252021"
+    },
+    {
+      "path": "packages/engine/src/session/calendar_nonzero_plan_parity_tests.rs",
+      "size": 28012,
+      "sha256": "bd3f7fba9a391e51e87eb790553a1883e1ba294eed7bb75b8ee60908a2e610d9"
+    },
+    {
+      "path": "packages/engine/src/session/candles.rs",
+      "size": 18249,
+      "sha256": "f3477aa179801180ac8a7c2b6d4a103f06dc857bcb370f552e445cba509d88a2"
+    },
+    {
+      "path": "packages/engine/src/session/day_boundary_kline_tests.rs",
+      "size": 19946,
+      "sha256": "6d0b27c27abb4a49207f34c3d34f955a568f78a5c13995a002368e28a5c6b7db"
+    },
+    {
+      "path": "packages/engine/src/session/decision_chain.rs",
+      "size": 242161,
+      "sha256": "e8b61bdcbac500cd9d937179830f9f6ce59e8d6b52b7f40a002e91d5415ba37e"
+    },
+    {
+      "path": "packages/engine/src/session/decision_chain/company_source_tests.rs",
+      "size": 27650,
+      "sha256": "deb51a8caa5aa1264b7b94254b7d0771e86d721facc9d2318629a2e3e573d9f5"
+    },
+    {
+      "path": "packages/engine/src/session/decision_chain/lifecycle.rs",
+      "size": 31942,
+      "sha256": "0e878577d9a773e85a73a3e4093a1ccc65c2ad97d7c1e56ba8cbe868aea5908c"
+    },
+    {
+      "path": "packages/engine/src/session/decision_chain/retail_analysis.rs",
+      "size": 39379,
+      "sha256": "f21d7d8de0b047d3c384d9697e3ae1132a56ff04af89ee1c18a52cacb478a9a6"
+    },
+    {
+      "path": "packages/engine/src/session/decision_chain/roots.rs",
+      "size": 26523,
+      "sha256": "a41686b486eacdc2a5dee7270b1efdffa38745bf0080f5dda2b3ed7ae0c86d33"
+    },
+    {
+      "path": "packages/engine/src/session/disclosure_batch_candidate_tests.rs",
+      "size": 8010,
+      "sha256": "dff315b9bd35a20972e9f28525a4215b6ec3cb18eec74510bdc9c47ce23c7fcb"
+    },
+    {
+      "path": "packages/engine/src/session/disclosure_candidate_tests.rs",
+      "size": 38941,
+      "sha256": "a4ba368831126ded7c97721930a5a897bd5cf50b829efc7d9311af0e3a891593"
+    },
+    {
+      "path": "packages/engine/src/session/exchange_calendar_model.rs",
+      "size": 31826,
+      "sha256": "c2d88098075b90c31d5dca078cf1f8458a33d1e33e6722d1df5a63f84c24d1b6"
+    },
+    {
+      "path": "packages/engine/src/session/failure.rs",
+      "size": 109474,
+      "sha256": "67ac0fdbdf9730baff2c7b31c2f84d1c38308820c2550ea0ce8b9ed1bfe844b5"
+    },
+    {
+      "path": "packages/engine/src/session/information_anchor/export_tests.rs",
+      "size": 5461,
+      "sha256": "72570766b736ddfc82d3af9c88f8699fb50c7f9be2662bff28972de7e61f3c14"
+    },
+    {
+      "path": "packages/engine/src/session/notices.rs",
+      "size": 46417,
+      "sha256": "34ad050f0a54fc2bce7329ff3307dc9202785ba2f8bc6c09083f3bbc2a642fd6"
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/account_settlement.rs",
+      "size": 10991,
+      "sha256": "3859ab05098ad127c124a17dd05d0e137955b2649637f9eda984eb8bb9aa20b1"
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/adaptive_plan_chain.rs",
+      "size": 50058,
+      "sha256": "d2d192e27f9fd526826e84c0ea23387e929cc3386c38b23f21dfb375b35eda97"
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/continuous_tick_finalizer.rs",
+      "size": 20921,
+      "sha256": "31a9d8fd424fcff8ea4c0498d0728520aec7b6372461438d7a97b06bec41a071"
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/market_tick_transaction.rs",
+      "size": 24392,
+      "sha256": "5524a47102ba1da4be341645dee3ffcefa9d468bb077d8e28bc93348d6439107"
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/quote_expiry.rs",
+      "size": 15368,
+      "sha256": "80584ea946645f2519d2162fce7a49f87ab113dab8359f5bfaebf37a31b0be6b"
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/read_only_start.rs",
+      "size": 20546,
+      "sha256": "65ee8ceb892e03e10903cd19b522273fe19d9f1af16e74df61f6fe75cf4119cc"
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/retail_projection.rs",
+      "size": 28346,
+      "sha256": "81ce3c1a0ea9123615cb2f4d47eb911e74244c80446e993addd199228c9f40d7"
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/session_execution_transaction.rs",
+      "size": 7288,
+      "sha256": "d90cc12f5d5c629d6d27f1fe03b44ca39aef8d3a2f1ae43c9de9cb004f2820cd"
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/stock_execution_transaction.rs",
+      "size": 7397,
+      "sha256": "6b16a421633a5687754a514bc541ba2ad99f7a45052cf1ae6d6ee38ab862deff"
+    },
+    {
+      "path": "packages/engine/src/session/pipeline/stock_stream.rs",
+      "size": 96469,
+      "sha256": "0df8399de255b2872296aee58fec0c1a32908ae6d78f65c396e764166cc28e54"
+    },
+    {
+      "path": "packages/engine/src/session/player_company_command_candidates.rs",
+      "size": 18712,
+      "sha256": "8f6037e117f30e5b5ff3936225de524eb7f4e48a52b493102dcdc43702e589e7"
+    },
+    {
+      "path": "packages/engine/src/session/protocol/civil/session.rs",
+      "size": 92742,
+      "sha256": "18166400676ae79ad3dc0905c1837fb32f95aa30c01fa07f4d67fd9c4b594418"
+    }
+  ],
+  "source_patch_sha256": "5ec0f34c33bba021f9762dbb1cdf4543c164e3c81b966fff89218c7b9fd42941",
+  "cargo_started": false,
+  "outside_scope_pending": [
+    "session/runtime_mirror.rs::projection",
+    "session/runtime_progress.rs::projection"
+  ],
+  "remaining_dead_code": "未声称全部清除，必须实际Clippy新诊断收敛"
+}

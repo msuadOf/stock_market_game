@@ -1,0 +1,91 @@
+ M packages/engine/src/company/bank/income_tax.rs
+ M packages/engine/src/company/cash_dividend.rs
+ M packages/engine/src/company/cash_dividend_tax.rs
+ M packages/engine/src/company/correction.rs
+ M packages/engine/src/company/disclosure_correction_batch_proof_tests.rs
+ M packages/engine/src/company/disclosure_correction_batch_tests.rs
+ M packages/engine/src/company/disclosure_correction_owner_tests.rs
+ M packages/engine/src/company/disclosure_correction_proof.rs
+ M packages/engine/src/company/disclosure_correction_proof_tests.rs
+ M packages/engine/src/company/disclosure_correction_test_fixture.rs
+ M packages/engine/src/company/industrial/chart.rs
+ M packages/engine/src/company/industrial/income_tax.rs
+ M packages/engine/src/company/industrial/inventory_sources.rs
+ M packages/engine/src/company/insurance/income_tax.rs
+ M packages/engine/src/company/mod.rs
+ M packages/engine/src/company/operations.rs
+ M packages/engine/src/company/operations/config.rs
+ M packages/engine/src/company/operations/core.rs
+ M packages/engine/src/company/operations/disclosure_correction_legacy_tests.rs
+ M packages/engine/src/company/real_estate/income_tax.rs
+ M packages/engine/src/company/real_estate/mod.rs
+ M packages/engine/src/company/simple/preferences.rs
+ M packages/engine/src/company/system.rs
+ M packages/engine/src/runtime/admin_tax_projection.rs
+ M packages/engine/src/runtime/calendar_public_restore_tests.rs
+ M packages/engine/src/runtime/coordinator.rs
+ M packages/engine/src/runtime/desk.rs
+ M packages/engine/src/runtime/drive.rs
+ M packages/engine/src/runtime/group.rs
+ M packages/engine/src/runtime/group/admin_transaction.rs
+ M packages/engine/src/runtime/group/admin_transaction/information.rs
+ M packages/engine/src/runtime/group/admin_transaction/information_tests.rs
+ M packages/engine/src/runtime/group/admin_transaction/repurchase_approval_tests.rs
+ M packages/engine/src/runtime/group/admin_transaction/repurchase_funds_tests.rs
+ M packages/engine/src/runtime/group/admin_transaction/repurchase_source_tests.rs
+ M packages/engine/src/runtime/group/origin_consumer_tests.rs
+ M packages/engine/src/runtime/group/repurchase_funds_candidate.rs
+ M packages/engine/src/runtime/information_clock_context.rs
+ M packages/engine/src/runtime/information_clock_context/tests.rs
+ M packages/engine/src/runtime/mod.rs
+ M packages/engine/src/runtime/protocol.rs
+ M packages/engine/src/runtime/world.rs
+ M packages/engine/src/runtime/world/admin_transaction.rs
+ M packages/engine/src/runtime/world/admin_transaction/calendar_information_intersection_tests.rs
+ M packages/engine/src/runtime/world/admin_transaction/funds_cost_tests.rs
+ M packages/engine/src/runtime/world/admin_transaction/information_tests.rs
+ M packages/engine/src/runtime/world/admin_transaction/repurchase_approval_tests.rs
+ M packages/engine/src/runtime/world/admin_transaction/repurchase_funds_tests.rs
+ M packages/engine/src/runtime/world/admin_transaction/stage_information_tests.rs
+ M packages/engine/src/runtime/world/information_handover.rs
+ M packages/engine/src/session.rs
+ M packages/engine/src/session/account_book.rs
+ M packages/engine/src/session/attention.rs
+ M packages/engine/src/session/calendar_entry_cache_tests.rs
+ M packages/engine/src/session/calendar_final_boundary_tests.rs
+ M packages/engine/src/session/calendar_nonzero_plan_parity_tests.rs
+ M packages/engine/src/session/candles.rs
+ M packages/engine/src/session/day_boundary_kline_tests.rs
+ M packages/engine/src/session/decision_chain.rs
+ M packages/engine/src/session/decision_chain/company_source_tests.rs
+ M packages/engine/src/session/decision_chain/lifecycle.rs
+ M packages/engine/src/session/decision_chain/retail_analysis.rs
+ M packages/engine/src/session/decision_chain/roots.rs
+ M packages/engine/src/session/disclosure_batch_candidate_tests.rs
+ M packages/engine/src/session/disclosure_candidate_tests.rs
+ M packages/engine/src/session/exchange_calendar_model.rs
+ M packages/engine/src/session/failure.rs
+ M packages/engine/src/session/information_anchor/export_tests.rs
+ M packages/engine/src/session/notices.rs
+ M packages/engine/src/session/pipeline/account_settlement.rs
+ M packages/engine/src/session/pipeline/adaptive_plan_chain.rs
+ M packages/engine/src/session/pipeline/continuous_tick_finalizer.rs
+ M packages/engine/src/session/pipeline/market_tick_transaction.rs
+ M packages/engine/src/session/pipeline/quote_expiry.rs
+ M packages/engine/src/session/pipeline/read_only_start.rs
+ M packages/engine/src/session/pipeline/retail_projection.rs
+ M packages/engine/src/session/pipeline/session_execution_transaction.rs
+ M packages/engine/src/session/pipeline/stock_execution_transaction.rs
+ M packages/engine/src/session/pipeline/stock_stream.rs
+ M packages/engine/src/session/player_company_command_candidates.rs
+ M packages/engine/src/session/protocol/civil/session.rs
+?? agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-implementation/batch-1-visibility.md
+?? agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-implementation/batch-1-visibility.patch
+?? agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-implementation/batch-2-worker-and-protocol-full.patch
+?? agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-implementation/batch-3-runtime-test-cfg.patch
+?? agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-implementation/candidate-1-READY.md
+?? agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-implementation/candidate-1-source.patch
+?? agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-implementation/combined-independent-reviews.md
+?? agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-implementation/fixtures-independent-review.md
+?? agents/branch-completion/clippy-ci-2026-10-30/sol-cfg-implementation/leaf-cfg-independent-review.md
+?? packages/engine/src/runtime/worker_context.rs

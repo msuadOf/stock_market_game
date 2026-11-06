@@ -1,0 +1,102 @@
+diff --git a/packages/engine/src/runtime/desk.rs b/packages/engine/src/runtime/desk.rs
+index de93d788..baec424a 100644
+--- a/packages/engine/src/runtime/desk.rs
++++ b/packages/engine/src/runtime/desk.rs
+@@ -3415,7 +3415,7 @@ fn build_resting_facts(state: &DeskState) -> Vec<super::protocol::RestingFact> {
+     orders
+ }
+ 
+-pub fn desk_main(
++pub(crate) fn desk_main(
+     mut setup: DeskSetup,
+     n_groups: usize,
+     config: Arc<GameConfig>,
+diff --git a/packages/engine/src/runtime/drive.rs b/packages/engine/src/runtime/drive.rs
+index f62464d4..76f316f9 100644
+--- a/packages/engine/src/runtime/drive.rs
++++ b/packages/engine/src/runtime/drive.rs
+@@ -1926,7 +1926,7 @@ impl RuntimeDriver {
+     /// 清簿撤单事实收集进 drained 缓冲（调用方 take_drained_events 取走）。
+     /// 日界批：收盘竞价成交随 Drain 应答上行——事件/个人确认在此消费
+     /// （civil_date=当日；receipts 返回调用方即时入账）。
+-    pub fn world_day_end_for_step(
++    pub(crate) fn world_day_end_for_step(
+         &mut self,
+         session: &mut GameSession,
+     ) -> Result<Vec<crate::session::personal_trade_history::PendingTradeReceipt>, String> {
+diff --git a/packages/engine/src/runtime/group.rs b/packages/engine/src/runtime/group.rs
+index 15b0b13f..3274a1ea 100644
+--- a/packages/engine/src/runtime/group.rs
++++ b/packages/engine/src/runtime/group.rs
+@@ -6116,7 +6116,7 @@ fn fnv(state: u64, value: u64) -> u64 {
+ 
+ /// 组线程主循环（骨架）。panic 运输：处理体 `catch_unwind` 捕获 → 回滚自身
+ /// overlay → `TaskDied`（原 payload）→ Final 上交 → 退出。
+-pub fn group_main(
++pub(crate) fn group_main(
+     state: GroupState,
+     desk_txs: Vec<Sender<super::protocol::DeskMsg>>,
+     rx: Receiver<GroupIn>,
+diff --git a/packages/engine/src/runtime/world.rs b/packages/engine/src/runtime/world.rs
+index 9ac313d1..a68809ee 100644
+--- a/packages/engine/src/runtime/world.rs
++++ b/packages/engine/src/runtime/world.rs
+@@ -180,9 +180,9 @@ pub struct OpenDerivationRecord {
+     /// 账户。
+     pub account: crate::AccountId,
+     /// observe 输入个人态（红证同输入锚）。
+-    pub personal_in: crate::session::PlanPersonalState,
++    pub(crate) personal_in: crate::session::PlanPersonalState,
+     /// observe 输出个人态（演进后）。
+-    pub personal_out: crate::session::PlanPersonalState,
++    pub(crate) personal_out: crate::session::PlanPersonalState,
+     /// Lifecycle 携带的候选评估（账户序单元素）。
+     pub assessments: Vec<(crate::StockId, crate::plans::CandidateAssessment)>,
+     /// D3a-2c 件4：组内 Lifecycle 开仓消费产物（PlanOpen——红证锚；
+@@ -2369,7 +2369,10 @@ impl World {
+     }
+ 
+     /// D4：挂当前相位计时捕获（world 运行期组/部 worker 读取安装）。
+-    pub fn set_tick_capture(&mut self, binding: crate::verification_evidence::PhaseTimingBinding) {
++    pub(crate) fn set_tick_capture(
++        &mut self,
++        binding: crate::verification_evidence::PhaseTimingBinding,
++    ) {
+         *self.capture_slot.lock().expect("capture 槽锁被 poison") = binding;
+     }
+ 
+diff --git a/packages/engine/src/session/failure.rs b/packages/engine/src/session/failure.rs
+index a07bb5a6..72fd08e5 100644
+--- a/packages/engine/src/session/failure.rs
++++ b/packages/engine/src/session/failure.rs
+@@ -954,7 +954,7 @@ impl GameSession {
+     }
+ 
+     /// 协调逻辑在调用线程；各并行 burst 经会话上下文进入其池（架构项 14）。
+-    pub(crate) fn step_on_context(
++    pub(super) fn step_on_context(
+         &mut self,
+         capture_commit_evidence: bool,
+     ) -> Result<super::pipeline::AuthoritativeTickCommit, StepFatal> {
+@@ -1551,7 +1551,7 @@ impl GameSession {
+     /// `capture_decision_chain_roots` 的能力探针：只有暴露链参数的信念
+     /// 机构策略进链（retail 位无 frozen policy——误投影导致 observe
+     /// panic，D3a-3 接线显红后收口）。
+-    pub fn runtime_personal_states(
++    pub(crate) fn runtime_personal_states(
+         &self,
+     ) -> std::collections::BTreeMap<
+         crate::AccountId,
+diff --git a/packages/engine/src/session/pipeline/retail_projection.rs b/packages/engine/src/session/pipeline/retail_projection.rs
+index 7463e98c..23b5aa85 100644
+--- a/packages/engine/src/session/pipeline/retail_projection.rs
++++ b/packages/engine/src/session/pipeline/retail_projection.rs
+@@ -93,7 +93,7 @@ impl RetailProjectionSeen {
+ 
+     /// 插入一条收据身份（任务65 #11：由 account_settlement 的 canonical 单遍调用；
+     /// 投影自身不再触碰 seen）。
+-    pub(in crate::session) fn insert(
++    pub(super) fn insert(
+         &mut self,
+         index: u64,
+         local_key: ReceiptLocalKey,
