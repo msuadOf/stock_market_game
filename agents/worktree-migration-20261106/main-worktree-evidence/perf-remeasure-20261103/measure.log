@@ -1,0 +1,6 @@
+batch_start=2026-11-03T13:31:46.661Z cores=64-79 per_run_cap_ms=120000 cleanup_ms=5000
+1-main exit=0 signal=null wall_ms=25878 samples=254 runnable_max=4 cpu_cores_mean=1.58 timed_out=false cap_kill_ms=null
+2-integration exit=0 signal=null wall_ms=23186 samples=228 runnable_max=4 cpu_cores_mean=1.57 timed_out=false cap_kill_ms=null
+3-integration exit=0 signal=null wall_ms=24349 samples=239 runnable_max=3 cpu_cores_mean=1.53 timed_out=false cap_kill_ms=null
+4-main exit=0 signal=null wall_ms=26901 samples=264 runnable_max=3 cpu_cores_mean=1.55 timed_out=false cap_kill_ms=null
+batch_finish=2026-11-03T13:33:35.554Z

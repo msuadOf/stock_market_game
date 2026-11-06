@@ -1,0 +1,141 @@
+diff --git a/apps/web/src/host/wasm-session-initial-restore.test.ts b/apps/web/src/host/wasm-session-initial-restore.test.ts
+index 2aa276ec..2ef22c6b 100644
+--- a/apps/web/src/host/wasm-session-initial-restore.test.ts
++++ b/apps/web/src/host/wasm-session-initial-restore.test.ts
+@@ -29,3 +29,34 @@ test("初始恢复只消费已预检的同一份档案，不再次序列化", {
+   slot.restoreInitial();
+   assert.deepEqual(calls, ["consume"]);
+ });
++
++for (const initial of ["create", "restoreInitial"] as const) {
++  test(`${initial} 后 drop 不重置初始恢复机会或 generation`, { timeout: 10000 }, () => {
++    const calls: string[] = [];
++    const slot = new WasmSessionSlot(() => ({
++      create_session() { calls.push("create"); return 9; },
++      restore_json() { calls.push("restore_json"); return 11; },
++      restore_prepared() { calls.push("restore_prepared"); return 7; },
++      snapshot: () => ({}),
++      drop_session(handle: number) { calls.push(`drop:${handle}`); },
++    }));
++    if (initial === "create") slot.create({}, 42n);
++    else slot.restoreInitial();
++    slot.drop();
++    assert.deepEqual(calls, initial === "create" ? ["create", "drop:9"] : ["restore_prepared", "drop:7"]);
++    const before = [...calls];
++    const generation = slot.readGeneration();
++    assert.equal(generation, 1);
++    assert.throws(() => slot.restoreInitial(), /首次空槽调用一次/);
++    assert.deepEqual(calls, before, "drop 后禁止再次进入初始恢复 FFI");
++    assert.equal(slot.readGeneration(), generation);
++    assert.throws(() => slot.requireHandle(), /尚未就绪/);
++  });
++}
++
++test("restoreInitial 在 bindings 未初始化时显式拒绝且不制造会话", { timeout: 10000 }, () => {
++  const slot = new WasmSessionSlot(() => null);
++  assert.throws(() => slot.restoreInitial(), /wasm 未初始化/);
++  assert.equal(slot.readGeneration(), 0);
++  assert.throws(() => slot.requireHandle(), /尚未就绪/);
++});
+diff --git a/apps/web/src/host/wasm-worker-ownership.test.ts b/apps/web/src/host/wasm-worker-ownership.test.ts
+index 11b760c5..45a66f94 100644
+--- a/apps/web/src/host/wasm-worker-ownership.test.ts
++++ b/apps/web/src/host/wasm-worker-ownership.test.ts
+@@ -733,3 +733,43 @@ for (const variant of ["string", "unknown", "error", "getter"] as const) {
+     f.send({ type: "drop" });
+   });
+ });
++
++for (const field of ["setup", "initialArchive", "seed"] as const) {
++  test(`生产 Worker restoreInitial 夹带 ${field} 失败并关闭该实例，不进入恢复 FFI`, { timeout: 10000 }, async () => {
++    await withWorker(async f => {
++      assert.deepEqual(f.calls, ["initial-topology"], "先完成唯一初始档的 topology 预检");
++      const before = [...f.calls];
++      const payload = field === "setup" ? {} : field === "initialArchive" ? f.saved : 42n;
++      await f.sendAsync({ type: "restoreInitial", [field]: payload }, () => f.posted.length > 0);
++      assert.equal(f.posted.length, 1);
++      assert.equal(f.posted[0].type, "failure");
++      assert.equal(f.posted[0].generation, 0);
++      assert.match(String(f.posted[0].message), /禁止第二份 payload/);
++      assert.deepEqual(f.calls, before, "非法 payload 不得创建或消费 Rust 会话");
++      assert.equal(f.timers.size, 0);
++      assert.equal(f.posted.some(message => ["ingress", "created", "baseline"].includes(message.type)), false);
++      for (const message of [{ type: "restoreInitial" }, { type: "create", seed: 42n }, { type: "save", requestId: 1, generation: 0 }]) {
++        f.posted.length = 0;
++        await f.sendAsync(message, () => f.posted.length > 0);
++        assert.equal(f.posted[0].type, message.type === "save" ? "operationError" : "failure");
++        assert.match(String(f.posted[0].message), /正在关闭/);
++        assert.deepEqual(f.calls, before, "关闭后的同实例不得重入 FFI");
++        assert.equal(f.posted.some(reply => ["ingress", "created", "baseline"].includes(reply.type)), false);
++      }
++    }, "initial-archive");
++  });
++}
++
++test("生产 Worker 默认新局拒绝 restoreInitial，不隐式建立或恢复会话", { timeout: 10000 }, async () => {
++  await withWorker(async f => {
++    const before = [...f.calls];
++    await f.sendAsync({ type: "restoreInitial" }, () => f.posted.length > 0);
++    assert.equal(f.posted.length, 1);
++    assert.equal(f.posted[0].type, "failure");
++    assert.equal(f.posted[0].generation, 0);
++    assert.match(String(f.posted[0].message), /需要唯一完整初始档/);
++    assert.deepEqual(f.calls, before);
++    assert.equal(f.timers.size, 0);
++    assert.equal(f.posted.some(message => ["ingress", "created", "baseline"].includes(message.type)), false);
++  });
++});
+diff --git a/apps/web/src/host/worker-host-w1-bootstrap.test.ts b/apps/web/src/host/worker-host-w1-bootstrap.test.ts
+index ca75b40c..c2f3d846 100644
+--- a/apps/web/src/host/worker-host-w1-bootstrap.test.ts
++++ b/apps/web/src/host/worker-host-w1-bootstrap.test.ts
+@@ -1,6 +1,10 @@
+ import assert from "node:assert/strict";
+ import test from "node:test";
+ import { drain, fixture, setup } from "./worker-host-w1.test-support.ts";
++import { commandDayEndArchiveFixture } from "../app/command-host-test-fixture.ts";
++import { WasmDocumentMemoryOwner } from "./wasm-document-memory-owner.ts";
++import { WasmMemoryStorage } from "./wasm-memory-storage.ts";
++import { fixture as storageFixture, MiB } from "./wasm-memory-storage.test-support.ts";
+ import { createEngineSupervisor } from "./engine-supervisor.ts";
+
+ for (const invalid of [undefined, {}, { onSpawnFailure: null }, { onSpawnFailure: 7 }]) {
+@@ -117,3 +121,38 @@ test("W1 dispose 收回仍在 bootstrap 的 child 和在途 query", { timeout: 1
+     assert.equal(f.clock.tasks.size, 0);
+   } finally { await f.cleanup(/最终释放事实未知/); }
+ });
++
++for (const initial of ["create", "restoreInitial"] as const) {
++  test(`W1 重复 ready 显式失败，${initial} 只发送一次并清理 Worker/timer`, { timeout: 10000 }, async () => {
++    const f = fixture();
++    try {
++      if (initial === "create") f.launch();
++      else {
++        const storage = storageFixture();
++        // 可信 producer 的传输 fixture，不作为真实发布包能力证据。
++        const owner = new WasmDocumentMemoryOwner({ maximumBytes: storage.options.maximumBytes, reclaimBytes: storage.options.reclaimBytes,
++          readCapacity: () => ({ kind: "enforced-capacity", initialPages: 1024, maximumPages: 4096, liveUpperBoundBytes: 256 * MiB }),
++          restoreCapabilities: { forArchive: () => ({ kind: "verified-package", wasmSha256: "a".repeat(64), glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "set_step_runtime_override", "init_wasm_wait", "wasm_wait_abort_layout", "shutdown_session"] }) },
++          createStorage: (liveUpperBoundBytes) => new WasmMemoryStorage({ ...storage.options, liveUpperBoundBytes }) });
++        const admission = owner.admit({ kind: "load", archive: commandDayEndArchiveFixture() });
++        if (admission.kind !== "admitted" || admission.intent.kind !== "load") throw new Error("需要载入票");
++        f.launch({ onSpawnFailure() {}, initialArchive: admission.intent.archive, memoryAdmissionTicket: admission.ticket });
++      }
++      await drain();
++      const engine = f.workers[0];
++      assert.deepEqual(engine.sent.filter(message => ["create", "restoreInitial"].includes(String(message.type))), initial === "create" ? [{ type: "create", seed: 42n }] : [{ type: "restoreInitial" }]);
++      assert.equal(f.outcome.status, "pending", "保持初始化中以覆盖重复 ready 的阶段拒绝");
++      engine.dataPort!.postMessage({ type: "ready" });
++      await drain();
++      assert.equal(f.outcome.status, "rejected");
++      if (f.outcome.status !== "rejected") throw new Error("重复 ready 没有拒绝初始化");
++      assert.match(String(f.outcome.error), /初始化阶段顺序无效/);
++      // restoreInitial fixture 尚无 handle，清理须经过控制层的 bounded shutdown deadline。
++      f.clock.advance(2001); await drain();
++      assert.equal(engine.sent.filter(message => message.type === initial).length, 1);
++      assert.ok(f.workers.every(worker => worker.terminations === 1));
++      assert.ok(f.workers.every(worker => worker.listenerCount() === 0));
++      assert.equal(f.clock.tasks.size, 0);
++    } finally { await f.cleanup(); }
++  });
++}

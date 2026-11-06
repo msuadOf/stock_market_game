@@ -1,0 +1,21 @@
+✔ W1 在分配资源前拒绝无效 onSpawnFailure undefined (9.404534ms)
+✔ W1 在分配资源前拒绝无效 onSpawnFailure [object Object] (1.450832ms)
+✔ W1 在分配资源前拒绝无效 onSpawnFailure [object Object] (0.936567ms)
+✔ W1 在分配资源前拒绝无效 onSpawnFailure [object Object] (2.187343ms)
+✔ W1 transport 首次传唯一控制端，业务 init 直传 setup，ACK 后 create 只传 seed (95.512443ms)
+✔ W1 main 初始化总 deadline 在首次 bootstrap post 前已登记 (5.947624ms)
+✔ W1 post 失败立即清理刚构造的 engine (5.258613ms)
+✔ W1 channel 失败立即清理刚构造的 engine (2.37779ms)
+✔ W1 dispose 取消初始化完成后所有本人监听器和 timer (14.885374ms)
+✔ W1 fixture 控制项：真实 MessageChannel 完成 substrate/ACK 往返才发 ready (5.883142ms)
+✔ W1 dispose 收回仍在 bootstrap 的 child 和在途 query (12.929927ms)
+✔ W1 重复 ready 显式失败，create 只发送一次并清理 Worker/timer (7.029305ms)
+✔ W1 重复 ready 显式失败，restoreInitial 只发送一次并清理 Worker/timer (34.790014ms)
+ℹ tests 13
+ℹ suites 0
+ℹ pass 13
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 765.218804

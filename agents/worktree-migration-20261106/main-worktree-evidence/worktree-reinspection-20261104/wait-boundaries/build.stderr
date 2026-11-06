@@ -1,0 +1,2 @@
+   Compiling engine v0.1.0 (<WORKSPACE>/.worktree/main-merge-2026-10-25/packages/engine)
+bounded command exhausted its execution budget within the total 299899ms deadline; process tree termination was requested and direct child close confirmed; bounded command process tree termination remains unconfirmed: owned process group identity unavailable after root exit: 2721662

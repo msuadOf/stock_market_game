@@ -1,0 +1,21 @@
+
+running 17 tests
+test coordinator_observes_abort_during_slice ... ok
+test coordinator_preserves_fifo_before_disconnection ... ok
+test coordinator_uses_coarse_slice_and_remaining_deadline ... ok
+test coordinator_rejects_clock_regression_above_start ... ok
+test coordinator_rechecks_host_abort_before_returning_buffered_message ... ok
+test exact_deadline_does_not_consume_message_arriving_during_last_slice ... ok
+test clock_regression_is_explicit ... ok
+test host_abort_has_priority_over_simultaneous_permanent_shutdown ... ok
+test oversleep_reports_actual_wait_without_consuming_late_message ... ok
+test worker_hot_spin_and_quiet_sleep_use_separate_budgets ... ok
+test worker_permanent_shutdown_does_not_process_buffered_message ... ok
+test worker_rechecks_host_abort_before_returning_buffered_message ... ok
+test worker_rechecks_shutdown_before_returning_buffered_message ... ok
+test worker_rejects_clock_regression_during_quiet_sleep ... ok
+test worker_rejects_clock_regression_during_spin ... ok
+test zero_deadline_polls_buffered_empty_and_disconnected_queue_without_sleep ... ok
+test zero_poll_slices_are_rejected_explicitly ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

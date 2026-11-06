@@ -1,0 +1,23 @@
+	Command being timed: "node scripts/run-long-validation.mjs 300000 -- env CARGO_TARGET_DIR=<TMP>/stock-game-perf-remeasure-93b36 cargo build --locked --release -p engine --example runtime_sync_policy_probe --jobs 32"
+	User time (seconds): 756.02
+	System time (seconds): 97.22
+	Percent of CPU this job got: 477%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 2:58.84
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 4763932
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 94
+	Minor (reclaiming a frame) page faults: 14494135
+	Voluntary context switches: 77223
+	Involuntary context switches: 328506
+	Swaps: 0
+	File system inputs: 185320
+	File system outputs: 9024
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

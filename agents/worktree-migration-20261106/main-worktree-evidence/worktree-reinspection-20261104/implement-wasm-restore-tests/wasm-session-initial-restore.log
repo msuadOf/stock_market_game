@@ -1,0 +1,14 @@
+✔ restoreInitial 只消费同一完整 X，一次 restore_prepared，无空 create 或旧 drop (8.728025ms)
+✔ restoreInitial Rust 原错不改写为新局，不制造 handle/generation (0.992539ms)
+✔ 初始恢复只消费已预检的同一份档案，不再次序列化 (0.849974ms)
+✔ create 后 drop 不重置初始恢复机会或 generation (0.744082ms)
+✔ restoreInitial 后 drop 不重置初始恢复机会或 generation (0.757662ms)
+✔ restoreInitial 在 bindings 未初始化时显式拒绝且不制造会话 (1.007499ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 273.273095
