@@ -7,7 +7,7 @@ import { chromium } from '../../apps/web/node_modules/@playwright/test/index.mjs
 import { createServer } from '../../apps/web/node_modules/vite/dist/node/index.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const server = await createServer({ root: path.join(root, 'apps/web'), mode: 'e2e', appType: 'custom', server: { host: '127.0.0.1', port: 0, fs: { allow: [root, '/tmp/wasm-sync-verified-final/wasm/pkg'] } } });
+const server = await createServer({ root: path.join(root, 'apps/web'), mode: 'e2e', appType: 'custom', server: { host: '127.0.0.1', port: 0, fs: { allow: [root] } } });
 server.middlewares.use((request, response, next) => {
   if (request.url !== '/runtime-check') return next();
   response.setHeader('Content-Type', 'text/html');

@@ -25,7 +25,7 @@ export RUSTUP_TOOLCHAIN=nightly-2026-09-05
 rustc scripts/wasm-panic/rustc-wrapper.rs -o "$work_dir/rustc-wrapper"
 export RUSTC_WRAPPER="$work_dir/rustc-wrapper"
 manifest() {
-  { printf '%s\0' Cargo.toml Cargo.lock rust-toolchain.toml; find .cargo packages/engine apps/web-wasm apps/web/src scripts/wasm-panic agents/wasm-tombstone-followup/browser-fixture -type f ! -path '*/node_modules/*' ! -path '*/target/*' -print0; } | sort -z | xargs -0 sha256sum
+  { printf '%s\0' Cargo.toml Cargo.lock rust-toolchain.toml; find .cargo packages/engine apps/web-wasm apps/web/src scripts/wasm-panic agents/wasm-tombstone-followup/browser-fixture -type f ! -path '*/node_modules/*' ! -path '*/target/*' ! -path 'apps/web-wasm/wasm-pack-output/*' -print0; } | sort -z | xargs -0 sha256sum
 }
 manifest > "$work_dir/before.sha256"
 printf 'release verification-harness：CARGO_BUILD_JOBS=%s，共享 wall-clock deadline=300s\n' "$CARGO_BUILD_JOBS"

@@ -1,30 +1,14 @@
 #!/usr/bin/env node
-// R3-2 组合验证自动化入口（wasm 线程抽象层 R4a 阶段 1，设计 §6.3 R3-2）。
-//
-// 单脚本串起锁定矩阵 → 产物构建 → 产品门 → 共享内存门 →（可选）浏览器
-// 组合冒烟，防"单件各自绿、组合红"。**工具链解阻塞批起 shared-memory-gate
-// 为必须绿门**——阶段 1 登记的"threads-xform 与无 rayon 链不兼容"经源码
-// 核清为误判（xform 输入符号全部由 rustc/lld/wasm-bindgen 运行时提供，
-// `__stack_alloc` 是 xform 输出而非 rayon 注入；依据与逐轮红→绿证据见
-// apps/web-wasm/.cargo/config.toml 登记与 .tmp/toolchain-unblock/
-// symbol-responsibility.md）。仍显式跳过（阶段 2）——
-//   R-worker 冒烟：G+N Worker spawn 依赖阶段 2 槽协议（设计 §12-14）；
-//   判据③双实例最小门（同 module+memory 两 Worker 实例化/独立栈 TLS/
-//   wait-notify/grow）已以最小复现产物验证 16/16 绿（.tmp/toolchain-unblock/
-//   browser-probe/），产品产物接入随阶段 2 宿主装配落 --browser 臂。
-// 其余门在本入口内必须真绿；任何未登记的红即失败。CI 常驻接入待全绿后挂。
-//
-// 用法：node scripts/verify-wasm-thread-combo.mjs [--browser] [--lock-only]
-//   --browser：追加 dist 构建 + COOP/COEP 隔离服务 + Chromium 组合冒烟
-//     （长验收，300000ms 共享 deadline，多核并行构建）。
-//
-// **browser-combo 转绿条件（阶段 2）**：G+N Worker spawn 断言（槽协议
-//   §12-14 落地）+ ≥1 tick 全协议绿 + abort 注入走完 R2 协议；
-//   shared-memory-gate 已随工具链解阻塞批转绿，不再是待转绿项。
+// WASM 组合验证入口。--browser 使用正式产品 build 和真实 host/tick，
+// 同时以独立 verification-harness 构建执行 Worker 故障注入。
+// 两种产物的证据分别报告；故障注入不代表产品包的同链注入。
+// 长验收包含构建、浏览器与清理，由外部 supervisor 共享 300000ms。
 
 import { execFileSync } from "node:child_process";
 import { availableParallelism } from "node:os";
-import { readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readlink, rm, unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { preparePinnedSysroot } from "./wasm-panic/prepare-sysroot.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { verifySharedMemoryArtifact, verifyWebReleaseWasm } from "./check-web-release-wasm.mjs";
@@ -61,6 +45,43 @@ export function combineGateResults(results) {
   };
 }
 
+export async function runBrowserCombo({ jobs, startedAt, now = Date.now, run = runBoundedCommand, root = rootDirectory, prepare = prepareBrowserFailureFixture, verifyShared = verifySharedMemoryArtifact }) {
+  const work = await prepare(root, process.env.STOCK_GAME_WASM_COMBO_DIR);
+  try {
+    const controller = new AbortController();
+    const command = async (spec, env = {}) => {
+      const remaining = Math.floor(startedAt + 299000 - now());
+      if (remaining <= 1000) throw new Error("browser-combo 共享 deadline 已耗尽");
+      await run({ ...spec, cwd: root, env: { ...process.env, ...env, CARGO_BUILD_JOBS: String(jobs) }, timeoutMs: remaining, cleanupReserveMs: 1000, signal: controller.signal }, (chunk) => process.stdout.write(chunk));
+    };
+    const guard = async (body) => { try { await body(); } catch (error) { controller.abort(error); throw error; } };
+    const outcomes = await Promise.allSettled([
+      guard(async () => {
+        await command({ command: process.execPath, args: [path.join(root, "scripts/frontend-build.mjs"), "--jobs", String(jobs), "--package-manager", "pnpm"] });
+        await verifyShared(path.join(root, "apps/web/wasm-pkg"));
+        await command({ command: process.execPath, args: [path.join(root, "scripts/browser-combo-dist.mjs")] });
+        await command({ command: process.execPath, args: [path.join(root, "agents/wasm-sync-parity/browser-runtime.mjs")] });
+      }),
+      guard(() => command({ command: "sh", args: [path.join(root, "agents/wasm-tombstone-followup/browser-fixture/batch.sh")] }, work.env)),
+    ]);
+    const failures = outcomes.filter((outcome) => outcome.status === "rejected").map((outcome) => outcome.reason);
+    if (failures.length) throw new AggregateError(failures, `浏览器组合验收失败：${failures.map((error) => error instanceof Error ? error.message : String(error)).join("；")}`);
+  } finally { await work.cleanup(); }
+  return "产品包真实 host/tick 与独立 verification-harness 故障注入均通过；故障注入不证明产品包同链注入";
+}
+
+async function prepareBrowserFailureFixture(root, directory) {
+  if (!directory || !path.isAbsolute(directory)) throw new Error("browser-combo 缺少 supervisor 工作目录");
+  try {
+    const rustc = execFileSync("rustup", ["which", "--toolchain", LOCKED_TOOLCHAIN, "rustc"], { encoding: "utf8", timeout: 5000 }).trim();
+    const sysroot = path.join(directory, "sysroot");
+    await preparePinnedSysroot(rustc, sysroot);
+    const target = path.join(root, ".tmp/wasm-thread-combo-harness-target");
+    await mkdir(target, { recursive: true });
+    return { env: { WASM_PANIC_SYSROOT: sysroot, CARGO_TARGET_DIR: target, WASM_PKG: path.join(directory, "pkg") }, cleanup: async () => {} };
+  } catch (error) { throw error; }
+}
+
 async function runWorker(withBrowser, lockOnly, jobs) {
   const startedAt = Date.now();
   process.stdout.write(`[combo/resources] ${JSON.stringify({jobs, available: availableParallelism(), sharedDeadlineMs:300000})}\n`);
@@ -90,6 +111,14 @@ async function runWorker(withBrowser, lockOnly, jobs) {
     return lockSummary;
   }
 
+  if (withBrowser) {
+    results.push(await runGate("browser-combo", () => runBrowserCombo({ jobs, startedAt })));
+    const summary = combineGateResults(results);
+    process.stdout.write(`[combo] ${JSON.stringify(summary)}\n`);
+    if (!summary.green) process.exitCode = 2;
+    return summary;
+  }
+
   // 门 2：产物构建（注入锁定工具链；build-std/atomics flags 由
   // apps/web-wasm/.cargo/config.toml 按调用目录链生效）。
   results.push(await runGate("wasm-build", async () => {
@@ -117,21 +146,11 @@ async function runWorker(withBrowser, lockOnly, jobs) {
     return `共享内存门绿：${files.join(", ")}`;
   }));
 
-  // 门 5：浏览器组合冒烟（G+N Worker spawn + ≥1 tick + 跨源隔离）。
-  // 阶段 1：未实施（依赖阶段 2 槽协议）——未加 --browser 时显式跳过登记。
-  if (withBrowser) {
-    results.push(await runGate("browser-combo", async () => {
-      // 阶段 2 落点：frontend-build → COOP/COEP header 服务 → Chromium 断言
-      // crossOriginIsolated / spawn G+N / ≥1 tick 全协议绿 / abort 走 R2。
-      throw new Error("browser-combo 未实施（R4a 阶段 2：需 dist 构建 + 隔离服务 + spawn 断言；当前以门面 stub 显式拒绝为合同）");
-    }));
-  } else {
-    results.push({ gate: "browser-combo", status: "skipped", detail: "未传 --browser（阶段 2 槽协议落地后接入 spawn/tick 冒烟）" });
-  }
+  results.push({ gate: "browser-combo", status: "skipped", detail: "未传 --browser，未执行真实浏览器验收" });
 
   const summary = combineGateResults(results);
   process.stdout.write(`\n[combo] ${JSON.stringify(summary, null, 2)}\n`);
-  const registeredRed = new Set(["browser-combo"]);
+  const registeredRed = new Set();
   const unregisteredRed = summary.red.filter((gate) => !registeredRed.has(gate));
   if (unregisteredRed.length > 0) {
     process.stderr.write(`[combo] 未登记的红门：${unregisteredRed.join(", ")}——组合验证失败（显式红之外不允许新红）\n`);
@@ -150,7 +169,7 @@ async function runWorker(withBrowser, lockOnly, jobs) {
 }
 
 /** 正式长入口由进程外supervisor覆盖矩阵、构建、检查与清理的共享总时限。 */
-export async function main(argv, { run = runBoundedCommand, env = process.env, nodeExecutable = process.execPath } = {}) {
+export async function main(argv, { run = runBoundedCommand, env = process.env, nodeExecutable = process.execPath, allocate = () => mkdtemp(path.join(tmpdir(), "stock-combo-")), cleanup = cleanupBrowserWorkspace, acquire = acquireBrowserLock } = {}) {
   const args = [...argv];
   const jobsIndex = args.indexOf("--jobs");
   let jobs = availableParallelism();
@@ -165,7 +184,7 @@ export async function main(argv, { run = runBoundedCommand, env = process.env, n
     return runWorker(args.includes("--browser"), args.includes("--lock-only"), jobs);
   }
   const lockOnly = args.includes("--lock-only");
-  return run({
+  if (!args.includes("--browser")) return run({
     command: nodeExecutable,
     args: [fileURLToPath(import.meta.url), "--internal-worker", ...args, "--jobs", String(jobs)],
     cwd: rootDirectory,
@@ -173,9 +192,45 @@ export async function main(argv, { run = runBoundedCommand, env = process.env, n
     timeoutMs: lockOnly ? 10000 : 300000,
     cleanupReserveMs: lockOnly ? 200 : 1000,
   }, (chunk) => process.stdout.write(chunk));
+  const release = await acquire();
+  let directory;
+  try {
+    directory = await allocate();
+    return await run({ command: nodeExecutable, args: [fileURLToPath(import.meta.url), "--internal-worker", ...args, "--jobs", String(jobs)], cwd: rootDirectory,
+      env: { ...env, TMPDIR: directory, STOCK_GAME_WASM_COMBO_DIR: directory, STOCK_GAME_WASM_COMBO_INTERNAL_WORKER: "1" }, timeoutMs: 290000, cleanupReserveMs: 1000 }, (chunk) => process.stdout.write(chunk));
+  } finally {
+    try { if (directory !== undefined) await cleanup(directory); } finally { await release(); }
+  }
+}
+
+async function acquireBrowserLock() {
+  const parent = path.join(rootDirectory, ".tmp");
+  const lock = path.join(parent, "wasm-thread-combo.lock");
+  await mkdir(parent, { recursive: true });
+  try { await mkdir(lock); } catch (error) {
+    if (error.code === "EEXIST") throw new Error(`浏览器组合验收已在运行或残留锁：${lock}`);
+    throw error;
+  }
+  return async () => { const { rmdir } = await import("node:fs/promises"); await rmdir(lock); };
+}
+
+async function cleanupBrowserWorkspace(directory) {
+  const link = path.join(rootDirectory, "agents/wasm-tombstone-followup/browser-fixture/pkg");
+  try {
+    const target = await readlink(link);
+    if (target !== path.join(directory, "pkg")) throw new Error(`fixture pkg 指向其他位置，拒绝清理：${target}`);
+    await unlink(link);
+  } catch (error) { if (error.code !== "ENOENT") throw error; }
+  await rm(directory, { recursive: true, force: true });
 }
 
 if (process.argv[1] !== undefined && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  try { await main(process.argv.slice(2)); }
-  catch (error) { process.stderr.write(`${error.message}\n`); process.exitCode = 1; }
+  try {
+    const args = process.argv.slice(2);
+    if (args.includes("--browser") && process.env.STOCK_GAME_WASM_COMBO_SUPERVISED !== "1") {
+      await runBoundedCommand({ command: process.execPath,
+        args: [path.join(rootDirectory, "scripts/run-long-validation.mjs"), "300000", "--", process.execPath, fileURLToPath(import.meta.url), ...args],
+        cwd: rootDirectory, env: { ...process.env, STOCK_GAME_WASM_COMBO_SUPERVISED: "1" }, timeoutMs: 300000, cleanupReserveMs: 1000 }, (chunk) => process.stdout.write(chunk));
+    } else await main(args);
+  } catch (error) { process.stderr.write(`${error.message}\n`); process.exitCode = 1; }
 }
