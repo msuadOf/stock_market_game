@@ -41,7 +41,7 @@ class Clock {
     this.now = end;
   }
 }
-function fixture(options: { constructError?: unknown; postError?: Error; channelErrorAt?: number; spawnCallbackError?: Error; fatalCallbackError?: Error; withoutReporter?: boolean; beforePost?: (child: WorkerHandle, channel: { port1: Port; port2: Port }) => void } = {}) {
+function fixture(options: { constructError?: unknown; postError?: Error; channelErrorAt?: number; spawnCallbackError?: Error; fatalCallbackError?: Error; onFatal?: () => void; withoutReporter?: boolean; beforePost?: (child: WorkerHandle, channel: { port1: Port; port2: Port }) => void } = {}) {
   const memory = new WebAssembly.Memory({ initial: 1, maximum: 4, shared: true });
   const layout = { baseAddr: 0, headerWords: HEADER_WORDS, slotStride: SLOT_STRIDE, joinStride: JOIN_STRIDE, capacity: 4, genBits: 29 };
   const words = new Int32Array(memory.buffer);
@@ -67,7 +67,7 @@ function fixture(options: { constructError?: unknown; postError?: Error; channel
       if (channels.length === options.channelErrorAt) throw new Error("Channel construct failed");
       const channel = { port1: new Port(), port2: new Port() }; channels.push(channel); return channel as unknown as MessageChannel;
     },
-    onFatalFailure: (failure) => { fatal.push(failure); if (options.fatalCallbackError !== undefined) throw options.fatalCallbackError; },
+    onFatalFailure: (failure) => { options.onFatal?.(); fatal.push(failure); if (options.fatalCallbackError !== undefined) throw options.fatalCallbackError; },
     onSpawnFailure: (failure) => { failures.push(failure); if (options.spawnCallbackError !== undefined) throw options.spawnCallbackError; },
     ...(options.withoutReporter === true ? {} : { reportError: (error: Error) => { reporterErrors.push(error); } }),
     timers: { now: () => clock.now, setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout },
@@ -199,6 +199,42 @@ test("当前 child 不能 ready 前发 H5，身份伪造/全局成功消息均�
     assert.equal(f.fatal.length, 1); assert.equal(f.supervisor.snapshot().workers, 0);
     assert.equal(f.clock.tasks.size, 0);
   }
+});
+
+test("已成立 child 的 trampoline failure 先发布 hardtrap 并保留原始错误", { timeout: 10000 }, () => {
+  let stateAtFatal = -1;
+  const f = fixture({ onFatal: () => { stateAtFatal = Atomics.load(f.words, joinWordOffset(0, 4)) >>> 0; } }); f.spawn(); f.ready();
+  const failure = { code: "FACADE_BOOTSTRAP_FAILURE", where: "facade-child-bootstrap.trampoline", message: "unreachable" };
+  f.channels[1].port1.emit({ type: "facadeBootstrapFailure", phase: "trampoline", workerId: 1, slot: 0, gen: 0, failure });
+  assert.equal(stateAtFatal, encodeJoin(0, JoinState.DeadHardtrap, 29));
+  assert.deepEqual(f.fatal, [failure]);
+});
+
+test("trampoline failure 在 fatal 回调前通知对应 join", { timeout: 10000 }, () => {
+  const originalNotify = Atomics.notify;
+  const notified: number[] = [];
+  let notifiedAtFatal: number[] = [];
+  const f = fixture({ onFatal: () => { notifiedAtFatal = [...notified]; } }); f.spawn(); f.ready();
+  try {
+    Atomics.notify = (array, index, count) => {
+      if (array.buffer === f.memory.buffer) notified.push(index);
+      return originalNotify(array, index, count);
+    };
+    const failure = { code: "FACADE_BOOTSTRAP_FAILURE", where: "facade-child-bootstrap.trampoline", message: "unreachable" };
+    f.channels[1].port1.emit({ type: "facadeBootstrapFailure", phase: "trampoline", workerId: 1, slot: 0, gen: 0, failure });
+    assert.ok(notifiedAtFatal.includes(joinWordOffset(0, 4)));
+  } finally {
+    Atomics.notify = originalNotify;
+  }
+});
+
+test("trampoline failure 的死亡信号写入失败仍保留原始错误", { timeout: 10000 }, () => {
+  const f = fixture(); f.spawn(); f.ready();
+  const failure = { code: "FACADE_BOOTSTRAP_FAILURE", where: "facade-child-bootstrap.trampoline", message: "unreachable" };
+  Atomics.store(f.words, slotFieldOffset(0, SLOT_JOIN_INDEX), 99);
+  f.channels[1].port1.emit({ type: "facadeBootstrapFailure", phase: "trampoline", workerId: 1, slot: 0, gen: 0, failure });
+  assert.equal(f.fatal[0].code, "FACADE_WORKER_PROTOCOL_ERROR");
+  assert.deepEqual((f.fatal[0].context as { originalFailure: unknown }).originalFailure, failure);
 });
 
 test("DONE 后 cleanup 失败独立 fatal，结果不变并无条件清所有本人 Worker", { timeout: 10000 }, () => {

@@ -343,7 +343,21 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
       if (!resource.ready && (message.phase === "validate" || message.phase === "instantiate" || message.phase === "layout")) {
         if (resource.identity === undefined) throw new Error("child 缺少 bootstrap 身份");
         spawnFailed(resource, resource.identity, "INSTANTIATE", message.failure, message.failure);
-      } else fatal(message.failure);
+      } else {
+        // 已成立的 child 可能在 trampoline 中 trap；先唤醒 join，再废弃实例。
+        // 这里没有 Rust panic 记录，故只报告 hardtrap，不推断具体原因。
+        if (resource.ready && resource.identity !== undefined) {
+          try {
+            const view = arena();
+            const join = Atomics.load(view.words, slotFieldOffset(resource.identity.slot, SLOT_JOIN_INDEX)) >>> 0;
+            writeDead(view, join, resource.identity.gen, "hardtrap", 1);
+          } catch (error) {
+            fatal(failure("FACADE_WORKER_PROTOCOL_ERROR", resource.role, error, { originalFailure: message.failure }));
+            return;
+          }
+        }
+        fatal(message.failure);
+      }
       return;
     }
     if (resource.role === "ingress") throw new Error("ingress 禁止 facade 控制消息");
