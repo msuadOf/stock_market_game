@@ -1,219 +1,72 @@
 # 架构 (Architecture)
 
-> 本文档定义系统的分层、依赖方向、目标目录结构。
-> 它是"后端可选"和"多端复用"能成立的地基。配套：[`principles.md`](principles.md)、[`tech-stack.md`](tech-stack.md)。
->
-> 本文描述当前已落地结构；具体跨端协议以代码和 ADR 为准。
+本文描述当前项目的分层、宿主和数据边界。具体契约以代码及对应 ADR 为准；交易规则的实现范围和简化见 [trading-rules.md](trading-rules.md)，完成情况见 [work-status.md](work-status.md)。工程约束见 [principles.md](principles.md)。
 
----
+## 分层与依赖方向
 
-## 1. 核心设计理念：Engine 在中心，外壳可替换
-
-```
-                         ┌─────────────────────┐
-                         │      game-engine     │   ← 纯逻辑核心
-                         │  (规则 / 模拟 / 撮合) │      (无副作用、可序列化)
-                         └──────────┬──────────┘
-                                    │ 纯函数调用
-            ┌───────────────┬───────┴────────┬────────────────┐
-            ▼               ▼                ▼                ▼
-       ┌─────────┐     ┌─────────┐      ┌──────────┐     ┌──────────┐
-       │  web    │     │ server  │      │ desktop  │     │  tests   │
-       │ (React) │     │(可选后端)│      │ (Tauri)  │     │ (各层)   │
-       └─────────┘     └─────────┘      └──────────┘     └──────────┘
-        浏览器            远程/联机         原生桌面          自动化
+```text
+React UI / Redux
+       ↓ EngineHost
+浏览器 Worker  |  远程 server  |  Tauri actor
+       ↓                  ↓               ↓
+   WASM 绑定        Rust engine      Rust engine
+       └──────────────────┴───────────────┘
 ```
 
-**关键点：**
-- `game-engine` 是**纯逻辑**：输入"状态 + 动作"，输出"新状态 + 事件"。不碰 DOM、不碰网络、不碰定时器。
-- native 缺省启用 runtime（[ADR-0043](decisions/0043-std-thread-ownership-runtime.md)），内部自管 OS 线程与 `std::sync::mpsc` 通道（NPC 组线程 + 每股交易部线程），不碰 DOM、网络或存储；`ENGINE_STEP_RUNTIME=0` 可临时切回旧管线。Web 产品宿主缺省解析为 `runtimeOverride: true`，使用 `World`/`RuntimeDriver` 并经 thread facade 使用 Workers，`runtimeOverride: false` 会被显式拒绝。WASM engine 内部在宿主未设置 override 时仍走串行管线；WASM 会话 create/restore 入口会在登记前要求 runtime，产品宿主的 setup/restore topology 初始化入口（`facade_slot_init_for_setup` / `facade_slot_init_for_restore_json`）也显式要求 runtime；raw `facade_slot_init` 不检查 runtime，只初始化 arena 并锚定共享时钟 ORIGIN；Web 产品宿主缺省启用 runtime。
-- engine 用 **Rust** 实现（[ADR-0002](decisions/0002-engine-rust-wasm.md)）：前端经 WASM 调用，后端/Tauri 直接复用同一 crate。
-- 各"外壳"负责 I/O（渲染、存储、网络、定时器），把用户动作翻译成对 engine 的调用。
-- 同一份 engine 能在前端、后端、Tauri、测试中**分别运行**——这是"后端可选"与"多端一致"的根本。
-- React 应用层只依赖统一 `EngineHost`：命令、`HostUpdate`、存读档与 `SpeedMetrics` 的语义完全
-  相同。`HostUpdate` 只包含 `baseline` 与带 seq 覆盖区间的 `delta`；`postMessage`、Tauri IPC、
-  REST/WebSocket 只是适配层传输细节，不得渗透为 UI 条件分支。宿主专属能力通过
-  `HostCapabilities` 显式暴露，详见 [ADR-0010](decisions/0010-unified-host-protocol-and-local-refresh.md)。
-  初始化、读档和显式刷新交付的 `baseline` 必须携带当前权威 `civilDate`；本地 Worker 与
-  Tauri actor 在同一次会话读取中生成 snapshot 与日期。日期缺失或无效时显式报错，
-  UI 不得根据交易日序或新局起始日期补造读档后的自然日。
+`packages/engine` 负责规则、市场模拟、撮合、账户和组合计算，不依赖 UI、网络或持久化。宿主负责计时、传输和存储，把用户动作交给 engine，并向 UI 发布结果。核心状态与规则可独立于渲染层测试；同一 engine 可由浏览器、server、desktop 和测试分别运行。引擎内部的 runtime 使用线程和消息通道，并不意味着它负责外部 I/O。语言与部署决策见 [ADR-0002](decisions/0002-engine-rust-wasm.md)、[ADR-0005](decisions/0005-unified-engine-three-deployments.md)。
 
-## 2. 分层与依赖方向（**无环依赖**）
+依赖由外向内：UI 通过应用接口访问宿主；宿主和绑定依赖 engine；engine 不依赖任何 app。各 app 不互相导入，desktop 复用 web 构建产物。存储与网络属于宿主边界，不能由 UI 散落地直接访问。
 
-```
-依赖只能向下流动，绝不向上、绝不跨外壳：
+## 宿主与通信
 
-   表现层 (web/desktop UI)  ──┐
-   应用层 (用例编排)         ──┼──►  核心层 (game-engine)
-   适配层 (存储/网络适配)    ──┘
+| 宿主 | engine 位置 | 传输 | 持久化 |
+|------|-------------|------|--------|
+| 浏览器本地局 | Web Worker 中的 Rust/WASM | `postMessage` | IndexedDB 日终快速槽及 JSON 导入/导出 |
+| 远程局 | server 的 Rust actor | REST 和 WebSocket | server 的 SQLite 数据库 |
+| 桌面本地局 | Tauri 的 Rust actor | Tauri IPC | 前端快速槽及 JSON 导入/导出 |
 
-   ❌ web 不能直接 import server 的代码
-   ❌ engine 不能 import 任何 UI / I/O 库
-```
+Web UI 和 desktop 可在启动时选择本地或远程宿主；静态 WebUI 服务不运行浏览器本地局。部署入口和构建目标见 [ADR-0027](decisions/0027-runtime-deployment-and-build-targets.md)，原生数据库与浏览器存储方向见 [ADR-0033](decisions/0033-day-end-database-and-browser-storage.md)。
 
-| 层 | 职责 | 可依赖 | 不可依赖 |
-|----|------|--------|----------|
-| **核心层** engine | 游戏规则、市场模拟、撮合、组合计算 | 仅标准库 + 极少数纯逻辑库 | UI、I/O、React、网络 |
-| **应用层** | 用例编排（一次"买入"涉及 engine + 存储 + 事件） | engine、适配层 | 具体框架细节 |
-| **适配层** | 存储、网络、平台 API 的封装（实现接口） | engine 的接口定义 | 表现层 |
-| **表现层** | UI、渲染、交互 | 应用层、核心层的只读视图 | 直接碰存储/网络 |
+React 应用通过 `EngineHost` 提交命令，消费统一的 `HostUpdate`：初始化、读档和显式刷新交付 `baseline`，后续 `delta` 声明连续的 seq 覆盖区间。`baseline` 包含权威 `civilDate`；缺失或无效时显式报错。宿主差异通过 `HostCapabilities` 暴露。命令入队确认不等于委托已被接受或成交；详细协议见 [ADR-0010](decisions/0010-unified-host-protocol-and-local-refresh.md)。
 
-## 3. "后端可选"如何实现
+## 运行时与状态
 
-引擎是纯逻辑 → 同一份代码可放三处：
+native 默认使用 [ADR-0043](decisions/0043-std-thread-ownership-runtime.md) 的所有权转移 runtime：NPC 分组和各股票交易部分别处理决策与撮合，协调者收敛并提交 tick。native 的 `ENGINE_STEP_RUNTIME=0` 是临时旧管线回退口。Web 产品宿主显式启用同一 runtime，经 thread facade 使用 Workers；WASM engine 未设置 override 时仍有串行管线。ADR-0043 仍为 draft，路径存在不代表完整验收已通过。
 
-| 模式 | engine 运行在 | 存储 | 联机 |
-|------|--------------|------|------|
-| **Stage 1 纯前端** | 浏览器 Web Worker（Rust/WASM） | IndexedDB 日终快速槽 / JSON 文件 | 无 |
-| **Stage 2 单机+后端** | 服务端（Rust engine actor） | 服务端会话 / JSON 存档 | 可选 |
-| **Stage 2 权威后端** | 服务端 | 服务端数据库 | 是（权威状态在后端） |
-| **Stage 3 桌面** | Tauri 进程（同份 engine） | 本地文件 / 复用后端 | 可选 |
+Web WASM 宿主的保守内存总账上限为 3 GiB，每个产品 `WebAssembly.Memory` 的 maximum 为 1 GiB、initial 为 64 MiB，残留重载阈值为 512 MiB。这些约束彼此独立，不代表真实 World 步进或 Browser 二十次验收已完成。
 
-> 关键设计：**存储与联机是"适配层"的可替换实现**。换后端 = 换一个适配器，不动核心。
-> 这要求核心层对存储/网络只依赖**接口**，不依赖具体实现（依赖倒置）。
+混合日历 raw runtime 接口仍在独立审查与组合验证中：`World::spawn(spec, calendar)` 显式接收 `TradingCalendar`；`calendar_start_date` 与当前 `civil_start_date` 是不同事实。`run_ticks(n)` 在执行前拒绝跨当前自然日的区间，raw caller 显式完成日终并设置下一自然日；生产 `GameSession` 仍拥有自然日经营与提交权威。
 
-运行时宿主选择与部署制品见 [ADR-0027](decisions/0027-runtime-deployment-and-build-targets.md)：
-Desktop/WebUI 同一成品在启动时选择本地或远程。WebUI 静态服务使用 Rust/Axum；
-浏览器的本地局仍运行在访问者的 WASM Worker，不运行在静态服务上。
-`server` 的可选 `web-ui` feature 提供静态资源，`--services webui|server|all` 控制启动
-的服务面；纯 Server 构建不依赖前端工具，部署程序无需 Node.js。
+每个 tick 的失败须显式报告，不能发布部分结果；自然日更新是独立事务。并发受理顺序和重放边界见 [ADR-0017](decisions/0017-escrow-parallel-tick.md) 与 [testing.md](testing.md)。不以固定 seed 承诺不同并发到达轨迹产生相同成交结果。
 
-## 4. 状态与持久化
+`SaveSlot` 保存恢复所需的权威事实，仅成功自然日日结产生持久存档候选；恢复时重建 runtime。输入在宿主边界及 engine 中校验，不兼容或损坏的存档显式报错。`Money` 在 engine 内以分为单位，跨 JSON、WASM 和宿主边界使用十进制分字符串；Web 用 `BigInt` 计算，但不将其存入 Redux。具体契约见 [ADR-0025](decisions/0025-day-end-only-persistence.md)、[ADR-0029](decisions/0029-responsibility-names-and-contract-versions.md) 和 [ADR-0031](decisions/0031-money-decimal-cents-wire.md)。
 
-当前 `SaveSlot` 不设代际版本标记，恢复事实放在 `runtime_state: SavedRuntimeState`。
-Rust 的 `session/persistence/saved_runtime.rs` 与 Web 的 `save/schema/runtime-state.ts` 分别负责
-投影/恢复和严格输入校验；生成类型与三宿主消费同一契约。仅成功自然日日结产生持久存档候选。
-`ProtocolCheckpoint` 仅用于无 runtime authority 的健康 serial 机械回放，Host 不借它撤回
-live World 已提交的市场、镜像与自然日事实，或清除首个 fatal；额外版本字段、旧字段与不完整当前结构
-显式拒绝，不建立格式迁移。见
-[ADR-0025](decisions/0025-day-end-only-persistence.md) 和
-[ADR-0029](decisions/0029-responsibility-names-and-contract-versions.md)。
-std-thread runtime 的恢复=日终静点重建线程拓扑（NPC 组线程与交易部线程重建，`WorldSpec.initial_committed_tick` 与 `session.tick()` 锁步对齐）；活动委托不进档（日终清簿后天然为空）不变；日内回滚=Abort 三层 working overlay 冲回（[ADR-0043](decisions/0043-std-thread-ownership-runtime.md)）。
+## 目录和 workspace
 
-- 游戏状态是**可序列化的纯数据**（JSON 友好），不含函数、不含类实例的隐藏状态。
-- `Money` 内部为 `i64` 分，跨 JSON、WASM、Server、Tauri 与存档统一为规范十进制分
-  字符串。Web 使用 `BigInt` 运算后返回字符串，Redux 不存 `BigInt`；图表仅末端坐标
-  允许近似，原始报价不得丢失。`AccountingAmount` 仍是独立元字符串。见
-  [ADR-0031](decisions/0031-money-decimal-cents-wire.md)，不接受数字金额或建立兼容路径。
-- 持久化通过**单一数据访问层**（[`principles.md`](principles.md) 原则 4）进行：
-  - 接口定义在适配层（`loadState` / `saveState`）。
-  - 实现可替换：IndexedDB 日终快速槽（前端）/ 文件或 DB（后端 / 桌面）。
-  - 前端沿用同一 gzip 与严格 schema；新库没有快速槽时，只读已有 LocalStorage 同格式档，
-    不在启动时复制写盘。新日终候选以 IndexedDB 事务替换快速槽，失败保留上一有效档；
-    数据库坏档或打开失败仍显式报错，不回退旧槽掩盖问题。
-- 每次读取都做 **schema 校验**（[`error-handling.md`](error-handling.md) §5），脏数据 → 显式报错而非静默吞。
-
-## Web WASM 内存资源边界
-
-当前 Web WASM 宿主的保守总账上限为 3GiB；每个产品 `WebAssembly.Memory` 的真实构造 `maximum` 独立固定为 1GiB，`initial` 为 64MiB，残留重载阈值 R 为 512MiB。总账 B、单实例容量 C 与残留重载阈值 R 是独立约束，不从总账反推单实例上限。实例 drop 后以真实终值累计；正常阈值 reload 可跨 document 继续同一残留链，活动实例遭遇 F5 时按其 live 上界继承，未知 release 终值保留原 live 锚并锁门。该资源边界不改变 A 股制度，不保证任意负载，也不代表真实 World 步进或 Browser 二十次验收已经完成。
-
-## 5. 目标目录结构（monorepo）
-
-> 选 monorepo 是因为多端共享同一个 engine，必须放同一仓库。
-
-```
-stock_market_game/
-├── apps/
-│   ├── web/                 # 前端 (React + Vite + Redux Toolkit)，经 wasm 调用 engine
-│   ├── web-wasm/            # wasm-bindgen 适配 crate；把 engine 暴露给 Web Worker
-│   ├── server/              # 可选后端 (Rust，Stage 2 起)
-│   └── desktop/             # Tauri 桌面壳 (复用 web + engine crate)
-├── packages/
-│   ├── engine/              # 游戏核心逻辑 (Rust crate, 纯逻辑；不含宿主绑定)
-│   │   └── src/runtime/     # std-thread 运行时：组线程/交易部/协调者/协议/world/驱动器（ADR-0043）
-│   ├── engine-gpu/          # GPU 能力探测/实验管线；权威计算仍为 CPU
-│   └── std-thread-proto/    # 三臂选型原型包（ADR-0043 证据；批 11 验收后退役）
-├── docs/                    # 你在这里的子树
-├── .github/                 # CI / 协作模板
-├── AGENTS.md / CONTRIBUTING.md
-└── ...
+```text
+apps/
+  web/                 React、Redux、宿主适配器和浏览器存储
+  web-wasm/            engine 的 wasm-bindgen 绑定
+  server/              可选远程服务及 engine actor
+  desktop/src-tauri/   Tauri 宿主及 engine actor
+packages/
+  engine/              游戏核心与 runtime
+  engine-gpu/          GPU 探测和实验管线
+  native-store/        server 使用的原生 SQLite 存储
+  std-thread-proto/    runtime 选型原型
 ```
 
-**包的依赖：** `apps/*` → `packages/engine`；`apps/*` 之间不互相依赖。
-engine 是被依赖的叶子，不依赖任何 app。
+Rust 包由 Cargo workspace 管理，`apps/web` 由 pnpm workspace 管理。`engine-gpu` 是实验能力，权威计算仍由 CPU 承担。
 
-## Escrow tick 与验证边界（ADR-0017）
+## 数据流示例
 
-本节描述候选实现的契约；完整语料、性能和最终宿主验收仍以独立证据为准，不由文档宣告通过。
-市场 tick 的 native 与 Web WASM 产品宿主生产路径共用 std-thread 运行时（[ADR-0043](decisions/0043-std-thread-ownership-runtime.md)）消息协议：协调者 `broadcast_start` 广播 `Arc<TickSnapshot>` → NPC 组线程决策∥+实体扣除+分段 flush，与每股交易部线程 `begin_tick`（隐式转正→行情快照→开盘清算→到期撤销）边收边撮∥ → `converge_round` 收齐 G+N 报告（commit 前唯一同步）→ `TickEvidence` 过校验后单点安装，或广播 Abort 逆序回放三层 working overlay（组账户/交易部簿/协调者 candidate）。等价语义保持：失败原子性、现金/股份守恒、事件 seq 单调、同拍交付（`apply_same_tick_fill_projection`）。账户/股票可并行，同股票受理先后不变。Web 产品宿主缺省解析为 `runtimeOverride: true`，使用 `World`/`RuntimeDriver` 和 facade Workers；WASM engine 内部在宿主未设置 override 时仍走串行管线，但 Web 产品宿主已显式启用 runtime。该路径描述不代表完整宿主验收已通过。
-
-`engine::StrategyState` 保存策略权威状态；展示 profile 不另立权威。
-`engine::ResVec` 的 cash（分）与 shares（股）分别守恒，聚合方程就是逐 envelope 方程之和。
-ExpiryShadow 报价过期释放在 SealAllocationSnapshot 前可见；密封批成交、撤单、拒单、竞价完成及日界释放在下一密封批才可用于分配。
-提交后的公开快照立即反映余额，但 UI 快照不保证包含全部账户；全账户验证读取完整内存验证投影。
-
-`engine::StepFatal` 与业务 IntentRejected 不同。失败丢弃私有影子与 outbox，
-`engine::business_state_hash` 不变；`engine::session_state_hash` 允许已声明的 poison/错误元数据差异。
-panic 是进程级故障，不使用 catch_unwind 冒充可恢复 tick——串行回退管线保持该语义。native runtime 的 worker panic 走显式运输协议（ADR-0043 决策 9）：单 tick 执行体 `catch_unwind` 捕获，payload 经 `UpMsg::TaskDied` 上行，协调者广播 Abort+Shutdown，收齐 `GroupFinal`/`DeskFinal` 并 join 后 `resume_unwind` 原 payload 重抛——tick 仍判死、已收敛权威未被触碰，是显式失败运输，不是冒充可恢复 tick。
-`engine::CivilUpdate` 是独立事务，不推进市场 tick；它与所有 `engine::TickFrame` 共同覆盖连续 seq。
-事件来源/实体/局部序号的完整映射见 ADR-0017 §3；数组位置与 seq 不表示跨实体因果。
-
-`engine::TickCommitEvidence` 仅在成功提交后交出真实收据链、全局游标与实际竞价/日界执行次数，
-不从最终账本反推收据。`engine::UpdateStreamProjector` 跨同 tick 市场帧和自然日更新维护共享 Session 序号。
-`verification-harness` feature 的临时调度观察/置换不进入存档，不形成备用业务实现。
-失败的禁排序实验必须有同输入启用排序成功的对照、明确错误、零部分事件及完整状态回滚；
-公开 JSON 重排不是执行器扰动证据。
-
-在 `Continuous` 且 live ledger 非空、没有报价到期的起点，完整 live 投影、资源密封与股票
-输入捕获读取相同不可变事实，可提前并行计算。结果仍按原门禁消费：先验证 `ExpiryShadow`
-投影，再接收 `SealAllocationSnapshot`；股票输入的错误留到原 `DecisionShadow` 入口与
-context 校验之后传播。空 ledger、到期报价及其他交易阶段使用原准备顺序；预计算结果
-仅属于可丢弃 tick candidate，不发布事件或改变权威状态。
-
-股票撮合由每股一个交易部持久线程承载（ADR-0043）：组↔交易部全互联 `std::sync::mpsc` 直发（G×N 下行 `Ops` + N×G 上行 `DeskBatch`），数据面不经协调者；无 Barrier、无 Condvar、无共享 Mutex。正确性基石是锁步不变量：交易部实体批次先于 `DeskReport` 发送、协调者收齐 G+N 报告后才广播下一 `Start`（mpsc FIFO + happens-before）；活性由相位感知看门狗（`recv_timeout` + `Phase`，`watchdog.rs`）守护，重述见 ADR-0043 关联的活性契约。rayon 随旧调度形态退役，`in_place_scope` 嵌套池已知边界不再存在。
-
-所有验证副本、进程临时目录及缓存位于工作区 `.tmp/`，worktree 位于 `.worktree/`。
-唯一的临时存储例外用于不验证掉电耐久性的用例与生成物，以隔离共享慢盘的 fsync 争用：
-`native-store` 物理文件行为测试（验证 close→reopen、selection、文件锁与 inode 别名）使用
-Linux tmpfs `/dev/shm/stock-market-game-native-store-tests` 或非 Linux 的系统临时目录；
-`ts-rs` export case 的批次 export root 使用 Linux tmpfs `/dev/shm/rust-export-*` 或非 Linux 的
-系统临时目录。上述目录不属于验证归档：数据库文件由用例结束自删，export root 由 runner 在批次结束
-清理；进程被强杀后的残留由运行者按对应平台的临时目录清理。
-验收绑定完整源码内容清单，包含未跟踪的必要源码；运行中哈希漂移使相关结果失效。
-性能只比较条件相同的实测 ticks/sec 与进程树 RSS，单列新路径阶段 wall。线程池注册表容量
-（历史 rayon 形态）只表示池中配置的 worker 数，不能称为实际 runnable/active worker；实际
-runnable 线程由外部 runner 从 Linux `/proc` 对整个进程树采样 `R`（running or runnable）
-状态。两者都不替代吞吐，
-也不能单凭 CPU 百分比推断提速。有限检查不证明绝对无死锁、满核或固定提速。
-Rust 侧用 cargo workspace 管理 `packages/engine`、`packages/engine-gpu`、`apps/web-wasm`、
-`apps/server` 和 `apps/desktop/src-tauri`；前端用 pnpm workspace 管理 `apps/web`。
-`apps/web-wasm` 是 engine 与浏览器之间的绑定适配层，不在核心 crate 内引入 Web API。
-两种 workspace 并存。
-
-## 6. 数据流（一个"买入"操作的例子）
-
-```
-用户点击"买入"
-  → [表现层] React 组件 dispatch 一个意图
-  → [应用层] EngineHost.submitIntent(intent)
-  → [适配层] WASM Worker / REST / Tauri invoke
-  → [核心层] GameSession.step() → Event[]（内部经 `step_runtime_enabled` 分派；Web 默认显式使用 World/RuntimeDriver，见 ADR-0043）
-  → [应用层] 三种宿主统一交付 HostUpdate（baseline / delta）
-  → [表现层] Redux 消费同一种更新批次并重渲染
-  任一步失败 → 抛出带上下文的错误 → UI 显式展示（绝不静默）
+```text
+用户提交买入意图
+  → React 调用 EngineHost.submitIntent
+  → 当前宿主接收命令并交给 engine
+  → engine 在市场步进中处理委托和撮合
+  → 宿主发布 HostUpdate
+  → Redux 更新视图，React 渲染结果
 ```
 
-## 7. 待定（与 ADR / 开放问题联动）
-
-- [x] engine 实现语言：**Rust → WASM** ✅ [ADR-0002](decisions/0002-engine-rust-wasm.md)
-- [x] 后端语言：**Rust** ✅ [ADR-0003](decisions/0003-backend-rust.md)
-- [x] 包管理：pnpm workspace（ADR-0007）
-- [x] monorepo 工具：Cargo workspace + pnpm workspace
-- [x] 联机协议：REST 命令/快照 + WebSocket 事件（ADR-0005）
-- [x] 并发模型：**std::thread 所有权转移运行时** ✅ [ADR-0043](decisions/0043-std-thread-ownership-runtime.md)
-
-> 已敲定的进 ADR（[`decisions/`](decisions/)）；未敲定的进开放问题清单，**不擅自拍板**。
-
-
-## 混合日历 raw runtime 接口（C2-C 候选）
-
-本节描述尚在独审与组合验证中的 C2-C 接口；不表示混合市场已完成验收。
-`World::spawn(spec, calendar)` 显式接收冻结的 `TradingCalendar`，
-`WorldSpec.calendar_start_date` 是共享/本股会话计数起日，
-`WorldSpec.civil_start_date` 是该 raw 世界当前自然日，二者不能用市场 tick 反推或互相替代。
-`run_ticks(n)` 在任何 Start 前校验整个区间；正数 n 超过当前 civil date 剩余市场拍时
-返回显式 `TickRangeCrossesCivilDay` 错误，不先执行合法前缀。零拍仍验证 source、catalog、日期与进度。
-raw caller 必须显式完成本日市场日终，再按真实 Calendar 设置下一自然日；接口不再自动跨日结算。
-生产 `GameSession` 仍独占自然日经营与提交，向 runtime 单向交付同 owner 的 immutable context；
-raw 世界不能替 Session 自动推进公司经营或补造另一份日期权威。新局/restore 创建新 source owner，
-同拍组与交易部共用同一个 Tick Arc，day cache 最多保留当前一日，且不进入 SaveSlot 或业务 hash。
+边界校验或执行失败时，错误必须携带上下文并由 UI 显示；不能用默认值掩盖错误。错误处理约定见 [error-handling.md](error-handling.md)。
