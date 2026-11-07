@@ -271,3 +271,53 @@ fn first_reopen_uses_stock_minute_zero_while_other_exchange_starts_day_one() {
         PRESET_HISTORY_DAYS + 2
     );
 }
+
+#[test]
+fn mixed_day_end_keeps_closed_stock_t1_locked_until_its_reopening_day_end() {
+    use engine::session::PositionSnap;
+    use engine::{AccountId, GameSession};
+
+    let mut save = fixture::initial_save(CalendarExchange::Sse, StockExchange::Shanghai, false);
+    // catalog 的 StockId 按代码排序，不能依赖 setup 输入顺序。
+    let initial = GameSession::restore(&save).expect("取得稳定 catalog");
+    let closed = initial.stock_id("600101").unwrap();
+    let open = initial.stock_id("000101").unwrap();
+    let positions = &mut save
+        .snapshot
+        .accounts
+        .get_mut(&AccountId(0))
+        .unwrap()
+        .positions;
+    for stock in [closed, open] {
+        positions.insert(
+            stock,
+            PositionSnap {
+                qty: 100,
+                t1_locked: 100,
+                invested_cents: 100_000,
+                recovered_cents: 0,
+            },
+        );
+    }
+    let mut session = GameSession::restore(&save).expect("编辑后日终存档必须合法");
+    for _ in 0..TICKS_PER_DAY {
+        session.step().unwrap();
+    }
+    let snapshot = session.snapshot();
+    assert_eq!(
+        snapshot.accounts[&AccountId(0)].positions[&open].t1_locked,
+        0
+    );
+    assert_eq!(
+        snapshot.accounts[&AccountId(0)].positions[&closed].t1_locked,
+        100
+    );
+    session.end_civil_day().unwrap();
+    for _ in 0..TICKS_PER_DAY {
+        session.step().unwrap();
+    }
+    assert_eq!(
+        session.snapshot().accounts[&AccountId(0)].positions[&closed].t1_locked,
+        0
+    );
+}
