@@ -294,3 +294,88 @@ fn desk_ex_rights_and_group_debit_share_prepare_abort_and_commit() {
     );
     assert!(again.is_err(), "已提交的旧参考价不得再次 Prepare");
 }
+
+#[test]
+fn two_groups_civil_cash_commit_funds_next_day_buy_and_exact_fees() {
+    use crate::orderbook::Side;
+    use crate::runtime::group::{GroupScript, PlaceSpec};
+
+    let script = |group| -> GroupScript {
+        Box::new(move |tick, _| {
+            let mut plan = TickPlan::default();
+            if (group, tick) == (1, 5) || (group, tick) == (0, 5) {
+                plan.places.push(PlaceSpec {
+                    local: 0,
+                    stock: 0,
+                    side: if group == 1 { Side::Sell } else { Side::Buy },
+                    price: 890,
+                    qty: 100,
+                });
+            }
+            plan
+        })
+    };
+    let mut spec = basic_spec(2, 1, 1, Box::new(script));
+    spec.ticks_per_day = 4;
+    spec.closing_auction_ticks = 0;
+    spec.initial_cash = 89_000;
+    let calendar = crate::calendar::TradingCalendar::current_default_calendar().unwrap();
+    let next = calendar
+        .next_trading_day(
+            crate::calendar::CalendarExchange::Sse,
+            spec.civil_start_date,
+        )
+        .unwrap();
+    let mut world = World::spawn(spec, calendar).unwrap();
+    world.run_ticks(4).unwrap();
+    world.run_day_end_public().unwrap();
+    let stages = vec![AdminOperationStage {
+        operations: vec![(
+            0,
+            vec![AdminOperation::CashDividend {
+                local: 0,
+                stock: 0,
+                amount: 1000,
+            }],
+        )],
+    }];
+    let request = crate::runtime::protocol::DeskExRightsRequest {
+        stock: 0,
+        expected_last_close: 1000,
+        reference_price: 900,
+    };
+    let before = world.snapshot_accounts().unwrap();
+    let error = world
+        .with_prepared_staged_administrative_and_desks(
+            stages.clone(),
+            None,
+            vec![request],
+            None,
+            |_, _, _| Err::<(), _>(invalid("双组公司事务原始错误")),
+        )
+        .err()
+        .expect("候选拒绝应返回错误");
+    assert!(error.to_string().contains("双组公司事务原始错误"));
+    assert_eq!(world.snapshot_accounts().unwrap(), before);
+    assert_eq!(world.public_views()[0].last_close, 1000);
+    world
+        .with_prepared_staged_administrative_and_desks(
+            stages,
+            None,
+            vec![request],
+            None,
+            |_, _, _| Ok(()),
+        )
+        .unwrap();
+    assert_eq!(world.public_views()[0].last_close, 900);
+    world.set_civil_date(next);
+    world.run_ticks(1).unwrap();
+    let accounts = world.snapshot_accounts().unwrap();
+    // 成交额 89000 分，最低佣金 500 分，双边过户费各 1 分，卖方印花税按银行家舍入为 44 分。
+    assert_eq!(accounts[0].1[0].cash, 90_000 - 89_000 - 501);
+    assert_eq!(accounts[1].1[0].cash, 89_000 + 89_000 - 545);
+    assert_eq!(accounts[0].1[0].shares[0], 1100);
+    assert_eq!(accounts[1].1[0].shares[0], 900);
+    let report = world.shutdown().unwrap();
+    assert_eq!(report.desk_finals[0].fee_sink, 501 + 545);
+}
