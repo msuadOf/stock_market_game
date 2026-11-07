@@ -1,5 +1,5 @@
 //! #119：真实生产日终账户交付与 R1 名册候选的短接缝验证。
-//! R1 尚未接入生产公司日终链；这里显式传递生产事实，不宣称 R4 已接线。
+//! #119 用例显式传递生产事实给 R1；另用真实公司自然日日结核对生产路径。
 
 use super::*;
 use crate::account::{Account, AccountKind};
@@ -9,6 +9,8 @@ use crate::runtime::world::DayEndCandidate;
 use crate::session::{GameSession, ReceiptBearingIntent};
 use crate::{Event, Intent, Money, Side, TradingPhase};
 use std::sync::{Arc, Mutex};
+
+include!("../../../../test-support/simple_company.rs");
 
 const TARGET: AccountId = AccountId(30106);
 const STOCK: StockId = StockId(0);
@@ -503,4 +505,186 @@ fn issue119_closing_1200_to_1500_reconciles_real_day_end_accounts_confirmations_
     assert_eq!(next_accounts[&TARGET][&STOCK], 1500);
     session.end_civil_day().unwrap();
     assert_eq!(session.civil_date(), day.next().unwrap().next().unwrap());
+}
+
+fn multigroup_registry_case(reject: bool) {
+    use crate as engine;
+    use crate::company::cash_dividend_tax::CashDividendTaxMode;
+    use crate::session::{FloatAllocation, WithinKindDistribution};
+
+    let mut setup = crate::session::npc_working_quote_tests::quote_setup(1);
+    setup.npcs.retail_count = 4;
+    setup.npcs.inst_count = 0;
+    setup.ticks_per_day = 6;
+    setup.closing_auction_ticks = 2;
+    setup.stocks[0].total_shares = 1_200;
+    setup.stocks[0].float_shares = 1_200;
+    setup.float_allocation = FloatAllocation::class_percentages(
+        100.0,
+        0.0,
+        0.0,
+        WithinKindDistribution::EqualPercentage,
+    );
+    setup.company_system = Some(simple_company_fixture!(engine; ["600888"]));
+    setup.dividend_tax_mode = Some(CashDividendTaxMode::AShareIndividual);
+    setup.par_value_per_share = Some(Money::from_cents(100));
+    setup.auto_corporate_foundation = true;
+    let mut session = GameSession::new_with_runtime_groups(setup, 119, 3).unwrap();
+    let day = session.civil_date();
+    let opening = session.corporate_actions().unwrap().registries[0].clone();
+    let before_seller = session
+        .account(AccountId(1))
+        .unwrap()
+        .position(&STOCK)
+        .unwrap()
+        .qty();
+    let before_buyer = session
+        .account(AccountId(4))
+        .unwrap()
+        .position(&STOCK)
+        .unwrap()
+        .qty();
+    session.step_via_runtime().unwrap();
+    let candidates = Arc::new(Mutex::new(Vec::new()));
+    let out = Arc::clone(&candidates);
+    session
+        .runtime_driver_for_test()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .set_day_end_validator_for_test(Box::new(move |candidate| {
+            out.lock().unwrap().push(candidate.clone());
+            Ok(())
+        }));
+    session.step_via_runtime().unwrap();
+    inject_pair(&session, AccountId(1), AccountId(4), 100);
+    let trades = session.step_via_runtime().unwrap();
+    assert_trade(&trades, AccountId(1), AccountId(4), 100);
+    for _ in 3..6 {
+        session.step_via_runtime().unwrap();
+    }
+    let candidate = candidates.lock().unwrap()[0].clone();
+    assert_eq!(candidate.groups.len(), 3);
+    assert_eq!(
+        session
+            .account(AccountId(1))
+            .unwrap()
+            .position(&STOCK)
+            .unwrap()
+            .qty(),
+        before_seller - 100
+    );
+    assert_eq!(
+        session
+            .account(AccountId(4))
+            .unwrap()
+            .position(&STOCK)
+            .unwrap()
+            .qty(),
+        before_buyer + 100
+    );
+    {
+        let handle = session.runtime_driver_for_test().unwrap();
+        let driver = handle.lock().unwrap();
+        assert_eq!(driver.account_by_owner((0, 1)), Some(AccountId(1)));
+        assert_eq!(driver.account_by_owner((2, 0)), Some(AccountId(4)));
+    }
+    if reject {
+        let actions = session.state.companies.corporate_actions_mut().unwrap();
+        let index = actions
+            .dividend_tax_books
+            .iter()
+            .position(|book| book.account() == AccountId(1))
+            .unwrap();
+        actions.dividend_tax_books.remove(index);
+        let before_actions = session.corporate_actions().unwrap().clone();
+        let before_positions: Vec<_> = session
+            .account_roster()
+            .into_iter()
+            .map(|id| {
+                (
+                    id,
+                    session
+                        .account(id)
+                        .unwrap()
+                        .position(&STOCK)
+                        .map_or(0, |p| p.qty()),
+                )
+            })
+            .collect();
+        let error = session
+            .end_civil_day()
+            .expect_err("已有持仓者缺少税账必须拒绝");
+        let message = error.to_string();
+        assert!(
+            message.contains("2030-01-02")
+                && message.contains("600888")
+                && message.contains("AccountId(1)")
+                && message.contains("税账"),
+            "{message}"
+        );
+        assert_eq!(session.civil_date(), day);
+        assert_eq!(*session.corporate_actions().unwrap(), before_actions);
+        for (id, qty) in before_positions {
+            assert_eq!(
+                session
+                    .account(id)
+                    .unwrap()
+                    .position(&STOCK)
+                    .map_or(0, |p| p.qty()),
+                qty
+            );
+        }
+        let fatal = session.poison_reason().unwrap().clone();
+        assert_eq!(session.step_via_runtime().unwrap_err(), fatal);
+        return;
+    }
+    session.end_civil_day().unwrap();
+    let registry = &session.corporate_actions().unwrap().registries[0];
+    assert_eq!(registry.settled_on(), day);
+    assert_ne!(
+        registry.holdings(),
+        opening.holdings(),
+        "真实成交必须改变名册"
+    );
+    let handle = session.runtime_driver_for_test().unwrap();
+    let driver = handle.lock().unwrap();
+    let mut seen = BTreeSet::new();
+    for (group, accounts) in &candidate.groups {
+        for (local, account) in accounts.iter().enumerate() {
+            let Some(id) = driver.account_by_owner((*group, local as u32)) else {
+                continue;
+            };
+            assert!(seen.insert(id));
+            let actual = session
+                .account(id)
+                .unwrap()
+                .position(&STOCK)
+                .map_or(0, |p| p.qty());
+            assert_eq!(actual, account.shares[0], "{id:?} Group 与 Session 持仓");
+            let registered: u64 = registry
+                .holdings()
+                .iter()
+                .filter(|holding| holding.holder == HolderId::Account(id))
+                .flat_map(|holding| &holding.lots)
+                .map(|lot| lot.qty)
+                .sum();
+            assert_eq!(
+                registered,
+                u64::from(actual),
+                "{id:?} 股东名册与 Session 持仓"
+            );
+        }
+    }
+    assert_eq!(seen, session.account_roster().into_iter().collect());
+}
+
+#[test]
+fn multigroup_trades_reconcile_actual_registry_at_civil_day_end() {
+    multigroup_registry_case(false);
+}
+
+#[test]
+fn multigroup_trade_then_missing_tax_book_rejects_civil_day_atomically() {
+    multigroup_registry_case(true);
 }
