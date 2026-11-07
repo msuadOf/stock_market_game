@@ -66,8 +66,9 @@ export async function runBrowserCombo({ jobs, startedAt, now = Date.now, run = r
     ]);
     const failures = outcomes.filter((outcome) => outcome.status === "rejected").map((outcome) => outcome.reason);
     if (failures.length) throw new AggregateError(failures, `浏览器组合验收失败：${failures.map((error) => error instanceof Error ? error.message : String(error)).join("；")}`);
+    await command({ command: process.execPath, args: [path.join(root, "agents/wasm-tombstone-followup/browser-fixture/full-host.mjs")] }, work.env);
   } finally { await work.cleanup(); }
-  return "产品包真实 host/tick 与独立 verification-harness 故障注入均通过；故障注入不证明产品包同链注入";
+  return "产品包真实 host/tick 与独立 verification-harness 故障注入及真实 host/UI 链均通过；故障注入不证明产品包同链注入";
 }
 
 async function prepareBrowserFailureFixture(root, directory) {

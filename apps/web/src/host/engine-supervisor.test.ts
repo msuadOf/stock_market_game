@@ -665,3 +665,19 @@ test("最终失败明确声明 last_committed_tick 未知并保留原诊断", { 
   assert.equal(context.last_committed_tick, "unknown");
   assert.equal(context.nativeEventMessage, "trap");
 });
+
+test("已接管的 Worker error 阻止冒泡并保留故障与清理", { timeout: 10000 }, () => {
+  for (const role of ["engine", "child"] as const) {
+    for (const deathAddress of [undefined, 16384]) {
+      const f = fixture({ deathAddress });
+      const worker = role === "engine" ? f.engine : f.spawn();
+      if (role === "child") f.ready();
+      const event = Object.assign(new Event("error", { cancelable: true }), { error: new Error("原始 trap"), message: "原始 trap" });
+      worker.dispatchEvent(event);
+      assert.equal(event.defaultPrevented, true);
+      if (deathAddress === undefined) assert.equal(f.fatal.length, 1);
+      f.supervisor.dispose();
+      assert.equal(worker.terminations, 1);
+    }
+  }
+});

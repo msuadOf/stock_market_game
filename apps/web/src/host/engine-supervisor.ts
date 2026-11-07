@@ -310,6 +310,8 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
   }
   function workerError(resource: Resource, event: Event): void {
     if (disposed || !resources.has(resource.worker)) return;
+    // 已接管的原生 error 仍会经下方故障通道报告；阻止它再冒泡并抢占 owner 的最终诊断。
+    if (event.type === "error") event.preventDefault();
     let originalFailure: HostFailure | undefined;
     let nativeEventMessage = "";
     try {

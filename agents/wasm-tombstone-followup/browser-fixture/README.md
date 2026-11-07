@@ -10,4 +10,4 @@ node --input-type=module -e 'import { preparePinnedSysroot } from "./scripts/was
 
 另须显式设置独立的 `CARGO_TARGET_DIR`、`WASM_PKG` 和 `CARGO_BUILD_JOBS`。从仓库根目录使用进程外 supervisor 以 300000ms 上限运行 `batch.sh`，并为终止和清理保留时间。批次比较受测源码的运行前后哈希，源码变化时必须重新构建与验证。
 
-child 场景检查 death futex、join 死亡信号、记录和 hard trap 缺席；primary 场景检查 engine、ingress 记录和身份。owner 场景检查真实浏览器 Worker 的错误经 owner 进入故障处理与终止。fixture 不覆盖 `createWorkerHost` 到 UI 的完整旅程，也不代替全仓验收。
+child 场景检查 death futex、join 死亡信号、记录和 hard trap 缺席；primary 场景检查 engine、ingress 记录和身份。owner 场景检查真实浏览器 Worker 的错误经 owner 进入故障处理与终止。另有 `full-host.mjs` 使用真实页面、`createWorkerHost`、`createEngineControlOwner` 与独立 verification-harness 注入 engine panic，检查页面错误码、owner 诊断、Worker 终止和 unknown 释放。其 control worker 工厂为可观测 fixture，非正式产品包同链注入；也不代替全仓验收。

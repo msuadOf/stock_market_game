@@ -49,11 +49,12 @@ test("浏览器组合入口按同一预算构建产品并执行真实 host 与�
   const { runBrowserCombo } = await import("./verify-wasm-thread-combo.mjs");
   const calls = [];
   await runBrowserCombo({ jobs: 8, startedAt: 1000, now: () => 2000, run: async (options) => calls.push(options), root: "/repo", prepare: async () => ({ env: {}, cleanup: async () => {} }), verifyShared: async (directory) => assert.equal(directory, "/repo/apps/web/wasm-pkg") });
-  assert.equal(calls.length, 4);
+  assert.equal(calls.length, 5);
   assert.match(calls[0].args[0], /frontend-build\.mjs$/);
   assert.match(calls[1].args[0], /browser-fixture\/batch\.sh$/);
   assert.match(calls[2].args[0], /browser-combo-dist\.mjs$/);
   assert.match(calls[3].args[0], /browser-runtime\.mjs$/);
+  assert.match(calls[4].args[0], /full-host\.mjs$/);
   assert.ok(calls.every((call) => call.timeoutMs <= 298000));
   assert.equal(calls[0].env.CARGO_BUILD_JOBS, "8");
   assert.equal(calls[2].env.CARGO_BUILD_JOBS, "8");
