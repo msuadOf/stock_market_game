@@ -25,6 +25,7 @@ function legalTrace() {
     const facts = stockSet.map((code) => ({ event: { PriceTick: { code } } }));
     if (index === 0 || index === 3) facts.push({ event: { Trade: trade } });
     if (index === 0) facts.push({ event: { IntentRejected: { code: 1, reason: "ExchangeClosed" } } });
+    if (index === 1) facts.push({ event: { IntentRejected: { account: "0", code: 0, reason: "InsufficientShares" } } });
     const closed_daily_candles = ended ? Object.fromEntries(stockSet.map((stock) => [stock, {}])) : {};
     if (ended) facts.push({ event: { DayBoundary: { closed_daily_candles: clone(closed_daily_candles) } } });
     const update = civil ? { CivilUpdate: { tick, civil_date: dates[index] } } : { TickBatch: { frames: [{ tick, facts, timeseries_payload: { active_daily_candles: {}, continuous_points: Object.fromEntries(stockSet.map((stock) => [stock, {}])), auction_points: {}, closed_daily_candles } }] } };
@@ -40,6 +41,7 @@ function legalTrace() {
 describe("V11独立业务oracle的污染拒绝", { concurrency: 4 }, () => {
   it("接受显式构造的业务期望，不能冒真实native结果", () => assert.doesNotThrow(() => assertBusinessTrace(legalTrace(), "native-runtime")));
   const mutations = [
+    ["买入后当日漏拒卖单", (trace) => { trace.frames[1].update.TickBatch.frames[0].facts = trace.frames[1].update.TickBatch.frames[0].facts.filter((fact) => !fact.event.IntentRejected); }],
     ["首拍没有真实Trade", (trace) => { trace.frames[0].update.TickBatch.frames[0].facts = trace.frames[0].update.TickBatch.frames[0].facts.filter((fact) => !fact.event.Trade); }],
     ["closed伪造PriceTick", (trace) => { trace.frames[0].update.TickBatch.frames[0].facts.push({ event: { PriceTick: { code: 1 } } }); }],
     ["盘中未锁T+1", (trace) => { trace.frames[0].view.snapshot.accounts[0].positions[0].t1_locked = 0; }],
@@ -68,4 +70,52 @@ describe("V11独立业务oracle的污染拒绝", { concurrency: 4 }, () => {
     serial.frames[5].view.dayEndAccounts[0].cash = "827997";
     assert.notDeepEqual(canonicalBusinessTrace(native), canonicalBusinessTrace(serial));
   });
+});
+
+describe("跨宿主业务门禁", () => {
+  it("分别执行 oracle 后比较 canonical trace", async () => {
+    const oracle = await import("./assert-business-trace.mjs");
+    assert.equal(typeof oracle.assertBusinessParity, "function", "必须提供独立业务对拍门禁");
+    const native = legalTrace();
+    const browser = { ok: true, result: { mode: "real-browser-wasm32-serial", trace: clone(native) } };
+    assert.doesNotThrow(() => oracle.assertBusinessParity(native, browser));
+    const badBrowser = clone(browser);
+    badBrowser.result.trace.frames[0].update.TickBatch.frames[0].facts = badBrowser.result.trace.frames[0].update.TickBatch.frames[0].facts.filter((fact) => !fact.event.Trade);
+    assert.throws(() => oracle.assertBusinessParity(native, badBrowser));
+    const badNative = clone(native);
+    badNative.frames[0].view.snapshot.accounts[0].positions[0].t1_locked = 0;
+    assert.throws(() => oracle.assertBusinessParity(badNative, browser));
+    const divergent = clone(browser);
+    divergent.result.trace.frames[0].view.extra = "意外差异";
+    assert.throws(() => oracle.assertBusinessParity(native, divergent));
+    assert.throws(() => oracle.assertBusinessParity(native, { ok: true }));
+  });
+});
+
+it("产品 host 业务 oracle 拒绝错误，且对拍核对公开帧", async () => {
+  const oracle = await import("./assert-business-trace.mjs");
+  assert.equal(typeof oracle.assertHostBusinessTrace, "function");
+  const native = legalTrace();
+  const convert = (view) => {
+    const remap = (map) => Object.fromEntries(Object.entries(map).map(([key, value]) => [key === "0" ? "000101" : "600101", clone(value)]));
+    const snapshot = clone(view.snapshot);
+    if (snapshot.accounts) snapshot.accounts = { "0": { ...snapshot.accounts["0"], positions: remap(snapshot.accounts["0"].positions) } };
+    if (snapshot.markets) snapshot.markets = remap(snapshot.markets);
+    if (snapshot.daily_candles) snapshot.daily_candles = remap(snapshot.daily_candles);
+    const currentMinute = remap(view.currentMinute ?? {}), retained = remap(view.retained ?? {});
+    for (const [code, item] of Object.entries(currentMinute)) { delete item.stock; item.code = code; }
+    for (const [code, item] of Object.entries(retained)) item.code = code;
+    const confirmations = (view.dayEndConfirmations?.["0"] ?? []).map(({ stock, price_cents, gross_cents, ...leg }) => ({ ...leg, code: stock === 0 ? "000101" : "600101", price: price_cents, gross: gross_cents })).reverse();
+    return { confirmations, civilDate: view.civilDate, snapshot, workingOrders: view.workingOrders, currentMinute, retained };
+  };
+  native.initial.snapshot.accounts = clone(native.initial.dayEndAccounts);
+  const host = { ok: true, initial: convert(native.initial), frames: native.frames.map((frame) => ({ updates: [{ type: "protocol", update: clone(frame.update) }], view: convert(frame.view) })) };
+  assert.doesNotThrow(() => oracle.assertHostBusinessTrace(host));
+  const bad = clone(host);bad.frames[0].view.snapshot.accounts[0].positions["000101"].t1_locked = 0;
+  assert.throws(() => oracle.assertHostBusinessTrace(bad));
+  assert.doesNotThrow(() => oracle.assertHostBusinessParity(native, host));
+  const mismatchView = clone(host);mismatchView.frames[0].view.snapshot.accounts[0].cash = "123";
+  assert.throws(() => oracle.assertHostBusinessParity(native, mismatchView));
+  const mismatch = clone(host);mismatch.frames[0].updates[0].update.TickBatch.frames[0].facts[0].event.PriceTick.seq = 999;
+  assert.throws(() => oracle.assertHostBusinessParity(native, mismatch));
 });

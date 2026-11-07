@@ -21,7 +21,7 @@ function candle(value, price, volume = 100n) {
   for (const key of ["open", "high", "low", "close"]) assert.equal(cents(value[key]), price);
   assert.equal(BigInt(value.volume), volume);
   assert.equal(cents(value.trade_stats.turnover_cents), price * volume);
-  assert.equal(BigInt(value.trade_stats.trade_count), 1n);
+  assert.equal(BigInt(value.trade_stats.trade_count), volume === 0n ? 0n : 1n);
 }
 function current(value, stock, date, phase, trading) {
   assert.equal(value.stock, stock);assert.equal(value.date, date);assert.equal(value.live, true);
@@ -88,6 +88,11 @@ export function assertBusinessTrace(trace, pipeline) {
   const firstTrades = events(trace.frames[0]).flatMap((event) => event.Trade ? [event.Trade] : []);
   assert.equal(firstTrades.length, 1, "首拍必须真实Panic对玩家成交，不延后到日结");
   assert.deepEqual(events(trace.frames[1]).filter((event) => event.Trade), []);
+  const sellRejections = events(trace.frames[1]).flatMap((event) => event.IntentRejected ? [event.IntentRejected] : []);
+  assert.equal(sellRejections.length, 1, "真实买入后的当日卖单须恰有一次拒绝");
+  assert.equal(sellRejections[0].account, "0");
+  assert.equal(sellRejections[0].code, trace.open);
+  assert.equal(sellRejections[0].reason, "InsufficientShares");
   let rejected = 0;
   for (const entry of trace.frames.slice(0, 2)) {
     current(entry.view.currentMinute[trace.closed], trace.closed, "2030-01-02", "Closed", false);
@@ -216,4 +221,99 @@ export function canonicalBusinessTrace(trace) {
     for (const rows of Object.values(view.dayEndConfirmations)) for (const leg of rows) delete leg.receipt_id;
   }
   return result;
+}
+
+// 两端分别满足业务约束后才比较，避免一致但错误的输出自证。
+export function assertBusinessParity(nativeTrace, browserResult) {
+  assert.equal(browserResult?.ok, true, "真实浏览器 driver 未成功");
+  assert.equal(browserResult.result?.mode, "real-browser-wasm32-serial", "浏览器执行模式不符");
+  assertBusinessTrace(nativeTrace, "native-runtime");
+  assertBusinessTrace(browserResult.result.trace, "wasm-serial");
+  assert.deepEqual(canonicalBusinessTrace(nativeTrace), canonicalBusinessTrace(browserResult.result.trace), "跨宿主业务 trace 不一致");
+}
+
+function hostUpdate(frame) {
+  const updates = frame.updates.filter((item) => item.type === "protocol");
+  assert.equal(updates.length, 1, "每步须恰有一个真实 protocol 更新");
+  return updates[0].update;
+}
+
+// 产品宿主只公开玩家账户；此 oracle 不构造 NPC 账户或其交割单。
+export function assertHostBusinessTrace(trace) {
+  assert.equal(trace.ok, true);
+  assert.equal(trace.initial.civilDate, "2030-01-02");
+  assert.equal(trace.frames.length, 6);
+  const [first, end, boundary, resumed, reopenedEnd, final] = trace.frames;
+  const facts = (frame) => events({ update: hostUpdate(frame) });
+  const firstTrades = facts(first).flatMap(event => event.Trade ? [event.Trade] : []);
+  assert.equal(firstTrades.length, 1);
+  assert.equal(firstTrades[0].code, 0);assert.equal(firstTrades[0].qty, 100);assert.equal(cents(firstTrades[0].price), 900n);
+  const closedReject = facts(first).flatMap(event => event.IntentRejected ? [event.IntentRejected] : []);
+  assert.equal(closedReject.length, 1);assert.equal(closedReject[0].code, 1);assert.equal(closedReject[0].reason, "ExchangeClosed");
+  const sellReject = facts(end).flatMap(event => event.IntentRejected ? [event.IntentRejected] : []);
+  assert.equal(sellReject.length, 1);assert.equal(sellReject[0].account, "0");assert.equal(sellReject[0].code, 0);assert.equal(sellReject[0].reason, "InsufficientShares");
+  assert.equal(first.view.snapshot.accounts["0"].positions["000101"].t1_locked, 100);
+  assert.equal(cents(trace.initial.snapshot.accounts["0"].cash) - cents(first.view.snapshot.accounts["0"].cash), 90501n);
+  assert.equal(end.view.snapshot.accounts["0"].positions["000101"].t1_locked, 0);
+  assert.equal(first.view.currentMinute["600101"].trading, false);assert.equal(first.view.currentMinute["600101"].phase, "Closed");assert.deepEqual(first.view.currentMinute["600101"].bars, []);
+  assert.equal(first.view.currentMinute["000101"].bars.length, 1);bar(first.view.currentMinute["000101"].bars[0], 900n);
+  const closed = boundary.view.retained["600101"].entries[0], open = boundary.view.retained["000101"].entries[0];
+  assert.equal(closed.date, "2030-01-02");assert.equal(closed.availability, "Closed");assert.equal(closed.daily_candle, null);assert.deepEqual(closed.bars, []);
+  assert.equal(open.availability, "Traded");candle(open.daily_candle, 900n);bar(open.bars[0], 900n);
+  assert.equal(boundary.view.confirmations.length, 1);
+  const firstReceipt = boundary.view.confirmations[0];
+  assert.equal(firstReceipt.code, "000101");assert.equal(firstReceipt.side, "Buy");assert.equal(firstReceipt.civil_date, "2030-01-02");assert.equal(firstReceipt.quantity_shares, 100);assert.equal(cents(firstReceipt.price), 900n);assert.equal(cents(firstReceipt.gross), 90000n);
+  assert.equal(cents(firstReceipt.actual_fees.commission), 500n);assert.equal(cents(firstReceipt.actual_fees.transfer_fee), 1n);assert.equal(cents(firstReceipt.actual_fees.stamp_tax), 0n);
+  const trades = facts(resumed).flatMap(event => event.Trade ? [event.Trade] : []);
+  assert.equal(trades.length, 1);assert.equal(trades[0].code, 0);assert.equal(trades[0].qty, 100);assert.equal(cents(trades[0].price), 810n);
+  assert.equal(resumed.view.currentMinute["600101"].trading, true);assert.equal(resumed.view.currentMinute["600101"].phase, "Continuous");
+  assert.equal(resumed.view.snapshot.accounts["0"].positions["000101"].t1_locked, 100);
+  assert.equal(reopenedEnd.view.snapshot.accounts["0"].positions["000101"].t1_locked, 0);
+  assert.equal(cents(trace.initial.snapshot.accounts["0"].cash) - cents(final.view.snapshot.accounts["0"].cash), 172002n);
+  const reopened = final.view.retained["600101"].entries[1], traded = final.view.retained["000101"].entries[1];
+  assert.equal(reopened.date, "2030-01-03");assert.equal(reopened.availability, "NoTrades");assert.deepEqual(reopened.bars, []);candle(reopened.daily_candle, 1000n, 0n);
+  assert.equal(traded.availability, "Traded");candle(traded.daily_candle, 810n);bar(traded.bars[0], 810n);
+  assert.equal(final.view.confirmations.length, 2);
+  const resumedReceipt = final.view.confirmations[0];
+  assert.equal(resumedReceipt.code, "000101");assert.equal(resumedReceipt.side, "Buy");assert.equal(resumedReceipt.civil_date, "2030-01-03");assert.equal(resumedReceipt.quantity_shares, 100);assert.equal(cents(resumedReceipt.price), 810n);assert.equal(cents(resumedReceipt.gross), 81000n);
+  assert.equal(cents(resumedReceipt.actual_fees.commission), 500n);assert.equal(cents(resumedReceipt.actual_fees.transfer_fee), 1n);assert.equal(cents(resumedReceipt.actual_fees.stamp_tax), 0n);
+}
+
+export function assertHostBusinessParity(native, host) {
+  assertBusinessTrace(native, "native-runtime");
+  assertHostBusinessTrace(host);
+  for (const [index, frame] of host.frames.entries()) {
+    const nativeUpdate = native.frames[index].update, browserUpdate = hostUpdate(frame);
+    if (nativeUpdate.TickBatch) assert.deepEqual(browserUpdate.TickBatch.frames, nativeUpdate.TickBatch.frames, `第 ${index} 步公开市场帧不一致`);
+    else assert.deepEqual(browserUpdate, nativeUpdate, `第 ${index} 步自然日更新不一致`);
+    const expectedView = native.frames[index].view;
+    assert.equal(frame.view.civilDate, expectedView.civilDate);
+    const codeOf = (id) => {
+      if (String(id) === String(native.open)) return "000101";
+      if (String(id) === String(native.closed)) return "600101";
+      throw new Error(`未知 StockId：${id}`);
+    };
+    const mapStocks = (map) => Object.fromEntries(Object.entries(map).map(([id, value]) => [codeOf(id), value]));
+    const expectedSnapshot = structuredClone(expectedView.snapshot);
+    for (const field of ["markets", "daily_candles", "active_daily_candles"]) if (expectedSnapshot[field] !== undefined) expectedSnapshot[field] = mapStocks(expectedSnapshot[field]);
+    const player = expectedSnapshot.accounts["0"];
+    player.positions = mapStocks(player.positions);
+    player.reserved_sell_qty = mapStocks(player.reserved_sell_qty);
+    expectedSnapshot.accounts = { "0": player };
+    assert.deepEqual(frame.view.snapshot, expectedSnapshot, `第 ${index} 步玩家公开快照不一致`);
+    assert.deepEqual(frame.view.workingOrders, expectedView.workingOrders, `第 ${index} 步玩家活动委托不一致`);
+    if (index === 2 || index === 5) {
+      const confirmations = expectedView.dayEndConfirmations["0"].map(({ stock, price_cents, gross_cents, ...leg }) => ({ ...leg, code: codeOf(stock), price: price_cents, gross: gross_cents })).reverse();
+      assert.deepEqual(frame.view.confirmations, confirmations, `第 ${index} 步玩家交割单不一致`);
+    }
+    for (const id of [native.open, native.closed]) {
+      const code = codeOf(id);
+      const minute = structuredClone(expectedView.currentMinute[id]);delete minute.stock;minute.code = code;
+      assert.deepEqual(frame.view.currentMinute[code], minute, `第 ${index} 步分钟查询不一致`);
+      if (Object.hasOwn(expectedView.retained, id)) {
+        const history = structuredClone(expectedView.retained[id]);delete history.stock;history.code = code;
+        assert.deepEqual(frame.view.retained[code], history, `第 ${index} 步保留历史不一致`);
+      } else assert(!Object.hasOwn(frame.view.retained, code));
+    }
+  }
 }
