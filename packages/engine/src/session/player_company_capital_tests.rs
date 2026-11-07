@@ -60,6 +60,66 @@ fn has_unit_transition(error: &(dyn std::error::Error + 'static)) -> bool {
 }
 
 #[test]
+fn player_command_invalid_rights_and_secondary_preserve_state() {
+    use crate::company::rights_offering::RightsOfferingError;
+
+    let cases = [
+        (
+            PlayerCompanyProposal::RightsOffering {
+                company: CompanyId(0),
+                price_per_share: Money::ZERO,
+                shares_per_existing_share_micros: 100_000,
+                payment_days: 1,
+            },
+            "subscription price must be positive",
+        ),
+        (
+            PlayerCompanyProposal::RightsOffering {
+                company: CompanyId(0),
+                price_per_share: Money::from_cents(100),
+                shares_per_existing_share_micros: 500_001,
+                payment_days: 1,
+            },
+            "rights ratio must not exceed 50%",
+        ),
+        (
+            PlayerCompanyProposal::RightsOffering {
+                company: CompanyId(0),
+                price_per_share: Money::from_cents(100),
+                shares_per_existing_share_micros: 100_000,
+                payment_days: 0,
+            },
+            "payment window must cover at least one trading day",
+        ),
+        (
+            PlayerCompanyProposal::SecondaryOffering {
+                company: CompanyId(0),
+                price_per_share: Money::from_cents(100),
+                shares: 0,
+            },
+            "directed placement target shares must be positive",
+        ),
+    ];
+    for (proposal, expected) in cases {
+        let mut game = game_with_features(true, true, false);
+        let error = assert_rejected_unchanged(&mut game, proposal);
+        let mut cursor: Option<&(dyn std::error::Error + 'static)> = Some(&error);
+        let mut found = false;
+        while let Some(cause) = cursor {
+            if let Some(RightsOfferingError::InvalidPlan { detail }) =
+                cause.downcast_ref::<RightsOfferingError>()
+            {
+                assert!(detail.contains(expected), "{detail}");
+                found = true;
+                break;
+            }
+            cursor = cause.source();
+        }
+        assert!(found, "缺少预期的 RightsOfferingError: {error:?}");
+    }
+}
+
+#[test]
 fn player_command_disabled_rights_has_its_own_zero_change_case() {
     let mut game = game(true);
     let error = assert_rejected_unchanged(&mut game, rights());
