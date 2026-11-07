@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createEngineSupervisor, allocateFacadeWorkerId } from "./engine-supervisor.ts";
-import { BUMP, CAPACITY, GEN_BITS, FREE_HEAD, FREE_HEAD_EMPTY, FREE_LEN, HEADER_WORDS, SLOT_STRIDE, JOIN_STRIDE, SLOT_JOIN_INDEX, H1_LOCK, AnswerField, SlotState, JoinState, encodeW, encodeJoin, slotWordOffset, slotFieldOffset, joinWordOffset } from "./facade-slot-protocol.ts";
+import { createEngineSupervisor, allocateFacadeWorkerId, FacadeSpawnError } from "./engine-supervisor.ts";
+import { BUMP, CAPACITY, GEN_BITS, FREE_HEAD, FREE_HEAD_EMPTY, FREE_LEN, HEADER_WORDS, SLOT_STRIDE, JOIN_STRIDE, SLOT_JOIN_INDEX, SLOT_ANSWER_B, H1_LOCK, AnswerField, SlotState, JoinState, encodeW, encodeJoin, slotWordOffset, slotFieldOffset, joinWordOffset } from "./facade-slot-protocol.ts";
 import type { HostFailure } from "./host-update.ts";
 import { parseHostFailure } from "./protocol-failure.ts";
 
@@ -235,6 +235,35 @@ test("trampoline failure 的死亡信号写入失败仍保留原始错误", { ti
   f.channels[1].port1.emit({ type: "facadeBootstrapFailure", phase: "trampoline", workerId: 1, slot: 0, gen: 0, failure });
   assert.equal(f.fatal[0].code, "FACADE_WORKER_PROTOCOL_ERROR");
   assert.deepEqual((f.fatal[0].context as { originalFailure: unknown }).originalFailure, failure);
+});
+
+test("全局 trampoline failure 抢先于 ready 时唤醒 spawn 并保留错误", { timeout: 10000 }, () => {
+  let slotAtFatal = -1, notifiedAtFatal = false, notified = false;
+  const f = fixture({ onFatal: () => { slotAtFatal = Atomics.load(f.words, slotWordOffset(0)) >>> 0; notifiedAtFatal = notified; } }); f.spawn();
+  const failure = { code: "FACADE_BOOTSTRAP_FAILURE", where: "facade-child-bootstrap.trampoline", message: "unreachable" };
+  const originalNotify = Atomics.notify;
+  try {
+    Atomics.notify = (array, index, count) => {
+      if (array.buffer === f.memory.buffer && index === slotWordOffset(0)) notified = true;
+      return originalNotify(array, index, count);
+    };
+    f.supervisor.handleGlobalMessage(f.children[0] as unknown as Worker, { type: "facadeBootstrapFailure", phase: "trampoline", workerId: 1, slot: 0, gen: 0, failure });
+  } finally { Atomics.notify = originalNotify; }
+  assert.equal(slotAtFatal, encodeW(0, SlotState.Fail, 29));
+  assert.equal(notifiedAtFatal, true);
+  assert.equal(Atomics.load(f.words, slotFieldOffset(0, SLOT_ANSWER_B)), FacadeSpawnError.BOOTSTRAP_FAILURE);
+  assert.deepEqual(f.fatal, [failure]);
+});
+
+test("全局 trampoline failure 晚于取消时不覆盖槽", { timeout: 10000 }, () => {
+  const f = fixture(); f.spawn();
+  const cancelled = encodeW(0, SlotState.Cancelled, 29);
+  Atomics.store(f.words, slotWordOffset(0), cancelled | 0);
+  const before = [...f.words];
+  const failure = { code: "FACADE_BOOTSTRAP_FAILURE", where: "facade-child-bootstrap.trampoline", message: "unreachable" };
+  f.supervisor.handleGlobalMessage(f.children[0] as unknown as Worker, { type: "facadeBootstrapFailure", phase: "trampoline", workerId: 1, slot: 0, gen: 0, failure });
+  assert.deepEqual([...f.words], before);
+  assert.deepEqual(f.fatal, [failure]);
 });
 
 test("DONE 后 cleanup 失败独立 fatal，结果不变并无条件清所有本人 Worker", { timeout: 10000 }, () => {

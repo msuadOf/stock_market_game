@@ -12,7 +12,7 @@ import type { WasmLifecycleObservation } from "./wasm-lifecycle-observation.ts";
 import type { WasmFinalRelease } from "./wasm-document-memory-owner.ts";
 
 /** 只分配宿主错误载荷，不改变 Rust 的 WorkerFailed 判定。 */
-export const FacadeSpawnError = Object.freeze({ WORKER_CONSTRUCT: 1, SCRIPT_LOAD: 2, INSTANTIATE: 3, SUPERVISOR_SHUTDOWN: 4 });
+export const FacadeSpawnError = Object.freeze({ WORKER_CONSTRUCT: 1, SCRIPT_LOAD: 2, INSTANTIATE: 3, SUPERVISOR_SHUTDOWN: 4, BOOTSTRAP_FAILURE: 5 });
 export function allocateFacadeWorkerId(next: number): { workerId: number; next: number } {
   if (!Number.isInteger(next) || next < 1 || next > 0xffffffff) throw new Error("facade Worker id 已耗尽或非法，禁止回绕");
   return { workerId: next, next: next + 1 };
@@ -346,7 +346,15 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
       } else {
         // 已成立的 child 可能在 trampoline 中 trap；先唤醒 join，再废弃实例。
         // 这里没有 Rust panic 记录，故只报告 hardtrap，不推断具体原因。
-        if (resource.ready && resource.identity !== undefined) {
+        if (!resource.ready && resource.identity !== undefined) {
+          try {
+            // 全局错误出口可抢先于控制端的 ready；此时 spawn 尚未成立。
+            answerFail(arena(), resource.identity.slot, resource.identity.gen, FacadeSpawnError.BOOTSTRAP_FAILURE);
+          } catch (error) {
+            fatal(failure("FACADE_WORKER_PROTOCOL_ERROR", resource.role, error, { originalFailure: message.failure }));
+            return;
+          }
+        } else if (resource.ready && resource.identity !== undefined) {
           try {
             const view = arena();
             const join = Atomics.load(view.words, slotFieldOffset(resource.identity.slot, SLOT_JOIN_INDEX)) >>> 0;
