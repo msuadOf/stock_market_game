@@ -8729,6 +8729,63 @@ mod sol_recheck1_tests {
         }
     }
 
+    #[test]
+    fn external_pending_sell_reaches_root_personal_observation() {
+        let id = crate::AccountId(9);
+        for (shares, pending, expected_equity, expected_cost) in [
+            (60, 140, 210_000, 1_500),
+            (0, 200, 210_000, 1_500),
+            (0, 60, 70_000, 5_000),
+        ] {
+            let mut account = GroupAccount::new(10_000, 2);
+            account.shares[0] = shares;
+            account.pending_sell_qty[0] = pending;
+            account.invested_cents[0] = 300_000;
+            account.ever_held[0] = true;
+            let snapshot = snapshot_arc();
+            let projection = crate::runtime::information_fixture::projection(vec![id]);
+            let library = Arc::new(crate::information::PublicLibrary::default());
+            let context = build_root_read_context(
+                &[Arc::new(account)],
+                0,
+                id,
+                &projection.initial_company_facts,
+                &library,
+                &crate::plans::PlanBook::default(),
+                snapshot.tick,
+                240,
+                &snapshot,
+                Arc::new(
+                    (0..2)
+                        .map(|stock| {
+                            (crate::StockId(stock),
+                    crate::observation::information_clock::InformationTradingAnchor::TradingDay { ordinal: 0 })
+                        })
+                        .collect(),
+                ),
+            );
+            let observation = crate::session::DecisionChainObservation {
+                market: super::super::decision::build_market_view(&snapshot),
+                paths: Default::default(),
+                technical: Default::default(),
+                now: snapshot.calendar.observation_instant_after(),
+                exposed: Default::default(),
+            };
+            let (_, result, _, _) = crate::session::InstitutionDecisionRoot::new(id, personal(id))
+                .observe(&context, &observation);
+            let experience = result.belief.experience();
+            assert_eq!(
+                experience.peak_equity,
+                Some(crate::Money::from_cents(expected_equity))
+            );
+            assert_eq!(
+                experience.stocks[&crate::StockId(0)].entry_reference_price,
+                Some(crate::Money::from_cents(expected_cost))
+            );
+            assert!(experience.feedback.stocks.contains_key(&crate::StockId(0)));
+        }
+    }
+
     // Sol 二审修复集 1：existing_before 成员在现金受限时优先获预算——
     // 同轮新开（不在集合内）=NewOpportunity 让位；若同轮新开被错误归入
     // existing（修复前调用点的实际行为——采集点在开仓循环之后），平手
@@ -10430,8 +10487,7 @@ mod pending_sell_risk_tests {
     }
 
     /// 外部（无 ChildTicket）在途卖单必须进入持仓投影（`build_root_read_context`
-    /// 消费的同一函数）。本用例只覆盖投影函数；完整 root/observe_personal
-    /// 端到端链路尚无自动用例，已登记为测试缺口。
+    /// 消费的同一函数）。本人观察链另由 external_pending_sell_reaches_root_personal_observation 覆盖。
     #[test]
     fn external_pending_without_ticket_survives_projected_positions() {
         let mut state = chain_harness(Side::Sell);
