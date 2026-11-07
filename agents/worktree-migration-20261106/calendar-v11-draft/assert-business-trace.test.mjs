@@ -111,6 +111,14 @@ it("产品 host 业务 oracle 拒绝错误，且对拍核对公开帧", async ()
   native.initial.snapshot.accounts = clone(native.initial.dayEndAccounts);
   const host = { ok: true, initial: convert(native.initial), frames: native.frames.map((frame) => ({ updates: [{ type: "protocol", update: clone(frame.update) }], view: convert(frame.view) })) };
   assert.doesNotThrow(() => oracle.assertHostBusinessTrace(host));
+  for (const frame of [2, 5]) {
+    for (const [field, value] of [["commission", "499"], ["transfer_fee", "0"], ["stamp_tax", "1"]]) {
+      const wrongFee = clone(host);
+      wrongFee.frames[frame].view.confirmations[0].actual_fees[field] = value;
+      assert.throws(() => oracle.assertHostBusinessTrace(wrongFee), `第 ${frame} 步 ${field} 错误必须被 browser oracle 拒绝`);
+      assert.throws(() => oracle.assertHostBusinessParity(native, wrongFee), `第 ${frame} 步 ${field} 错误必须使跨宿主门禁失败`);
+    }
+  }
   const bad = clone(host);bad.frames[0].view.snapshot.accounts[0].positions["000101"].t1_locked = 0;
   assert.throws(() => oracle.assertHostBusinessTrace(bad));
   assert.doesNotThrow(() => oracle.assertHostBusinessParity(native, host));
