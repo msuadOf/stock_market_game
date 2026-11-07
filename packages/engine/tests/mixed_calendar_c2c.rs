@@ -313,7 +313,17 @@ fn mixed_day_end_keeps_closed_stock_t1_locked_until_its_reopening_day_end() {
         100
     );
     session.end_civil_day().unwrap();
-    for _ in 0..TICKS_PER_DAY {
+    assert_eq!(
+        session.snapshot().accounts[&AccountId(0)].positions[&closed].t1_locked,
+        100
+    );
+    session.step().unwrap();
+    assert_eq!(
+        session.snapshot().accounts[&AccountId(0)].positions[&closed].t1_locked,
+        100,
+        "复市首拍不能提前解锁"
+    );
+    for _ in 1..TICKS_PER_DAY {
         session.step().unwrap();
     }
     assert_eq!(
