@@ -45,7 +45,7 @@ export class WorkerTransportFixture {
   bindIngressTransport(
     listener: (event: MessageEvent<unknown>) => void,
     instanceId: number,
-    substrate: { readonly module: WebAssembly.Module; readonly memory: WebAssembly.Memory; readonly layout: unknown; readonly diagnostics: boolean },
+    substrate: { readonly module: WebAssembly.Module; readonly memory: WebAssembly.Memory; readonly layout: unknown; readonly diagnostics: boolean; readonly primary?: { readonly workerId: number; readonly address: number } },
   ): MessagePort {
     const business = this.createChannel();
     listener(new MessageEvent("message", { data: {

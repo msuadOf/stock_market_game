@@ -42,7 +42,25 @@ function diagnosticDetails(
   seen = new Set<object>(),
   depth = 0,
   field?: string,
+  path = "context",
 ): unknown {
+  if (mode === "context" && path === "context" && field === "last_committed_tick") {
+    return value === "unknown" ? "未知" : "[已脱敏：非公开诊断值]";
+  }
+  if (mode === "context" && (path === "context" || path === "context.original" || path === "record") && field === "tombstoneReadError") {
+    return "读取失败，原始详情已脱敏";
+  }
+  const restricted = (path === "context" || path === "context.original") && field === "incomplete"
+    || (path === "tombstone" && ["state", "kind", "phase", "truncated"].includes(field ?? ""))
+    || (path === "identity" && ["workerId", "role", "slot", "gen"].includes(field ?? ""));
+  if (mode === "context" && restricted) {
+    const valid = field === "state" ? typeof value === "string" && ["absent", "writing", "live", "invalid-utf8"].includes(value)
+      : field === "kind" ? typeof value === "string" && ["panic", "hardtrap"].includes(value)
+      : field === "role" ? typeof value === "string" && ["engine", "ingress", "child"].includes(value)
+      : field === "truncated" || field === "incomplete" ? typeof value === "boolean"
+      : typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= (field === "phase" ? 65535 : 4294967295);
+    return valid ? value : "[已脱敏：非公开诊断值]";
+  }
   if (mode === "context" && field === "operation") return typeof value === "string" ? publicContextString(value, field) : "[已脱敏：非公开诊断值]";
   if (depth >= 12) return "[详情超过展示深度]";
   if (value === null || value === undefined) return value === null ? null : "[未提供]";
@@ -56,19 +74,29 @@ function diagnosticDetails(
   if (seen.has(value)) return "[循环引用]";
   seen.add(value);
   try {
-    if (Array.isArray(value)) return value.map((entry) => diagnosticDetails(entry, mode, seen, depth + 1, field));
+    if (Array.isArray(value)) return value.map((entry) => diagnosticDetails(entry, mode, seen, depth + 1, field, path === "records" ? "record" : "other"));
     const result: Record<string, unknown> = {};
     const descriptors = Object.getOwnPropertyDescriptors(value);
     for (const [index, [key, descriptor]] of Object.entries(descriptors).entries()) {
-      const publicField = mode === "context" ? PUBLIC_CONTEXT_FIELDS.has(key) : CAUSE_FIELDS.has(key);
-      const safeKey = publicField ? key : `[已脱敏字段${index + 1}]`;
+      const nextPath = mode !== "context" ? "other"
+        : (path === "context" || path === "context.original") && key === "tombstone" ? "tombstone"
+        : path === "context" && key === "original" ? "context.original"
+        : path === "context" && key === "records" ? "records"
+        : path === "record" && key === "identity" ? "identity"
+        : path === "record" && key === "tombstone" ? "tombstone" : "other";
+      const projected = nextPath !== "other" || (path === "context" && key === "last_committed_tick")
+        || ((path === "context" || path === "context.original" || path === "record") && key === "tombstoneReadError") || ((path === "context" || path === "context.original") && key === "incomplete")
+        || (path === "identity" && ["workerId", "role", "slot", "gen"].includes(key))
+        || (path === "tombstone" && ["state", "kind", "phase", "truncated"].includes(key));
+      const publicField = mode === "context" ? PUBLIC_CONTEXT_FIELDS.has(key) || projected : CAUSE_FIELDS.has(key);
+      const safeKey = publicField ? (mode === "context" && path === "context" && key === "last_committed_tick" ? "最近已提交 tick" : key) : `[已脱敏字段${index + 1}]`;
       if (PRIVATE_FIELDS.test(key) || (mode === "cause" && !CAUSE_FIELDS.has(key))) {
         Object.defineProperty(result, safeKey, { value: "[已脱敏]", enumerable: true });
       } else if (!Object.hasOwn(descriptor, "value")) {
         Object.defineProperty(result, safeKey, { value: "[详情读取失败：访问器字段未执行]", enumerable: true });
       } else {
         Object.defineProperty(result, safeKey, {
-          value: diagnosticDetails(descriptor.value, key === "context" ? "context" : mode, seen, depth + 1, key),
+          value: diagnosticDetails(descriptor.value, key === "context" ? "context" : mode, seen, depth + 1, key, projected && nextPath === "other" ? path : nextPath),
           enumerable: true,
         });
       }

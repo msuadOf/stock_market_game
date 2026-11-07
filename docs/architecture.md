@@ -35,6 +35,8 @@ native 默认使用 [ADR-0043](decisions/0043-std-thread-ownership-runtime.md) �
 
 Web WASM 宿主的保守内存总账上限为 3 GiB，每个产品 `WebAssembly.Memory` 的 maximum 为 1 GiB、initial 为 64 MiB，残留重载阈值为 512 MiB。这些约束彼此独立，不代表真实 World 步进或 Browser 二十次验收已完成。
 
+Web WASM 的 panic 早期死亡通知与有界 tombstone 采用受控 std 构建，诊断记录可能缺席或尚未完成；hard trap 由宿主报告。固定工具链、消息限制、构建平台与尚待验证的边界见 [ADR-0044](decisions/0044-wasm-panic-tombstone.md)。该 ADR 仍为 draft，不能将局部探针视为完整产品验收。
+
 混合日历 raw runtime 接口仍在独立审查与组合验证中：`World::spawn(spec, calendar)` 显式接收 `TradingCalendar`；`calendar_start_date` 与当前 `civil_start_date` 是不同事实。`run_ticks(n)` 在执行前拒绝跨当前自然日的区间，raw caller 显式完成日终并设置下一自然日；生产 `GameSession` 仍拥有自然日经营与提交权威。
 
 每个 tick 的失败须显式报告，不能发布部分结果；自然日更新是独立事务。并发受理顺序和重放边界见 [ADR-0017](decisions/0017-escrow-parallel-tick.md) 与 [testing.md](testing.md)。不以固定 seed 承诺不同并发到达轨迹产生相同成交结果。

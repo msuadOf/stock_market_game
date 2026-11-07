@@ -9,6 +9,8 @@
 //!
 //! 详见 docs/architecture.md 与 docs/decisions/0002-engine-rust-wasm.md。
 
+#![cfg_attr(target_arch = "wasm32", feature(stdarch_wasm_atomic_wait))]
+
 // Native workers allocate and release tick candidates on different threads.
 // The allocator choice is process-wide but does not own game state. Other
 // platforms keep their supported allocator. See ADR-0020 for measurements.
@@ -90,6 +92,8 @@ pub mod clock;
 mod facade_slot;
 /// 线程门面：native=std re-export，wasm=槽协议接线（设计 §0/§1.1/§12-14）。
 pub mod thread_facade;
+#[cfg(any(target_arch = "wasm32", test))]
+mod wasm_tombstone;
 
 pub mod verification_evidence;
 

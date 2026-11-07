@@ -56,6 +56,12 @@ mod wasm_impl {
     /// facade init：arena 单线程期划拨（宿主 bootstrap 在 substrate 就绪后
     /// 调 `facade_slot_init`；容量 = 2×(G+N+2)）。
     pub fn init_wasm_facade(capacity: u32) -> Result<(), &'static str> {
+        extern "C" {
+            fn wasm_tombstone_std_marker() -> u32;
+        }
+        if unsafe { wasm_tombstone_std_marker() } != 0x57325431 {
+            return Err("WASM std tombstone 版本标记不匹配");
+        }
         RUNTIME
             .set(Arc::new(SlotArena::alloc(capacity, GEN_BITS_DEFAULT)))
             .map_err(|_| {
@@ -70,6 +76,16 @@ mod wasm_impl {
                 "wasm32 facade runtime 未初始化：宿主 bootstrap 须先调 facade_slot_init（容量 2×(G+N+2)，§12.1.6）",
             )
         })
+    }
+
+    /// 初始化 engine/ingress 记录，engine TLS 在返回前完成绑定。
+    pub fn init_tombstone_primary() -> Result<(u32, u32, u32), &'static str> {
+        crate::wasm_tombstone::init_primary()
+    }
+
+    /// 在 ingress 首次业务调用前验证并绑定预登记记录。
+    pub fn bind_tombstone_ingress(address: u32, worker_id: u32) -> Result<(), &'static str> {
+        crate::wasm_tombstone::bind_ingress(address, worker_id)
     }
 
     /// 子 trampoline 导出入口（子 Worker bootstrap 调）：返回 0=Ran、
@@ -202,7 +218,8 @@ mod wasm_impl {
 
 #[cfg(target_family = "wasm")]
 pub use wasm_impl::{
-    available_parallelism, child_trampoline, facade_layout, init_wasm_facade, Builder, JoinHandle,
+    available_parallelism, bind_tombstone_ingress, child_trampoline, facade_layout,
+    init_tombstone_primary, init_wasm_facade, Builder, JoinHandle,
 };
 
 #[cfg(test)]

@@ -40,6 +40,8 @@ pub trait FacadePlatform: Sync {
     /// H5：REQ 已发布后向监督者发 facadeSpawn 消息（§13.2 时序：H4 之后、
     /// supervisor 一切槽操作之前——REQ 未发布而消息先到会使 A1 假性失败）。
     fn notify_spawn(&self, slot: u32, gen: u32, name: &str);
+    #[cfg(target_arch = "wasm32")]
+    fn notify_spawn_v2(&self, slot: u32, gen: u32, name: &str, record_addr: u32);
     /// 记录退出意图；Rust trampoline 返回 JS 后，bootstrap 校验并 raw destroy，
     /// 最后才发真实 W3 workerExit、置 rust_done 并关闭。回调内不得 destroy 当前栈。
     fn worker_exit(&self, worker_id: u32, slot: u32, gen: u32);
@@ -77,6 +79,8 @@ impl FacadePlatform for NullPlatform {
     }
     fn wake_all_u32(&self, _addr: *const std::sync::atomic::AtomicU32) {}
     fn notify_spawn(&self, _slot: u32, _gen: u32, _name: &str) {}
+    #[cfg(target_arch = "wasm32")]
+    fn notify_spawn_v2(&self, _slot: u32, _gen: u32, _name: &str, _record_addr: u32) {}
     fn worker_exit(&self, _worker_id: u32, _slot: u32, _gen: u32) {}
     fn terminate_child(&self, _worker_id: u32) {}
 }
@@ -100,6 +104,13 @@ mod wasm_impl {
         fn facade_futex_notify(word_addr: u32);
         /// H5：facadeSpawn 消息（name 指针+len 指入共享线性内存）。
         fn facade_spawn_notify(slot_index: u32, gen: u32, name_ptr: u32, name_len: u32);
+        fn facade_spawn_notify_v2(
+            slot_index: u32,
+            gen: u32,
+            name_ptr: u32,
+            name_len: u32,
+            record_addr: u32,
+        );
         /// 仅记录退出意图；真实 workerExit/close 在 Rust 返回及 raw destroy 成功后执行。
         fn facade_worker_exit_notify(worker_id: u32, slot_index: u32, gen: u32);
         /// 迟到构造子 terminate（幂等卫生）。
@@ -131,6 +142,17 @@ mod wasm_impl {
         fn notify_spawn(&self, slot: u32, gen: u32, name: &str) {
             unsafe { facade_spawn_notify(slot, gen, name.as_ptr() as u32, name.len() as u32) }
         }
+        fn notify_spawn_v2(&self, slot: u32, gen: u32, name: &str, record_addr: u32) {
+            unsafe {
+                facade_spawn_notify_v2(
+                    slot,
+                    gen,
+                    name.as_ptr() as u32,
+                    name.len() as u32,
+                    record_addr,
+                )
+            }
+        }
         fn worker_exit(&self, worker_id: u32, slot: u32, gen: u32) {
             unsafe { facade_worker_exit_notify(worker_id, slot, gen) }
         }
@@ -159,6 +181,10 @@ impl<P: FacadePlatform + Send> FacadePlatform for std::sync::Arc<P> {
     }
     fn notify_spawn(&self, slot: u32, gen: u32, name: &str) {
         (**self).notify_spawn(slot, gen, name)
+    }
+    #[cfg(target_arch = "wasm32")]
+    fn notify_spawn_v2(&self, slot: u32, gen: u32, name: &str, record_addr: u32) {
+        (**self).notify_spawn_v2(slot, gen, name, record_addr)
     }
     fn worker_exit(&self, worker_id: u32, slot: u32, gen: u32) {
         (**self).worker_exit(worker_id, slot, gen)

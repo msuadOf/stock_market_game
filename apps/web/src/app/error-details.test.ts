@@ -140,3 +140,48 @@ test("未注入 Clipboard 时使用浏览器接口，复制成功前不宣布成
     else Object.defineProperty(globalThis, "navigator", descriptor);
   }
 });
+
+test("tombstone 反馈只在指定路径展示受限的 Worker 诊断字段", { timeout: 10000 }, async () => {
+  const { buildErrorFeedback } = await import("./error-details.ts");
+  const text = buildErrorFeedback({ code: "HOST_FATAL", where: "host", message: "失败", context: {
+    incomplete: true,
+    records: [
+      { identity: { workerId: 7, slot: 2, gen: 9, address: 1234 }, tombstone: { state: "live", kind: "panic", phase: 3, truncated: false, message: "private-panic" } },
+      { identity: { workerId: 4294967295, role: "ingress" }, tombstone: { state: "invalid-utf8", kind: "hardtrap", phase: 0, truncated: true, bytes: [112, 114] } },
+      { identity: { workerId: 0, role: "engine" }, tombstone: { state: "writing" } },
+    ],
+    original: { tombstone: { state: "absent" } },
+    unrelated: { state: "private-state", workerId: "private-worker", truncated: "private-truncated" },
+  } });
+  for (const expected of ['"incomplete": true', '"workerId": 7', '"slot": 2', '"gen": 9', '"state": "live"', '"kind": "panic"', '"phase": 3', '"truncated": false', '"state": "invalid-utf8"', '"kind": "hardtrap"', '"state": "writing"', '"state": "absent"']) assert.ok(text.includes(expected), expected);
+  assert.doesNotMatch(text, /private-|"address": 1234|112|114/);
+});
+
+test("tombstone 诊断字段拒绝任意字符串、对象及越界数值", { timeout: 10000 }, async () => {
+  const { buildErrorFeedback } = await import("./error-details.ts");
+  const text = buildErrorFeedback({ code: "HOST_FATAL", where: "host", message: "失败", context: {
+    incomplete: "private-incomplete", records: [{ identity: { workerId: -1, role: "private-role" }, tombstone: {
+      state: "private-state", kind: "private-kind", phase: 65536, truncated: { tick: 123 }, message: "private-message",
+    } }],
+  } });
+  assert.doesNotMatch(text, /private-|65536|"workerId": -1|"tick": 123/);
+});
+
+test("仅在宿主 context 指定路径显示最近已提交 tick 未知", { timeout: 10000 }, async () => {
+  const { buildErrorFeedback } = await import("./error-details.ts");
+  const base = { code: "HOST_FATAL", where: "host", message: "失败" };
+  assert.match(buildErrorFeedback({ ...base, context: { last_committed_tick: "unknown" } }), /"最近已提交 tick": "未知"/);
+  const text = buildErrorFeedback({ ...base, context: { last_committed_tick: "private-tick", unrelated: { last_committed_tick: "unknown" } } });
+  assert.doesNotMatch(text, /private-tick|unknown/);
+  assert.doesNotMatch(text, /"最近已提交 tick": "未知"/);
+});
+
+
+test("直接 tombstone 与读取失败保持可辨认且不泄露错误文本", { timeout: 10000 }, async () => {
+  const { buildErrorFeedback } = await import("./error-details.ts");
+  const base = { code: "HOST_FATAL", where: "host", message: "失败" };
+  assert.match(buildErrorFeedback({ ...base, context: { tombstone: { state: "absent" } } }), /"state": "absent"/);
+  const text = buildErrorFeedback({ ...base, context: { tombstoneReadError: "private-error", records: [{ identity: { workerId: 3, slot: 2, gen: 9 }, tombstoneReadError: "private-record-error" }] } });
+  assert.equal((text.match(/"tombstoneReadError": "读取失败，原始详情已脱敏"/g) ?? []).length, 2);
+  assert.doesNotMatch(text, /private-/);
+});

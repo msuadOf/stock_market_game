@@ -93,7 +93,8 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
   const layout = { baseAddr: 0, headerWords: HEADER_WORDS, slotStride: SLOT_STRIDE, joinStride: JOIN_STRIDE, capacity: 4, genBits: 29 };
   const words = new Int32Array(memory.buffer);
   Atomics.store(words, CAPACITY, layout.capacity); Atomics.store(words, GEN_BITS, layout.genBits); Atomics.store(words, FREE_HEAD, FREE_HEAD_EMPTY | 0);
-  const substrate = { module, memory, layout, diagnostics: false, waitAbort: { address: 4096, bytes: 1 as const } };
+  const primary = { engine: { workerId: 0, address: 4200 }, ingress: { workerId: 0xffffffff, address: 4456 }, death: { address: 4100, bytes: 4 } };
+  const substrate = { module, memory, layout, diagnostics: false, waitAbort: { address: 4096, bytes: 1 as const }, waitDeath: { address: 4100, bytes: 4 as const } };
   let configured = 0;
   let configuredSubstrate: typeof substrate | undefined;
   class FixtureChannel extends NodeMessageChannel {
@@ -181,7 +182,10 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
               this.emit({ type: "engineLifecycle", instanceId: this.instanceId, state: options.claimUnallocatedAfterMemory === true ? "unallocated" : "quiescent" });
             }
             if (request.type === "facadeEngineMemoryRegistered" && options.initAfterMemoryFailure === undefined) {
-              this.controlPort!.postMessage({ type: "facadeEngineConfiguration", allocationId: 1, module, layout, diagnostics: false, waitAbort: substrate.waitAbort });
+              this.controlPort!.postMessage({ type: "facadeEngineDeath", allocationId: 1, primary });
+            }
+            if (request.type === "facadeEngineDeathRegistered") {
+              this.controlPort!.postMessage({ type: "facadeEngineConfiguration", allocationId: 1, module, layout, diagnostics: false, waitAbort: substrate.waitAbort, waitDeath: substrate.waitDeath });
             }
             if (request.type === "facadeEngineConfigured") { configured++; this.dataPort!.postMessage({ type: "initializationProgress", phase: "engine" }); this.dataPort!.postMessage({ type: "ready" }); }
           });
@@ -243,6 +247,8 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
       return new FixtureWorker(url);
     }
   }); install("MessageChannel", FixtureChannel);
+  const timeOrigin = performance.timeOrigin;
+  install("performance", { now: () => clock.now, timeOrigin });
   install("setTimeout", clock.setTimeout); install("clearTimeout", clock.clearTimeout);
   install("window", { setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout });
   const sink = (failure: HostFailure) => { failures.push(failure); options.spawnSink?.(failure); };

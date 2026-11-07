@@ -11,6 +11,7 @@ function fixture(glueMethods: Record<string, unknown> = {}, onLoad: () => void =
   const channel = new MessageChannel();
   channel.port1.addEventListener("message", (event) => {
     if (event.data.type === "facadeEngineMemory") channel.port1.postMessage({ type: "facadeEngineMemoryRegistered", allocationId: 1 });
+    if (event.data.type === "facadeEngineDeath") { calls.push("death-register"); channel.port1.postMessage({ type: "facadeEngineDeathRegistered", allocationId: 1 }); }
   });
   channel.port1.start();
   const calls: string[] = [];
@@ -30,7 +31,9 @@ function fixture(glueMethods: Record<string, unknown> = {}, onLoad: () => void =
         initSync: () => { calls.push("instantiate"); return { memory, __wbindgen_thread_destroy() {} }; },
         facade_slot_init_for_setup: () => { calls.push("setup"); },
         facade_slot_layout: () => { calls.push("layout"); return LAYOUT; },
+        wasm_tombstone_init_primary: () => { calls.push("primary"); return { engine: { workerId: 0, address: 60000 }, ingress: { workerId: 0xffffffff, address: 60256 }, death: { address: 65004, bytes: 4 } }; },
         wasm_wait_abort_layout: () => ({ address: 65000, bytes: 1 }),
+        wasm_wait_death_layout: () => ({ address: 65004, bytes: 4 }),
         ...glueMethods,
       };
       for (const [key, getter] of Object.entries(glueGetters)) Object.defineProperty(glue, key, { get: getter });
@@ -42,19 +45,20 @@ function fixture(glueMethods: Record<string, unknown> = {}, onLoad: () => void =
 }
 
 async function initialize(f: ReturnType<typeof fixture>, extra: Record<string, unknown> = {}) {
-  const configured = new Promise<void>((resolve) => f.channel.port1.addEventListener("message", (event) => { if (event.data.type === "facadeEngineConfiguration") resolve(); }));
+  const configured = new Promise<Record<string, unknown>>((resolve) => f.channel.port1.addEventListener("message", (event) => { if (event.data.type === "facadeEngineConfiguration") resolve(event.data); }));
   f.channel.port1.start();
   const pending = f.initializer.initialize({ type: "init", setup: {}, controlPort: f.channel.port2, ...extra });
-  await configured;
+  const configuration = await configured;
   f.channel.port1.postMessage({ type: "facadeEngineConfigured" });
   await pending;
+  return configuration;
 }
 
 test("默认初始化不探测 runtime API，保持既有 setup 顺序", { timeout: 10000 }, async () => {
   const f = fixture();
   try {
     await initialize(f);
-    assert.deepEqual(f.calls, ["memory", "bind", "load", "instantiate", "setup", "layout", "install"]);
+    assert.deepEqual(f.calls, ["memory", "bind", "load", "instantiate", "primary", "death-register", "setup", "layout", "install"]);
   } finally { f.cleanup(); }
 });
 
@@ -66,8 +70,9 @@ test("显式 true 在实例化后按原数值设置 runtime 和 wait，再执行
     },
   });
   try {
-    await initialize(f, { runtimeOverride: true, waitSettings: WAIT_SETTINGS });
-    assert.deepEqual(f.calls, ["memory", "bind", "load", "instantiate", "runtime:true", "wait:11,22,33,44", "setup", "layout", "install"]);
+    const configuration = await initialize(f, { runtimeOverride: true, waitSettings: WAIT_SETTINGS });
+    assert.deepEqual(configuration.waitDeath, { address: 65004, bytes: 4 });
+    assert.deepEqual(f.calls, ["memory", "bind", "load", "instantiate", "primary", "death-register", "runtime:true", "wait:11,22,33,44", "setup", "layout", "install"]);
   } finally { f.cleanup(); }
 });
 
@@ -75,7 +80,7 @@ test("显式 false 仅调用一次 runtime setter", { timeout: 10000 }, async ()
   const f = fixture({ set_step_runtime_override(value: boolean) { f.calls.push(`runtime:${value}`); } });
   try {
     await initialize(f, { runtimeOverride: false });
-    assert.deepEqual(f.calls, ["memory", "bind", "load", "instantiate", "runtime:false", "setup", "layout", "install"]);
+    assert.deepEqual(f.calls, ["memory", "bind", "load", "instantiate", "primary", "death-register", "runtime:false", "setup", "layout", "install"]);
   } finally { f.cleanup(); }
 });
 
@@ -85,8 +90,9 @@ test("显式请求缺少所需 glue 方法时 typed 拒绝且不初始化 slot �
     [{ runtimeOverride: true, waitSettings: WAIT_SETTINGS }, "set_step_runtime_override"],
     [{ runtimeOverride: true, waitSettings: WAIT_SETTINGS }, "init_wasm_wait"],
     [{ runtimeOverride: true, waitSettings: WAIT_SETTINGS }, "wasm_wait_abort_layout"],
+    [{ runtimeOverride: true, waitSettings: WAIT_SETTINGS }, "wasm_wait_death_layout"],
   ] as const) {
-    const methods = missing === "wasm_wait_abort_layout" ? { set_step_runtime_override() {}, init_wasm_wait() {}, wasm_wait_abort_layout: undefined } : missing === "init_wasm_wait" ? { set_step_runtime_override() {} } : {};
+    const methods = missing === "wasm_wait_death_layout" ? { set_step_runtime_override() {}, init_wasm_wait() {}, wasm_wait_death_layout: undefined } : missing === "wasm_wait_abort_layout" ? { set_step_runtime_override() {}, init_wasm_wait() {}, wasm_wait_abort_layout: undefined } : missing === "init_wasm_wait" ? { set_step_runtime_override() {} } : {};
     const f = fixture(methods);
     try {
       await assert.rejects(f.initializer.initialize({ type: "init", setup: {}, controlPort: f.channel.port2, ...extra }), (error: unknown) => {
@@ -151,7 +157,7 @@ test("异步 load 期间 waitSettings 变更不能改变已校验的 FFI 快照"
   }, () => { wait.spinUs = -1; });
   try {
     await initialize(f, { runtimeOverride: true, waitSettings: wait });
-    assert.deepEqual(f.calls, ["memory", "bind", "load", "instantiate", "runtime:true", "wait:11,22,33,44", "setup", "layout", "install"]);
+    assert.deepEqual(f.calls, ["memory", "bind", "load", "instantiate", "primary", "death-register", "runtime:true", "wait:11,22,33,44", "setup", "layout", "install"]);
   } finally { f.cleanup(); }
 });
 
@@ -176,7 +182,7 @@ test("runtimeOverride getter 只读取一次并消费已校验原值", { timeout
     f.channel.port1.postMessage({ type: "facadeEngineConfigured" });
     await pending;
     assert.equal(reads, 1);
-    assert.deepEqual(f.calls, ["memory", "bind", "load", "instantiate", "runtime:true", "wait:11,22,33,44", "setup", "layout", "install"]);
+    assert.deepEqual(f.calls, ["memory", "bind", "load", "instantiate", "primary", "death-register", "runtime:true", "wait:11,22,33,44", "setup", "layout", "install"]);
   } finally { f.cleanup(); }
 });
 
@@ -189,7 +195,7 @@ test("显式 false 不读取不需要的 wait API getter", { timeout: 10000 }, a
   try {
     await initialize(f, { runtimeOverride: false });
     assert.equal(reads, 0);
-    assert.deepEqual(f.calls, ["memory", "bind", "load", "instantiate", "runtime:false", "setup", "layout", "install"]);
+    assert.deepEqual(f.calls, ["memory", "bind", "load", "instantiate", "primary", "death-register", "runtime:false", "setup", "layout", "install"]);
   } finally { f.cleanup(); }
 });
 
@@ -240,6 +246,17 @@ test("spinUs 与 quietUs 为零保留原数值传入 wait FFI", { timeout: 10000
   });
   try {
     await initialize(f, { runtimeOverride: true, waitSettings: { ...WAIT_SETTINGS, spinUs: 0, quietUs: 0 } });
-    assert.deepEqual(f.calls, ["memory", "bind", "load", "instantiate", "runtime:true", "wait:0,0,33,44", "setup", "layout", "install"]);
+    assert.deepEqual(f.calls, ["memory", "bind", "load", "instantiate", "primary", "death-register", "runtime:true", "wait:0,0,33,44", "setup", "layout", "install"]);
+  } finally { f.cleanup(); }
+});
+
+test("runtime 的非法 death layout 在配置前拒绝", { timeout: 10000 }, async () => {
+  const f = fixture({
+    set_step_runtime_override() {}, init_wasm_wait() {},
+    wasm_wait_death_layout: () => ({ address: 65005, bytes: 4 }),
+  });
+  try {
+    await assert.rejects(f.initializer.initialize({ type: "init", setup: {}, controlPort: f.channel.port2, runtimeOverride: true, waitSettings: WAIT_SETTINGS }), /DEAD/);
+    assert.equal(f.calls.includes("setup"), false);
   } finally { f.cleanup(); }
 });

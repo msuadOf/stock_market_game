@@ -7,6 +7,7 @@ import type { FacadeSubstrate } from "./engine-supervisor.ts";
 import { createFacadeEngineHandshake } from "./facade-engine-handshake.ts";
 import { createFacadeSharedMemory, instantiateFacadeModule, type FacadeSyncInitializer } from "./facade-wasm-module.ts";
 import { parseWasmWaitAbortLayout, type WasmWaitAbortLayout } from "./wasm-wait-abort.ts";
+import { parseWasmWaitDeathLayout, type WasmWaitDeathLayout } from "./wasm-wait-death.ts";
 
 export interface FacadeEngineGlue extends FacadeSyncInitializer {
   readonly facade_slot_init_for_setup: (setup: unknown) => void;
@@ -16,6 +17,8 @@ export interface FacadeEngineGlue extends FacadeSyncInitializer {
   readonly set_step_runtime_override?: (enabled: boolean) => void;
   readonly init_wasm_wait?: (spinUs: number, quietUs: number, fineUs: number, coarseUs: number) => void;
   readonly wasm_wait_abort_layout?: () => unknown;
+  readonly wasm_wait_death_layout?: () => unknown;
+  readonly wasm_tombstone_init_primary: () => unknown;
 }
 interface FacadeWaitSettings {
   readonly spinUs: number;
@@ -117,14 +120,21 @@ export function createFacadeEngineInitializer(options: {
         const loaded = await options.load();
         if (disposed) throw new Error("engine 加载完成时实例已 dispose");
         instantiateFacadeModule(loaded.glue, loaded.module, memory);
+        if (typeof loaded.glue.wasm_tombstone_init_primary !== "function") throw new Error("facade glue 缺少 wasm_tombstone_init_primary");
+        const primary = loaded.glue.wasm_tombstone_init_primary();
+        await handshake.registerDeath(primary);
+        if (disposed) throw new Error("DEAD 登记后实例已 dispose");
         let waitAbort: WasmWaitAbortLayout | undefined;
+        let waitDeath: WasmWaitDeathLayout | undefined;
         if (runtime.requested) {
           const setRuntimeOverride = loaded.glue.set_step_runtime_override;
           const initializeWait = runtime.enabled ? loaded.glue.init_wasm_wait : undefined;
           const abortLayout = runtime.enabled ? loaded.glue.wasm_wait_abort_layout : undefined;
+          const deathLayout = runtime.enabled ? loaded.glue.wasm_wait_death_layout : undefined;
           const missing = typeof setRuntimeOverride !== "function" ? "set_step_runtime_override"
             : runtime.enabled && typeof initializeWait !== "function" ? "init_wasm_wait"
-            : runtime.enabled && typeof abortLayout !== "function" ? "wasm_wait_abort_layout" : undefined;
+            : runtime.enabled && typeof abortLayout !== "function" ? "wasm_wait_abort_layout"
+            : runtime.enabled && typeof deathLayout !== "function" ? "wasm_wait_death_layout" : undefined;
           if (missing !== undefined) throw Object.assign(new Error(`facade glue 缺少 runtime initializer: ${missing}`), {
             code: "WASM_RUNTIME_NOT_READY", where: "facade-engine-initialize.runtime", context: { operation: missing },
           });
@@ -137,6 +147,8 @@ export function createFacadeEngineInitializer(options: {
             initializeWait.call(loaded.glue, wait.spinUs, wait.quietUs, wait.fineUs, wait.coarseUs);
             if (typeof abortLayout !== "function") throw new Error("已校验的 abort layout getter 状态丢失");
             waitAbort = parseWasmWaitAbortLayout(abortLayout.call(loaded.glue), memory);
+            if (typeof deathLayout !== "function") throw new Error("已校验的 death layout getter 状态丢失");
+            waitDeath = parseWasmWaitDeathLayout(deathLayout.call(loaded.glue), memory);
           } else {
             if (typeof setRuntimeOverride !== "function") throw new Error("已校验的 runtime setter 状态丢失");
             setRuntimeOverride.call(loaded.glue, false);
@@ -155,7 +167,7 @@ export function createFacadeEngineInitializer(options: {
         const layout = loaded.glue.facade_slot_layout();
         options.environment.installFacadeSlotLayout(layout); options.environment.getArenaView();
         const candidate = Object.freeze({ module: loaded.module, memory, layout, diagnostics: loaded.diagnostics });
-        await handshake.configure(candidate, waitAbort);
+        await handshake.configure(candidate, waitAbort, waitDeath);
         if (disposed) throw new Error("engine configured 到达时实例已 dispose");
         current = candidate;
         return candidate;

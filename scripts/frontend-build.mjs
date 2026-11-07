@@ -1,11 +1,13 @@
-import { cp, lstat, mkdir, rm } from "node:fs/promises";
-import { availableParallelism } from "node:os";
+import { cp, lstat, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { availableParallelism, tmpdir } from "node:os";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import { executeBuildCommand, parseBuildArgs } from "./build-targets.mjs";
 import { createFrontendCommands } from "./frontend-build-plan.mjs";
 import { runBoundedCommand } from "./run-with-deadline.mjs";
 import { executeWasmPackBuild } from "./wasm-pack-build.mjs";
+import { withFrontendWasmSysroot } from "./frontend-wasm-sysroot.mjs";
 
 const rootDirectory = path.resolve(import.meta.dirname, "..");
 
@@ -56,7 +58,7 @@ async function ensureDirectory(root, directory) {
   }
 }
 
-export async function executeFrontendBuild(plan, { commandRunner = executeBuildCommand } = {}) {
+export async function executeFrontendBuild(plan, { commandRunner = executeBuildCommand, withSysroot = withFrontendWasmSysroot } = {}) {
   await ensureDirectory(plan.root, path.dirname(plan.wasmPackage));
   await ensureDirectory(plan.root, path.join(plan.root, "target"));
   for (const command of plan.commands) {
@@ -72,12 +74,12 @@ export async function executeFrontendBuild(plan, { commandRunner = executeBuildC
       await ensureDirectory(plan.root, destination);
       await rm(destination, { recursive: true });
       await cp(plan.wasmPackage, destination, { recursive: true, errorOnExist: true, force: false });
-    } else if (command.command === "wasm-pack") await executeWasmPackBuild(plan.root, command, commandRunner);
+    } else if (command.command === "wasm-pack") await withSysroot(command, (configured) => executeWasmPackBuild(plan.root, configured, commandRunner), { tempRoot: process.env.STOCK_FRONTEND_SYSROOT_TEMP_ROOT || tmpdir() });
     else await commandRunner(command);
   }
 }
 
-export async function main(arguments_, { root = rootDirectory, output = (message) => process.stdout.write(message), run = runBoundedCommand } = {}) {
+export async function main(arguments_, { root = rootDirectory, output = (message) => process.stdout.write(message), run = runBoundedCommand, timeoutMs = 300000 } = {}) {
   const options = parseFrontendArgs(arguments_);
   if (options.help) {
     output("Usage: node scripts/frontend-build.mjs [--jobs N] [--dry-run] [--package-manager pnpm|corepack] [--pages-base /REPOSITORY/]\nBuild: pinned pnpm, Rust nightly, wasm-pack and Node; output: apps/web/dist.\n");
@@ -89,8 +91,24 @@ export async function main(arguments_, { root = rootDirectory, output = (message
     for (const command of plan.commands) output(`${command.command} ${command.args.join(" ")}\n`);
     return;
   }
-  await run({ command: process.execPath, args: [fileURLToPath(import.meta.url), ...arguments_], cwd: root,
-    env: { ...process.env, STOCK_FRONTEND_BUILD_WORKER: "1" }, timeoutMs: plan.deadlineMs, cleanupReserveMs: 1000 });
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 6 || timeoutMs > plan.deadlineMs) throw new Error("frontend build deadline must be within 300000ms.");
+  const started = performance.now();
+  const reserveMs = Math.min(1000, Math.floor(timeoutMs / 3));
+  let temporary;
+  const hardTimer = setTimeout(() => {
+    process.stderr.write(`[frontend build] total ${timeoutMs}ms deadline exhausted; cleanup not confirmed: ${temporary}\n`);
+    process.exit(1);
+  }, timeoutMs);
+  try {
+    temporary = await mkdtemp(path.join(tmpdir(), "stock-frontend-build-"));
+    const remaining = Math.floor(timeoutMs - reserveMs - (performance.now() - started));
+    if (remaining <= 1) throw new Error("frontend build preparation exhausted its shared execution deadline.");
+    await run({ command: process.execPath, args: [fileURLToPath(import.meta.url), ...arguments_], cwd: root,
+      env: { ...process.env, STOCK_FRONTEND_BUILD_WORKER: "1", STOCK_FRONTEND_SYSROOT_TEMP_ROOT: temporary }, timeoutMs: remaining,
+      cleanupReserveMs: Math.min(reserveMs, Math.max(1, Math.floor(remaining / 3))) });
+  } finally {
+    try { if (temporary !== undefined) await rm(temporary, { recursive: true, force: true }); } finally { clearTimeout(hardTimer); }
+  }
 }
 
 if (process.argv[1] !== undefined && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

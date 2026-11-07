@@ -5,17 +5,17 @@ import { CAPACITY, GEN_BITS, HEADER_WORDS, SLOT_STRIDE, JOIN_STRIDE } from "./fa
 import { WorkerTransportFixture } from "./worker-transport.test-support.ts";
 
 let nextId = 0;
-async function fixture(run: (f: { send(value: Record<string, unknown>): Promise<void>; posted: Record<string, unknown>[]; payload: Record<string, unknown>; calls: string[]; reported: Error[] }) => Promise<void>, postError?: Error, sharedMemory = true) {
+async function fixture(run: (f: { send(value: Record<string, unknown>): Promise<void>; posted: Record<string, unknown>[]; payload: Record<string, unknown>; calls: string[]; reported: Error[] }) => Promise<void>, postError?: Error, sharedMemory = true, bindError = false, primary = { workerId: 0xffffffff, address: 1024 }) {
   const id = ++nextId, key = Symbol.for(`stock-game-ingress-substrate-${id}`);
   const posted: Record<string, unknown>[] = [], lifecycle: Record<string, unknown>[] = [], calls: string[] = [], reported: Error[] = [];
   let listener!: (event: { data: Record<string, unknown> }) => void;
   const memory = new WebAssembly.Memory({ initial: 1, maximum: 2, ...(sharedMemory ? { shared: true } : {}) }), words = new Int32Array(memory.buffer);
   if (sharedMemory) { Atomics.store(words, CAPACITY, 4); Atomics.store(words, GEN_BITS, 29); }
-  const substrate = { diagnostics: false, module: new WebAssembly.Module(new Uint8Array([0,97,115,109,1,0,0,0])), memory, layout: { baseAddr: 0, headerWords: HEADER_WORDS, slotStride: SLOT_STRIDE, joinStride: JOIN_STRIDE, capacity: 4, genBits: 29 } };
+  const substrate = { primary, diagnostics: false, module: new WebAssembly.Module(new Uint8Array([0,97,115,109,1,0,0,0])), memory, layout: { baseAddr: 0, headerWords: HEADER_WORDS, slotStride: SLOT_STRIDE, joinStride: JOIN_STRIDE, capacity: 4, genBits: 29 } };
   const payload = { type: "bindIngress", requestId: 1, generation: 1, token: 7, shared: true };
   const transport = new WorkerTransportFixture();
   const originalSelf = Object.getOwnPropertyDescriptor(globalThis, "self");
-  Object.defineProperty(globalThis, key, { configurable: true, value: { calls, bound: false, memory } });
+  Object.defineProperty(globalThis, key, { configurable: true, value: { calls, bound: false, memory, bindError } });
   Object.defineProperty(globalThis, "self", { configurable: true, value: { postMessage(value: Record<string, unknown>) { if (value.type !== "ingressLifecycle") throw new Error("ingress business output bypassed dataPort"); lifecycle.push(value); }, reportError(error: Error) { reported.push(error); }, addEventListener(_type: string, callback: typeof listener) { listener = callback; } } });
   const hooks = registerHooks({
     resolve(specifier, context, next) {
@@ -24,7 +24,7 @@ async function fixture(run: (f: { send(value: Record<string, unknown>): Promise<
     },
     load(url, context, next) {
       const state = `globalThis[Symbol.for(${JSON.stringify(Symbol.keyFor(key))})]`;
-      if (url.endsWith(`${id}:../../wasm-pkg/web_wasm.js`)) return { shortCircuit: true, format: "module", source: `const f=${state}; export function initSync(input){if(!f.bound)throw new Error("env not bound");if(input.memory!==f.memory)throw new Error("wrong memory"); f.calls.push("initSync");return {memory:input.memory,__wbindgen_thread_destroy(){}}}; export function ingress_enqueue(token,intent){f.calls.push(JSON.stringify([token,intent]))}` };
+      if (url.endsWith(`${id}:../../wasm-pkg/web_wasm.js`)) return { shortCircuit: true, format: "module", source: `const f=${state}; export function initSync(input){if(!f.bound)throw new Error("env not bound");if(input.memory!==f.memory)throw new Error("wrong memory"); f.calls.push("initSync");return {memory:input.memory,__wbindgen_thread_destroy(){}}}; export function wasm_tombstone_bind_ingress(address,id){f.calls.push("tombstone:"+address+":"+id);if(f.bindError)throw new Error("tombstone bind failed")}; export function ingress_enqueue(token,intent){f.calls.push(JSON.stringify([token,intent]))}` };
       if (url.endsWith(`${id}:./engine-clock-env.ts`)) return { shortCircuit: true, format: "module", source: `import {createFacadeThreadBinding} from ${JSON.stringify(new URL("./facade-thread-binding.ts", import.meta.url).href)};const b=createFacadeThreadBinding({isWorker:()=>true});const f=${state}; export function bindFacadeThreadEnvironment(input){b.bindFacadeThreadEnvironment(input);f.bound=true;f.calls.push(input.role)};export const {installFacadeSlotLayout,getArenaView}=b;` };
       return next(url, context);
     },
@@ -45,7 +45,7 @@ async function fixture(run: (f: { send(value: Record<string, unknown>): Promise<
 test("ingress 首次先bind角色再用engine共享module/memory实例化，换代只换token", { timeout: 10000 }, async () => {
   await fixture(async (f) => {
     await f.send(f.payload);
-    assert.deepEqual(f.calls, ["ingress", "initSync"]);
+    assert.deepEqual(f.calls, ["ingress", "initSync", "tombstone:1024:4294967295"]);
     assert.equal(f.posted[0].type, "ingressBound");
     await f.send({ type: "enqueue", requestId: 2, generation: 1, intent: { Cancel: { code: 0, id: 7 } } });
     assert.equal(f.calls.at(-1), '[7,{"Cancel":{"code":0,"id":7}}]');
@@ -80,4 +80,30 @@ test("非共享 substrate 在真实 ingress bootstrap 显式报告且不初始�
     assert.equal(f.reported.length, 1);
     assert.match(f.reported[0].message, /shared|共享|memory/i);
   }, undefined, false);
+});
+
+
+test("ingress tombstone 绑定失败时不允许业务调用", { timeout: 10000 }, async () => {
+  await fixture(async (f) => {
+    await f.send(f.payload);
+    assert.equal(f.posted[0]?.type, "operationError");
+    assert.match(String(f.posted[0]?.message), /tombstone bind failed/);
+    await f.send({ ...f.payload, requestId: 2 });
+    assert.equal(f.posted.at(-1)?.type, "operationError");
+    assert.equal(f.calls.filter((call) => call === "initSync").length, 1);
+    await f.send({ type: "enqueue", requestId: 3, generation: 1, intent: {} });
+    assert.equal(f.posted.at(-1)?.type, "operationError");
+    assert.equal(f.calls.some((call) => call.startsWith("[7,")), false);
+  }, undefined, true, true);
+});
+
+
+test("ingress 拒绝错误身份及越界记录", { timeout: 10000 }, async () => {
+  for (const primary of [{ workerId: 0, address: 1024 }, { workerId: 0xffffffff, address: 65532 }]) {
+    await fixture(async (f) => {
+      assert.equal(f.reported.length, 1);
+      assert.match(f.reported[0].message, /tombstone/);
+      assert.deepEqual(f.calls, []);
+    }, undefined, true, false, primary);
+  }
 });

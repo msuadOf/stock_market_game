@@ -1,5 +1,6 @@
 import type { WasmLifecycleObservation } from "./wasm-lifecycle-observation.ts";
 import type { WasmFinalRelease } from "./wasm-document-memory-owner.ts";
+import type { HostFailure } from "./host-update.ts";
 import { parseHostFailure } from "./protocol-failure.ts";
 import { parseWasmSessionShutdown } from "./wasm-shutdown-report.ts";
 
@@ -103,6 +104,7 @@ export function createEngineControlClient(options: {
   readonly runtimeOverride: boolean;
   readonly onLifecycleObservation?: (event: WasmLifecycleObservation) => void;
   readonly onFailure: (error: Error) => void;
+  readonly onFailurePending?: (failure: HostFailure) => void;
   readonly onSpawnFailure: (failure: unknown) => void;
 }): {
   readonly instanceId: number;
@@ -125,6 +127,8 @@ export function createEngineControlClient(options: {
   const enginePort = businessPortHandle(engineChannel.port1);
   let requestId = 0;
   let failed = false;
+  let failureError: Error | undefined;
+  let failurePending = false;
   let terminal = false;
   let terminalReceipt: WasmFinalRelease | { readonly kind: "unknown"; readonly message: string } | undefined;
   let businessShutdownCompleted = false;
@@ -177,13 +181,13 @@ export function createEngineControlClient(options: {
     configuredReject(error);
     try { closeBusinessPorts(error); }
     catch (cleanupError) { error = new AggregateError([error, cleanupError], "controlWorker 故障且业务端清理失败"); }
-    releaseReject(error);
-    if (terminalReceipt !== undefined) { terminal = true; cleanup(); options.onFailure(error); return; }
+    failureError = error;
+    if (terminalReceipt !== undefined) { finishTerminal(); options.onFailure(error); return; }
     // 先让 owner 清理 nested Worker；硬故障无收据时只保留 unknown，并在同一 2s 内撤下本地引用。
-    if (!cleanupAtDeadline) failureCleanupTimer = setTimeout(cleanup, 2000);
+    if (!cleanupAtDeadline) failureCleanupTimer = setTimeout(() => { cleanup(); releaseReject(error); }, 2000);
     try { controlWorker?.postMessage({ type: "abort", instanceId }); }
-    catch (abortError) { cleanup(); options.onFailure(new AggregateError([error, abortError], "controlWorker 故障且清理命令无法投递")); return; }
-    if (cleanupAtDeadline) cleanup();
+    catch (abortError) { cleanup(); releaseReject(error); options.onFailure(new AggregateError([error, abortError], "controlWorker 故障且清理命令无法投递")); return; }
+    if (cleanupAtDeadline) { cleanup(); releaseReject(error); }
     options.onFailure(error);
   }
   function finishTerminal(): void {
@@ -197,7 +201,8 @@ export function createEngineControlClient(options: {
     terminal = true;
     if (!wasConfigured) configuredReject(new Error("controlWorker 未在 terminal 前完成 configured"));
     if (result.kind === "unknown") releaseReject(new Error(`controlWorker release unknown: ${result.message}`));
-    else if (!failed) releaseResolve(result);
+    else if (failed) releaseReject(failureError ?? new Error("controlWorker 已失败"));
+    else releaseResolve(result);
     if (finalObservation !== undefined) {
       try { options.onLifecycleObservation?.(finalObservation); }
       catch (error) { options.onFailure(error instanceof Error ? error : new Error("release lifecycle observer 失败", { cause: error })); }
@@ -255,6 +260,15 @@ export function createEngineControlClient(options: {
         } else throw new Error("controlWorker terminal release.kind 无效");
         terminalReceipt = result as unknown as NonNullable<typeof terminalReceipt>;
         finishTerminal();
+        return;
+      }
+      if (value.type === "failurePending") {
+        exact(value, ["type", "instanceId", "failure"], "controlWorker failurePending");
+        const failure = parseHostFailure(value.failure, "engine-control-client.failurePending");
+        if (!failurePending && !failed && terminalReceipt === undefined) {
+          failurePending = true;
+          options.onFailurePending?.(failure);
+        }
         return;
       }
       if (value.type === "failure") {
@@ -336,7 +350,13 @@ export function createEngineControlClient(options: {
       controlWorker.postMessage({ type: "beginShutdown", instanceId, deadline });
     },
     completeShutdown() { businessShutdownCompleted = true; finishTerminal(); },
-    abortShutdown(error) { fail(error); },
+    abortShutdown(error) {
+      if (failurePending && !failed && !terminal && terminalReceipt === undefined) {
+        controlWorker?.postMessage({ type: "shutdownFailure", instanceId, message: error.message || String(error) });
+        return;
+      }
+      fail(error);
+    },
     terminateAfterRelease() {
       if (!terminal) throw new Error("controlWorker 真实 terminal 收据尚未到达");
       cleanup();

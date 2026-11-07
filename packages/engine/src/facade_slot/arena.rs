@@ -320,6 +320,10 @@ impl SlotArena {
             .load(Ordering::SeqCst)
     }
     /// join 槽死亡信号细节码写入（D5 写者）。
+    #[cfg(target_arch = "wasm32")]
+    pub fn join_dead_code_word(&self, index: u32) -> &AtomicU32 {
+        self.word(self.join_base(index) + JOIN_DEAD_CODE)
+    }
     pub fn set_join_dead_code(&self, index: u32, code: u32) {
         self.word(self.join_base(index) + JOIN_DEAD_CODE)
             .store(code, Ordering::SeqCst);

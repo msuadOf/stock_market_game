@@ -169,14 +169,16 @@ test("closing fatal 的完整 HostFailure 进入 dispose 主错，release unknow
     await drain(); f.ingress(); f.baseline(); await drain(); f.ack(f.workers[1], 1); await drain();
     const outcome = f.readOutcome(); if (outcome.status !== "fulfilled") throw new Error("fixture 未就绪");
     f.workers[0].onPost = request => { if (request.type === "shutdown") f.workers[0].emit(structuredClone({ type: "failure", generation: 1, ...failure })); };
-    await assert.rejects(outcome.host.dispose(), (error: unknown) => {
+    const closing = outcome.host.dispose();
+    const rejected = assert.rejects(closing, (error: unknown) => {
       assert.ok(error instanceof AggregateError);
       const cause = error.cause as { primary: Error; release: Error };
       assert.deepEqual(cause.primary.cause, failure);
       assert.ok(cause.release instanceof Error);
       return true;
     });
-    await released;
+    await drain(); f.clock.advance(2001); await drain();
+    await rejected; await released;
   } finally { await f.cleanup(/shutdown|未知|失败/); }
 });
 
@@ -216,6 +218,34 @@ test("Rust reply 后等待 child exit 期间的 fatal 仍保完整 HostFailure",
     });
     await drain();
     f.workers[0].emit(structuredClone({ type: "failure", generation: 1, ...failure }));
+    await drain(); f.clock.advance(2001); await drain();
     await rejected; await released;
   } finally { await f.cleanup(/shutdown|未知|失败/); }
+});
+
+test("failurePending 立即冻结业务并等待 writer 的终态", { timeout: 10000 }, async () => {
+  const f = fixture();
+  try {
+    f.launch(); await drain(); f.ingress(); f.baseline(); await drain(); f.ack(f.workers[1], 1); await drain();
+    const outcome = f.readOutcome(); if (outcome.status !== "fulfilled") throw new Error("fixture 未就绪");
+    const failures: Array<{ code: string; context?: unknown }> = [];
+    const started = outcome.host.start(() => true, failure => failures.push(failure));
+    await drain(); const startRequest = f.workers[0].sent.at(-1)!;
+    f.workers[0].emit({ type: "started", requestId: startRequest.requestId, generation: startRequest.generation });
+    await started;
+    f.spawn(); await drain(); const child = f.workers[2], init = child.sent[0];
+    child.controlPort!.postMessage({ type: "facadeChildReady", workerId: init.workerId, slot: 0, gen: 0 }); await drain();
+    const death = new Int32Array(f.substrate.memory.buffer, f.substrate.waitDeath.address, 1);
+    Atomics.store(death, 0, 1); Atomics.notify(death, 0); await drain();
+    await assert.rejects(outcome.host.civilDate!(), /关闭|故障/);
+    await assert.rejects(outcome.host.submitIntent({} as never), /关闭|故障/);
+    assert.equal(child.terminations, 0);
+    assert.equal(f.workers[0].terminations, 0);
+    f.clock.advance(1999); await drain();
+    assert.equal(child.terminations, 0, "writer 在共享 deadline 前不得被终止");
+    f.clock.advance(2); await drain();
+    assert.equal(failures.length, 1);
+    assert.equal(failures[0].code, "WASM_WORKER_DEATH");
+    assert.ok(failures[0].context, "终态必须保留诊断详情");
+  } finally { await f.cleanup(); }
 });

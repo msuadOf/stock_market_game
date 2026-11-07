@@ -1,9 +1,9 @@
 import type { FacadeChildControlMessage } from "./facade-child-bootstrap.ts";
 import { parseHostFailure } from "./protocol-failure.ts";
 import { parseFacadeEngineSubstrate, type FacadeEngineSubstrateMessage } from "./facade-engine-protocol.ts";
-import { parseFacadeEngineMemory, parseFacadeEngineConfiguration, type FacadeEngineMemoryMessage, type FacadeEngineConfigurationMessage } from "./facade-engine-protocol.ts";
+import { parseFacadeEngineMemory, parseFacadeEngineConfiguration, parseFacadeEngineDeath, type FacadeEngineMemoryMessage, type FacadeEngineConfigurationMessage, type FacadeEngineDeathMessage } from "./facade-engine-protocol.ts";
 
-export type FacadeSupervisorControlMessage = FacadeChildControlMessage | FacadeEngineSubstrateMessage | FacadeEngineMemoryMessage | FacadeEngineConfigurationMessage;
+export type FacadeSupervisorControlMessage = FacadeChildControlMessage | FacadeEngineSubstrateMessage | FacadeEngineMemoryMessage | FacadeEngineConfigurationMessage | FacadeEngineDeathMessage;
 
 /** 先于业务 parser 分流；已识别的 facade 消息不允许静默落入业务路径。 */
 export function parseFacadeSupervisorControl(value: unknown): FacadeSupervisorControlMessage | null {
@@ -20,9 +20,16 @@ export function parseFacadeSupervisorControl(value: unknown): FacadeSupervisorCo
     return result;
   }
   switch (type) {
+    case "facadeEngineDeath": return parseFacadeEngineDeath(value);
     case "facadeEngineMemory": return parseFacadeEngineMemory(value);
     case "facadeEngineConfiguration": return parseFacadeEngineConfiguration(value);
     case "facadeEngineSubstrate": return parseFacadeEngineSubstrate(value);
+    case "facadeSpawnV2": {
+      exact(["type", "slot", "gen", "name", "recordAddr"]);
+      const name = source.name;
+      if (typeof name !== "string") throw new Error("facadeSpawnV2.name 必须为 string");
+      return { type, slot: u32("slot"), gen: u32("gen"), name, recordAddr: u32("recordAddr") };
+    }
     case "facadeSpawn": {
       exact(["type", "slot", "gen", "name"]);
       const name = source.name;

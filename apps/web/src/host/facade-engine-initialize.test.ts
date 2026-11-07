@@ -16,6 +16,7 @@ test("engine bind→实例化→Rust setup arena/clock→layout→main配置确�
       getArenaView: () => ({ words: new Int32Array(memory.buffer), capacity: 8, genBits: 29 }),
     },
     load: async () => { calls.push("load"); return { module, diagnostics: false, glue: {
+      wasm_tombstone_init_primary: () => ({ engine: { workerId: 0, address: 60000 }, ingress: { workerId: 0xffffffff, address: 60256 }, death: { address: 65004, bytes: 4 } }),
       initSync: (input) => { calls.push("instantiate"); assert.equal(input.memory, memory); return { memory, __wbindgen_thread_destroy() {} }; },
       facade_slot_init_for_setup: (input) => { calls.push("clock+arena"); assert.deepEqual(input, setup); },
       facade_slot_layout: () => { calls.push("layout"); return layout; },
@@ -26,6 +27,7 @@ test("engine bind→实例化→Rust setup arena/clock→layout→main配置确�
     assert.throws(() => initializer.requireConfigured(), /configured/);
     const received = new Promise<Record<string, unknown>>((resolve) => channel.port1.addEventListener("message", (event) => {
       if (event.data.type === "facadeEngineMemory") channel.port1.postMessage({ type: "facadeEngineMemoryRegistered", allocationId: 1 });
+      else if (event.data.type === "facadeEngineDeath") channel.port1.postMessage({ type: "facadeEngineDeathRegistered", allocationId: 1 });
       else resolve(event.data);
     }));
     channel.port1.start();
@@ -82,4 +84,36 @@ test("加载中重复 init 关闭新收到端与原端各一次，原初始化�
     release(); await assert.rejects(pending, /load interrupted/);
     assert.equal(originalCloses, 1); assert.equal(duplicateCloses, 1);
   } finally { release(); initializer.dispose(); original.port1.close(); duplicate.port1.close(); }
+});
+
+test("engine 在 DEAD 登记 ACK 前不执行 setup，重复 ACK 显式失败", { timeout: 10000 }, async () => {
+  const channel = new MessageChannel();
+  const memory = new WebAssembly.Memory({ initial: 1, maximum: 2, shared: true });
+  const module = new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]));
+  const primary = { engine: { workerId: 0, address: 60000 }, ingress: { workerId: 0xffffffff, address: 60256 }, death: { address: 65004, bytes: 4 } };
+  let setup = false, failure: unknown;
+  const initializer = createFacadeEngineInitializer({ isolated: () => true, createMemory: () => memory,
+    environment: { bindFacadeThreadEnvironment() {}, installFacadeSlotLayout() {}, getArenaView: () => ({ words: new Int32Array(memory.buffer), capacity: 8, genBits: 29 }) },
+    load: async () => ({ module, diagnostics: false, glue: {
+      initSync: () => ({ memory, __wbindgen_thread_destroy() {} }), wasm_tombstone_init_primary: () => primary,
+      facade_slot_init_for_setup: () => { setup = true; },
+      facade_slot_layout: () => ({ baseAddr: 0, headerWords: HEADER_WORDS, slotStride: SLOT_STRIDE, joinStride: JOIN_STRIDE, capacity: 8, genBits: 29 }),
+    } }), onFailure: (error) => { failure = error; },
+  });
+  let deathReceived!: () => void;
+  const death = new Promise<void>((resolve) => { deathReceived = resolve; });
+  channel.port1.addEventListener("message", (event) => {
+    if (event.data.type === "facadeEngineMemory") channel.port1.postMessage({ type: "facadeEngineMemoryRegistered", allocationId: 1 });
+    if (event.data.type === "facadeEngineDeath") { assert.deepEqual(event.data.primary, primary); deathReceived(); }
+  });
+  channel.port1.start();
+  try {
+    const pending = initializer.initialize({ type: "init", setup: {}, controlPort: channel.port2 });
+    await death;
+    assert.equal(setup, false);
+    channel.port1.postMessage({ type: "facadeEngineDeathRegistered", allocationId: 1 });
+    channel.port1.postMessage({ type: "facadeEngineDeathRegistered", allocationId: 1 });
+    await assert.rejects(pending, /确认|dispose/);
+    assert.ok(failure === undefined || failure instanceof Error);
+  } finally { initializer.dispose(); channel.port1.close(); channel.port2.close(); }
 });

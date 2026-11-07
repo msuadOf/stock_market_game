@@ -41,7 +41,7 @@ class Clock {
     this.now = end;
   }
 }
-function fixture(options: { constructError?: unknown; postError?: Error; channelErrorAt?: number; spawnCallbackError?: Error; fatalCallbackError?: Error; onFatal?: () => void; withoutReporter?: boolean; beforePost?: (child: WorkerHandle, channel: { port1: Port; port2: Port }) => void } = {}) {
+function fixture(options: { deathAddress?: number; constructError?: unknown; postError?: Error; channelErrorAt?: number; spawnCallbackError?: Error; fatalCallbackError?: Error; onFatal?: () => void; withoutReporter?: boolean; beforePost?: (child: WorkerHandle, channel: { port1: Port; port2: Port }) => void } = {}) {
   const memory = new WebAssembly.Memory({ initial: 1, maximum: 4, shared: true });
   const layout = { baseAddr: 0, headerWords: HEADER_WORDS, slotStride: SLOT_STRIDE, joinStride: JOIN_STRIDE, capacity: 4, genBits: 29 };
   const words = new Int32Array(memory.buffer);
@@ -67,12 +67,13 @@ function fixture(options: { constructError?: unknown; postError?: Error; channel
       if (channels.length === options.channelErrorAt) throw new Error("Channel construct failed");
       const channel = { port1: new Port(), port2: new Port() }; channels.push(channel); return channel as unknown as MessageChannel;
     },
+    onFailurePending: () => {},
     onFatalFailure: (failure) => { options.onFatal?.(); fatal.push(failure); if (options.fatalCallbackError !== undefined) throw options.fatalCallbackError; },
     onSpawnFailure: (failure) => { failures.push(failure); if (options.spawnCallbackError !== undefined) throw options.spawnCallbackError; },
     ...(options.withoutReporter === true ? {} : { reportError: (error: Error) => { reporterErrors.push(error); } }),
     timers: { now: () => clock.now, setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout },
   });
-  supervisor.installSubstrate({ module: new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])), memory, layout, diagnostics: false });
+  supervisor.installSubstrate({ module: new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])), memory, layout, diagnostics: false, ...(options.deathAddress === undefined ? {} : { waitDeath: { address: options.deathAddress, bytes: 4 } }) });
   function publish(slot: number, gen = 0) {
     Atomics.store(words, BUMP, slot + 1);
     Atomics.store(words, slotFieldOffset(slot, SLOT_JOIN_INDEX), slot);
@@ -207,7 +208,7 @@ test("已成立 child 的 trampoline failure 先发布 hardtrap 并保留原始�
   const failure = { code: "FACADE_BOOTSTRAP_FAILURE", where: "facade-child-bootstrap.trampoline", message: "unreachable" };
   f.channels[1].port1.emit({ type: "facadeBootstrapFailure", phase: "trampoline", workerId: 1, slot: 0, gen: 0, failure });
   assert.equal(stateAtFatal, encodeJoin(0, JoinState.DeadHardtrap, 29));
-  assert.deepEqual(f.fatal, [failure]);
+  assert.deepEqual(f.fatal, [{ ...failure, context: { last_committed_tick: "unknown" } }]);
 });
 
 test("trampoline failure 在 fatal 回调前通知对应 join", { timeout: 10000 }, () => {
@@ -218,7 +219,7 @@ test("trampoline failure 在 fatal 回调前通知对应 join", { timeout: 10000
   try {
     Atomics.notify = (array, index, count) => {
       if (array.buffer === f.memory.buffer) notified.push(index);
-      return originalNotify(array, index, count);
+      return array instanceof Int32Array ? originalNotify(array, index, count) : originalNotify(array, index, count);
     };
     const failure = { code: "FACADE_BOOTSTRAP_FAILURE", where: "facade-child-bootstrap.trampoline", message: "unreachable" };
     f.channels[1].port1.emit({ type: "facadeBootstrapFailure", phase: "trampoline", workerId: 1, slot: 0, gen: 0, failure });
@@ -245,14 +246,14 @@ test("全局 trampoline failure 抢先于 ready 时唤醒 spawn 并保留错误"
   try {
     Atomics.notify = (array, index, count) => {
       if (array.buffer === f.memory.buffer && index === slotWordOffset(0)) notified = true;
-      return originalNotify(array, index, count);
+      return array instanceof Int32Array ? originalNotify(array, index, count) : originalNotify(array, index, count);
     };
     f.supervisor.handleGlobalMessage(f.children[0] as unknown as Worker, { type: "facadeBootstrapFailure", phase: "trampoline", workerId: 1, slot: 0, gen: 0, failure });
   } finally { Atomics.notify = originalNotify; }
   assert.equal(slotAtFatal, encodeW(0, SlotState.Fail, 29));
   assert.equal(notifiedAtFatal, true);
   assert.equal(Atomics.load(f.words, slotFieldOffset(0, SLOT_ANSWER_B)), FacadeSpawnError.BOOTSTRAP_FAILURE);
-  assert.deepEqual(f.fatal, [failure]);
+  assert.deepEqual(f.fatal, [{ ...failure, context: { last_committed_tick: "unknown" } }]);
 });
 
 test("全局 trampoline failure 晚于取消时不覆盖槽", { timeout: 10000 }, () => {
@@ -263,7 +264,7 @@ test("全局 trampoline failure 晚于取消时不覆盖槽", { timeout: 10000 }
   const failure = { code: "FACADE_BOOTSTRAP_FAILURE", where: "facade-child-bootstrap.trampoline", message: "unreachable" };
   f.supervisor.handleGlobalMessage(f.children[0] as unknown as Worker, { type: "facadeBootstrapFailure", phase: "trampoline", workerId: 1, slot: 0, gen: 0, failure });
   assert.deepEqual([...f.words], before);
-  assert.deepEqual(f.fatal, [failure]);
+  assert.deepEqual(f.fatal, [{ ...failure, context: { last_committed_tick: "unknown" } }]);
 });
 
 test("DONE 后 cleanup 失败独立 fatal，结果不变并无条件清所有本人 Worker", { timeout: 10000 }, () => {
@@ -273,7 +274,7 @@ test("DONE 后 cleanup 失败独立 fatal，结果不变并无条件清所有本
   Atomics.store(f.words, joinWordOffset(0, 4), done | 0);
   const failure = { code: "DESTROY_FAILED", where: "fixture.cleanup", message: "destroy failed" };
   f.channels[1].port1.emit({ type: "facadeBootstrapFailure", phase: "cleanup", workerId: 1, slot: 0, gen: 0, failure });
-  assert.deepEqual(f.fatal, [failure]);
+  assert.deepEqual(f.fatal, [{ ...failure, context: { last_committed_tick: "unknown" } }]);
   assert.equal(Atomics.load(f.words, joinWordOffset(0, 4)) >>> 0, done);
   for (const worker of [f.engine, ...f.children, ingress]) assert.equal(worker.terminations, 1);
   assert.equal(f.clock.tasks.size, 0); assert.equal(f.supervisor.snapshot().ports, 0);
@@ -301,8 +302,8 @@ test("shutdown H5 不建 child；dispose 后迟到事件零槽写且清所有计
 });
 
 test("Worker id 最大值可用，耗尽显式失败且不回绕", { timeout: 10000 }, () => {
-  assert.deepEqual(allocateFacadeWorkerId(0xffffffff), { workerId: 0xffffffff, next: 0x100000000 });
-  for (const value of [0, -1, 1.5, 0x100000000, NaN]) assert.throws(() => allocateFacadeWorkerId(value), /Worker id/);
+  assert.deepEqual(allocateFacadeWorkerId(0xfffffffe), { workerId: 0xfffffffe, next: 0xffffffff });
+  for (const value of [0, -1, 1.5, 0xffffffff, 0x100000000, NaN]) assert.throws(() => allocateFacadeWorkerId(value), /Worker id/);
 });
 
 test("Channel 构造抛错也清构造出的 child 并返回 FAIL", { timeout: 10000 }, () => {
@@ -509,4 +510,158 @@ test("强制 dispose 清 manifest 不得把真实 drain waiter 改成成功", { 
   const pending = f.supervisor.waitForChildrenExit(1000);
   f.supervisor.dispose();
   await assert.rejects(pending, /dispose|废弃|终止/);
+});
+
+test("V2 child trap 报告本 worker 的已发布 tombstone", { timeout: 10000 }, () => {
+  const f = fixture(); f.publish(0);
+  f.channels[0].port1.emit({ type: "facadeSpawnV2", slot: 0, gen: 0, name: "fixture", recordAddr: 8192 });
+  f.ready();
+  const bytes = new Uint8Array(f.memory.buffer, 8192, 256);
+  const words = new Uint32Array(f.memory.buffer, 8192, 4);
+  const halves = new Uint16Array(f.memory.buffer, 8192, 8);
+  words[1] = 1; halves[4] = 3; bytes[10] = 1; halves[6] = 4; bytes.set(new TextEncoder().encode("oops"), 16); Atomics.store(words, 0, 2);
+  const event = new Event("error"); Object.assign(event, { message: "trap", error: new Error("trap") });
+  f.children[0].dispatchEvent(event);
+  assert.equal(f.fatal.length, 1);
+  assert.deepEqual((f.fatal[0].context as Record<string, unknown>).tombstone, { state: "live", kind: "panic", phase: 3, message: "oops", truncated: false });
+});
+
+test("V2 记录地址不能越界、重叠 arena 或被不同 spawn 重用", { timeout: 10000 }, () => {
+  for (const recordAddr of [0, 1, 4, 65500]) {
+    const f = fixture(); f.publish(0);
+    f.channels[0].port1.emit({ type: "facadeSpawnV2", slot: 0, gen: 0, name: "fixture", recordAddr });
+    assert.equal(f.fatal.length, 1); assert.equal(f.children.length, 0);
+  }
+  const f = fixture(); f.publish(0);
+  f.channels[0].port1.emit({ type: "facadeSpawnV2", slot: 0, gen: 0, name: "fixture", recordAddr: 8192 });
+  f.ready(); f.publish(1);
+  f.channels[0].port1.emit({ type: "facadeSpawnV2", slot: 1, gen: 0, name: "fixture", recordAddr: 8192 });
+  assert.equal(f.fatal.length, 1); assert.equal(f.children.length, 1);
+});
+
+test("V2 损坏记录保留原错误，未发布记录维持 hardtrap", { timeout: 10000 }, () => {
+  for (const magic of [0, 1, 7]) {
+    const f = fixture(); f.publish(0);
+    f.channels[0].port1.emit({ type: "facadeSpawnV2", slot: 0, gen: 0, name: "fixture", recordAddr: 8192 });
+    f.ready(); Atomics.store(new Uint32Array(f.memory.buffer, 8192, 4), 0, magic);
+    const event = new Event("error"); Object.assign(event, { message: "trap", error: new Error("original trap") });
+    f.children[0].dispatchEvent(event);
+    assert.equal(f.fatal[0].message, "original trap");
+    const context = f.fatal[0].context as Record<string, unknown>;
+    if (magic === 7) assert.match(context.tombstoneReadError as string, /magic/);
+    else assert.deepEqual(context.tombstone, { state: magic === 0 ? "absent" : "writing" });
+    assert.equal(Atomics.load(f.words, joinWordOffset(0, 4)) >>> 0, encodeJoin(0, JoinState.DeadHardtrap, 29));
+  }
+});
+
+test("过期 V2 spawn 不登记地址，当前代可以使用该地址", { timeout: 10000 }, () => {
+  const f = fixture(); f.publish(0, 1);
+  f.channels[0].port1.emit({ type: "facadeSpawnV2", slot: 0, gen: 0, name: "stale", recordAddr: 8192 });
+  f.channels[0].port1.emit({ type: "facadeSpawnV2", slot: 0, gen: 1, name: "current", recordAddr: 8192 });
+  assert.equal(f.children.length, 1); assert.equal(f.fatal.length, 0); f.supervisor.dispose();
+});
+
+test("Rust 先发布 DeadPanic 时仍报告 child fatal 和记录", { timeout: 10000 }, () => {
+  const f = fixture(); f.publish(0);
+  f.channels[0].port1.emit({ type: "facadeSpawnV2", slot: 0, gen: 0, name: "fixture", recordAddr: 8192 });
+  f.ready(); Atomics.store(f.words, joinWordOffset(0, 4), encodeJoin(0, JoinState.DeadPanic, 29));
+  const event = new Event("error"); Object.assign(event, { message: "panic", error: new Error("panic") });
+  f.children[0].dispatchEvent(event);
+  assert.equal(f.fatal.length, 1);
+  assert.deepEqual((f.fatal[0].context as Record<string, unknown>).tombstone, { state: "absent" });
+});
+
+
+test("全局死亡通知先于记录发布时显式报告未发布状态并终止实例", { timeout: 10000 }, async () => {
+  const f = fixture({ deathAddress: 16384 }); f.publish(0);
+  f.channels[0].port1.emit({ type: "facadeSpawnV2", slot: 0, gen: 0, name: "fixture", recordAddr: 8192 });
+  f.ready();
+  const death = new Int32Array(f.memory.buffer, 16384, 1);
+  Atomics.store(death, 0, 1); Atomics.notify(death, 0);
+  await new Promise<void>((resolve) => setTimeout(resolve, 30));
+  assert.equal(f.fatal.length, 0);
+  f.supervisor.setDeadline(f.clock.now + 100); f.clock.advance(100);
+  assert.equal(f.fatal.length, 1);
+  assert.equal(f.fatal[0].code, "WASM_WORKER_DEATH");
+  assert.deepEqual((f.fatal[0].context as { records: Array<{ tombstone: unknown }> }).records[0].tombstone, { state: "absent" });
+  assert.equal(f.supervisor.snapshot().disposed, true);
+});
+
+test("dispose 后迟到的全局死亡通知不得报告", { timeout: 10000 }, async () => {
+  const f = fixture({ deathAddress: 16384 }); f.supervisor.dispose();
+  const death = new Int32Array(f.memory.buffer, 16384, 1);
+  Atomics.store(death, 0, 1); Atomics.notify(death, 0);
+  await new Promise<void>((resolve) => setTimeout(resolve, 30));
+  assert.equal(f.fatal.length, 0);
+});
+
+test("报告器故障保留 V2 tombstone 快照", { timeout: 10000 }, () => {
+  const f = fixture(); f.publish(0);
+  f.channels[0].port1.emit({ type: "facadeSpawnV2", slot: 0, gen: 0, name: "fixture", recordAddr: 8192 });
+  f.ready();
+  const event = new Event("error"); Object.assign(event, { message: "FACADE_BOOTSTRAP_REPORTER_FAILURE", error: new Error("reporter failure") });
+  f.children[0].dispatchEvent(event);
+  assert.equal(f.fatal[0].code, "FACADE_BOOTSTRAP_REPORTER_FAILURE");
+  assert.deepEqual((f.fatal[0].context as Record<string, unknown>).tombstone, { state: "absent" });
+});
+
+test("死亡宽限内 child 错误优先，取消延迟报告", { timeout: 10000 }, async () => {
+  const f = fixture({ deathAddress: 16384 }); f.publish(0);
+  f.channels[0].port1.emit({ type: "facadeSpawnV2", slot: 0, gen: 0, name: "fixture", recordAddr: 8192 });
+  f.ready();
+  const death = new Int32Array(f.memory.buffer, 16384, 1);
+  Atomics.store(death, 0, 1); Atomics.notify(death, 0);
+  await new Promise<void>((resolve) => setTimeout(resolve, 30));
+  const event = new Event("error"); Object.assign(event, { message: "trap", error: new Error("原始 child 故障") });
+  f.children[0].dispatchEvent(event);
+  assert.equal(f.fatal.length, 0);
+  f.supervisor.setDeadline(f.clock.now + 100); f.clock.advance(100);
+  assert.equal(f.fatal.length, 1); assert.equal(f.fatal[0].code, "WASM_WORKER_DEATH");
+});
+
+test("DEAD 布局不得与 arena 或 abort 重叠", { timeout: 10000 }, () => {
+  assert.throws(() => fixture({ deathAddress: 4 }), /重叠/);
+});
+
+test("DEAD 后 writer 可完成发布，期限前不终止并保留首错", { timeout: 10000 }, async () => {
+  const f = fixture({ deathAddress: 16384 }); f.publish(0);
+  f.channels[0].port1.emit({ type: "facadeSpawnV2", slot: 0, gen: 0, name: "fixture", recordAddr: 8192 }); f.ready();
+  const words = new Uint32Array(f.memory.buffer, 8192, 4), halves = new Uint16Array(f.memory.buffer, 8192, 8), bytes = new Uint8Array(f.memory.buffer, 8192, 256);
+  Atomics.store(words, 0, 1);
+  const death = new Int32Array(f.memory.buffer, 16384, 1); Atomics.store(death, 0, 1); Atomics.notify(death, 0);
+  await new Promise<void>((resolve) => setTimeout(resolve, 30));
+  f.supervisor.setDeadline(f.clock.now + 100); f.clock.advance(99);
+  assert.equal(f.children[0].terminations, 0); assert.equal(f.fatal.length, 0);
+  words[1] = 1; bytes[10] = 1; halves[6] = 4; bytes.set(new TextEncoder().encode("oops"), 16); Atomics.store(words, 0, 2);
+  f.clock.advance(1);
+  assert.equal(f.fatal[0].code, "WASM_WORKER_DEATH");
+  assert.deepEqual((f.fatal[0].context as { records: Array<{ tombstone: unknown }> }).records[0].tombstone, { state: "live", kind: "panic", phase: 0, message: "oops", truncated: false });
+});
+
+test("failurePending 保留首错并追加清理错误", { timeout: 10000 }, async () => {
+  const f = fixture({ deathAddress: 16384 });
+  const death = new Int32Array(f.memory.buffer, 16384, 1); Atomics.store(death, 0, 1); Atomics.notify(death, 0);
+  await new Promise<void>((resolve) => setTimeout(resolve, 30));
+  f.supervisor.noteFailureDuringPending({ code: "CLEANUP", where: "fixture", message: "清理失败" });
+  f.supervisor.setDeadline(f.clock.now + 1); f.clock.advance(1);
+  assert.equal(f.fatal[0].code, "WASM_WORKER_DEATH");
+  assert.equal((f.fatal[0].context as { subsequentFailures: HostFailure[] }).subsequentFailures[0].code, "CLEANUP");
+});
+
+test("已到期的终态清理同步释放 Worker 并保留首错", { timeout: 10000 }, () => {
+  const f = fixture({ deathAddress: 16384 }); f.spawn(); f.ready();
+  f.supervisor.setDeadline(f.clock.now);
+  f.supervisor.finishFailureAtDeadline({ code: "TIMEOUT", where: "fixture", message: "清理超时" });
+  assert.equal(f.children[0].terminations, 1);
+  assert.equal(f.fatal[0].code, "TIMEOUT");
+  assert.equal(f.supervisor.snapshot().disposed, true);
+});
+
+test("最终失败明确声明 last_committed_tick 未知并保留原诊断", { timeout: 10000 }, () => {
+  const f = fixture(); f.spawn(); f.ready();
+  const event = new Event("error"); Object.assign(event, { message: "trap", error: new Error("trap") });
+  f.children[0].dispatchEvent(event);
+  const context = f.fatal[0].context as Record<string, unknown>;
+  assert.equal(context.last_committed_tick, "unknown");
+  assert.equal(context.nativeEventMessage, "trap");
 });

@@ -29,6 +29,7 @@ function fixture(options: FixtureOptions = {}) {
       getArenaView: () => { calls.push("arena"); return { words: new Int32Array(memory.buffer), capacity: 4, genBits: 29 }; },
     },
     load: async () => { calls.push("load"); return { module: new WebAssembly.Module(new Uint8Array([0,97,115,109,1,0,0,0])), diagnostics: false, glue: {
+      wasm_tombstone_init_primary: () => ({ engine: { workerId: 0, address: 60000 }, ingress: { workerId: 0xffffffff, address: 60256 }, death: { address: 65004, bytes: 4 } }),
       initSync: ({ memory: shared }: { memory: WebAssembly.Memory }) => { calls.push("instantiate"); return { memory: shared, __wbindgen_thread_destroy() {} }; },
       facade_slot_init_for_setup: (setup: unknown) => { calls.push("setup-init"); setups.push(setup); options.setup?.(setup); },
       ...(options.hasRestore === false ? {} : { facade_slot_init_for_restore_json: (json: string) => { calls.push("restore-string-init"); archives.push(JSON.parse(json)); options.restore?.(json); } }),
@@ -36,7 +37,7 @@ function fixture(options: FixtureOptions = {}) {
       facade_slot_layout: () => { calls.push("layout"); return layout; },
     } }; }, onFailure: (error) => { throw error; },
   });
-  channel.port1.addEventListener("message", (event) => channel.port1.postMessage(event.data.type === "facadeEngineMemory" ? { type: "facadeEngineMemoryRegistered", allocationId: 1 } : { type: "facadeEngineConfigured" })); channel.port1.start();
+  channel.port1.addEventListener("message", (event) => channel.port1.postMessage(event.data.type === "facadeEngineMemory" ? { type: "facadeEngineMemoryRegistered", allocationId: 1 } : event.data.type === "facadeEngineDeath" ? { type: "facadeEngineDeathRegistered", allocationId: 1 } : { type: "facadeEngineConfigured" })); channel.port1.start();
   return { initializer, channel, calls, setups, archives, close() { initializer.dispose(); channel.port1.close(); channel.port2.close(); } };
 }
 test("初始档沿String ABI合同消费同一完整X，绝不调用default-new initializer", async () => {

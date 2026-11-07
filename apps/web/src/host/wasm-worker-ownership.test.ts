@@ -64,7 +64,9 @@ async function createFixture(
   const layout = { baseAddr: 0, headerWords: HEADER_WORDS, slotStride: SLOT_STRIDE, joinStride: JOIN_STRIDE, capacity: 4, genBits: 29 };
   let sharedMemory!: WebAssembly.Memory;
   const bindings = {
-    initSync: ({ memory }: { memory: WebAssembly.Memory }) => { sharedMemory = memory; return { memory, __wbindgen_thread_destroy() {} }; },
+    wasm_tombstone_bind_ingress() {},
+      wasm_tombstone_init_primary: () => ({ engine: { workerId: 0, address: 60000 }, ingress: { workerId: 0xffffffff, address: 60256 }, death: { address: 65004, bytes: 4 } }),
+      initSync: ({ memory }: { memory: WebAssembly.Memory }) => { sharedMemory = memory; return { memory, __wbindgen_thread_destroy() {} }; },
     facade_slot_init_for_setup: () => { const words = new Int32Array(sharedMemory.buffer); Atomics.store(words, CAPACITY, 4); Atomics.store(words, GEN_BITS, 29); Atomics.store(words, FREE_HEAD, FREE_HEAD_EMPTY | 0); },
     clear_prepared_restore: () => {},
     facade_slot_init_for_restore_json: (encoded: string) => {
@@ -124,9 +126,10 @@ async function createFixture(
   replace(bindingsKey, bindings);
   replace("self", { crossOriginIsolated: true, postMessage: (message: Message) => { if (message.type === "engineLifecycle") globalLifecycle.push(message); }, addEventListener: (_type: string, callback: typeof listener) => { listener = callback; } });
   const emptyModule = [0,97,115,109,1,0,0,0];
-  const exportNames = ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore"];
+  const exportNames = ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "wasm_tombstone_init_primary", "wasm_tombstone_bind_ingress"];
   const exportEntries = exportNames.flatMap((name, index) => [name.length, ...new TextEncoder().encode(name), 0, index]);
-  const wasmBytes = Uint8Array.from(missingWrites === "initial-archive" ? [...emptyModule, 1,4,1,96,0,0, 3,5,4,0,0,0,0, 7,exportEntries.length+1,4,...exportEntries, 10,13,4,2,0,11,2,0,11,2,0,11,2,0,11] : emptyModule);
+  const exportSize = exportEntries.length + 1;
+  const wasmBytes = Uint8Array.from(missingWrites === "initial-archive" ? [...emptyModule, 1,4,1,96,0,0, 3,7,6,0,0,0,0,0,0, 7, (exportSize & 127) | 128, exportSize >> 7, 6,...exportEntries, 10,19,6,2,0,11,2,0,11,2,0,11,2,0,11,2,0,11,2,0,11] : emptyModule);
   const wasmHash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", wasmBytes))].map((byte) => byte.toString(16).padStart(2, "0")).join("");
   replace("fetch", async () => ({ ok: true, arrayBuffer: async () => wasmBytes.buffer }));
   replace("setTimeout", (callback: () => void) => { const id = ++nextTimer; timers.set(id, callback); return id; });
@@ -158,7 +161,7 @@ async function createFixture(
   }));
   await import(`./wasm-worker.ts?owner-test=${id}`);
   assert.ok(listener);
-  const control = new MessageChannel(); control.port1.addEventListener("message", (event) => { const value = event.data as Message; control.port1.postMessage(value.type === "facadeEngineMemory" ? { type: "facadeEngineMemoryRegistered", allocationId: 1 } : { type: "facadeEngineConfigured" }); }); control.port1.start();
+  const control = new MessageChannel(); control.port1.addEventListener("message", (event) => { const value = event.data as Message; control.port1.postMessage(value.type === "facadeEngineMemory" ? { type: "facadeEngineMemoryRegistered", allocationId: 1 } : value.type === "facadeEngineDeath" ? { type: "facadeEngineDeathRegistered", allocationId: 1 } : { type: "facadeEngineConfigured" }); }); control.port1.start();
   const business = new MessageChannel();
   const actualPost = business.port1.postMessage.bind(business.port1);
   business.port1.postMessage = (value: unknown) => {

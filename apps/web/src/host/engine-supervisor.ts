@@ -8,21 +8,26 @@ import { classifyWasmFailure, describeWasmFailure } from "./wasm-failure.ts";
 import { answerFail, answerOk, createSupervisorState, evaluateOkRecovery, onWorkerExit, recoverPending, registerChild, writeDead, type FacadeArenaView } from "./facade-supervisor.ts";
 import { CAPACITY, GEN_BITS, GEN_BITS_DEFAULT, HEADER_WORDS, SLOT_STRIDE, JOIN_STRIDE, SLOT_JOIN_INDEX, SlotState, JoinState, decodeGen, decodeJoinState, encodeW, slotWordOffset, slotFieldOffset, joinWordOffset } from "./facade-slot-protocol.ts";
 import { abortWasmWait, parseWasmWaitAbortLayout, type WasmWaitAbortLayout } from "./wasm-wait-abort.ts";
+import { parseWasmWaitDeathLayout, watchWasmDeath, type WasmWaitDeathLayout } from "./wasm-wait-death.ts";
 import type { WasmLifecycleObservation } from "./wasm-lifecycle-observation.ts";
+import { readWasmTombstone } from "./wasm-tombstone.ts";
 import type { WasmFinalRelease } from "./wasm-document-memory-owner.ts";
 
 /** 只分配宿主错误载荷，不改变 Rust 的 WorkerFailed 判定。 */
 export const FacadeSpawnError = Object.freeze({ WORKER_CONSTRUCT: 1, SCRIPT_LOAD: 2, INSTANTIATE: 3, SUPERVISOR_SHUTDOWN: 4, BOOTSTRAP_FAILURE: 5 });
 export function allocateFacadeWorkerId(next: number): { workerId: number; next: number } {
-  if (!Number.isInteger(next) || next < 1 || next > 0xffffffff) throw new Error("facade Worker id 已耗尽或非法，禁止回绕");
+  if (!Number.isInteger(next) || next < 1 || next > 0xfffffffe) throw new Error("facade Worker id 已耗尽或非法，禁止回绕");
   return { workerId: next, next: next + 1 };
 }
+export interface FacadePrimaryLayout { readonly engine: { readonly workerId: 0; readonly address: number }; readonly ingress: { readonly workerId: 4294967295; readonly address: number }; readonly death: WasmWaitDeathLayout }
 export interface FacadeSubstrate {
   readonly module: WebAssembly.Module;
   readonly memory: WebAssembly.Memory;
   readonly layout: FacadeSlotLayout;
   readonly diagnostics: boolean;
   readonly waitAbort?: WasmWaitAbortLayout;
+  readonly waitDeath?: WasmWaitDeathLayout;
+  readonly primary?: FacadePrimaryLayout;
 }
 export interface SupervisorTimers {
   now(): number;
@@ -35,6 +40,7 @@ export interface EngineSupervisorOptions {
   readonly createChildWorker: (name?: string) => Worker;
   readonly createChannel?: () => MessageChannel;
   readonly onFatalFailure: (failure: HostFailure) => void;
+  readonly onFailurePending?: (failure: HostFailure) => void;
   readonly onSpawnFailure: (failure: HostFailure) => void;
   readonly reportError?: (error: Error) => void;
   /** 只交纯数据；构造途中未取得 Memory 事实时交 Error，不能编造零字节。 */
@@ -47,6 +53,7 @@ interface Resource {
   readonly worker: Worker;
   readonly role: "engine" | "child" | "ingress";
   readonly identity?: Readonly<FacadeThreadIdentity>;
+  readonly recordAddr?: number;
   readonly port?: MessagePort;
   localPort?: MessagePort;
   readonly listeners: Array<readonly [EventTarget, string, EventListener]>;
@@ -54,6 +61,22 @@ interface Resource {
   ready: boolean;
   quiescent?: boolean;
   doneObservedAt?: number;
+}
+
+function parsePrimary(value: unknown, memory: WebAssembly.Memory): FacadePrimaryLayout {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("primary 布局必须为对象");
+  const source = value as Record<string, unknown>;
+  if (Object.keys(source).sort().join(",") !== "death,engine,ingress") throw new Error("primary 布局字段非法");
+  function record(value: unknown, expected: number): { workerId: number; address: number } {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("primary 记录非法");
+    const item = value as Record<string, unknown>;
+    if (Object.keys(item).sort().join(",") !== "address,workerId" || item.workerId !== expected || typeof item.address !== "number" || !Number.isInteger(item.address) || item.address <= 0 || item.address % 4 !== 0 || item.address + 256 > memory.buffer.byteLength) throw new Error("primary 记录身份或地址非法");
+    return { workerId: expected, address: item.address };
+  }
+  const engine = record(source.engine, 0), ingress = record(source.ingress, 0xffffffff);
+  const death = parseWasmWaitDeathLayout(source.death, memory);
+  if (engine.address < ingress.address + 256 && ingress.address < engine.address + 256 || [engine.address, ingress.address].some((address) => death.address < address + 256 && address < death.address + 4)) throw new Error("primary 记录与 DEAD 重叠");
+  return Object.freeze({ engine: Object.freeze({ ...engine, workerId: 0 as const }), ingress: Object.freeze({ ...ingress, workerId: 0xffffffff as const }), death });
 }
 
 /** supervisor 所在的 control owner 持全部真实资源；manifest 只保存 W0 的 slot/gen 事实。 */
@@ -70,10 +93,17 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
   let substrate: FacadeSubstrate | undefined;
   let engineResource: Resource | undefined;
   let nextWorkerId = 1;
+  const records: Array<{ address: number; identity: Readonly<FacadeThreadIdentity> }> = [];
   let disposed = false, shuttingDown = false;
   let deadline = Infinity;
   let sweepTimer: number | undefined;
+  let cancelDeathWatch: (() => void) | undefined;
+  let deathTimer: number | undefined;
+  let deathReport: (() => void) | undefined;
+  let pendingFailure: HostFailure | undefined;
+  const subsequentFailures: HostFailure[] = [];
   let allocatedMemory: WebAssembly.Memory | undefined;
+  let primary: FacadePrimaryLayout | undefined;
   let allocationStarted = false;
   let allocationConfirmedAbsent = false;
   let unprovenTermination = false;
@@ -146,6 +176,14 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
     const pendingDrain = drain; drain = undefined;
     pendingDrain?.reject(new Error("实例已 dispose；强制清表不能证明真实 child exit"));
     const errors: unknown[] = [];
+    if (deathTimer !== undefined) {
+      const timer = deathTimer; deathTimer = undefined; deathReport = undefined;
+      try { timers.clearTimeout(timer); } catch (error) { errors.push(error); }
+    }
+    if (cancelDeathWatch !== undefined) {
+      const cancel = cancelDeathWatch; cancelDeathWatch = undefined;
+      try { cancel(); } catch (error) { errors.push(error); }
+    }
     if (sweepTimer !== undefined) {
       const timer = sweepTimer; sweepTimer = undefined;
       try { timers.clearTimeout(timer); } catch (error) { errors.push(error); }
@@ -183,11 +221,14 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
       : receipt.kind === "released" ? { type: "finalRelease", kind: "released", finalBytes: receipt.finalBytes } : { type: "finalRelease", kind: "not-allocated" });
     return receipt;
   }
-  function fatal(detail: HostFailure): void {
+  function finalizeFatal(detail: HostFailure): void {
     if (disposed) return;
-    let reported = detail;
+    const context = detail.context;
+    let reported: HostFailure = { ...detail, context: context !== null && typeof context === "object" && !Array.isArray(context)
+      ? { ...context, last_committed_tick: "unknown" }
+      : context === undefined ? { last_committed_tick: "unknown" } : { original: context, last_committed_tick: "unknown" } };
     try { if (substrate?.waitAbort !== undefined) abortWasmWait(substrate.memory, substrate.waitAbort); }
-    catch (error) { reported = { ...detail, cause: { primary: detail.cause, abort: failure("WASM_ABORT_WRITE", "fatal", error) } }; }
+    catch (error) { reported = { ...reported, cause: { primary: detail.cause, abort: failure("WASM_ABORT_WRITE", "fatal", error) } }; }
     try { dispose(); }
     catch (error) { reported = { ...reported, cause: { primary: reported.cause, releaseReporter: failure("WASM_RELEASE_REPORTER", "fatal", error) } }; }
     try { onFatalFailure(reported); }
@@ -197,6 +238,41 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
       else if (typeof globalThis.reportError === "function") globalThis.reportError(report);
       else throw error;
     }
+  }
+  function fatal(detail: HostFailure): void {
+    if (disposed) return;
+    if (substrate?.waitDeath === undefined && primary === undefined) { finalizeFatal(detail); return; }
+    if (pendingFailure !== undefined) { subsequentFailures.push(detail); return; }
+    pendingFailure = detail;
+    shuttingDown = true;
+    try { if (substrate?.waitAbort !== undefined) abortWasmWait(substrate.memory, substrate.waitAbort); }
+    catch (error) { subsequentFailures.push(failure("WASM_ABORT_WRITE", "failurePending", error)); }
+    try {
+      if (options.onFailurePending === undefined) throw new Error("waitDeath 需要 failurePending 控制端");
+      options.onFailurePending(detail);
+      schedulePendingFailure();
+    } catch (error) { finalizeFatal({ ...detail, cause: { primary: detail.cause, pendingReporter: describeWasmFailure(error) } }); }
+  }
+  function schedulePendingFailure(): void {
+    if (pendingFailure === undefined || disposed || deadline === Infinity) return;
+    if (deathTimer !== undefined) timers.clearTimeout(deathTimer);
+    deathReport = () => {
+      deathTimer = undefined; deathReport = undefined;
+      if (disposed || pendingFailure === undefined) return;
+      const allRecords = [...(primary === undefined ? [] : [
+        { address: primary.engine.address, identity: { workerId: 0, role: "engine" } },
+        { address: primary.ingress.address, identity: { workerId: 0xffffffff, role: "ingress" } },
+      ]), ...records];
+      const snapshots = allRecords.map(({ address, identity }) => {
+        try {
+          const memory = substrate?.memory ?? allocatedMemory;
+          if (memory === undefined) throw new Error("facade Memory 尚未登记");
+          return { identity, tombstone: readWasmTombstone(memory, address, identity.workerId) };
+        } catch (error) { return { identity, tombstoneReadError: describeWasmFailure(error) }; }
+      });
+      finalizeFatal({ ...pendingFailure, context: { original: pendingFailure.context, records: snapshots, subsequentFailures, incomplete: true } });
+    };
+    deathTimer = timers.setTimeout(deathReport, Math.max(0, deadline - timers.now()));
   }
   function spawnFailed(resource: Resource | undefined, identity: FacadeThreadIdentity, code: keyof typeof FacadeSpawnError, error: unknown, detail?: HostFailure): void {
     if (resource !== undefined) cleanup(resource, true);
@@ -210,18 +286,27 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
     target.addEventListener(type, listener);
     resource.listeners.push([target, type, listener]);
   }
+  function withTombstone(resource: Resource, detail: HostFailure): HostFailure {
+    if (resource.recordAddr === undefined || resource.identity === undefined || substrate === undefined) return detail;
+    try {
+      const tombstone = readWasmTombstone(substrate.memory, resource.recordAddr, resource.identity.workerId);
+      return { ...detail, context: { original: detail.context, tombstone } };
+    } catch (error) {
+      return { ...detail, context: { original: detail.context, tombstoneReadError: describeWasmFailure(error) } };
+    }
+  }
   function evaluateWorkerError(resource: Resource, detail: HostFailure, eventMessage: string): void {
     if (resource.role === "child" && resource.identity !== undefined) {
       if (resource.ready && (eventMessage.includes(FACADE_BOOTSTRAP_REPORTER_FAILURE) || detail.message.includes(FACADE_BOOTSTRAP_REPORTER_FAILURE))) {
-        fatal({ ...detail, code: FACADE_BOOTSTRAP_REPORTER_FAILURE }); return;
+        fatal(withTombstone(resource, { ...detail, code: FACADE_BOOTSTRAP_REPORTER_FAILURE })); return;
       }
       if (!resource.ready) { spawnFailed(resource, resource.identity, "SCRIPT_LOAD", detail, detail); return; }
       const view = arena();
       const join = Atomics.load(view.words, slotFieldOffset(resource.identity.slot, SLOT_JOIN_INDEX)) >>> 0;
       const outcome = writeDead(view, join, resource.identity.gen, "hardtrap", 1);
-      if (outcome !== "written") return;
+      if (outcome !== "written" && outcome !== "lost-to-dead") return;
     }
-    fatal(detail);
+    fatal(resource.role === "child" ? withTombstone(resource, detail) : detail);
   }
   function workerError(resource: Resource, event: Event): void {
     if (disposed || !resources.has(resource.worker)) return;
@@ -277,7 +362,7 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
     const view = arena();
     if (slot >= view.capacity || gen >= 2 ** view.genBits) throw new Error("facade slot/gen 超出当前 layout");
   }
-  function spawn(slot: number, gen: number, runtimeName: string): void {
+  function spawn(slot: number, gen: number, runtimeName: string, recordAddr?: number): void {
     validatePair(slot, gen);
     const view = arena();
     if (shuttingDown) {
@@ -286,12 +371,26 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
       return;
     }
     if ((Atomics.load(view.words, slotWordOffset(slot)) >>> 0) !== encodeW(gen, SlotState.Req, view.genBits)) return;
+    if (recordAddr !== undefined) {
+      if (substrate === undefined) throw new Error("facade substrate 尚未装入");
+      const { layout, memory } = substrate;
+      const arenaEnd = layout.baseAddr + (layout.headerWords + layout.capacity * (layout.slotStride + layout.joinStride)) * 4;
+      if (recordAddr === 0 || recordAddr % 4 !== 0 || recordAddr + 256 > memory.buffer.byteLength ||
+          (recordAddr < arenaEnd && recordAddr + 256 > layout.baseAddr) ||
+          (primary !== undefined && [primary.engine.address, primary.ingress.address].some((address) => recordAddr < address + 256 && address < recordAddr + 256)) ||
+          (substrate.waitDeath !== undefined && recordAddr < substrate.waitDeath.address + 4 && substrate.waitDeath.address < recordAddr + 256) ||
+          (substrate.waitAbort !== undefined && recordAddr <= substrate.waitAbort.address && substrate.waitAbort.address < recordAddr + 256) ||
+          records.some(({ address }) => recordAddr < address + 256 && address < recordAddr + 256)) {
+        throw new Error("facadeSpawnV2 记录地址非法、重叠或已登记");
+      }
+    }
     for (const resource of resources.values()) {
       if (resource.identity?.slot === slot && resource.identity.gen === gen) throw new Error("同代 facadeSpawn 重复请求");
     }
     const allocated = allocateFacadeWorkerId(nextWorkerId);
     nextWorkerId = allocated.next;
     const identity = Object.freeze({ workerId: allocated.workerId, slot, gen });
+    if (recordAddr !== undefined) records.push({ address: recordAddr, identity });
     let worker: Worker;
     const childName = `stock-game:${options.instanceId ?? 0}:child:${allocated.workerId}:${slot}:${gen}`;
     try { worker = createChildWorker(childName); }
@@ -299,6 +398,7 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
     let resource: Resource;
     try { resource = attach(worker, "child", identity); }
     catch (error) { spawnFailed(undefined, identity, "WORKER_CONSTRUCT", error); return; }
+    if (recordAddr !== undefined) Object.assign(resource, { recordAddr });
     if (substrate === undefined || resource.localPort === undefined) throw new Error("child bootstrap 资源不完整");
     options.onLifecycleObservation?.({ type: "childSpawn", ...identity, name: childName, runtimeName });
     const message: FacadeChildBootstrapMessage = { type: "facadeChildBootstrap", ...substrate, ...identity, controlPort: resource.localPort };
@@ -320,11 +420,21 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
       options.onLifecycleObservation?.({ type: "memoryRegistered", allocationId: 1, role: "engine" });
       return;
     }
+    if (message.type === "facadeEngineDeath") {
+      if (resource.role !== "engine" || resource.port === undefined || allocatedMemory === undefined || substrate !== undefined || primary !== undefined) throw new Error("primary 只能在首次 Memory 登记后配置");
+      primary = parsePrimary(message.primary, allocatedMemory);
+      cancelDeathWatch = watchWasmDeath(allocatedMemory, primary.death, () => {
+        if (!disposed) fatal({ code: "WASM_WORKER_DEATH", where: "engine-supervisor.death", message: "WASM Worker 报告死亡；诊断记录可能尚未发布", recoverable: false, recoveryActions: ["请保留错误详情并反馈"] });
+      }, (error) => { if (!disposed) fatal(failure("WASM_DEATH_WATCH_ERROR", "death", error)); });
+      resource.port.postMessage({ type: "facadeEngineDeathRegistered", allocationId: 1 });
+      return;
+    }
     if (message.type === "facadeEngineConfiguration") {
       if (resource.role !== "engine" || resource.localPort !== undefined || resource.port === undefined || allocatedMemory === undefined) throw new Error("配置必须关联本控制端已登记的唯一 Memory");
       if (requireWaitAbort && message.waitAbort === undefined) throw new Error("runtime true 缺少真实 wait abort 布局");
+      if (requireWaitAbort && primary === undefined) throw new Error("runtime true 缺少提前登记 primary 布局");
       const waitAbort = message.waitAbort === undefined ? undefined : parseWasmWaitAbortLayout(message.waitAbort, allocatedMemory);
-      installSubstrate({ module: message.module, memory: allocatedMemory, layout: message.layout, diagnostics: message.diagnostics, ...(waitAbort === undefined ? {} : { waitAbort }) });
+      installSubstrate({ module: message.module, memory: allocatedMemory, layout: message.layout, diagnostics: message.diagnostics, ...(waitAbort === undefined ? {} : { waitAbort }), ...(message.waitDeath === undefined ? {} : { waitDeath: message.waitDeath as WasmWaitDeathLayout }) });
       resource.port.postMessage({ type: "facadeEngineConfigured" });
       options.onLifecycleObservation?.({ type: "allocationConfigured", allocationId: 1, role: "engine", workerId: null, slot: null, gen: null });
       return;
@@ -345,7 +455,7 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
         spawnFailed(resource, resource.identity, "INSTANTIATE", message.failure, message.failure);
       } else {
         // 已成立的 child 可能在 trampoline 中 trap；先唤醒 join，再废弃实例。
-        // 这里没有 Rust panic 记录，故只报告 hardtrap，不推断具体原因。
+        // 有记录时保留诊断；未发布时只能按 hardtrap 表达。
         if (!resource.ready && resource.identity !== undefined) {
           try {
             // 全局错误出口可抢先于控制端的 ready；此时 spawn 尚未成立。
@@ -364,7 +474,7 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
             return;
           }
         }
-        fatal(message.failure);
+        fatal(withTombstone(resource, message.failure));
       }
       return;
     }
@@ -372,6 +482,7 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
     if (resource.role === "child" && !resource.ready && message.type !== "facadeChildReady") throw new Error("child ready 前不能发运行控制消息");
     switch (message.type) {
       case "facadeSpawn": checkpoint(); if (!disposed) spawn(message.slot, message.gen, message.name); return;
+      case "facadeSpawnV2": checkpoint(); if (!disposed) spawn(message.slot, message.gen, message.name, message.recordAddr); return;
       case "facadeTerminateChild": {
         if (message.workerId < 1 || message.workerId >= nextWorkerId) throw new Error("terminate Worker id 不属于本实例已分配域");
         const target = [...resources.values()].find((candidate) => candidate.identity?.workerId === message.workerId);
@@ -498,6 +609,7 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
   function tightenDeadline(until: number): void {
     if ((!Number.isFinite(until) && until !== Infinity) || until < 0) throw new Error("实例 deadline 必须为非负时间");
     deadline = Math.min(deadline, until);
+    schedulePendingFailure();
     if (sweepTimer !== undefined) { timers.clearTimeout(sweepTimer); sweepTimer = undefined; }
     checkpoint(); scheduleSweep();
   }
@@ -515,7 +627,19 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
     if ((Atomics.load(view, CAPACITY) >>> 0) !== layout.capacity || (Atomics.load(view, GEN_BITS) >>> 0) !== layout.genBits) throw new Error("facade layout header 不匹配");
     if (Object.keys(layout).sort().join(",") !== "baseAddr,capacity,genBits,headerWords,joinStride,slotStride") throw new Error("facade layout 字段不完整或有未知字段");
     const waitAbort = input.waitAbort === undefined ? undefined : parseWasmWaitAbortLayout(input.waitAbort, memory);
-    substrate = Object.freeze({ module, memory, layout: Object.freeze({ ...layout }), diagnostics, ...(waitAbort === undefined ? {} : { waitAbort }) });
+    const waitDeath = input.waitDeath === undefined ? primary?.death : parseWasmWaitDeathLayout(input.waitDeath, memory);
+    if (waitDeath !== undefined) {
+      const overlaps = (start: number, length: number) => waitDeath.address < start + length && start < waitDeath.address + 4;
+      if (overlaps(layout.baseAddr, length * 4) || (waitAbort !== undefined && overlaps(waitAbort.address, 1))) throw new Error("wasm DEAD 布局与 arena 或 abort 重叠");
+    }
+    substrate = Object.freeze({ module, memory, layout: Object.freeze({ ...layout }), diagnostics, ...(waitAbort === undefined ? {} : { waitAbort }), ...(waitDeath === undefined ? {} : { waitDeath }) });
+    if (primary !== undefined && (waitDeath === undefined || waitDeath.address !== primary.death.address)) throw new Error("配置 DEAD 地址与提前登记不一致");
+    if (primary !== undefined && (primary.engine.address < layout.baseAddr + length * 4 && layout.baseAddr < primary.engine.address + 256 || primary.ingress.address < layout.baseAddr + length * 4 && layout.baseAddr < primary.ingress.address + 256)) throw new Error("primary 记录与 arena 重叠");
+    if (primary !== undefined && waitAbort !== undefined && [primary.engine.address, primary.ingress.address].some((address) => address <= waitAbort.address && waitAbort.address < address + 256)) throw new Error("primary 记录与 abort 重叠");
+    if (primary !== undefined) substrate = Object.freeze({ ...substrate, primary });
+    if (waitDeath !== undefined && primary === undefined) cancelDeathWatch = watchWasmDeath(memory, waitDeath, () => {
+      if (!disposed) fatal({ code: "WASM_WORKER_DEATH", where: "engine-supervisor.death", message: "WASM Worker 报告死亡；诊断记录可能尚未发布", recoverable: false, recoveryActions: ["请保留错误详情并反馈"] });
+    }, (error) => { if (!disposed) fatal(failure("WASM_DEATH_WATCH_ERROR", "death", error)); });
     scheduleSweep();
   }
   function assertConfigured(): void {
@@ -541,6 +665,20 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
         engine.worker.postMessage({ type: "bindEngineTransport", instanceId, dataPort, controlPort: engine.localPort }, [dataPort, engine.localPort]);
         engine.localPort = undefined;
       } catch (error) { fatal(failure("FACADE_ENGINE_BOOTSTRAP", "engine", error)); }
+    },
+    finishFailureAtDeadline(detail: HostFailure): void {
+      if (!Number.isFinite(deadline) || timers.now() < deadline) throw new Error("failure deadline 尚未到期，不能提前终止 writer");
+      if (disposed) return;
+      fatal(parseHostFailure(detail, "engine-supervisor.deadline"));
+      if (!disposed && deathReport !== undefined) {
+        const report = deathReport;
+        if (deathTimer !== undefined) timers.clearTimeout(deathTimer);
+        report();
+      }
+    },
+    noteFailureDuringPending(detail: HostFailure): void {
+      if (disposed || pendingFailure === undefined) throw new Error("只有 failurePending 期间能追加关停错误");
+      subsequentFailures.push(parseHostFailure(detail, "engine-supervisor.failurePending"));
     },
     installSubstrate, assertConfigured,
     getSubstrate(): FacadeSubstrate {
@@ -598,7 +736,7 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
       return { disposed, children: [...resources.values()].filter((resource) => resource.role === "child").length,
         workers: resources.size, ports: [...resources.values()].reduce((count, resource) => count + (resource.port === undefined ? 0 : 1) + (resource.localPort === undefined ? 0 : 1), 0),
         protocolEntries: protocol.manifest.size, pendingRecovery: protocol.pendingRecovery.length,
-        timers: (sweepTimer === undefined ? 0 : 1) + [...resources.values()].filter((resource) => resource.readyTimer !== undefined).length };
+        timers: (sweepTimer === undefined ? 0 : 1) + (deathTimer === undefined ? 0 : 1) + [...resources.values()].filter((resource) => resource.readyTimer !== undefined).length };
     },
   };
 }

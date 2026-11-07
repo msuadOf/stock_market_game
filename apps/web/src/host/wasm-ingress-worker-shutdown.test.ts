@@ -12,7 +12,7 @@ test("生产 ingress quiesce 在已排队 enqueue 后 ACK，之后 bind/enqueue 
   let handler!: (event: { data: Record<string, unknown> }) => void;
   const memory = new WebAssembly.Memory({ initial: 1, maximum: 2, shared: true });
   const words = new Int32Array(memory.buffer); Atomics.store(words, CAPACITY, 4); Atomics.store(words, GEN_BITS, 29);
-  replace(key, { initSync: () => ({ memory, __wbindgen_thread_destroy() {} }), ingress_enqueue: (token: number, intent: unknown) => { calls.push({ token, intent }); } });
+  replace(key, { wasm_tombstone_bind_ingress: () => {}, initSync: () => ({ memory, __wbindgen_thread_destroy() {} }), ingress_enqueue: (token: number, intent: unknown) => { calls.push({ token, intent }); } });
   const lifecycle: Record<string, unknown>[] = [];
   replace("self", { postMessage: (message: Record<string, unknown>) => { lifecycle.push(message); }, reportError(error: unknown) { throw error; }, addEventListener(_type: string, listener: typeof handler) { handler = listener; } });
   const hooks = registerHooks({
@@ -22,7 +22,7 @@ test("生产 ingress quiesce 在已排队 enqueue 后 ACK，之后 bind/enqueue 
       return next(specifier, context);
     },
     load(url, context, next) {
-      if (url === "virtual:ingress-shutdown-bindings") return { format: "module", shortCircuit: true, source: 'const f=globalThis[Symbol.for("stock-game-ingress-shutdown")]; export const initSync=f.initSync; export const ingress_enqueue=f.ingress_enqueue;' };
+      if (url === "virtual:ingress-shutdown-bindings") return { format: "module", shortCircuit: true, source: 'const f=globalThis[Symbol.for("stock-game-ingress-shutdown")]; export const initSync=f.initSync; export const ingress_enqueue=f.ingress_enqueue; export const wasm_tombstone_bind_ingress=f.wasm_tombstone_bind_ingress;' };
       if (url === "virtual:ingress-shutdown-env") return { format: "module", shortCircuit: true, source: `import {createFacadeThreadBinding} from ${JSON.stringify(new URL("./facade-thread-binding.ts", import.meta.url).href)}; const binding=createFacadeThreadBinding({isWorker:()=>true}); export const {bindFacadeThreadEnvironment,installFacadeSlotLayout,getArenaView}=binding;` };
       return next(url, context);
     },
@@ -33,7 +33,7 @@ test("生产 ingress quiesce 在已排队 enqueue 后 ACK，之后 bind/enqueue 
     const workerUrl = "./wasm-ingress-worker.ts?shutdown-test";
     await import(workerUrl);
     const ownerPort = transport.bindIngressTransport(handler as (event: MessageEvent<unknown>) => void, 1, {
-      memory, module: new WebAssembly.Module(new Uint8Array([0,97,115,109,1,0,0,0])), diagnostics: false,
+      primary: { workerId: 0xffffffff, address: 1024 }, memory, module: new WebAssembly.Module(new Uint8Array([0,97,115,109,1,0,0,0])), diagnostics: false,
       layout: { baseAddr: 0, headerWords: HEADER_WORDS, slotStride: SLOT_STRIDE, joinStride: JOIN_STRIDE, capacity: 4, genBits: 29 },
     });
     ownerPort.addEventListener("message", (event) => posted.push((event as MessageEvent<Record<string, unknown>>).data));

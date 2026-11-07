@@ -222,3 +222,15 @@ it("wait 把真实共享字唤醒映射为 0", { timeout: 10_000 }, async () => 
     await worker.terminate();
   }
 });
+
+it("H5 v2 仅接受共享内存中完整对齐的预登记记录", { timeout: 10_000 }, () => {
+  const { binding, memory, layout, messages } = fixture();
+  binding.installFacadeSlotLayout(layout);
+  const name = new TextEncoder().encode("组");
+  new Uint8Array(memory.buffer, 4096, name.length).set(name);
+  binding.facade_spawn_notify_v2(1, 7, 4096, name.length, 8192);
+  assert.deepEqual(messages, [{ type: "facadeSpawnV2", slot: 1, gen: 7, name: "组", recordAddr: 8192 }]);
+  for (const addr of [0, 65, 128, 65500]) {
+    assert.throws(() => binding.facade_spawn_notify_v2(1, 7, 4096, name.length, addr), /记录|地址/);
+  }
+});

@@ -1361,6 +1361,71 @@ pub fn wasm_wait_abort_layout() -> Result<JsValue, JsValue> {
         .map_err(|error| JsValue::from_str(&format!("wasm abort 布局序列化失败：{error}")))
 }
 
+/// 返回同一 memory 的单向 Worker 死亡字布局；宿主只能观察，不能写入。
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen]
+pub fn wasm_wait_death_layout() -> Result<JsValue, JsValue> {
+    let layout = engine::runtime::watchdog::wasm_wait_death_layout()
+        .map_err(|error| JsValue::from_str(&error))?;
+    serde_wasm_bindgen::to_value(&layout)
+        .map_err(|error| JsValue::from_str(&format!("wasm death 布局序列化失败：{error}")))
+}
+
+/// WASM 主 Worker 的预登记记录；身份值在单个共享 memory 内唯一。
+#[cfg(target_family = "wasm")]
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TombstonePrimaryRecord {
+    worker_id: u32,
+    address: u32,
+}
+
+#[cfg(target_family = "wasm")]
+#[derive(serde::Serialize)]
+struct TombstoneDeathWord {
+    address: u32,
+    bytes: u32,
+}
+
+#[cfg(target_family = "wasm")]
+#[derive(serde::Serialize)]
+struct TombstonePrimaryLayout {
+    engine: TombstonePrimaryRecord,
+    ingress: TombstonePrimaryRecord,
+    death: TombstoneDeathWord,
+}
+
+/// 在 setup/restore 前初始化并绑定 engine 的主 Worker tombstone。
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen]
+pub fn wasm_tombstone_init_primary() -> Result<JsValue, JsValue> {
+    let (engine, ingress, death) =
+        engine::thread_facade::init_tombstone_primary().map_err(JsValue::from_str)?;
+    let layout = TombstonePrimaryLayout {
+        engine: TombstonePrimaryRecord {
+            worker_id: 0,
+            address: engine,
+        },
+        ingress: TombstonePrimaryRecord {
+            worker_id: u32::MAX,
+            address: ingress,
+        },
+        death: TombstoneDeathWord {
+            address: death,
+            bytes: 4,
+        },
+    };
+    serde_wasm_bindgen::to_value(&layout)
+        .map_err(|error| JsValue::from_str(&format!("主 Worker tombstone 布局序列化失败：{error}")))
+}
+
+/// ingress 启动后、业务调用前绑定同一 memory 预登记的记录。
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen]
+pub fn wasm_tombstone_bind_ingress(address: u32, worker_id: u32) -> Result<(), JsValue> {
+    engine::thread_facade::bind_tombstone_ingress(address, worker_id).map_err(JsValue::from_str)
+}
+
 // ---------------------------------------------------------------------------
 // 验证专用入口（feature = verification-harness；正式产物零暴露）。
 //
@@ -1389,6 +1454,35 @@ pub fn verification_facade_spawn(ack_timeout_ms: u32) -> Result<u32, JsValue> {
         }
         *store = Some(handle);
         let _ = ack_timeout_ms; // 预留：门面当前固定 SPAWN_ACK_TIMEOUT_MS
+        Ok(index)
+    })
+}
+
+/// 验证 release WASM 的真实 panic 与 hard trap；正式产物不暴露此入口。
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+#[wasm_bindgen]
+pub fn verification_facade_spawn_death(mode: u32) -> Result<u32, JsValue> {
+    if mode > 2 {
+        return Err(JsValue::from_str("未知 death fixture"));
+    }
+    let handle = engine::thread_facade::Builder::new()
+        .name("verification-death".to_owned())
+        .spawn(move || -> u32 {
+            match mode {
+                0 => panic!("真实 Worker panic 消息"),
+                1 => std::panic::panic_any(String::from("动态 payload")),
+                2 => core::arch::wasm32::unreachable(),
+                _ => unreachable!(),
+            }
+        })
+        .map_err(|error| JsValue::from_str(&format!("verification death spawn 失败：{error}")))?;
+    let index = facade_join_index_of(&handle);
+    FACADE_VERIFY_HANDLES.with(|slot| {
+        let mut store = slot.borrow_mut();
+        if store.is_some() {
+            return Err(JsValue::from_str("verification death：已有在途句柄"));
+        }
+        *store = Some(handle);
         Ok(index)
     })
 }
@@ -1698,3 +1792,10 @@ mod catalog_boundary_tests {
 
 #[cfg(test)]
 mod runtime_sync_policy_tests;
+
+/// 验证专用：在已绑定的 engine 或 ingress TLS 中触发静态 panic。
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+#[wasm_bindgen]
+pub fn verification_tombstone_primary_panic() {
+    panic!("WASM_PRIMARY_TOMBSTONE_PROBE");
+}

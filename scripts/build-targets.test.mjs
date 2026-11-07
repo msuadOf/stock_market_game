@@ -636,7 +636,7 @@ test("native UI 构建在 wasm-pack 修改 LICENSE 后停止，不运行 Cargo �
     await writeFile(path.join(root, "packages/engine/src/lib.rs"), "// fixture\n");
     await writeFile(path.join(root, "LICENSE"), "fixture license");
     await assert.rejects(executeBuild(parseBuildArgs(["webui", "--jobs", "4"]), {
-      root, host: "linux", buildId: "license", commandRunner: async (command) => {
+      root, host: "linux", buildId: "license", withSysroot: async (command, run) => run(command), commandRunner: async (command) => {
         if (command.command === "rustc") return "host: x86_64-unknown-linux-gnu\n";
         if (command.command === "wasm-pack") await writeFile(path.join(root, "LICENSE"), "changed");
         else assert.equal(command.command, "corepack", "LICENSE failure must stop subsequent build commands");

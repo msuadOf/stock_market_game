@@ -2,6 +2,7 @@ import type { FacadeControlMessage } from "./facade-thread-binding.ts";
 import type { FacadeSubstrate } from "./engine-supervisor.ts";
 import { parseFacadeEngineConfigured } from "./facade-engine-protocol.ts";
 import type { WasmWaitAbortLayout } from "./wasm-wait-abort.ts";
+import type { WasmWaitDeathLayout } from "./wasm-wait-death.ts";
 
 interface HandshakeTimers {
   setTimeout(callback: () => void, milliseconds: number): number;
@@ -16,6 +17,7 @@ export function createFacadeEngineHandshake(options: { readonly port: MessagePor
   } : options.timers;
   let started = false, configured = false, closed = false;
   let memoryStarted = false, memoryRegistered = false;
+  let deathStarted = false, deathRegistered = false;
   let timer: number | undefined;
   let resolve: (() => void) | undefined, reject: ((error: unknown) => void) | undefined;
   function close(): void {
@@ -38,6 +40,14 @@ export function createFacadeEngineHandshake(options: { readonly port: MessagePor
         const source = value as Record<string, unknown>;
         if (!memoryStarted || memoryRegistered || started || Object.keys(source).sort().join(",") !== "allocationId,type" || source.allocationId !== 1) throw new Error("Memory 登记确认提前、重复或身份错误");
         memoryRegistered = true;
+        if (timer !== undefined) { timers.clearTimeout(timer); timer = undefined; }
+        const done = resolve; resolve = undefined; reject = undefined; done?.();
+        return;
+      }
+      if (value !== null && typeof value === "object" && (value as Record<string, unknown>).type === "facadeEngineDeathRegistered") {
+        const source = value as Record<string, unknown>;
+        if (!deathStarted || deathRegistered || started || Object.keys(source).sort().join(",") !== "allocationId,type" || source.allocationId !== 1) throw new Error("DEAD 登记确认提前、重复或身份错误");
+        deathRegistered = true;
         if (timer !== undefined) { timers.clearTimeout(timer); timer = undefined; }
         const done = resolve; resolve = undefined; reject = undefined; done?.();
         return;
@@ -65,9 +75,20 @@ export function createFacadeEngineHandshake(options: { readonly port: MessagePor
         catch (error) { fail(error); }
       });
     },
-    configure(substrate: FacadeSubstrate, waitAbort?: WasmWaitAbortLayout): Promise<void> {
+    registerDeath(primary: unknown): Promise<void> {
+      if (!memoryRegistered || deathStarted || started || closed) throw new Error("DEAD 只允许在 Memory 登记后登记一次");
+      deathStarted = true;
+      return new Promise<void>((done, failed) => {
+        resolve = done; reject = failed;
+        timer = timers.setTimeout(() => fail(new Error("engine DEAD 登记等待超过 10000ms")), 10000);
+        try { port.postMessage({ type: "facadeEngineDeath", allocationId: 1, primary }); }
+        catch (error) { fail(error); }
+      });
+    },
+    configure(substrate: FacadeSubstrate, waitAbort?: WasmWaitAbortLayout, waitDeath?: WasmWaitDeathLayout): Promise<void> {
       if (started || closed) throw new Error("engine substrate 只允许发送一次");
       if (memoryStarted && !memoryRegistered) throw new Error("engine Memory 尚未由主侧确认");
+      if (deathStarted && !deathRegistered) throw new Error("engine DEAD 尚未由主侧确认");
       started = true;
       return new Promise<void>((done, failed) => {
         resolve = done; reject = failed;
@@ -75,7 +96,7 @@ export function createFacadeEngineHandshake(options: { readonly port: MessagePor
         try {
           // 已登记 Memory 时不再跨消息 clone wrapper；控制端阶段就是一次分配权威。
           port.postMessage(memoryRegistered
-            ? { type: "facadeEngineConfiguration", allocationId: 1, module: substrate.module, layout: substrate.layout, diagnostics: substrate.diagnostics, ...(waitAbort === undefined ? {} : { waitAbort }) }
+            ? { type: "facadeEngineConfiguration", allocationId: 1, module: substrate.module, layout: substrate.layout, diagnostics: substrate.diagnostics, ...(waitAbort === undefined ? {} : { waitAbort }), ...(waitDeath === undefined ? {} : { waitDeath }) }
             : { type: "facadeEngineSubstrate", ...substrate });
         }
         catch (error) { fail(error); }

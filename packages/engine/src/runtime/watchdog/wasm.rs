@@ -83,6 +83,20 @@ pub fn wasm_wait_abort_layout() -> Result<WasmWaitAbortLayout, String> {
     Ok(WasmWaitAbortLayout { address, bytes: 1 })
 }
 
+/// 全局 DEAD 在 panic 初期置位并 futex notify；记录可能尚未发布。
+#[derive(serde::Serialize)]
+pub struct WasmWaitDeathLayout {
+    pub address: u32,
+    pub bytes: u32,
+}
+
+pub fn wasm_wait_death_layout() -> Result<WasmWaitDeathLayout, String> {
+    require_wasm_wait_initialized()?;
+    let address = u32::try_from(crate::wasm_tombstone::death_word() as usize)
+        .map_err(|_| "wasm DEAD 地址超出 wasm32 范围".to_owned())?;
+    Ok(WasmWaitDeathLayout { address, bytes: 4 })
+}
+
 struct Runtime {
     started: crate::clock::Instant,
     #[cfg(feature = "verification-harness")]

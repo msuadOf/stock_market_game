@@ -244,10 +244,11 @@ export function createWorkerHost(
       controlClient = createEngineControlClient({ runtimeOverride: runtimeOptions.runtimeOverride === true,
         onLifecycleObservation: options.lifecycleObserver,
         onSpawnFailure(failure) { options.onSpawnFailure(parseWorkerFailure(failure)); },
+        onFailurePending(failure) { beginFailurePending(failure); },
         onFailure(error) {
           const cause = error.cause;
-          if (cause !== null && typeof cause === "object" && Object.hasOwn(cause, "code") && Object.hasOwn(cause, "where")) notifyFailure(parseWorkerFailure(cause));
-          else notifyFailure({ code: "WASM_CONTROL_WORKER", where: "worker-host.control", message: error.message, cause: error });
+          if (cause !== null && typeof cause === "object" && Object.hasOwn(cause, "code") && Object.hasOwn(cause, "where")) notifyFailure(parseWorkerFailure(cause), false, true);
+          else notifyFailure({ code: "WASM_CONTROL_WORKER", where: "worker-host.control", message: error.message, cause: error }, false, true);
         },
       });
     } catch (error) { resolveRelease?.({ kind: "not-allocated" }); reject(error); return; }
@@ -280,12 +281,32 @@ export function createWorkerHost(
     let indicatorCapabilities: IndicatorCapabilities = { intradayAverage: false, macd: false, priceKdj: false, candleKdj: false };
     let personalTradeHistory = false;
     let pendingFailure: HostFailure | null = null;
+    let pendingDeadline: number | null = null;
     const deadline = new InitializationDeadline((phase) => {
       if (!initialized) notifyFailure({ code: "WASM_WORKER_INIT_TIMEOUT", where: "worker-host.initialize", message: `行情引擎初始化在${phase}超时，请反馈详情。` });
     }, (message) => options.onInitializationProgress?.(message));
 
-    const notifyFailure = (failure: HostFailure, preserveVisibleBaseline = false) => {
-      if (disposed) return;
+    const beginFailurePending = (failure: HostFailure) => {
+      if (disposed || pendingFailure !== null) return;
+      pendingFailure = failure;
+      const until = performance.now() + 2000;
+      pendingDeadline = until;
+      if (!closing) {
+        closing = true;
+        const error = new Error(`${failure.code} @ ${failure.where}: ${failure.message}`, { cause: failure });
+        closingCancellation = error;
+        requests.beginClosing("shutdown", error);
+        ingressRequests?.beginClosing("quiesceIngress", error);
+      }
+      controlClient.beginShutdown(until);
+    };
+
+    const notifyFailure = (failure: HostFailure, preserveVisibleBaseline = false, terminal = false) => {
+      if (disposed || (pendingDeadline !== null && !terminal)) return;
+      if (pendingDeadline !== null) {
+        pendingFailure = failure;
+        if (disposal !== undefined) return;
+      }
       disposed = true;
       callback = null;
       if (!preserveVisibleBaseline) cachedBaseline = null;
@@ -295,7 +316,7 @@ export function createWorkerHost(
       const cleanupRequests: Promise<unknown>[] = [];
       if (currentGeneration > 0) {
         try {
-          requests.beginClosing("shutdown", error);
+          if (pendingDeadline === null) requests.beginClosing("shutdown", error);
           cleanupRequests.push(requests.request({ type: "shutdown", requestId: requests.nextRequestId(), generation: currentGeneration }, "shutdownCompleted", 2000).then((response) => {
             if (Object.keys(response).sort().join(",") !== "generation,report,requestId,type") throw new Error("shutdownCompleted 字段无效");
             const report = parseWasmSessionShutdown(response.report);
@@ -306,14 +327,14 @@ export function createWorkerHost(
       }
       if (ingressRequests !== null && ingressGeneration > 0) {
         try {
-          ingressRequests.beginClosing("quiesceIngress", error);
+          if (pendingDeadline === null) ingressRequests.beginClosing("quiesceIngress", error);
           cleanupRequests.push(ingressRequests.request({ type: "quiesceIngress", requestId: ingressRequests.nextRequestId(), generation: ingressGeneration }, "ingressQuiescent", 2000).then((response) => {
             if (Object.keys(response).sort().join(",") !== "generation,requestId,type") throw new Error("ingress quiescence ACK 字段无效");
           }));
         } catch (shutdownError) { cleanupRequests.push(Promise.reject(shutdownError)); }
       }
       deadline.dispose();
-      try { controlClient.beginShutdown(performance.now() + 2000); }
+      try { controlClient.beginShutdown(pendingDeadline ?? performance.now() + 2000); }
       catch (error) { queueMicrotask(() => { throw new Error("请求 controlWorker 清理失败；release 保持 unknown", { cause: error }); }); }
       ingressWorker = null;
       const ownerRejected = new Promise<never>((_resolve, reject) => { void controlClient.release.then(undefined, reject); });
@@ -600,6 +621,13 @@ export function createWorkerHost(
         dispose() {
           if (disposal !== undefined) return disposal;
           if (disposed) { disposal = Promise.resolve(); return disposal; }
+          if (pendingDeadline !== null) {
+            disposal = controlClient.release.then(
+              () => { const failure = pendingFailure!; throw new Error(`${failure.code} @ ${failure.where}: ${failure.message}`, { cause: failure }); },
+              (error: unknown) => { const failure = pendingFailure!; throw new AggregateError([error], `${failure.code} @ ${failure.where}: ${failure.message}`, { cause: failure }); },
+            );
+            return disposal;
+          }
           closing = true;
           callback = null; fatalCallback = null;
           const cancellation = new Error("WASM Worker 已被销毁或正在关闭，业务操作已取消");

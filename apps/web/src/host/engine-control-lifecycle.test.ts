@@ -22,16 +22,16 @@ class WorkerHandle extends EventTarget {
   emit(value: unknown) { this.dispatchEvent(new MessageEvent("message", { data: value })); }
 }
 
-async function withClient(run: (client: ReturnType<typeof createEngineControlClient>, worker: WorkerHandle, failures: Error[], observations: unknown[]) => Promise<void>) {
+async function withClient(run: (client: ReturnType<typeof createEngineControlClient>, worker: WorkerHandle, failures: Error[], observations: unknown[], pending: unknown[]) => Promise<void>) {
   const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
   const worker = new WorkerHandle();
   Object.defineProperty(globalThis, "Worker", { configurable: true, value: class { constructor() { return worker; } } });
-  const failures: Error[] = [], observations: unknown[] = [];
-  const client = createEngineControlClient({ runtimeOverride: false, onFailure: (error) => { failures.push(error); }, onSpawnFailure() {}, onLifecycleObservation: (event) => { observations.push(event); } });
+  const failures: Error[] = [], observations: unknown[] = [], pending: unknown[] = [];
+  const client = createEngineControlClient({ runtimeOverride: false, onFailure: (error) => { failures.push(error); }, onSpawnFailure() {}, onFailurePending: (failure) => { pending.push(failure); }, onLifecycleObservation: (event) => { observations.push(event); } });
   void client.configured.catch(() => {});
   void client.release.catch(() => {});
   client.start();
-  try { await run(client, worker, failures, observations); }
+  try { await run(client, worker, failures, observations, pending); }
   finally {
     client.enginePort.close();
     const transferred = worker.sent[0]?.dataPort;
@@ -47,6 +47,25 @@ test("control client 接受首个 child 的 slot0/gen0", { timeout: 10000 }, asy
     worker.emit({ type: "lifecycle", instanceId: client.instanceId, event });
     assert.deepEqual(observations, [event]);
     assert.deepEqual(failures, []);
+    worker.emit({ type: "terminal", instanceId: client.instanceId, release: { kind: "not-allocated" } });
+    client.completeShutdown();
+    await client.release;
+  });
+});
+
+test("control client 只交付首个合法 failurePending 且不提前关闭业务端", { timeout: 10000 }, async () => {
+  await withClient(async (client, worker, failures, _observations, pending) => {
+    const first = { code: "FIRST", where: "engine", message: "首错" };
+    worker.emit({ type: "failurePending", instanceId: client.instanceId, failure: first });
+    worker.emit({ type: "failurePending", instanceId: client.instanceId, failure: { code: "SECOND", where: "engine", message: "后错" } });
+    assert.equal(pending.length, 1);
+    assert.equal((pending[0] as { code: string }).code, "FIRST");
+    assert.deepEqual(failures, []);
+    assert.doesNotThrow(() => client.enginePort.postMessage({ type: "shutdown" }));
+    client.abortShutdown(new Error("关停故障"));
+    assert.equal(worker.terminations, 0);
+    assert.equal(worker.sent.at(-1)?.type, "shutdownFailure");
+    assert.doesNotThrow(() => client.enginePort.postMessage({ type: "shutdown" }));
     worker.emit({ type: "terminal", instanceId: client.instanceId, release: { kind: "not-allocated" } });
     client.completeShutdown();
     await client.release;
@@ -117,7 +136,7 @@ async function withConfiguredOwner(run: (fixture: {
   readonly posted: Record<string, unknown>[];
   readonly words: Int32Array;
   readonly control: MessagePort;
-}) => Promise<void>, phase: "configured" | "registered" | "unallocated" = "configured") {
+}) => Promise<void>, phase: "configured" | "registered" | "unallocated" | "wait-death" = "configured") {
   const channels: MessageChannel[] = [];
   const createChannel = () => { const channel = new MessageChannel(); channels.push(channel); return channel; };
   const data = createChannel(), engine = new WorkerHandle(), posted: Record<string, unknown>[] = [];
@@ -138,10 +157,16 @@ async function withConfiguredOwner(run: (fixture: {
   Atomics.store(words, CAPACITY, 4); Atomics.store(words, GEN_BITS, 29); Atomics.store(words, FREE_HEAD, FREE_HEAD_EMPTY | 0);
   if (phase === "configured") control.postMessage({ type: "facadeEngineSubstrate", module: new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])), memory,
     layout: { baseAddr: 0, headerWords: HEADER_WORDS, slotStride: SLOT_STRIDE, joinStride: JOIN_STRIDE, capacity: 4, genBits: 29 }, diagnostics: false });
+  else if (phase === "wait-death") {
+    control.postMessage({ type: "facadeEngineMemory", allocationId: 1, memory });
+    control.postMessage({ type: "facadeEngineConfiguration", allocationId: 1, module: new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])),
+      layout: { baseAddr: 0, headerWords: HEADER_WORDS, slotStride: SLOT_STRIDE, joinStride: JOIN_STRIDE, capacity: 4, genBits: 29 }, diagnostics: false,
+      waitAbort: { address: 4096, bytes: 1 }, waitDeath: { address: 4100, bytes: 4 } });
+  }
   else if (phase === "registered") control.postMessage({ type: "facadeEngineMemory", allocationId: 1, memory });
   try {
     for (let count = 0; count < 8; count++) await setImmediate();
-    assert.equal(posted.some((value) => value.type === "configured"), phase === "configured");
+    assert.equal(posted.some((value) => value.type === "configured"), phase === "configured" || phase === "wait-death", JSON.stringify(posted));
     await run({ send, engine, posted, words, control });
   } finally {
     send({ type: "invalid", instanceId: 1 });
@@ -187,4 +212,35 @@ test("control owner 将实际 runtimeName 与唯一 child Worker 身份一起观
     assert.ok(spawn);
     assert.deepEqual(spawn.event, { type: "childSpawn", workerId: 1, slot: 0, gen: 0, name: "stock-game:1:child:1:0:0", runtimeName: "rt-group-0" });
   });
+});
+
+
+test("control owner 到期故障先终止 Worker 再发布 terminal", { timeout: 10000 }, async () => {
+  await withConfiguredOwner(async ({ send, engine, posted }) => {
+    send({ type: "beginShutdown", instanceId: 1, deadline: performance.timeOrigin + performance.now() - 1 });
+    send({ type: "abort", instanceId: 1 });
+    assert.equal(engine.terminations, 1);
+    const pending = posted.findIndex((message) => message.type === "failurePending");
+    const terminal = posted.findIndex((message) => message.type === "terminal");
+    assert.ok(pending >= 0 && terminal > pending);
+    assert.equal((posted[terminal].release as { kind: string }).kind, "unknown");
+  }, "wait-death");
+});
+
+
+
+test("control owner 原生错误不可克隆时仍交付首错与 terminal", { timeout: 10000 }, async () => {
+  await withConfiguredOwner(async ({ send, engine, posted }) => {
+    const event = new Event("error");
+    Object.assign(event, { message: "原生 Worker 错误", uncloneable: () => {} });
+    engine.dispatchEvent(event);
+    send({ type: "beginShutdown", instanceId: 1, deadline: performance.timeOrigin + performance.now() - 1 });
+    send({ type: "abort", instanceId: 1 });
+    for (let count = 0; count < 8; count++) await setImmediate();
+    const failure = posted.find((message) => message.type === "failure");
+    assert.ok(failure);
+    assert.doesNotThrow(() => structuredClone(failure));
+    assert.equal(posted.filter((message) => message.type === "terminal").length, 1);
+    assert.equal(engine.terminations, 1);
+  }, "wait-death");
 });

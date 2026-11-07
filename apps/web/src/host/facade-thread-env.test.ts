@@ -14,6 +14,7 @@ const FACADE_IMPORT_NAMES = [
   "facade_futex_wait",
   "facade_futex_notify",
   "facade_spawn_notify",
+  "facade_spawn_notify_v2",
   "facade_worker_exit_notify",
   "facade_terminate_child",
 ] as const;

@@ -9,6 +9,7 @@ import { runBoundedCommand } from "./run-with-deadline.mjs";
 import { verifyWebReleaseWasm } from "./check-web-release-wasm.mjs";
 import { createFrontendCommands } from "./frontend-build-plan.mjs";
 import { executeWasmPackBuild } from "./wasm-pack-build.mjs";
+import { withFrontendWasmSysroot } from "./frontend-wasm-sysroot.mjs";
 
 const rootDirectory = path.resolve(import.meta.dirname, "..");
 const targets = new Set(["desktop", "webui", "webui-server", "server"]);
@@ -218,11 +219,12 @@ export async function publishArtifact(inputs) {
 }
 
 class BuildRun {
-  constructor(plan, { options, context, borrowed = false } = {}) {
+  constructor(plan, { options, context, borrowed = false, withSysroot = withFrontendWasmSysroot } = {}) {
     this.plan = plan;
     this.options = options;
     this.context = context;
     this.borrowed = borrowed;
+    this.withSysroot = withSysroot;
     this.owned = [];
   }
 
@@ -288,7 +290,7 @@ class BuildRun {
         if (stat !== undefined && (stat.isSymbolicLink() || !stat.isDirectory())) throw new Error(`unsafe cached bundle directory: ${bundle}`);
         await rm(bundle, { recursive: true, force: true });
       } else if (command.action === "stage-frontend") await stageFrontend(plan);
-      else if (command.command === "wasm-pack") await executeWasmPackBuild(plan.root, command, commandRunner);
+      else if (command.command === "wasm-pack") await this.withSysroot(command, (configured) => executeWasmPackBuild(plan.root, configured, commandRunner), { tempRoot: plan.work });
       else await commandRunner(command);
     }
     if (plan.compileOnly) {
@@ -340,8 +342,8 @@ export function executeBuildCommand(command) {
   });
 }
 
-export async function executeBuild(options, { commandRunner = executeBuildCommand, prepared = false, ...context } = {}) {
-  const run = new BuildRun(createBuildPlan(options, context), { options, context, borrowed: prepared });
+export async function executeBuild(options, { commandRunner = executeBuildCommand, prepared = false, withSysroot = withFrontendWasmSysroot, ...context } = {}) {
+  const run = new BuildRun(createBuildPlan(options, context), { options, context, borrowed: prepared, withSysroot });
   return run.execute(commandRunner);
 }
 

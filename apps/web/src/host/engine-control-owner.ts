@@ -32,6 +32,7 @@ type ActiveOwner = {
   finalizing: boolean;
   terminal: boolean;
   failing: boolean;
+  failurePending: boolean;
   configured: boolean;
   shutdownTimer?: ReturnType<typeof setTimeout>;
 };
@@ -81,19 +82,38 @@ function serializeFailure(error: unknown, fallbackWhere: string): Readonly<Recor
   const detail = error instanceof Error ? error : new Error("controlWorker 发生非 Error 故障", { cause: error });
   return { code: "WASM_CONTROL_WORKER_FAILURE", where: fallbackWhere, message: detail.message, cause: detail };
 }
+function workerEventFailure(event: Event, role: "engine" | "ingress", kind: "error" | "messageerror"): Readonly<Record<string, unknown>> {
+  const error = event as ErrorEvent;
+  const message = typeof error.message === "string" && error.message.length > 0 ? error.message : `${role} Worker ${kind} 事件`;
+  return { code: "WASM_WORKER_EVENT", where: `engine-control-worker.${role}.${kind}`, message,
+    cause: { type: event.type, ...(typeof error.filename === "string" ? { filename: error.filename } : {}),
+      ...(typeof error.lineno === "number" ? { lineno: error.lineno } : {}), ...(typeof error.colno === "number" ? { colno: error.colno } : {}) } };
+}
 function sendSpawnFailure(active: ActiveOwner, failure: unknown): void {
   try { post({ type: "spawnFailure", instanceId: active.instanceId, failure: serializeFailure(failure, "engine-control-worker.spawn") }); }
   catch (error) { sendFailure(active, error); }
 }
-function sendFailure(active: ActiveOwner, error: unknown): void {
+function sendFailure(active: ActiveOwner, error: unknown, supervisorDisposed = false): void {
   if (active.terminal || active.failing) return;
-  active.failing = true;
   const failure = serializeFailure(error, "engine-control-worker");
   const detail = error instanceof Error ? error : new Error(String(failure.message), { cause: error });
+  if (!supervisorDisposed && active.supervisor !== null) {
+    try {
+      const supervisorFailure = { code: "WASM_CONTROL_WORKER_FAILURE", where: "engine-control-worker", message: detail.message, cause: detail };
+      if (active.shutdownDeadline !== Infinity && performance.now() >= active.shutdownDeadline) active.supervisor.finishFailureAtDeadline(supervisorFailure);
+      else {
+        if (active.shutdownDeadline === Infinity) {
+          active.shutdownDeadline = performance.now() + 2000;
+          active.supervisor.setDeadline(active.shutdownDeadline);
+        }
+        active.supervisor.discard(supervisorFailure);
+      }
+      if (active.terminal || active.failurePending) return;
+    } catch (releaseError) { dependencies.reportError(new AggregateError([detail, releaseError], "controlWorker 故障后释放失败")); }
+  }
+  active.failing = true;
   try { post({ type: "failure", instanceId: active.instanceId, failure }); }
   catch (reportError) { dependencies.reportError(new AggregateError([detail, reportError], "controlWorker 错误无法投递")); }
-  try { active.supervisor?.discard({ code: "WASM_CONTROL_WORKER_FAILURE", where: "engine-control-worker", message: detail.message, cause: detail }); }
-  catch (releaseError) { dependencies.reportError(new AggregateError([detail, releaseError], "controlWorker 故障后释放失败")); }
   // supervisor 尚未接管的构造中资源同样必须尝试终止；收据始终保留 unknown。
   if (active.supervisor === null) {
     try { active.engine?.terminate(); active.ingress?.terminate(); }
@@ -118,7 +138,7 @@ function lifecycle(active: ActiveOwner, event: WasmLifecycleObservation): void {
   post({ type: "lifecycle", instanceId: active.instanceId, event });
 }
 function finalize(active: ActiveOwner): void {
-  if (active.terminal || active.finalizing || !active.engineQuiescent || !active.ingressQuiescent || !active.childrenDrained) return;
+  if (active.terminal || active.finalizing || active.failurePending || !active.engineQuiescent || !active.ingressQuiescent || !active.childrenDrained) return;
   active.finalizing = true;
   try {
     const supervisor = active.supervisor;
@@ -141,7 +161,7 @@ function initialize(value: unknown): ActiveOwner {
   const instanceId = safe(request.instanceId, "controlWorker instanceId");
   if (request.type !== "start" || typeof request.runtimeOverride !== "boolean" || !(request.dataPort instanceof MessagePort)) throw new Error("controlWorker start 内容无效");
   const active: ActiveOwner = { instanceId, supervisor: null, engine: null, engineCreated: false, ingress: null, ingressPort: null,
-    ingressPortSent: false, ingressGeneration: 0, ingressConfigurations: new Map(), listeners: [], ports: new Set([request.dataPort as MessagePort]), engineQuiescent: false, ingressQuiescent: false, childrenDrained: false, shutdownDeadline: Infinity, finalizing: false, terminal: false, failing: false, configured: false };
+    ingressPortSent: false, ingressGeneration: 0, ingressConfigurations: new Map(), listeners: [], ports: new Set([request.dataPort as MessagePort]), engineQuiescent: false, ingressQuiescent: false, childrenDrained: false, shutdownDeadline: Infinity, finalizing: false, terminal: false, failing: false, failurePending: false, configured: false };
   owner = active;
   const engine = dependencies.createEngineWorker(`stock-game:${instanceId}:engine`);
   active.engineCreated = true;
@@ -154,7 +174,8 @@ function initialize(value: unknown): ActiveOwner {
       return dependencies.createChildWorker(name);
     },
     createChannel: dependencies.createChannel,
-    onFatalFailure(failure) { sendFailure(active, failure); },
+    onFailurePending(failure) { active.failurePending = true; post({ type: "failurePending", instanceId: active.instanceId, failure: serializeFailure(failure, "engine-control-worker.pending") }); },
+    onFatalFailure(failure) { sendFailure(active, failure, true); },
     onSpawnFailure(failure) { sendSpawnFailure(active, failure); },
     onLifecycleObservation(event) { lifecycle(active, event); },
   }); } catch (error) {
@@ -187,8 +208,8 @@ function initialize(value: unknown): ActiveOwner {
       } else throw new Error("engineLifecycle.state 无效");
     } catch (error) { sendFailure(active, error); }
   });
-  listen(active, engine, "error", (event) => sendFailure(active, event));
-  listen(active, engine, "messageerror", (event) => sendFailure(active, event));
+  listen(active, engine, "error", (event) => sendFailure(active, workerEventFailure(event, "engine", "error")));
+  listen(active, engine, "messageerror", (event) => sendFailure(active, workerEventFailure(event, "engine", "messageerror")));
   supervisor.bootstrapEngineTransport(request.dataPort as MessagePort, instanceId, request.runtimeOverride);
   active.ports.delete(request.dataPort as MessagePort);
   return active;
@@ -231,10 +252,11 @@ function bindIngress(active: ActiveOwner, request: ControlRequest): void {
         }
       } catch (error) { sendFailure(active, error); }
     });
-    listen(active, ingress, "error", (event) => sendFailure(active, event));
-    listen(active, ingress, "messageerror", (event) => sendFailure(active, event));
+    listen(active, ingress, "error", (event) => sendFailure(active, workerEventFailure(event, "ingress", "error")));
+    listen(active, ingress, "messageerror", (event) => sendFailure(active, workerEventFailure(event, "ingress", "messageerror")));
+    if (substrate.primary === undefined) throw new Error("ingress 缺少预登记 tombstone");
     ingress.postMessage({ type: "bindIngressTransport", instanceId: active.instanceId, dataPort: channel.port2,
-      module: substrate.module, memory: substrate.memory, layout: substrate.layout, diagnostics: substrate.diagnostics }, [channel.port2]);
+      module: substrate.module, memory: substrate.memory, layout: substrate.layout, diagnostics: substrate.diagnostics, primary: substrate.primary.ingress }, [channel.port2]);
     active.ports.delete(channel.port2);
   }
   if (!active.ingressPortSent) {
@@ -258,6 +280,12 @@ dependencies.addMessageListener((event: MessageEvent<unknown>) => {
       exact(request, ["type", "instanceId"], "abort");
       sendFailure(owner, new Error("主线程报告控制通道故障，资源释放保持 unknown")); return;
     }
+    if (request.type === "shutdownFailure") {
+      exact(request, ["type", "instanceId", "message"], "shutdownFailure");
+      if (!owner.failurePending || typeof request.message !== "string" || request.message.length === 0) throw new Error("shutdownFailure 内容或阶段无效");
+      owner.supervisor!.noteFailureDuringPending({ code: "WASM_SHUTDOWN_FAILURE", where: "engine-control-worker.shutdown", message: request.message });
+      return;
+    }
     if (request.type === "bindIngress") { bindIngress(owner, request); return; }
     if (request.type === "beginShutdown") {
       const active = owner;
@@ -270,10 +298,11 @@ dependencies.addMessageListener((event: MessageEvent<unknown>) => {
       if (owner.shutdownTimer !== undefined) clearTimeout(owner.shutdownTimer);
       owner.shutdownTimer = setTimeout(() => {
         if (!active.terminal && (!active.engineQuiescent || !active.ingressQuiescent || !active.childrenDrained)) {
-          sendFailure(active, new Error("共享关停期限届满，缺少真实 engine/ingress quiescence 或 child drain 收据"));
+          const error = new Error("共享关停期限届满，缺少真实 engine/ingress quiescence 或 child drain 收据");
+          sendFailure(active, error);
         }
       }, Math.max(0, owner.shutdownDeadline - performance.now()));
-      void active.supervisor!.waitForChildrenExit(active.shutdownDeadline).then(() => { active.childrenDrained = true; finalize(active); }, (error) => sendFailure(active, error));
+      void active.supervisor!.waitForChildrenExit(active.shutdownDeadline).then(() => { active.childrenDrained = true; finalize(active); }, (error) => { if (active.failurePending) active.supervisor?.noteFailureDuringPending({ code: "WASM_SHUTDOWN_FAILURE", where: "engine-control-worker.shutdown", message: String(error) }); else sendFailure(active, error); });
       return;
     }
     throw new Error(`未知 controlWorker 命令：${request.type}`);

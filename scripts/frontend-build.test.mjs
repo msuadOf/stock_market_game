@@ -86,7 +86,7 @@ test("WASM copy replaces stale generated files only after source checks succeed"
     await writeFile(path.join(plan.frontend, "wasm-pkg/stale"), "old");
     const bytes = packageFixture();
     const calls = [];
-    await executeFrontendBuild(plan, { commandRunner: async (command) => {
+    await executeFrontendBuild(plan, { withSysroot: async (command, run) => run(command), commandRunner: async (command) => {
       calls.push(command);
       if (command.command === "wasm-pack") await writePackageFixture(plan.wasmPackage, bytes);
     } });
@@ -100,10 +100,10 @@ test("WASM copy replaces stale generated files only after source checks succeed"
     assert.deepEqual(await readFile(path.join(plan.frontend, "wasm-pkg/wasm-build-provenance.json")), provenanceBytes);
     assert.deepEqual(await readFile(path.join(plan.frontend, "wasm-pkg/verified-restore-capability.json")), Buffer.from(`${JSON.stringify(capability, null, 2)}\n`));
     assert.match(calls.at(-1).args[0], /check-web-release-wasm/);
-    await assert.rejects(executeFrontendBuild(plan, { commandRunner: async () => { throw new Error("compiler failed"); } }), /compiler failed/);
+    await assert.rejects(executeFrontendBuild(plan, { withSysroot: async (command, run) => run(command), commandRunner: async () => { throw new Error("compiler failed"); } }), /compiler failed/);
     assert.equal(await readFile(path.join(plan.frontend, "wasm-pkg/web_wasm.js"), "utf8"), bytes.glue);
     const failedCalls = [];
-    await assert.rejects(executeFrontendBuild(plan, { commandRunner: async (command) => {
+    await assert.rejects(executeFrontendBuild(plan, { withSysroot: async (command, run) => run(command), commandRunner: async (command) => {
       failedCalls.push(command);
       if (command.command === "wasm-pack") await writePackageFixture(plan.wasmPackage, packageFixture(true));
       if (command.args[0].endsWith("check-web-release-wasm.mjs")) throw new Error("private diagnostic export");
@@ -121,9 +121,12 @@ test("frontend entry supervises the whole build once, and dry-run creates nothin
     await main(["--jobs", "4", "--dry-run"], { root, output: () => {}, run: async (command) => { calls.push(command); } });
     assert.deepEqual(calls, []);
     assert.deepEqual(await readdir(root), []);
+    const started = performance.now();
     await main(["--jobs", "4"], { root, output: () => {}, run: async (command) => { calls.push(command); } });
+    const elapsed = performance.now() - started;
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].timeoutMs, 300000);
+    assert.ok(calls[0].timeoutMs <= 299000);
+    assert.ok(calls[0].timeoutMs >= 299000 - elapsed - 1);
     assert.equal(calls[0].cleanupReserveMs, 1000);
     assert.equal(calls[0].env.STOCK_FRONTEND_BUILD_WORKER, "1");
     assert.match(calls[0].args[0], /frontend-build\.mjs$/);
@@ -167,7 +170,7 @@ test("WASM copy refuses a symlink destination without changing the referenced fi
     await mkdir(unrelated);
     await writeFile(path.join(unrelated, "keep"), "user data");
     await symlink(unrelated, path.join(plan.frontend, "wasm-pkg"), process.platform === "win32" ? "junction" : "dir");
-    await assert.rejects(executeFrontendBuild(plan, { commandRunner: async (command) => {
+    await assert.rejects(executeFrontendBuild(plan, { withSysroot: async (command, run) => run(command), commandRunner: async (command) => {
       if (command.command === "wasm-pack") await writePackageFixture(plan.wasmPackage, packageFixture());
     } }), /symbolic link/);
     assert.equal(await readFile(path.join(unrelated, "keep"), "utf8"), "user data");
@@ -204,9 +207,44 @@ test("frontend 构建在 LICENSE 变更后阻断后续复制", { timeout: 10000 
     await writeFile(path.join(root, "packages/engine/src/lib.rs"), "// fixture\n");
     await writeFile(path.join(root, "LICENSE"), "fixture license");
     const plan = createFrontendPlan({ jobs: 4 }, { root, host: "linux" });
-    await assert.rejects(executeFrontendBuild(plan, { commandRunner: async (command) => {
+    await assert.rejects(executeFrontendBuild(plan, { withSysroot: async (command, run) => run(command), commandRunner: async (command) => {
       if (command.command === "wasm-pack") await writeFile(path.join(root, "LICENSE"), "changed");
       else assert.ok(!command.args[0].endsWith("check-web-release-wasm.mjs"), "LICENSE failure must stop release checks");
     } }), /LICENSE.*changed/);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("受控 sysroot 仅在 wasm-pack 期间注入，成功和失败均清理", { timeout: 10000 }, async () => {
+  const { withFrontendWasmSysroot } = await import("./frontend-wasm-sysroot.mjs");
+  const scratch = await mkdtemp(path.join(tmpdir(), "frontend-sysroot-test-"));
+  try {
+    let prepared;
+    const command = { command: "wasm-pack", env: { RUSTUP_TOOLCHAIN: "nightly-2026-09-05" } };
+    const options = { tempRoot: scratch, environment: {}, resolveRustc: async () => "/toolchain/bin/rustc", prepare: async (rustc, dest) => { assert.equal(rustc, "/toolchain/bin/rustc"); prepared = dest; await mkdir(dest); }, compile: async (rustc, args) => { assert.equal(rustc, "/toolchain/bin/rustc"); assert.match(args[0], /rustc-wrapper\.rs$/); }, host: "linux" };
+    await withFrontendWasmSysroot(command, async (configured) => {
+      assert.equal(configured.env.WASM_PANIC_SYSROOT, prepared);
+      assert.match(configured.env.RUSTC_WRAPPER, /rustc-wrapper$/);
+      assert.equal(command.env.RUSTC_WRAPPER, undefined);
+    }, options);
+    assert.deepEqual(await readdir(scratch), []);
+    await assert.rejects(withFrontendWasmSysroot(command, async () => { throw new Error("compiler failed"); }, options), /compiler failed/);
+    assert.deepEqual(await readdir(scratch), []);
+    await assert.rejects(withFrontendWasmSysroot(command, async () => assert.fail("构建不应执行"), { ...options, prepare: async () => { throw new Error("源校验失败"); } }), /源校验失败/);
+    assert.deepEqual(await readdir(scratch), []);
+    await assert.rejects(withFrontendWasmSysroot(command, async () => {}, { ...options, environment: { RUSTC_WRAPPER: "existing" } }), /RUSTC_WRAPPER/);
+    await withFrontendWasmSysroot(command, async (configured) => assert.match(configured.env.RUSTC_WRAPPER, /rustc-wrapper\.exe$/), { ...options, host: "windows" });
+    await assert.rejects(withFrontendWasmSysroot(command, async () => assert.fail("构建不应执行"), { ...options, compile: async () => { throw new Error("wrapper 编译失败"); } }), /wrapper 编译失败/);
+    assert.deepEqual(await readdir(scratch), []);
+  } finally { await rm(scratch, { recursive: true, force: true }); }
+});
+
+test("frontend supervisor 在 deadline 失败后清理 worker 的 sysroot 父目录", { timeout: 10000 }, async () => {
+  const { main } = await api();
+  let owned;
+  await assert.rejects(main(["--jobs", "4"], { output: () => {}, run: async ({ env }) => {
+    owned = env.STOCK_FRONTEND_SYSROOT_TEMP_ROOT;
+    await mkdir(path.join(owned, "worker-sysroot"));
+    throw new Error("deadline exhausted");
+  } }), /deadline exhausted/);
+  await assert.rejects(readdir(owned), { code: "ENOENT" });
 });

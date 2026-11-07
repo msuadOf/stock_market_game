@@ -28,6 +28,8 @@ pub struct SpawnJob {
     pub drop_result: unsafe fn(*mut u8),
     /// 线程名（H5 消息携带；arena 不设 name 字——无槽上读者，台账登记偏差）。
     pub name: String,
+    #[cfg(target_arch = "wasm32")]
+    pub tombstone: &'static crate::wasm_tombstone::TombstoneRecord,
 }
 
 // F: Send + 'static ⇒ 跨线程（engine worker → 子 Worker）转移安全。
@@ -58,6 +60,8 @@ impl SpawnJob {
             drop_fn: drop_erased::<F>,
             drop_result: drop_erased::<T>,
             name,
+            #[cfg(target_arch = "wasm32")]
+            tombstone: Box::leak(Box::new(crate::wasm_tombstone::TombstoneRecord::new())),
         })
     }
 }
@@ -166,9 +170,14 @@ where
 {
     // name 先行克隆（H5 时 job 所有权已入槽，避免与 trampoline 并发读）。
     let name = job.name.clone();
+    #[cfg(target_arch = "wasm32")]
+    let tombstone_addr = job.tombstone as *const _ as u32;
     let published = publish_spawn(arena, platform, job)?;
     // H5：REQ 发布之后（§13.2 时序前提——消息先到会使 A1 假性失败）。
+    #[cfg(not(target_arch = "wasm32"))]
     platform.notify_spawn(published.slot, published.gen, &name);
+    #[cfg(target_arch = "wasm32")]
+    platform.notify_spawn_v2(published.slot, published.gen, &name, tombstone_addr);
 
     let slot = published.slot;
     let gen = published.gen;
@@ -394,6 +403,28 @@ pub fn trampoline_run<P: FacadePlatform>(
     }
     // W1：恰一闭包恰一跑。
     let job = unsafe { Box::from_raw(job_ptr) };
+    #[cfg(target_arch = "wasm32")]
+    {
+        use crate::wasm_tombstone::{DeathKind, PanicTarget, TombstoneHeader};
+        let join_index = arena.join_index_of(slot);
+        // wasm RUNTIME 是整个实例内不可重置的静态 owner；记录同样保持到实例废弃。
+        let join = unsafe { &*(arena.join_word(join_index) as *const _) };
+        let dead_code = unsafe { &*(arena.join_dead_code_word(join_index) as *const _) };
+        crate::wasm_tombstone::bind(PanicTarget {
+            record: job.tombstone,
+            join,
+            dead_code,
+            waiting: encode_join(gen, JoinState::Waiting, gb),
+            writing: encode_join(gen, JoinState::DeadWriting, gb),
+            dead: encode_join(gen, JoinState::DeadPanic, gb),
+            header: TombstoneHeader {
+                worker_id,
+                // child 执行相位尚无已批准编码；0 明确表示未知。
+                phase: 0,
+                kind: DeathKind::Panic,
+            },
+        });
+    }
     let result = unsafe { (job.invoke)(job.closure) };
     let drop_result = job.drop_result;
     drop(job);

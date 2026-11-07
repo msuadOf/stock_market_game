@@ -132,7 +132,7 @@ for (const initial of ["create", "restoreInitial"] as const) {
         // 可信 producer 的传输 fixture，不作为真实发布包能力证据。
         const owner = new WasmDocumentMemoryOwner({ maximumBytes: storage.options.maximumBytes, reclaimBytes: storage.options.reclaimBytes,
           readCapacity: () => ({ kind: "enforced-capacity", initialPages: 1024, maximumPages: 4096, liveUpperBoundBytes: 256 * MiB }),
-          restoreCapabilities: { forArchive: () => ({ kind: "verified-package", wasmSha256: "a".repeat(64), glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "set_step_runtime_override", "init_wasm_wait", "wasm_wait_abort_layout", "shutdown_session"] }) },
+          restoreCapabilities: { forArchive: () => ({ kind: "verified-package", wasmSha256: "a".repeat(64), glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "wasm_tombstone_init_primary", "wasm_tombstone_bind_ingress", "set_step_runtime_override", "init_wasm_wait", "wasm_wait_abort_layout", "wasm_wait_death_layout", "shutdown_session"] }) },
           createStorage: (liveUpperBoundBytes) => new WasmMemoryStorage({ ...storage.options, liveUpperBoundBytes }) });
         const admission = owner.admit({ kind: "load", archive: commandDayEndArchiveFixture() });
         if (admission.kind !== "admitted" || admission.intent.kind !== "load") throw new Error("需要载入票");
@@ -144,9 +144,10 @@ for (const initial of ["create", "restoreInitial"] as const) {
       assert.equal(f.outcome.status, "pending", "保持初始化中以覆盖重复 ready 的阶段拒绝");
       engine.dataPort!.postMessage({ type: "ready" });
       await drain();
-      assert.equal(f.outcome.status, "rejected");
-      if (f.outcome.status !== "rejected") throw new Error("重复 ready 没有拒绝初始化");
-      assert.match(String(f.outcome.error), /初始化阶段顺序无效/);
+      const rejected = f.readOutcome();
+      assert.equal(rejected.status, "rejected");
+      if (rejected.status !== "rejected") throw new Error("重复 ready 没有拒绝初始化");
+      assert.match(String(rejected.error), /初始化阶段顺序无效/);
       // restoreInitial fixture 尚无 handle，清理须经过控制层的 bounded shutdown deadline。
       f.clock.advance(2001); await drain();
       assert.equal(engine.sent.filter(message => message.type === initial).length, 1);

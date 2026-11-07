@@ -6,6 +6,7 @@ import { parseFacadeEngineSubstrate } from "./facade-engine-protocol.ts";
 
 type IngressBindings = FacadeSyncInitializer & {
   ingress_enqueue(token: number, intent: unknown): void;
+  wasm_tombstone_bind_ingress(address: number, workerId: number): void;
 };
 
 let bindings: IngressBindings | null = null;
@@ -18,6 +19,7 @@ let closing = false;
 let businessPort: MessagePort | undefined;
 let ownerInstanceId: number | undefined;
 let transportBound = false;
+let primary: { address: number; workerId: number } | undefined;
 let cachedSubstrate: ReturnType<typeof parseFacadeEngineSubstrate> | undefined;
 function post(message: unknown): void {
   if (businessPort === undefined) throw new Error("Browser ingress business port 尚未绑定");
@@ -47,6 +49,8 @@ function handleBusinessMessage(event: MessageEvent<Record<string, unknown>>): vo
               loaded = await import("../../wasm-pkg/web_wasm.js") as unknown as IngressBindings;
             }
             instantiateFacadeModule(loaded, substrate.module, substrate.memory);
+            if (primary === undefined || typeof loaded.wasm_tombstone_bind_ingress !== "function") throw new Error("ingress 缺少预登记 tombstone 或绑定接口");
+            loaded.wasm_tombstone_bind_ingress(primary.address, primary.workerId);
             installFacadeSlotLayout(substrate.layout); getArenaView();
             bindings = loaded;
           } else if (["module", "memory", "layout", "diagnostics"].some((key) => Object.hasOwn(message, key))) {
@@ -92,7 +96,7 @@ self.addEventListener("message", (event: MessageEvent<unknown>) => {
     if (message !== null && typeof message === "object" && (message as Record<string, unknown>).type === "bindIngressTransport") {
       const source = message as Record<string, unknown>;
       try {
-        if (Object.keys(source).sort().join(",") !== "dataPort,diagnostics,instanceId,layout,memory,module,type" || !Number.isSafeInteger(source.instanceId)
+        if (Object.keys(source).sort().join(",") !== "dataPort,diagnostics,instanceId,layout,memory,module,primary,type" || !Number.isSafeInteger(source.instanceId)
           || Number(source.instanceId) < 1 || !(source.dataPort instanceof MessagePort)) throw new Error("ingress transport 字段无效");
         throw new Error("Browser ingress transport 只允许首次绑定");
       } catch (error) { if (typeof self.reportError === "function") self.reportError(error); else queueMicrotask(() => { throw error; }); }
@@ -115,8 +119,13 @@ self.addEventListener("message", (event: MessageEvent<unknown>) => {
     return;
   }
   try {
-    if (Object.keys(source).sort().join(",") !== "dataPort,diagnostics,instanceId,layout,memory,module,type" || !Number.isSafeInteger(source.instanceId)
+    if (Object.keys(source).sort().join(",") !== "dataPort,diagnostics,instanceId,layout,memory,module,primary,type" || !Number.isSafeInteger(source.instanceId)
       || Number(source.instanceId) < 1 || !(source.dataPort instanceof MessagePort)) throw new Error("ingress transport 字段无效");
+    const rawPrimary = source.primary;
+    if (rawPrimary === null || typeof rawPrimary !== "object" || Array.isArray(rawPrimary)) throw new Error("ingress tombstone 身份无效");
+    const identity = rawPrimary as Record<string, unknown>;
+    if (Object.keys(identity).sort().join(",") !== "address,workerId" || identity.workerId !== 0xffffffff || typeof identity.address !== "number" || !Number.isInteger(identity.address) || identity.address <= 0 || identity.address % 4 !== 0 || !(source.memory instanceof WebAssembly.Memory) || identity.address + 256 > source.memory.buffer.byteLength) throw new Error("ingress tombstone 身份或地址无效");
+    primary = { address: identity.address, workerId: identity.workerId };
     const substrate = parseFacadeEngineSubstrate({ type: "facadeEngineSubstrate", module: source.module, memory: source.memory, layout: source.layout, diagnostics: source.diagnostics });
     businessPort = source.dataPort;
     ownerInstanceId = Number(source.instanceId);

@@ -14,6 +14,17 @@ export interface FacadeEngineMemoryMessage {
   readonly allocationId: number;
   readonly memory: WebAssembly.Memory;
 }
+export interface FacadeEngineDeathMessage {
+  readonly type: "facadeEngineDeath";
+  readonly allocationId: 1;
+  readonly primary: unknown;
+}
+export function parseFacadeEngineDeath(value: unknown): FacadeEngineDeathMessage {
+  const source = record(value);
+  if (source.type !== "facadeEngineDeath" || source.allocationId !== 1
+    || Object.keys(source).sort().join(",") !== "allocationId,primary,type") throw new Error("facadeEngineDeath 形状非法");
+  return { type: "facadeEngineDeath", allocationId: 1, primary: source.primary };
+}
 export interface FacadeEngineConfigurationMessage {
   readonly type: "facadeEngineConfiguration";
   readonly allocationId: number;
@@ -21,6 +32,7 @@ export interface FacadeEngineConfigurationMessage {
   readonly layout: FacadeSlotLayout;
   readonly diagnostics: boolean;
   readonly waitAbort?: unknown;
+  readonly waitDeath?: unknown;
 }
 export function parseFacadeEngineMemory(value: unknown): FacadeEngineMemoryMessage {
   const source = record(value);
@@ -33,12 +45,13 @@ export function parseFacadeEngineMemory(value: unknown): FacadeEngineMemoryMessa
 export function parseFacadeEngineConfiguration(value: unknown): FacadeEngineConfigurationMessage {
   const source = record(value);
   if (source.type !== "facadeEngineConfiguration" || source.allocationId !== 1
-    || Object.keys(source).some((key) => !["type", "allocationId", "module", "layout", "diagnostics", "waitAbort"].includes(key))
+    || Object.keys(source).some((key) => !["type", "allocationId", "module", "layout", "diagnostics", "waitAbort", "waitDeath"].includes(key))
     || !(source.module instanceof WebAssembly.Module) || typeof source.diagnostics !== "boolean") throw new Error("facadeEngineConfiguration 形状非法");
   // layout 的完整 header/bounds 在 supervisor 关联唯一已登记 Memory 后校验。
   if (source.layout === null || typeof source.layout !== "object" || Array.isArray(source.layout)) throw new Error("facade engine layout 必须为对象");
   return { type: "facadeEngineConfiguration", allocationId: 1, module: source.module, layout: source.layout as unknown as FacadeSlotLayout,
-    diagnostics: source.diagnostics, ...(Object.hasOwn(source, "waitAbort") ? { waitAbort: source.waitAbort } : {}) };
+    diagnostics: source.diagnostics, ...(Object.hasOwn(source, "waitAbort") ? { waitAbort: source.waitAbort } : {}),
+    ...(Object.hasOwn(source, "waitDeath") ? { waitDeath: source.waitDeath } : {}) };
 }
 function record(value: unknown): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("facade engine 控制消息必须为对象");

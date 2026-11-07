@@ -9,6 +9,7 @@ export interface FacadeThreadIdentity {
 }
 export type FacadeControlMessage =
   | { readonly type: "facadeSpawn"; readonly slot: number; readonly gen: number; readonly name: string }
+  | { readonly type: "facadeSpawnV2"; readonly slot: number; readonly gen: number; readonly name: string; readonly recordAddr: number }
   | { readonly type: "facadeTerminateChild"; readonly workerId: number };
 export interface FacadeThreadConfiguration {
   readonly memory: WebAssembly.Memory;
@@ -173,7 +174,7 @@ export function createFacadeThreadBinding(options: { readonly isWorker?: () => b
     return config;
   }
 
-  function facade_spawn_notify(slot: number, gen: number, namePtr: number, nameLen: number): void {
+  function spawnMessage(slot: number, gen: number, namePtr: number, nameLen: number): { slot: number; gen: number; name: string } {
     const config = controlRole();
     const current = currentLayout();
     const messageSlot = rawUnsigned(slot, "slot");
@@ -192,7 +193,24 @@ export function createFacadeThreadBinding(options: { readonly isWorker?: () => b
     } catch (cause) {
       throw new Error("facade_thread_env：name 不是有效 UTF-8", { cause });
     }
-    config.postControl({ type: "facadeSpawn", slot: messageSlot, gen: messageGen, name });
+    return { slot: messageSlot, gen: messageGen, name };
+  }
+
+  function facade_spawn_notify(slot: number, gen: number, namePtr: number, nameLen: number): void {
+    const result = spawnMessage(slot, gen, namePtr, nameLen);
+    controlRole().postControl({ type: "facadeSpawn", ...result });
+  }
+
+  function facade_spawn_notify_v2(slot: number, gen: number, namePtr: number, nameLen: number, recordAddr: number): void {
+    const config = controlRole();
+    const current = currentLayout();
+    const address = rawUnsigned(recordAddr, "recordAddr");
+    const arenaEnd = current.baseAddr + 4 * (current.headerWords + current.capacity * (current.slotStride + current.joinStride));
+    if (address === 0 || address % 4 !== 0 || address + 256 > config.memory.buffer.byteLength || (address < arenaEnd && address + 256 > current.baseAddr)) {
+      fail("tombstone 记录地址未对齐、越界或与 arena 重叠");
+    }
+    const result = spawnMessage(slot, gen, namePtr, nameLen);
+    config.postControl({ type: "facadeSpawnV2", ...result, recordAddr: address });
   }
 
   function facade_worker_exit_notify(workerId: number, slot: number, gen: number): void {
@@ -222,5 +240,5 @@ export function createFacadeThreadBinding(options: { readonly isWorker?: () => b
   }
 
   return { bindFacadeThreadEnvironment, installFacadeSlotLayout, getArenaView, requireExitIntent,
-    facade_futex_wait, facade_futex_notify, facade_spawn_notify, facade_worker_exit_notify, facade_terminate_child };
+    facade_futex_wait, facade_futex_notify, facade_spawn_notify, facade_spawn_notify_v2, facade_worker_exit_notify, facade_terminate_child };
 }

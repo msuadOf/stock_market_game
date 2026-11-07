@@ -30,8 +30,8 @@ mod wasm;
 pub(crate) use wasm::require_wasm_wait_initialized;
 #[cfg(target_family = "wasm")]
 pub use wasm::{
-    init_wasm_wait, recv_deadline, spin_config, wasm_wait_abort_layout, worker_recv,
-    worker_recv_spin, WasmWaitAbortLayout,
+    init_wasm_wait, recv_deadline, spin_config, wasm_wait_abort_layout, wasm_wait_death_layout,
+    worker_recv, worker_recv_spin, WasmWaitAbortLayout, WasmWaitDeathLayout,
 };
 #[cfg(all(target_family = "wasm", feature = "verification-harness"))]
 pub(crate) use wasm::{verify_coordinator_recv, verify_host_aborted, verify_worker_recv};

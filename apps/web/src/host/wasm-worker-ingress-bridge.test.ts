@@ -69,7 +69,8 @@ async function createFixture(
   const capabilities = { npcDecisionDiagnostics: false, indicatorCapabilities: { intradayAverage: false, macd: false, priceKdj: false, candleKdj: false }, personalTradeHistory: false };
   let boundMemory!: WebAssembly.Memory;
   const bindings: Record<string, unknown> = {
-    initSync: (input: { memory: WebAssembly.Memory }) => { boundMemory = input.memory; return { memory: options.sharedMemory ? boundMemory : memory, __wbindgen_thread_destroy() {} }; },
+    wasm_tombstone_init_primary: () => ({ engine: { workerId: 0, address: 60000 }, ingress: { workerId: 0xffffffff, address: 60256 }, death: { address: 65004, bytes: 4 } }),
+      initSync: (input: { memory: WebAssembly.Memory }) => { boundMemory = input.memory; return { memory: options.sharedMemory ? boundMemory : memory, __wbindgen_thread_destroy() {} }; },
     facade_slot_init_for_setup: () => { const words = new Int32Array(boundMemory.buffer); Atomics.store(words, CAPACITY, 4); Atomics.store(words, GEN_BITS, 29); },
     facade_slot_layout: () => ({ baseAddr: 0, headerWords: HEADER_WORDS, slotStride: SLOT_STRIDE, joinStride: JOIN_STRIDE, capacity: 4, genBits: 29 }),
     create_session: () => handle,
@@ -139,6 +140,7 @@ async function createFixture(
   ownerControl.addEventListener("message", (event) => {
     const value = (event as MessageEvent<Record<string, unknown>>).data;
     if (value.type === "facadeEngineMemory") { earlyMemory = value.memory as WebAssembly.Memory; ownerControl.postMessage({ type: "facadeEngineMemoryRegistered", allocationId: 1 }); }
+    else if (value.type === "facadeEngineDeath") ownerControl.postMessage({ type: "facadeEngineDeathRegistered", allocationId: 1 });
     else { substrate = { ...value, memory: earlyMemory }; ownerControl.postMessage({ type: "facadeEngineConfigured" }); }
   }); ownerControl.start();
   const send = async (message: Message) => {

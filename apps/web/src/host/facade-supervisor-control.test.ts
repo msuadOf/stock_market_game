@@ -28,3 +28,10 @@ test("bootstrap failure 只有 validate 无身份，其他 phase 身份必填且
   assert.throws(() => parseFacadeSupervisorControl({ type: "facadeBootstrapFailure", phase: "cleanup", failure }));
   assert.throws(() => parseFacadeSupervisorControl({ ...message, failure: { ...failure, recoverable: "yes" } }));
 });
+
+test("facadeSpawnV2 保留记录地址并拒绝畸形字段", { timeout: 10000 }, () => {
+  const input = { type: "facadeSpawnV2", slot: 3, gen: 5, name: "nested", recordAddr: 8192 };
+  assert.deepEqual(parseFacadeSupervisorControl(input), input);
+  for (const recordAddr of [-1, 1.5, 2 ** 32, "8192"]) assert.throws(() => parseFacadeSupervisorControl({ ...input, recordAddr }));
+  assert.throws(() => parseFacadeSupervisorControl({ ...input, extra: true }));
+});

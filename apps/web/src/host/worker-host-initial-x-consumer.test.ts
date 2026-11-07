@@ -8,10 +8,10 @@ import { WasmMemoryStorage } from "./wasm-memory-storage.ts";
 import { fixture as storageFixture, MiB } from "./wasm-memory-storage.test-support.ts";
 
 // 这是可信 producer 接口的传输 fixture，不是实际发布包能力证据。
-const capability = { kind: "verified-package", wasmSha256: "a".repeat(64), glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore"] };
+const capability = { kind: "verified-package", wasmSha256: "a".repeat(64), glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "wasm_tombstone_init_primary", "wasm_tombstone_bind_ingress"] };
 test("有 verified package capability 时 bootstrap 唯一完整 X，ready 后仅 restoreInitial", { timeout: 10000 }, async () => {
   const f = fixture(); const storage = storageFixture();
-  const runtimeCapability = { ...capability, exports: [...capability.exports, "set_step_runtime_override", "init_wasm_wait", "wasm_wait_abort_layout", "shutdown_session"] };
+  const runtimeCapability = { ...capability, exports: [...capability.exports, "set_step_runtime_override", "init_wasm_wait", "wasm_wait_abort_layout", "wasm_wait_death_layout", "shutdown_session"] };
   const owner = new WasmDocumentMemoryOwner({ maximumBytes: storage.options.maximumBytes, reclaimBytes: storage.options.reclaimBytes,
     readCapacity: () => ({ kind: "enforced-capacity", initialPages: 1024, maximumPages: 4096, liveUpperBoundBytes: 256 * MiB }),
     restoreCapabilities: { forArchive: () => runtimeCapability as never },
@@ -29,6 +29,7 @@ test("有 verified package capability 时 bootstrap 唯一完整 X，ready 后�
     assert.deepEqual(f.workers[0].sent.find((message) => message.type === "restoreInitial"), { type: "restoreInitial" });
     assert.equal(f.workers[0].sent.some((message) => message.type === "create" || message.type === "restore"), false);
     f.workers[0].error(new Error("只验证启动传输，缺少真实 quiescence")); await drain();
+    f.clock.advance(2001); await drain();
     await assert.rejects(owner.finish(ticket), /quiescence|停止 grow/);
   } finally { await f.cleanup(); }
 });
@@ -63,11 +64,15 @@ for (const contradictory of [false, true]) {
 test("restore capability 保留 omitted/false/true 三态，与 initializer requested 语义一致", { timeout: 10000 }, () => {
   const withSetter = { ...capability, exports: [...capability.exports, "set_step_runtime_override"] };
   const withRuntime = { ...withSetter, exports: [...withSetter.exports, "init_wasm_wait", "wasm_wait_abort_layout", "shutdown_session"] };
+  assert.throws(() => parseVerifiedRestoreCapability({ ...capability, exports: capability.exports.filter((name) => name !== "wasm_tombstone_init_primary") }), /缺少/);
+  assert.throws(() => parseVerifiedRestoreCapability({ ...capability, exports: capability.exports.filter((name) => name !== "wasm_tombstone_bind_ingress") }), /缺少/);
   assert.deepEqual(parseVerifiedRestoreCapability(capability), capability);
   assert.throws(() => parseVerifiedRestoreCapability(capability, false), /缺少/);
   assert.deepEqual(parseVerifiedRestoreCapability(withSetter, false), withSetter);
   assert.throws(() => parseVerifiedRestoreCapability(withSetter, true), /缺少/);
-  assert.deepEqual(parseVerifiedRestoreCapability(withRuntime, true), withRuntime);
+  assert.throws(() => parseVerifiedRestoreCapability(withRuntime, true), /缺少/);
+  const withDeath = { ...withRuntime, exports: [...withRuntime.exports, "wasm_wait_death_layout"] };
+  assert.deepEqual(parseVerifiedRestoreCapability(withDeath, true), withDeath);
 });
 
 for (const runtimeOverride of [false, true]) test(`显式 runtimeOverride:${runtimeOverride} ${runtimeOverride ? "缺 setter" : "不受支持"}时零 Worker/Channel 拒绝并结 not-allocated`, { timeout: 10000 }, async () => {
