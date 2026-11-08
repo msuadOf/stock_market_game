@@ -182,6 +182,7 @@ impl GameSession {
     /// 付款候选与行政镜像共用这一份真实完整基线；首 Prepare 前还须核来源未变。
     pub(super) fn prepare_civil_administrative_baseline(
         &self,
+        initial_full: Option<crate::runtime::drive::InitialCivilFull>,
     ) -> Result<AdministrativeBaseline, SessionError> {
         let baseline = {
             let cell = self.runtime_driver.as_ref().ok_or_else(|| {
@@ -197,7 +198,7 @@ impl GameSession {
                 ))
             })?;
             driver
-                .prepare_administrative_baseline(self)
+                .prepare_administrative_baseline_with_initial(self, initial_full)
                 .map_err(|source| {
                     SessionError::CivilInformation(CivilInformationError::new(
                         self.civil_date(),

@@ -414,6 +414,23 @@ impl GameSession {
     }
 
     pub(in crate::session) fn construct_runtime_driver_lazy(&mut self) -> Result<(), StepFatal> {
+        self.construct_runtime_driver_lazy_inner(false).map(|_| ())
+    }
+
+    pub(in crate::session) fn construct_runtime_driver_for_civil(
+        &mut self,
+    ) -> Result<crate::runtime::drive::InitialCivilFull, StepFatal> {
+        self.construct_runtime_driver_lazy_inner(true)?
+            .ok_or_else(|| StepFatal::InvariantViolation {
+                location: "GameSession::construct_runtime_driver_for_civil".to_owned(),
+                description: "首次 civil 接管缺完整原始读面".to_owned(),
+            })
+    }
+
+    fn construct_runtime_driver_lazy_inner(
+        &mut self,
+        retain_civil_full: bool,
+    ) -> Result<Option<crate::runtime::drive::InitialCivilFull>, StepFatal> {
         self.require_healthy()?;
         let fail = |description| StepFatal::InvariantViolation {
             location: "GameSession::ensure_runtime_driver".to_owned(),
@@ -445,7 +462,12 @@ impl GameSession {
         })?;
         driver.adopt_session_seq(self);
         let prepared = (|| {
-            let input = driver.prepare_static_driver_projection(self)?;
+            let (input, full) = if retain_civil_full {
+                let (input, full) = driver.prepare_civil_static_driver_projection(self)?;
+                (input, Some(full))
+            } else {
+                (driver.prepare_static_driver_projection(self)?, None)
+            };
             let mirror = self.prepare_runtime_handover_mirror(&mut driver, input)?;
             // staged fixture 仅窥视；全部 prepare 成功前仍保留原批。
             #[cfg(test)]
@@ -462,9 +484,9 @@ impl GameSession {
             let ack = self
                 .validate_runtime_mirror_source(&driver, &mirror)
                 .map_err(|error| error.to_string())?;
-            Ok::<_, String>((mirror, ack))
+            Ok::<_, String>((mirror, ack, full))
         })();
-        let (mirror, ack) = match prepared {
+        let (mirror, ack, full) = match prepared {
             Ok(value) => value,
             Err(error) => {
                 return match driver.stop_prepared_without_drain() {
@@ -496,7 +518,7 @@ impl GameSession {
         let _ = crate::session::pipeline::staged_decision::take_any();
         self.runtime_driver = Some(std::sync::Mutex::new(driver));
         self.state.runtime_information_authority = true;
-        Ok(())
+        Ok(full)
     }
 
     /// runtime 驱动入口：native 缺省启用 runtime 时 `step()` 走 RuntimeDriver

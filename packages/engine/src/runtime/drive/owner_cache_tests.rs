@@ -127,3 +127,49 @@ fn changed_roster_is_rejected_by_static_flush_manual_day_end_and_administrative_
     assert_eq!(serde_json::to_value(session.snapshot()).unwrap(), before);
     assert_eq!(driver.world_committed_tick(), 0);
 }
+
+#[test]
+fn civil_full_changed_world_source_rereads_both_domains() {
+    let (session, mut driver) = fixture();
+    let (_, full) = driver
+        .prepare_civil_static_driver_projection(&session)
+        .expect("必须先取得真实首次静点完整读面");
+    let original = full.source;
+    let next = original.civil_date.next().unwrap();
+    driver.world.set_civil_date(next);
+    assert_ne!(driver.mirror_source(), original, "必须实际改变 World 来源");
+    let scope = crate::session::calendar_entry_cache_tests::EntryScope::enter();
+    let baseline = driver
+        .prepare_administrative_baseline_with_initial(&session, Some(full))
+        .expect("来源改变后必须重新完整读取");
+    let counts = scope.full_read_counts();
+    drop(scope);
+    assert_eq!(baseline.source.civil_date, next);
+    assert_eq!(counts.full_accounts, 1, "来源改变必须重读账户");
+    assert_eq!(counts.full_personals, 1, "来源改变必须重读个人态");
+}
+
+#[test]
+fn civil_full_inconsistent_internal_source_is_rejected() {
+    let (session, mut driver) = fixture();
+    let (_, mut full) = driver
+        .prepare_civil_static_driver_projection(&session)
+        .expect("必须先取得真实首次静点完整读面");
+    assert_eq!(full.source, full.personals.source);
+    full.personals.source.generation = full.personals.source.generation.checked_add(1).unwrap();
+    let scope = crate::session::calendar_entry_cache_tests::EntryScope::enter();
+    let error = match driver.prepare_administrative_baseline_with_initial(&session, Some(full)) {
+        Ok(_) => panic!("同一完整读面的内部来源不一致必须显式拒绝"),
+        Err(error) => error,
+    };
+    let counts = scope.full_read_counts();
+    drop(scope);
+    assert!(
+        error
+            .to_string()
+            .contains("首次 civil 完整读面内部来源不一致"),
+        "{error}"
+    );
+    assert_eq!(counts.full_accounts, 0, "内部损坏不能用账户重读掩盖");
+    assert_eq!(counts.full_personals, 0, "内部损坏不能用个人态重读掩盖");
+}

@@ -28,7 +28,7 @@ use crate::money::Money;
 use crate::strategy::StrategyData;
 use crate::{AccountId, Event, GameSession, SessionSetup};
 pub(crate) use convergence::{PreparedDriverCalendar, PreparedDriverStep};
-pub(crate) use static_projection::PreparedStaticRead;
+pub(crate) use static_projection::{InitialCivilFull, PreparedStaticRead};
 
 #[derive(Debug)]
 pub(crate) struct RuntimeDriverConstructionError {

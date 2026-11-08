@@ -718,6 +718,10 @@ impl World {
     }
 
     fn collect_personal_full_inner(&mut self) -> Result<PersonalFullSnapshot, RuntimeError> {
+        #[cfg(all(test, not(target_family = "wasm")))]
+        crate::session::calendar_entry_cache_tests::record_entry_call(
+            crate::session::calendar_entry_cache_tests::EntryCall::FullPersonals,
+        );
         if let Some(reason) = &self.dead_reason {
             return Err(RuntimeError::ProtocolInvariant {
                 detail: format!("Full 读取拒绝已终止 World：{reason}"),
@@ -2640,6 +2644,10 @@ impl World {
     pub fn snapshot_accounts(
         &mut self,
     ) -> Result<Vec<(GroupIdx, Vec<GroupAccount>)>, RuntimeError> {
+        #[cfg(all(test, not(target_family = "wasm")))]
+        crate::session::calendar_entry_cache_tests::record_entry_call(
+            crate::session::calendar_entry_cache_tests::EntryCall::FullAccounts,
+        );
         if self.group_txs.len() != self.n_groups {
             return Err(RuntimeError::Disconnected {
                 who: None,

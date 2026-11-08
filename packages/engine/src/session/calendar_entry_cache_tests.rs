@@ -14,17 +14,41 @@ pub(crate) struct EntryCounts {
     pub start: u32,
     pub drain: u32,
 }
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct FullReadCounts {
+    pub full_accounts: u32,
+    pub full_personals: u32,
+}
 #[derive(Clone, Copy)]
 pub(crate) enum EntryCall {
     Freeze,
     Take,
     Start,
     Drain,
+    FullAccounts,
+    FullPersonals,
 }
 thread_local! { static ENTRY_COUNTS: Cell<Option<EntryCounts>> = const { Cell::new(None) }; }
+thread_local! { static FULL_READ_COUNTS: Cell<Option<FullReadCounts>> = const { Cell::new(None) }; }
 
 /// 只见证本caller线程的真实调用尝试；不新增运行时消息、共享状态或持久字段。
 pub(crate) fn record_entry_call(call: EntryCall) {
+    match call {
+        EntryCall::FullAccounts | EntryCall::FullPersonals => {
+            FULL_READ_COUNTS.with(|slot| {
+                if let Some(mut counts) = slot.get() {
+                    match call {
+                        EntryCall::FullAccounts => counts.full_accounts += 1,
+                        EntryCall::FullPersonals => counts.full_personals += 1,
+                        _ => unreachable!(),
+                    }
+                    slot.set(Some(counts));
+                }
+            });
+            return;
+        }
+        _ => {}
+    }
     ENTRY_COUNTS.with(|slot| {
         if let Some(mut counts) = slot.get() {
             match call {
@@ -32,6 +56,7 @@ pub(crate) fn record_entry_call(call: EntryCall) {
                 EntryCall::Take => counts.take += 1,
                 EntryCall::Start => counts.start += 1,
                 EntryCall::Drain => counts.drain += 1,
+                EntryCall::FullAccounts | EntryCall::FullPersonals => unreachable!(),
             }
             slot.set(Some(counts));
         }
@@ -46,6 +71,10 @@ impl EntryScope {
             assert!(slot.get().is_none(), "不允许嵌套或串case计数");
             slot.set(Some(EntryCounts::default()));
         });
+        FULL_READ_COUNTS.with(|slot| {
+            assert!(slot.get().is_none(), "不允许嵌套或串case计数");
+            slot.set(Some(FullReadCounts::default()));
+        });
         Self {
             _caller_thread: std::marker::PhantomData,
         }
@@ -53,10 +82,14 @@ impl EntryScope {
     pub(crate) fn counts(&self) -> EntryCounts {
         ENTRY_COUNTS.with(|slot| slot.get().expect("scope必须仍在位"))
     }
+    pub(crate) fn full_read_counts(&self) -> FullReadCounts {
+        FULL_READ_COUNTS.with(|slot| slot.get().expect("scope必须仍在位"))
+    }
 }
 impl Drop for EntryScope {
     fn drop(&mut self) {
         ENTRY_COUNTS.with(|slot| slot.set(None));
+        FULL_READ_COUNTS.with(|slot| slot.set(None));
     }
 }
 

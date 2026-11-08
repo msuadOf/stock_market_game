@@ -62,6 +62,14 @@ impl super::RuntimeDriver {
         &mut self,
         session: &crate::GameSession,
     ) -> Result<AdministrativeBaseline, crate::runtime::RuntimeError> {
+        self.prepare_administrative_baseline_with_initial(session, None)
+    }
+
+    pub(crate) fn prepare_administrative_baseline_with_initial(
+        &mut self,
+        session: &crate::GameSession,
+        initial: Option<super::InitialCivilFull>,
+    ) -> Result<AdministrativeBaseline, crate::runtime::RuntimeError> {
         use crate::runtime::RuntimeError;
         let invalid = |detail: String| RuntimeError::ProtocolInvariant { detail };
         if !self.pending_mirror_domains().is_empty() {
@@ -71,9 +79,25 @@ impl super::RuntimeDriver {
         }
         self.ensure_plan_ownership().map_err(invalid)?;
         let source = self.mirror_source();
-        let accounts = match self.world.snapshot_accounts() {
-            Ok(value) => value,
-            Err(error) => return Err(self.world.stop_failed_administrative_read(error)),
+        if self.world.is_terminal() {
+            return Err(invalid("行政完整基线拒绝已终止 World".into()));
+        }
+        if initial
+            .as_ref()
+            .is_some_and(|value| value.personals.source != value.source)
+        {
+            let error = invalid("首次 civil 完整读面内部来源不一致".into());
+            return Err(self.world.stop_failed_administrative_read(error));
+        }
+        let initial = initial.filter(|value| value.source == source);
+        let (accounts, retained_personals) = if let Some(value) = initial {
+            (value.accounts, Some(value.personals))
+        } else {
+            let accounts = match self.world.snapshot_accounts() {
+                Ok(value) => value,
+                Err(error) => return Err(self.world.stop_failed_administrative_read(error)),
+            };
+            (accounts, None)
         };
         if accounts.len() != self.world.n_groups()
             || accounts.iter().enumerate().any(|(index, (group, rows))| {
@@ -83,7 +107,10 @@ impl super::RuntimeDriver {
             let error = invalid("行政完整基线账户组维度错误".into());
             return Err(self.world.stop_failed_administrative_read(error));
         }
-        let full = self.world.collect_personal_full()?;
+        let full = match retained_personals {
+            Some(full) => full,
+            None => self.world.collect_personal_full()?,
+        };
         if full.source != source {
             let error = invalid("行政完整基线的个人态来源已改变".into());
             return Err(self.world.stop_failed_administrative_read(error));

@@ -6,6 +6,16 @@ pub(super) struct InitialStaticSeed {
     pub market_views: Vec<(i64, u64)>,
 }
 
+/// 仅首次 civil 静点接管与紧接的行政基线之间传递的原始完整读面。
+pub(crate) struct InitialCivilFull {
+    pub source: crate::runtime::source::WorldMirrorSource,
+    pub accounts: Vec<(
+        super::super::GroupIdx,
+        Vec<super::super::group::GroupAccount>,
+    )>,
+    pub personals: super::super::world::PersonalFullSnapshot,
+}
+
 #[derive(Clone)]
 pub(crate) struct PreparedStaticRead {
     pub source: crate::runtime::source::WorldMirrorSource,
@@ -57,21 +67,32 @@ impl RuntimeDriver {
         &mut self,
         session: &GameSession,
     ) -> Result<PreparedDriverStep, String> {
-        self.prepare_static_projection_inner(session, true)
+        self.prepare_static_projection_inner(session, true, false)
+            .map(|(input, _)| input)
     }
 
     pub(crate) fn prepare_flush_driver_projection(
         &mut self,
         session: &GameSession,
     ) -> Result<PreparedDriverStep, String> {
-        self.prepare_static_projection_inner(session, false)
+        self.prepare_static_projection_inner(session, false, false)
+            .map(|(input, _)| input)
+    }
+
+    pub(crate) fn prepare_civil_static_driver_projection(
+        &mut self,
+        session: &GameSession,
+    ) -> Result<(PreparedDriverStep, InitialCivilFull), String> {
+        let (input, full) = self.prepare_static_projection_inner(session, true, true)?;
+        Ok((input, full.ok_or("首次 civil 静点缺完整原始读面")?))
     }
 
     fn prepare_static_projection_inner(
         &mut self,
         session: &GameSession,
         initial_adoption: bool,
-    ) -> Result<PreparedDriverStep, String> {
+        retain_civil_full: bool,
+    ) -> Result<(PreparedDriverStep, Option<InitialCivilFull>), String> {
         self.ensure_plan_ownership()?;
         let (calendar_day, _) = session
             .prepare_market_calendar_projection()
@@ -121,6 +142,7 @@ impl RuntimeDriver {
             || self.sync_inputs.account_source()
                 == crate::runtime::driver_sync::AccountSource::Full
             || self.pending_mirror_domains().accounts_full;
+        let mut retained_accounts = None;
         let accounts = if full_accounts {
             let groups = self
                 .world
@@ -132,6 +154,9 @@ impl RuntimeDriver {
                 })
             {
                 return Err("静点 Full 账户组集合或名册不完整".to_owned());
+            }
+            if retain_civil_full {
+                retained_accounts = Some(groups.clone());
             }
             groups
                 .into_iter()
@@ -165,6 +190,14 @@ impl RuntimeDriver {
         if full.source != source {
             return Err("静点 Full 个人态来源改变".to_owned());
         }
+        let retained_personals = if retain_civil_full {
+            Some(super::super::world::PersonalFullSnapshot {
+                source: full.source,
+                groups: full.groups.clone(),
+            })
+        } else {
+            None
+        };
         let personals = full
             .groups
             .into_iter()
@@ -216,7 +249,7 @@ impl RuntimeDriver {
         if self.mirror_source() != source {
             return Err("静点 Full 读取期间 World 来源改变".to_owned());
         }
-        Ok(PreparedDriverStep {
+        let input = PreparedDriverStep {
             sync_source: None,
             calendar: PreparedDriverCalendar::Static(calendar_day),
             accounts,
@@ -241,7 +274,17 @@ impl RuntimeDriver {
                 market_views,
                 refresh_market: !initial_adoption && has_committed_market_tick,
             }),
-        })
+        };
+        let retained = match (retained_accounts, retained_personals) {
+            (Some(accounts), Some(personals)) => Some(InitialCivilFull {
+                source,
+                accounts,
+                personals,
+            }),
+            (None, None) => None,
+            _ => return Err("首次 civil 静点完整读面不成对".to_owned()),
+        };
+        Ok((input, retained))
     }
 
     pub(crate) fn stop_prepared_without_drain(self) -> Result<(), String> {

@@ -44,6 +44,36 @@ fn runtime_information_session(start: &str) -> GameSession {
     game
 }
 
+#[test]
+fn first_closed_civil_day_reads_each_full_projection_once() {
+    let mut setup = super::npc_working_quote_tests::quote_setup(0);
+    setup.start_date = crate::CivilDate::from_iso("2030-01-05").unwrap();
+    setup.ticks_per_day = 2;
+    let mut game = GameSession::new(setup, 42).unwrap();
+    assert!(
+        game.runtime_driver.is_none(),
+        "必须从未接管的真实 Session 开始"
+    );
+    let before_cash = game.account(AccountId(0)).unwrap().cash();
+    let before_date = game.civil_date();
+    let scope = crate::session::calendar_entry_cache_tests::EntryScope::enter();
+    let report = game.end_civil_day().expect("首个休市日必须真实完成");
+    let counts = scope.full_read_counts();
+    drop(scope);
+    assert_eq!(report.settled_date, before_date);
+    assert_eq!(game.civil_date(), before_date.next().unwrap());
+    assert_eq!(game.tick(), 0, "休市日不得推进市场拍");
+    assert_eq!(game.account(AccountId(0)).unwrap().cash(), before_cash);
+    assert_eq!(
+        counts.full_accounts, 1,
+        "首次接管与行政基线应复用同源完整账户"
+    );
+    assert_eq!(
+        counts.full_personals, 1,
+        "首次接管与行政基线应复用同源完整个人态"
+    );
+}
+
 fn closed_runtime_information_session() -> GameSession {
     runtime_information_session("2030-01-05")
 }
