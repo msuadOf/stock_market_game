@@ -143,6 +143,7 @@ async fn correction_business_rejection_keeps_installed_close_and_contiguous_canc
     let mut ordered = ordered_actor_events(&harness);
 
     harness.actor.run_cycle(1);
+    harness.actor.drain_consumed();
 
     let mut committed_ticks = Vec::new();
     while let Ok(payload) = harness.events_rx.as_mut().unwrap().try_recv() {
@@ -499,6 +500,7 @@ fn fatal_civil_after_market_install_keeps_committed_close_and_first_poison() {
     harness.subscribe_engine_events();
     harness.subscribe_failures();
     harness.actor.run_cycle(1);
+    harness.actor.drain_consumed();
     let payload = harness
         .events_rx
         .as_mut()

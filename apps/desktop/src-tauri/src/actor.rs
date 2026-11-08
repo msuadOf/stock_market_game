@@ -12,6 +12,7 @@
 //!
 //! 当前单玩家模式：意图固定路由给玩家 `AccountId(0)`（见 `enqueue`）。
 
+use std::collections::VecDeque;
 #[cfg(test)]
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
@@ -47,6 +48,7 @@ pub const BASE_TICK_MS: u64 = 1000;
 const FASTEST_BATCH_BUDGET: Duration = Duration::from_millis(14);
 const FASTEST_BATCH_MAX_STEPS: usize = 100_000;
 const UI_PUBLISH_INTERVAL: Duration = Duration::from_millis(16);
+const MAX_PENDING_TICKS: usize = 8;
 const SPEED_SAMPLE_MIN_DURATION: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -982,6 +984,13 @@ impl SessionManager {
             timeline_id: session_id.clone(),
             generation: 1,
             pause_preferences: PausePreferences::default(),
+            consumer: None,
+            pending_ticks: 0,
+            fixed_batches: VecDeque::new(),
+            fixed_frames: VecDeque::new(),
+            consumer_notify: Arc::new(tokio::sync::Notify::new()),
+            #[cfg(test)]
+            consumer_gate: None,
         };
         tokio::spawn(actor.run());
         Ok(session_id)
@@ -1013,6 +1022,48 @@ struct StepFailureCapture {
     frames: Vec<engine::session::protocol::TickFrame>,
 }
 
+struct TickConsumer {
+    input: Option<std::sync::mpsc::Sender<engine::session::protocol::DeferredTick>>,
+    output: std::sync::mpsc::Receiver<
+        Result<engine::session::protocol::ConsumedTick, engine::session::StepFatal>,
+    >,
+    worker: Option<std::thread::JoinHandle<()>>,
+}
+
+fn consumer_failure(description: impl Into<String>) -> engine::session::StepFatal {
+    engine::session::StepFatal::InvariantViolation {
+        location: "desktop.actor.tick_consumer".into(),
+        description: description.into(),
+    }
+}
+
+struct ConsumerWakeOnExit {
+    sender: Option<
+        std::sync::mpsc::Sender<
+            Result<engine::session::protocol::ConsumedTick, engine::session::StepFatal>,
+        >,
+    >,
+    notify: Arc<tokio::sync::Notify>,
+}
+
+impl Drop for ConsumerWakeOnExit {
+    fn drop(&mut self) {
+        self.sender.take();
+        self.notify.notify_one();
+    }
+}
+
+impl Drop for TickConsumer {
+    fn drop(&mut self) {
+        self.input.take();
+        if let Some(worker) = self.worker.take() {
+            if worker.join().is_err() {
+                eprintln!("desktop tick consumer 线程发生 panic");
+            }
+        }
+    }
+}
+
 /// actor：独占 `GameSession` 的 tokio task。命令经 `cmd_rx`，事件经 `app.emit`。
 struct SessionActor<R: Runtime> {
     ingress: Arc<RwLock<(u64, engine::SharedSessionIngress)>>,
@@ -1033,6 +1084,13 @@ struct SessionActor<R: Runtime> {
     timeline_id: String,
     generation: u64,
     pause_preferences: PausePreferences,
+    consumer: Option<TickConsumer>,
+    pending_ticks: usize,
+    fixed_batches: VecDeque<(usize, bool)>,
+    fixed_frames: VecDeque<TickFrame>,
+    consumer_notify: Arc<tokio::sync::Notify>,
+    #[cfg(test)]
+    consumer_gate: Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>,
 }
 
 #[cfg(test)]
@@ -1074,6 +1132,12 @@ impl ActorHarness {
             timeline_id: timeline_id.to_owned(),
             generation: 1,
             pause_preferences,
+            consumer: None,
+            pending_ticks: 0,
+            fixed_batches: VecDeque::new(),
+            fixed_frames: VecDeque::new(),
+            consumer_notify: Arc::new(tokio::sync::Notify::new()),
+            consumer_gate: None,
         };
         Self {
             app,
@@ -1114,28 +1178,145 @@ impl ActorHarness {
 }
 
 impl<R: Runtime> SessionActor<R> {
-    fn step_game(&mut self) -> Result<TickFrame, engine::session::StepFatal> {
-        #[cfg(test)]
-        let capture = if let Some((remaining, error, capture)) = &mut self.injected_step_failure {
-            if *remaining == 0 {
-                let mut observed = capture.lock().unwrap();
-                observed.saved =
-                    Some(serde_json::to_value(self.game.game().save().unwrap()).unwrap());
-                observed.origin = Some(self.game.runtime_mirror_origin());
-                observed.business = Some(self.game.business_state_hash().unwrap());
-                return Err(error.clone());
-            }
-            *remaining -= 1;
-            Some(Arc::clone(capture))
-        } else {
-            None
-        };
-        let result = self.game.step_frame();
-        #[cfg(test)]
-        if let (Some(capture), Ok(frame)) = (capture, &result) {
-            capture.lock().unwrap().frames.push(frame.clone());
+    fn start_consumer(&mut self) -> Result<(), engine::session::StepFatal> {
+        if self.consumer.is_some() {
+            return Ok(());
         }
-        result
+        let (input, receiver) =
+            std::sync::mpsc::channel::<engine::session::protocol::DeferredTick>();
+        let (sender, output) = std::sync::mpsc::channel();
+        let notify = Arc::clone(&self.consumer_notify);
+        #[cfg(test)]
+        let gate = self.consumer_gate.take();
+        let worker = std::thread::Builder::new()
+            .name("desktop-tick-consumer".into())
+            .spawn(move || {
+                let wake_on_exit = ConsumerWakeOnExit {
+                    sender: Some(sender),
+                    notify: Arc::clone(&notify),
+                };
+                #[cfg(test)]
+                let mut gate = gate;
+                for deferred in receiver {
+                    #[cfg(test)]
+                    if let Some((entered, release)) = gate.take() {
+                        entered.send(()).expect("测试必须接收消费者进入通知");
+                        release.recv().expect("测试必须释放消费者");
+                    }
+                    let result = deferred.consume();
+                    let failed = result.is_err();
+                    let sent = wake_on_exit
+                        .sender
+                        .as_ref()
+                        .expect("消费者输出必须存在")
+                        .send(result)
+                        .is_ok();
+                    notify.notify_one();
+                    if !sent || failed {
+                        break;
+                    }
+                }
+            })
+            .map_err(|error| consumer_failure(format!("无法启动外围消费者：{error}")))?;
+        self.consumer = Some(TickConsumer {
+            input: Some(input),
+            output,
+            worker: Some(worker),
+        });
+        Ok(())
+    }
+
+    fn collect_consumed(&mut self, wait: bool) -> Result<(), engine::session::StepFatal> {
+        let grouped = !self.fixed_batches.is_empty();
+        let mut frames = Vec::new();
+        while self.pending_ticks > 0 {
+            let consumer = self
+                .consumer
+                .as_ref()
+                .expect("有待消费 tick 时必须存在消费者");
+            let received = if wait {
+                consumer
+                    .output
+                    .recv()
+                    .map_err(|error| consumer_failure(format!("外围消费者退出：{error}")))
+            } else {
+                match consumer.output.try_recv() {
+                    Ok(result) => Ok(result),
+                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                    Err(error) => Err(consumer_failure(format!("外围消费者退出：{error}"))),
+                }
+            };
+            self.pending_ticks -= 1;
+            match received
+                .and_then(|result| result)
+                .and_then(|consumed| self.game.record_consumed_tick(consumed))
+            {
+                Ok(frame) => {
+                    #[cfg(test)]
+                    if let Some((_, _, capture)) = &self.injected_step_failure {
+                        capture.lock().unwrap().frames.push(frame.clone());
+                    }
+                    if grouped {
+                        self.queue_consumed_frames(vec![frame])?;
+                    } else {
+                        frames.push(frame);
+                    }
+                }
+                Err(error) => {
+                    self.pending_ticks = 0;
+                    if !frames.is_empty() {
+                        self.publish_protocol_frames(frames)
+                            .map_err(|failure| consumer_failure(failure.message))?;
+                    }
+                    self.fixed_batches.clear();
+                    let prefix: Vec<_> = self.fixed_frames.drain(..).collect();
+                    if !prefix.is_empty() {
+                        self.publish_protocol_frames(prefix)
+                            .map_err(|failure| consumer_failure(failure.message))?;
+                    }
+                    return Err(error);
+                }
+            }
+        }
+        if !frames.is_empty() {
+            self.publish_protocol_frames(frames)
+                .map_err(|failure| consumer_failure(failure.message))?;
+        }
+        Ok(())
+    }
+
+    fn queue_consumed_frames(
+        &mut self,
+        frames: Vec<TickFrame>,
+    ) -> Result<(), engine::session::StepFatal> {
+        if self.fixed_batches.is_empty() {
+            if !frames.is_empty() {
+                self.publish_protocol_frames(frames)
+                    .map_err(|failure| consumer_failure(failure.message))?;
+            }
+            return Ok(());
+        }
+        self.fixed_frames.extend(frames);
+        while let Some(&(count, closed)) = self.fixed_batches.front() {
+            if !closed || self.fixed_frames.len() < count {
+                break;
+            }
+            self.fixed_batches.pop_front();
+            let batch: Vec<_> = self.fixed_frames.drain(..count).collect();
+            if !batch.is_empty() {
+                self.publish_protocol_frames(batch)
+                    .map_err(|failure| consumer_failure(failure.message))?;
+            }
+        }
+        Ok(())
+    }
+
+    fn drain_consumed(&mut self) -> bool {
+        if let Err(error) = self.collect_consumed(true) {
+            self.stop_after_step_failure(error);
+            return false;
+        }
+        true
     }
     /// 主循环：`select!` 同时等命令与 interval tick。
     ///
@@ -1144,6 +1325,7 @@ impl<R: Runtime> SessionActor<R> {
     /// - `cmd_rx` 关闭（所有句柄 drop）→ 退出，task 结束。
     async fn run(mut self) {
         let mut interval = self.fresh_interval();
+        let consumer_notify = Arc::clone(&self.consumer_notify);
 
         loop {
             tokio::select! {
@@ -1165,6 +1347,9 @@ impl<R: Runtime> SessionActor<R> {
                         None => break,
                     }
                 }
+                _ = consumer_notify.notified(), if self.pending_ticks > 0 => {
+                    if let Err(error) = self.collect_consumed(false) { self.stop_after_step_failure(error); }
+                }
                 _ = interval.tick(), if !self.pacing.is_fastest() && self.pacing.is_running() => {
                     self.tick_and_emit().await;
                     if self.cmd_rx.is_closed() { break; }
@@ -1175,6 +1360,8 @@ impl<R: Runtime> SessionActor<R> {
                 }
             }
         }
+        self.drain_consumed();
+        self.consumer.take();
     }
 
     /// 构造固定倍率计时器（Skip 积压补发）。
@@ -1200,15 +1387,38 @@ impl<R: Runtime> SessionActor<R> {
     }
 
     fn run_cycle(&mut self, limit: usize) {
+        let fixed = !self.pacing.is_fastest() && limit > 0;
+        if fixed {
+            self.fixed_batches.push_back((0, false));
+        }
+        self.run_cycle_inner(limit, fixed);
+        if fixed {
+            self.finish_fixed_batch();
+        }
+    }
+
+    fn finish_fixed_batch(&mut self) {
+        if let Some(batch) = self.fixed_batches.back_mut() {
+            batch.1 = true;
+        }
+        if let Err(error) = self.queue_consumed_frames(Vec::new()) {
+            self.stop_after_step_failure(error);
+        }
+    }
+
+    fn run_cycle_inner(&mut self, limit: usize, fixed: bool) {
         if self.cmd_rx.is_closed() {
+            return;
+        }
+        if let Err(error) = self.collect_consumed(false) {
+            self.stop_after_step_failure(error);
             return;
         }
         if let Err(error) = self.game.require_healthy() {
             self.stop_after_step_failure(error);
             return;
         }
-        let started = std::time::Instant::now();
-        let mut frames = Vec::new();
+        let started = Instant::now();
         let mut steps = 0;
         while steps < limit && {
             #[cfg(test)]
@@ -1217,7 +1427,6 @@ impl<R: Runtime> SessionActor<R> {
             let injecting = false;
             injecting || started.elapsed() < FASTEST_BATCH_BUDGET
         } {
-            // Process a command received during tick n before starting tick n+1.
             if limit > 1 && !self.cmd_rx.is_empty() {
                 break;
             }
@@ -1225,23 +1434,123 @@ impl<R: Runtime> SessionActor<R> {
                 Ok(true) => break,
                 Ok(false) => {}
                 Err(error) => {
-                    self.stop_cycle_with_unpublished_frames(frames, error);
+                    if fixed {
+                        self.finish_fixed_batch();
+                    }
+                    if !self.drain_consumed() {
+                        return;
+                    }
+                    self.stop_cycle_with_unpublished_frames(Vec::new(), error);
                     return;
                 }
             }
-            let frame = match self.step_game() {
-                Ok(frame) => frame,
+            #[cfg(test)]
+            if let Some((remaining, error, capture)) = &mut self.injected_step_failure {
+                if *remaining == 0 {
+                    let error = error.clone();
+                    let capture = Arc::clone(capture);
+                    if fixed {
+                        self.finish_fixed_batch();
+                    }
+                    if !self.drain_consumed() {
+                        return;
+                    }
+                    let mut observed = capture.lock().unwrap();
+                    observed.saved =
+                        Some(serde_json::to_value(self.game.game().save().unwrap()).unwrap());
+                    observed.origin = Some(self.game.runtime_mirror_origin());
+                    observed.business = Some(self.game.business_state_hash().unwrap());
+                    drop(observed);
+                    self.stop_after_step_failure(error);
+                    return;
+                }
+                *remaining -= 1;
+            }
+            if self.pending_ticks == MAX_PENDING_TICKS {
+                if !self.drain_consumed() || self.cmd_rx.is_closed() {
+                    return;
+                }
+            }
+            if let Err(error) = self.start_consumer() {
+                self.stop_after_step_failure(error);
+                return;
+            }
+            let deferred = match self.game.advance_core_tick() {
+                Ok(deferred) => deferred,
                 Err(error) => {
-                    self.stop_cycle_with_unpublished_frames(frames, error.into());
+                    if fixed {
+                        self.finish_fixed_batch();
+                    }
+                    let pending = self.pending_ticks;
+                    let mut failure = HostFailure::step(error);
+                    if let Err(publication_error) = self.collect_consumed(true) {
+                        eprintln!(
+                            "[session {}] fatal 后成功前缀无法交付：{publication_error:?}",
+                            self.session_id
+                        );
+                        failure.message.push_str(&format!("；先前 {pending} 个已提交 tick 的外围结果未能全部交付，内存事实保留供诊断"));
+                    }
+                    self.stop_after_host_failure(failure);
                     return;
                 }
             };
-            frames.push(frame);
+            let consumer = self.consumer.as_ref().unwrap();
+            if let Err(error) = consumer.input.as_ref().unwrap().send(deferred) {
+                let mut failure =
+                    HostFailure::step(consumer_failure(format!("无法提交已完成 tick：{error}")));
+                failure.message.push_str(&format!(
+                    "；tick {} 已提交但未交付，内存事实保留供诊断，请重新打开有效日终档或新局",
+                    self.game.tick()
+                ));
+                if fixed {
+                    if let Some(batch) = self.fixed_batches.back_mut() {
+                        batch.1 = true;
+                    }
+                }
+                let prefix_result = self
+                    .queue_consumed_frames(Vec::new())
+                    .and_then(|_| self.collect_consumed(true));
+                if let Err(prefix_error) = prefix_result {
+                    eprintln!(
+                        "[session {}] 发送失败后的成功前缀无法交付：{prefix_error:?}",
+                        self.session_id
+                    );
+                    failure.message.push_str("；先前已提交前缀未能全部交付");
+                }
+                self.stop_after_host_failure(failure);
+                return;
+            }
+            self.pending_ticks += 1;
+            if fixed {
+                self.fixed_batches
+                    .back_mut()
+                    .expect("固定倍率批次必须存在")
+                    .0 += 1;
+            }
             steps += 1;
         }
-        if let Err(failure) = self.publish_protocol_cycle(frames) {
-            self.stop_after_host_failure(*failure);
+        if let Err(error) = self.collect_consumed(false) {
+            self.stop_after_step_failure(error);
             return;
+        }
+        match self.game.civil_day_ready() {
+            Ok(true) => {
+                if fixed {
+                    self.finish_fixed_batch();
+                }
+                if !self.drain_consumed() || self.cmd_rx.is_closed() {
+                    return;
+                }
+                if let Err(failure) = self.prepare_civil_updates() {
+                    self.stop_after_host_failure(*failure);
+                    return;
+                }
+            }
+            Ok(false) => {}
+            Err(error) => {
+                self.stop_cycle_with_unpublished_frames(Vec::new(), error);
+                return;
+            }
         }
         self.pacing.refresh_metrics(self.game.tick());
     }
@@ -1274,7 +1583,7 @@ impl<R: Runtime> SessionActor<R> {
         self.stop_after_host_failure(failure);
     }
 
-    fn publish_protocol_cycle(&mut self, frames: Vec<TickFrame>) -> Result<(), Box<HostFailure>> {
+    fn publish_protocol_frames(&mut self, frames: Vec<TickFrame>) -> Result<(), Box<HostFailure>> {
         if !frames.is_empty() {
             let range = frames
                 .first()
@@ -1289,7 +1598,6 @@ impl<R: Runtime> SessionActor<R> {
                 }
             }
         }
-        self.prepare_civil_updates()?;
         Ok(())
     }
 
@@ -1349,6 +1657,27 @@ impl<R: Runtime> SessionActor<R> {
     async fn handle_command(&mut self, cmd: SessionCommand) {
         if self.cmd_rx.is_closed() {
             return;
+        }
+        if matches!(
+            &cmd,
+            SessionCommand::SetRunning { running: false, .. } | SessionCommand::Shutdown { .. }
+        ) {
+            self.pacing.set_running(false, self.game.tick());
+        }
+        if !self.drain_consumed() || self.cmd_rx.is_closed() {
+            return;
+        }
+        if matches!(
+            &cmd,
+            SessionCommand::Snapshot { .. }
+                | SessionCommand::RuntimeSnapshot { .. }
+                | SessionCommand::QueryBaseline { .. }
+                | SessionCommand::PlayerWorkingOrders { .. }
+        ) {
+            if let Err(error) = self.game.flush_now() {
+                self.stop_after_step_failure(error);
+                return;
+            }
         }
         match cmd {
             SessionCommand::SubscribeRightsOffering {

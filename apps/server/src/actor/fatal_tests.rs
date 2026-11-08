@@ -130,9 +130,14 @@ fn production_actor_steps_and_delivers_tick_batches() {
         pause_preferences: PausePreferences::default(),
         fatal_failure: None,
         deferred_drop_reported: false,
+        consumer: None,
+        fixed_batches: std::collections::VecDeque::new(),
+        fixed_frames: Vec::new(),
     };
     actor.run_protocol_batch(1);
+    actor.collect_ticks(true).unwrap();
     actor.run_protocol_batch(1);
+    actor.collect_ticks(true).unwrap();
     assert!(actor.fatal_failure.is_none());
     assert_eq!(actor.game.tick(), 2);
     for expected in 1..=2 {
@@ -142,6 +147,261 @@ fn production_actor_steps_and_delivers_tick_batches() {
         };
         assert_eq!(batch.frames.last().unwrap().tick, expected);
     }
+}
+
+#[test]
+fn blocked_production_consumer_does_not_block_next_core_tick() {
+    let _guard = CONSUMER_PROBE_LOCK.lock().unwrap();
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let probe = Arc::new(ConsumerBlockProbe {
+        committed: AtomicUsize::new(0),
+        entered: entered_tx,
+        release: std::sync::Mutex::new(release_rx),
+    });
+    *CONSUMER_BLOCK_PROBE.lock().unwrap() = Some(Arc::clone(&probe));
+    let (mut actor, mut updates) = catalog_actor_fixture();
+    actor.game.step_frame().unwrap();
+    actor.session_id = "consumer-block-probe".into();
+    let actor_thread = std::thread::spawn(move || {
+        actor.run_protocol_batch(2);
+        actor.collect_ticks(true).unwrap();
+        actor
+    });
+    entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_millis(200);
+    while probe.committed.load(Ordering::SeqCst) < 2 && std::time::Instant::now() < deadline {
+        std::thread::yield_now();
+    }
+    let committed_while_blocked = probe.committed.load(Ordering::SeqCst);
+    release_tx.send(()).unwrap();
+    actor_thread.join().unwrap();
+    *CONSUMER_BLOCK_PROBE.lock().unwrap() = None;
+    assert_eq!(committed_while_blocked, 2);
+    let mut frames = Vec::new();
+    while frames.len() < 2 {
+        let update = updates.try_recv().unwrap().update.unwrap();
+        let ProtocolUpdate::TickBatch(batch) = update else {
+            panic!("必须交付市场帧")
+        };
+        frames.extend(batch.frames.iter().cloned());
+    }
+    assert_eq!(frames.len(), 2);
+    assert_eq!((frames[0].tick, frames[1].tick), (2, 3));
+    assert_eq!(frames[0].seq_to, frames[1].seq_from);
+}
+
+#[test]
+fn full_consumer_window_waits_before_the_next_core_tick() {
+    let _guard = CONSUMER_PROBE_LOCK.lock().unwrap();
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let probe = Arc::new(ConsumerBlockProbe {
+        committed: AtomicUsize::new(0),
+        entered: entered_tx,
+        release: std::sync::Mutex::new(release_rx),
+    });
+    *CONSUMER_BLOCK_PROBE.lock().unwrap() = Some(Arc::clone(&probe));
+    let (mut actor, _) = catalog_actor_fixture();
+    actor.game.step_frame().unwrap();
+    actor.session_id = "consumer-block-probe".into();
+    for _ in 0..MAX_PENDING_TICKS {
+        actor.run_protocol_batch(1);
+    }
+    entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    let pending = actor.consumer.as_ref().unwrap().pending;
+    let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        actor.run_protocol_batch(1);
+        let tick = actor.game.tick();
+        actor.collect_ticks(true).unwrap();
+        finished_tx.send(tick).unwrap();
+    });
+    let before_release = finished_rx.recv_timeout(Duration::from_millis(100));
+    let committed_while_blocked = probe.committed.load(Ordering::SeqCst);
+    release_tx.send(()).unwrap();
+    let tick = finished_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    worker.join().unwrap();
+    *CONSUMER_BLOCK_PROBE.lock().unwrap() = None;
+    assert_eq!(pending, MAX_PENDING_TICKS);
+    assert!(matches!(
+        before_release,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+    ));
+    assert_eq!(committed_while_blocked, MAX_PENDING_TICKS);
+    assert_eq!(tick, MAX_PENDING_TICKS as u64 + 2);
+}
+
+#[test]
+fn fixed_cycle_keeps_all_frames_in_one_batch_across_full_consumer_window() {
+    let _guard = CONSUMER_PROBE_LOCK.lock().unwrap();
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let probe = Arc::new(ConsumerBlockProbe {
+        committed: AtomicUsize::new(0),
+        entered: entered_tx,
+        release: std::sync::Mutex::new(release_rx),
+    });
+    *CONSUMER_BLOCK_PROBE.lock().unwrap() = Some(Arc::clone(&probe));
+    let (mut actor, mut updates) = catalog_actor_fixture();
+    actor.game.step_frame().unwrap();
+    actor.session_id = "consumer-block-probe".into();
+    actor.injected_step_failure = Some((
+        MAX_PENDING_TICKS + 2,
+        engine::session::StepFatal::InvariantViolation {
+            location: "test.fixed_cycle".into(),
+            description: "不应触发".into(),
+        },
+        Arc::new(std::sync::Mutex::new(StepFailureCapture::default())),
+    ));
+    let worker = std::thread::spawn(move || {
+        actor.run_protocol_batch(MAX_PENDING_TICKS + 1);
+        actor.collect_ticks(true).unwrap();
+    });
+    entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while probe.committed.load(Ordering::SeqCst) < MAX_PENDING_TICKS
+        && std::time::Instant::now() < deadline
+    {
+        std::thread::yield_now();
+    }
+    let committed = probe.committed.load(Ordering::SeqCst);
+    release_tx.send(()).unwrap();
+    worker.join().unwrap();
+    *CONSUMER_BLOCK_PROBE.lock().unwrap() = None;
+    assert_eq!(committed, MAX_PENDING_TICKS);
+    let update = updates.try_recv().unwrap().update.unwrap();
+    let ProtocolUpdate::TickBatch(batch) = update else {
+        panic!("必须发布市场帧")
+    };
+    assert_eq!(batch.frames.len(), MAX_PENDING_TICKS + 1);
+    assert_eq!(
+        (
+            batch.frames.first().unwrap().tick,
+            batch.frames.last().unwrap().tick
+        ),
+        (2, MAX_PENDING_TICKS as u64 + 2)
+    );
+    assert!(matches!(
+        updates.try_recv(),
+        Err(broadcast::error::TryRecvError::Closed)
+    ));
+}
+
+#[test]
+fn disconnected_consumer_delivers_fixed_prefix_before_fatal() {
+    let (mut actor, mut updates) = catalog_actor_fixture();
+    let first = actor.game.advance_core_tick().unwrap().consume().unwrap();
+    let (input, receiver) = std::sync::mpsc::channel();
+    drop(receiver);
+    let (sender, output) = std::sync::mpsc::channel();
+    assert!(sender.send(Ok(first)).is_ok());
+    drop(sender);
+    actor.consumer = Some(TickConsumer {
+        input: Some(input),
+        output,
+        pending: 1,
+        worker: None,
+        cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        notify: Arc::new(tokio::sync::Notify::new()),
+    });
+    actor.fixed_batches.push_back((1, false));
+    actor.run_protocol_batch_inner(1, true);
+    let first = updates.try_recv().unwrap();
+    let ProtocolUpdate::TickBatch(batch) = first.update.unwrap() else {
+        panic!("必须先交付成功前缀")
+    };
+    assert_eq!(batch.frames.len(), 1);
+    assert_eq!(batch.frames[0].tick, 1);
+    let fatal = updates.try_recv().unwrap();
+    assert!(fatal.update.is_none());
+    assert!(fatal.failure.unwrap().message.contains("已提交"));
+    assert_eq!(actor.game.tick(), 2);
+    assert!(matches!(
+        updates.try_recv(),
+        Err(broadcast::error::TryRecvError::Empty)
+    ));
+}
+
+#[tokio::test]
+async fn consumer_completion_wakes_actor_before_next_tick_timer() {
+    let _guard = CONSUMER_PROBE_LOCK.lock().unwrap();
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let probe = Arc::new(ConsumerBlockProbe {
+        committed: AtomicUsize::new(0),
+        entered: entered_tx,
+        release: std::sync::Mutex::new(release_rx),
+    });
+    *CONSUMER_BLOCK_PROBE.lock().unwrap() = Some(probe);
+    let (mut actor, mut updates) = catalog_actor_fixture();
+    let (commands, receiver) = mpsc::unbounded_channel();
+    actor.cmd_rx = receiver;
+    actor.session_id = "consumer-block-probe".into();
+    actor.pacing.tick_interval = Duration::from_secs(10);
+    actor.run_protocol_batch(1);
+    entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    let task = tokio::spawn(actor.run());
+    release_tx.send(()).unwrap();
+    let update = tokio::time::timeout(Duration::from_secs(1), updates.recv()).await;
+    let (reply, finished) = oneshot::channel();
+    commands.send(SessionCommand::Shutdown { reply }).unwrap();
+    finished.await.unwrap();
+    task.await.unwrap();
+    *CONSUMER_BLOCK_PROBE.lock().unwrap() = None;
+    let update = update.unwrap().unwrap().update.unwrap();
+    let ProtocolUpdate::TickBatch(batch) = update else {
+        panic!("必须发布市场帧")
+    };
+    assert_eq!(batch.frames.len(), 1);
+    assert_eq!(batch.frames[0].tick, 1);
+}
+
+#[tokio::test]
+async fn snapshot_and_baseline_match_consumed_resting_order_delta() {
+    let (mut actor, mut updates) = catalog_actor_fixture();
+    actor
+        .game
+        .enqueue_player_intent(
+            AccountId(0),
+            engine::Intent::PlaceLimit {
+                code: engine::StockId(0),
+                side: engine::Side::Buy,
+                price: engine::LimitPrice::Fixed(engine::Money::from_cents(1000)),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    actor.run_protocol_batch(1);
+    actor.collect_ticks(true).unwrap();
+    let ProtocolUpdate::TickBatch(batch) = updates.try_recv().unwrap().update.unwrap() else {
+        panic!("必须交付市场帧")
+    };
+    let delta = batch.runtime_delta.unwrap();
+    assert!(!delta.working_orders.upserts.is_empty());
+    let account = delta.accounts.get(&AccountId(0)).unwrap();
+    assert!(account.reserved_cash > engine::Money::ZERO);
+
+    let baseline = actor.public_baseline_candidate().unwrap();
+    assert_eq!(
+        baseline.snapshot.accounts.get(&AccountId(0)).unwrap(),
+        account
+    );
+    assert_eq!(
+        baseline.snapshot.markets[&engine::StockId(0)].best_bid,
+        Some(engine::Money::from_cents(1000))
+    );
+
+    let (reply, response) = oneshot::channel();
+    actor
+        .handle_command(SessionCommand::Snapshot { reply })
+        .await;
+    let snapshot = response.await.unwrap();
+    assert_eq!(snapshot.accounts.get(&AccountId(0)).unwrap(), account);
+    assert_eq!(
+        snapshot.markets[&engine::StockId(0)].bids,
+        baseline.snapshot.markets[&engine::StockId(0)].bids
+    );
 }
 
 #[tokio::test]
@@ -378,6 +638,9 @@ async fn capture(successful_steps: usize) {
         pause_preferences: PausePreferences::default(),
         fatal_failure: None,
         deferred_drop_reported: false,
+        consumer: None,
+        fixed_batches: std::collections::VecDeque::new(),
+        fixed_frames: Vec::new(),
     };
 
     actor.run_protocol_batch(if successful_steps == 0 { 1 } else { 8 });
@@ -704,6 +967,9 @@ async fn authority_reads_reject_stale_generations() {
         pause_preferences: PausePreferences::default(),
         fatal_failure: None,
         deferred_drop_reported: false,
+        consumer: None,
+        fixed_batches: std::collections::VecDeque::new(),
+        fixed_frames: Vec::new(),
     };
 
     let (reply, response) = oneshot::channel();
@@ -790,6 +1056,9 @@ async fn command_burst_keeps_submission_order_after_callers_stop_waiting() {
         pause_preferences: PausePreferences::default(),
         fatal_failure: None,
         deferred_drop_reported: false,
+        consumer: None,
+        fixed_batches: std::collections::VecDeque::new(),
+        fixed_frames: Vec::new(),
     };
     let expected: Vec<_> = (1..=64)
         .map(|lot_count| {
@@ -931,6 +1200,9 @@ fn zero_step_batch_keeps_progress_origin_and_ingress_facts() {
         pause_preferences: PausePreferences::default(),
         fatal_failure: None,
         deferred_drop_reported: false,
+        consumer: None,
+        fixed_batches: std::collections::VecDeque::new(),
+        fixed_frames: Vec::new(),
     };
     let before = serde_json::to_value(actor.game.game().save().unwrap()).unwrap();
     let origin = actor.game.runtime_mirror_origin();
@@ -971,6 +1243,9 @@ fn catalog_actor_fixture() -> (SessionActor, broadcast::Receiver<EngineUpdate>) 
             pause_preferences: PausePreferences::default(),
             fatal_failure: None,
             deferred_drop_reported: false,
+            consumer: None,
+            fixed_batches: std::collections::VecDeque::new(),
+            fixed_frames: Vec::new(),
         },
         receiver,
     )

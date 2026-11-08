@@ -855,3 +855,8 @@ native 日终 restore 以公司 book／finance／binding／canonical Plan／curs
 交易日排期到达时，Simple 公司源在私有 tick candidate 中真实公开月报并生成 `CompanyDisclosurePublished`；完整提交后才进入权威公开库。NPC 本人获知走既有订阅/cadence 链，按 `next_information_check` 真实到期时点登记，不因玩家查询或日终提前获知。休市日、收盘后的月报由自然日日结在同一次 civil 事务内送达；该事务使用报告日终 `disclosure_instant`（Monthly 为当日 23:59:59）作为本人观察边界，`published_at` 仍记录材料实际排期时点，两者不合并或互相冒充；不制造市场 tick。月报材料在同报告范围内使用单月同比修订增长预测，并使用本人已获知的年度基准，不把单月利润直接年化，也不混用单体与合并范围。
 
 当前实现只覆盖 Simple 公司源；前史封账、集团月报成员封账检查、公开/更正/事件/存档游标原子性与恢复不重复属于 Q23 限定范围。完整回归、真实 WASM 三宿主验收与发布 fixture 仍由 root 统一收口，本登记不宣称完整产品验收。
+
+连续运行延迟完整镜像时，逐拍 `RuntimeDelta.mirror_origin` 的 `source_tick`、
+`source_generation` 与 `mirror_phase` 标识公开成员账户及委托所使用的 World 来源；
+`install_sequence` 仍是最近一次完整镜像安装序号，不因这些读面前进而递增。
+`GameSession.runtime_mirror_origin` 仍标识完整镜像来源。

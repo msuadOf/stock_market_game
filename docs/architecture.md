@@ -33,6 +33,14 @@ React 应用通过 `EngineHost` 提交命令，消费统一的 `HostUpdate`：�
 
 native 默认使用 [ADR-0043](decisions/0043-std-thread-ownership-runtime.md) 的所有权转移 runtime：NPC 分组和各股票交易部分别处理决策与撮合，协调者收敛并提交 tick。native 的 `ENGINE_STEP_RUNTIME=0` 是临时旧管线回退口。Web 产品宿主显式启用同一 runtime，经 thread facade 使用 Workers；WASM engine 未设置 override 时仍有串行管线。ADR-0043 仍为 draft，路径存在不代表完整验收已通过。
 
+native 宿主连续运行通过 `ProtocolSession::advance_core_tick` 提交核心，交出拥有同版事实与读面输入的 `DeferredTick`。
+独立 FIFO 消费者生成外围结果，再由 `record_consumed_tick` 按序登记；普通拍不等待上一拍外围完成。
+宿主仅在在途窗口满、显式读取或自然日日界等必要消费点追平，保留控制命令响应和有序交付。
+显式 `step_frame` 仍同步返回完整单步结果，并共用同一核心交易实现。
+
+核心失败阻止继续推进；外围失败显式报告并停止该交付链，已经提交的 tick 不回退重跑。
+未消费事实不能跨 checkpoint 或自然日日结，避免恢复或保存重复交付。
+
 Web WASM 宿主的保守内存总账上限为 3 GiB，每个产品 `WebAssembly.Memory` 的 maximum 为 1 GiB、initial 为 64 MiB，残留重载阈值为 512 MiB。这些约束彼此独立，不代表真实 World 步进或 Browser 二十次验收已完成。
 
 Web WASM 的 panic 早期死亡通知与有界 tombstone 采用受控 std 构建，诊断记录可能缺席或尚未完成；hard trap 由宿主报告。固定工具链、消息限制、构建平台与尚待验证的边界见 [ADR-0044](decisions/0044-wasm-panic-tombstone.md)。该 ADR 仍为 draft，不能将局部探针视为完整产品验收。

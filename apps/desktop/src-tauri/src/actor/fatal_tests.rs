@@ -63,8 +63,10 @@ async fn assert_auto_step_fatal(fastest: bool, successful_steps: usize) {
 
     if fastest {
         actor.run_fastest_batch().await;
+        actor.drain_consumed();
     } else {
         actor.tick_and_emit().await;
+        actor.drain_consumed();
     }
 
     let committed_tick = actor.game.tick();
@@ -165,7 +167,9 @@ async fn assert_auto_step_fatal(fastest: bool, successful_steps: usize) {
         committed_save
     );
     actor.tick_and_emit().await;
+    actor.drain_consumed();
     actor.run_fastest_batch().await;
+    actor.drain_consumed();
     assert_eq!(actor.game.tick(), committed_tick);
     assert_eq!(
         actor.game.business_state_hash().unwrap(),
@@ -216,6 +220,7 @@ async fn fixed_high_speed_production_batches_every_due_frame_before_ipc() {
     harness.actor.last_fixed_publish -= Duration::from_millis(16);
     let before_publish = harness.actor.last_fixed_publish;
     harness.actor.tick_and_emit().await;
+    harness.actor.drain_consumed();
     let payload = harness.events_rx.as_mut().unwrap().try_recv().unwrap();
     let value: serde_json::Value = serde_json::from_str(&payload).unwrap();
     let frames = value["update"]["TickBatch"]["frames"].as_array().unwrap();
@@ -236,6 +241,7 @@ async fn fixed_high_speed_production_batches_every_due_frame_before_ipc() {
     harness.actor.last_fixed_publish -= Duration::from_millis(16);
     let second_before_publish = harness.actor.last_fixed_publish;
     harness.actor.tick_and_emit().await;
+    harness.actor.drain_consumed();
     let second_payload = harness.events_rx.as_mut().unwrap().try_recv().unwrap();
     let second_value: serde_json::Value = serde_json::from_str(&second_payload).unwrap();
     let second_frames = second_value["update"]["TickBatch"]["frames"]
@@ -298,6 +304,7 @@ async fn fixed_cold_batch_preserves_unfinished_tick_debt() {
     harness.actor.last_fixed_publish -= Duration::from_millis(16);
     let original = harness.actor.last_fixed_publish;
     harness.actor.tick_and_emit().await;
+    harness.actor.drain_consumed();
     let completed = harness.actor.game.tick();
     assert!(completed > 0);
     assert_eq!(
@@ -317,6 +324,60 @@ async fn fixed_cold_batch_preserves_unfinished_tick_debt() {
             .len() as u64,
         completed
     );
+}
+
+#[test]
+fn disconnected_consumer_delivers_fixed_prefix_before_fatal() {
+    use tauri::Listener;
+    let mut setup = super::tests::diagnostic_setup();
+    setup.start_date = engine::CivilDate::from_iso("2030-01-02").unwrap();
+    setup.npcs.inst_count = 0;
+    let game = ProtocolSession::new(setup, 7).unwrap();
+    let mut harness = ActorHarness::new_protocol_actor(
+        game,
+        false,
+        PausePreferences::default(),
+        "disconnected",
+        "one",
+    );
+    let (events_tx, mut events_rx) = mpsc::unbounded_channel();
+    for name in [crate::ENGINE_EVENT_NAME, "engine-failure"] {
+        let sender = events_tx.clone();
+        harness.app.listen(name, move |event| {
+            sender.send((name, event.payload().to_owned())).unwrap();
+        });
+    }
+    let first = harness
+        .actor
+        .game
+        .advance_core_tick()
+        .unwrap()
+        .consume()
+        .unwrap();
+    let (input, receiver) = std::sync::mpsc::channel();
+    drop(receiver);
+    let (sender, output) = std::sync::mpsc::channel();
+    assert!(sender.send(Ok(first)).is_ok());
+    drop(sender);
+    harness.actor.consumer = Some(TickConsumer {
+        input: Some(input),
+        output,
+        worker: None,
+    });
+    harness.actor.pending_ticks = 1;
+    harness.actor.fixed_batches.push_back((1, false));
+    harness.actor.run_cycle_inner(1, true);
+    harness.actor.finish_fixed_batch();
+    let (first_name, first_payload) = events_rx.try_recv().unwrap();
+    let (second_name, failure_payload) = events_rx.try_recv().unwrap();
+    assert_eq!(first_name, crate::ENGINE_EVENT_NAME);
+    let update: serde_json::Value = serde_json::from_str(&first_payload).unwrap();
+    assert_eq!(update["update"]["TickBatch"]["frames"][0]["tick"], 1);
+    assert_eq!(second_name, "engine-failure");
+    let failure: serde_json::Value = serde_json::from_str(&failure_payload).unwrap();
+    assert!(failure["message"].as_str().unwrap().contains("已提交"));
+    assert_eq!(harness.actor.game.tick(), 2);
+    assert!(events_rx.try_recv().is_err());
 }
 
 #[tokio::test]

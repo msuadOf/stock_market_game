@@ -690,7 +690,7 @@ impl GameSession {
             .prepare_market_calendar_tick()
             .map_err(|fatal| self.poison_runtime_step(fatal))?;
         let result = self.with_routed_runtime_driver_ref(driver, tick, |session, driver| {
-            session.runtime_step_with_prepared_mirror_mode(driver, false, |_, facts| {
+            session.runtime_step_with_prepared_mirror_mode(driver, false, false, |_, facts| {
                 Ok(facts.into_iter().map(|fact| fact.event).collect())
             })
         });
@@ -718,6 +718,41 @@ impl GameSession {
         })
     }
 
+    /// 连续运行暂缓普通拍完整镜像，保留核心进度与同版时序事实。
+    pub(in crate::session) fn advance_core_with_projection<P>(
+        &mut self,
+        defer_mirror: bool,
+        project: impl FnOnce(
+            crate::session::protocol::TickCandidateProjection<'_>,
+            Vec<crate::session::protocol::EventFact>,
+        ) -> Result<P, StepFatal>,
+    ) -> Result<
+        (
+            P,
+            std::sync::Arc<crate::runtime::publication::PublishedTick>,
+            std::sync::Arc<Vec<crate::AccountId>>,
+            usize,
+        ),
+        StepFatal,
+    > {
+        self.check_step_start()
+            .map_err(|fatal| self.poison_runtime_step(fatal))?;
+        self.with_routed_runtime_driver(|session, driver| {
+            let value = session.runtime_step_with_prepared_mirror_mode(
+                driver,
+                true,
+                defer_mirror,
+                project,
+            )?;
+            Ok((
+                value,
+                driver.publication().load(),
+                driver.resting_id_map_handle(),
+                driver.accounts_per_group(),
+            ))
+        })
+    }
+
     /// 普通拍与日界共用私有 prepare、最后 callback、source 验证及 move install。
     pub(in crate::session) fn runtime_step_with_install(
         &mut self,
@@ -737,7 +772,7 @@ impl GameSession {
             Vec<crate::session::protocol::EventFact>,
         ) -> Result<P, StepFatal>,
     ) -> Result<P, StepFatal> {
-        self.runtime_step_with_prepared_mirror_mode(driver, true, project)
+        self.runtime_step_with_prepared_mirror_mode(driver, true, false, project)
     }
 
     /// direct owner 保留显式市场日结 API；逐拍提交仍与常驻 owner 共用唯一 core。
@@ -745,6 +780,7 @@ impl GameSession {
         &mut self,
         driver: &mut crate::runtime::drive::RuntimeDriver,
         automatic_day_end: bool,
+        defer_mirror: bool,
         project: impl FnOnce(
             crate::session::protocol::TickCandidateProjection<'_>,
             Vec<crate::session::protocol::EventFact>,
@@ -781,7 +817,9 @@ impl GameSession {
             .map_err(|fatal| self.poison_runtime_step(fatal))?;
         let prepared = driver
             .prepare_driver_step_with_day_end(self, automatic_day_end)
-            .and_then(|input| self.prepare_runtime_publication(driver, input, tick));
+            .and_then(|input| {
+                self.prepare_runtime_publication_mode(driver, input, tick, defer_mirror)
+            });
         let mut prepared = prepared.map_err(|description| {
             let fatal = StepFatal::InvariantViolation {
                 location: "runtime_mirror::prepare".to_owned(),
@@ -868,7 +906,7 @@ impl GameSession {
                     description,
                 })
             })?;
-            if !self.state.setup.runtime_sync_policy.needs_tick_flush() {
+            if defer_mirror || !self.state.setup.runtime_sync_policy.needs_tick_flush() {
                 driver
                     .install_dirty_personal_into_session(self)
                     .map_err(|description| {

@@ -2,6 +2,199 @@ use super::*;
 use engine::session::protocol::ReplayGuard;
 include!("../../../../../packages/engine/test-support/simple_company.rs");
 
+#[test]
+fn desktop_limits_pending_ticks_until_consumer_catches_up() {
+    let mut setup = super::tests::diagnostic_setup();
+    setup.start_date = engine::CivilDate::from_iso("2030-01-02").unwrap();
+    let game = ProtocolSession::new(setup, 7).unwrap();
+    let mut harness =
+        ActorHarness::new_protocol_actor(game, true, PausePreferences::default(), "window", "one");
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    harness.actor.consumer_gate = Some((entered_tx, release_rx));
+    for _ in 0..MAX_PENDING_TICKS {
+        harness.actor.run_cycle(1);
+    }
+    entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    let pending = harness.actor.pending_ticks;
+    let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        harness.actor.run_cycle(1);
+        let tick = harness.actor.game.tick();
+        harness.actor.drain_consumed();
+        finished_tx.send(tick).unwrap();
+    });
+    let before_release = finished_rx.recv_timeout(Duration::from_millis(50));
+    release_tx.send(()).unwrap();
+    let tick = finished_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    worker.join().unwrap();
+    assert_eq!(pending, MAX_PENDING_TICKS);
+    assert!(matches!(
+        before_release,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+    ));
+    assert_eq!(tick, MAX_PENDING_TICKS as u64 + 1);
+}
+
+#[tokio::test]
+async fn desktop_consumer_wakes_actor_before_next_tick_timer() {
+    let mut setup = super::tests::diagnostic_setup();
+    setup.start_date = engine::CivilDate::from_iso("2030-01-02").unwrap();
+    let game = ProtocolSession::new(setup, 7).unwrap();
+    let mut harness =
+        ActorHarness::new_protocol_actor(game, false, PausePreferences::default(), "wake", "one");
+    harness.actor.pacing.tick_interval = Duration::from_secs(10);
+    harness.subscribe_engine_events();
+    let mut events = harness.events_rx.take().unwrap();
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    harness.actor.consumer_gate = Some((entered_tx, release_rx));
+    harness.actor.run_cycle(1);
+    entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    let task = tokio::spawn(harness.actor.run());
+    release_tx.send(()).unwrap();
+    let event = tokio::time::timeout(Duration::from_secs(1), events.recv()).await;
+    let (reply, finished) = oneshot::channel();
+    harness
+        .cmd_tx
+        .send(SessionCommand::Shutdown { reply })
+        .unwrap();
+    finished.await.unwrap();
+    task.await.unwrap();
+    let payload = event.unwrap().unwrap();
+    let value: serde_json::Value = serde_json::from_str(&payload).unwrap();
+    let EngineUpdate::TickBatch(batch) = serde_json::from_value(value["update"].clone()).unwrap()
+    else {
+        panic!("必须发布 tick")
+    };
+    assert_eq!(batch.frames.len(), 1);
+    assert_eq!(batch.frames[0].tick, 1);
+}
+
+#[tokio::test]
+async fn explicit_desktop_reads_match_consumed_order_delta() {
+    let mut setup = super::tests::diagnostic_setup();
+    setup.start_date = engine::CivilDate::from_iso("2030-01-02").unwrap();
+    setup.npcs.retail_count = 0;
+    setup.npcs.inst_count = 0;
+    let game = ProtocolSession::new(setup, 7).unwrap();
+    let mut harness =
+        ActorHarness::new_protocol_actor(game, false, PausePreferences::default(), "reads", "one");
+    harness.subscribe_engine_events();
+    harness
+        .actor
+        .game
+        .shared_ingress()
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code: engine::StockId(0),
+                side: engine::Side::Buy,
+                price: engine::LimitPrice::Fixed(engine::Money::from_cents(900)),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    harness.actor.run_cycle(1);
+    harness.actor.drain_consumed();
+    let payload = harness.events_rx.as_mut().unwrap().try_recv().unwrap();
+    let value: serde_json::Value = serde_json::from_str(&payload).unwrap();
+    let EngineUpdate::TickBatch(batch) = serde_json::from_value(value["update"].clone()).unwrap()
+    else {
+        panic!("必须发布 tick")
+    };
+    let delta = batch.runtime_delta.unwrap();
+    assert_eq!(delta.working_orders.upserts.len(), 1);
+    assert!(delta.accounts[&AccountId(0)].reserved_cash > engine::Money::ZERO);
+    let (reply, received) = oneshot::channel();
+    harness
+        .actor
+        .handle_command(SessionCommand::Snapshot { reply })
+        .await;
+    let snapshot = received.await.unwrap();
+    assert_eq!(
+        snapshot.accounts[&AccountId(0)],
+        delta.accounts[&AccountId(0)]
+    );
+    assert_eq!(
+        snapshot.mirror_origin.source_tick,
+        delta.mirror_origin.source_tick
+    );
+    assert_eq!(
+        snapshot.mirror_origin.source_generation,
+        delta.mirror_origin.source_generation
+    );
+    assert_eq!(
+        snapshot.markets[&engine::StockId(0)].best_bid,
+        Some(engine::Money::from_cents(900))
+    );
+    let (reply, received) = oneshot::channel();
+    harness
+        .actor
+        .handle_command(SessionCommand::QueryBaseline {
+            generation: 1,
+            reply,
+        })
+        .await;
+    let baseline = received.await.unwrap().unwrap();
+    assert_eq!(
+        baseline.snapshot.accounts[&AccountId(0)],
+        snapshot.accounts[&AccountId(0)]
+    );
+    assert_eq!(baseline.snapshot.markets, snapshot.markets);
+    let (reply, received) = oneshot::channel();
+    harness
+        .actor
+        .handle_command(SessionCommand::PlayerWorkingOrders {
+            generation: 1,
+            reply,
+        })
+        .await;
+    assert_eq!(
+        received.await.unwrap().unwrap().value,
+        serde_json::to_value(delta.working_orders.upserts).unwrap()
+    );
+}
+
+#[tokio::test]
+async fn desktop_core_advances_while_prior_tick_consumption_is_blocked() {
+    let mut setup = super::tests::diagnostic_setup();
+    setup.start_date = engine::CivilDate::from_iso("2030-01-02").unwrap();
+    let game = ProtocolSession::new(setup, 7).unwrap();
+    let mut harness = ActorHarness::new_protocol_actor(
+        game,
+        false,
+        PausePreferences::default(),
+        "core-first",
+        "one",
+    );
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    harness.subscribe_engine_events();
+    harness.actor.consumer_gate = Some((entered_tx, release_rx));
+    harness.actor.run_cycle(1);
+    entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    harness.actor.run_cycle(1);
+    let tick_while_blocked = harness.actor.game.tick();
+    release_tx.send(()).unwrap();
+    harness.actor.drain_consumed();
+    assert_eq!(tick_while_blocked, 2);
+    assert_eq!(harness.actor.game.tick(), 2);
+    assert_eq!(harness.actor.pending_ticks, 0);
+    let mut replay = ReplayGuard::new(0, 0);
+    let mut ticks = Vec::new();
+    let events = harness.events_rx.as_mut().unwrap();
+    while let Ok(payload) = events.try_recv() {
+        let value: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        let update: EngineUpdate = serde_json::from_value(value["update"].clone()).unwrap();
+        replay.ingest(&update).unwrap();
+        if let EngineUpdate::TickBatch(batch) = update {
+            ticks.extend(batch.frames.iter().map(|frame| frame.tick));
+        }
+    }
+    assert_eq!(ticks, vec![1, 2]);
+}
+
 #[tokio::test]
 async fn company_read_command_preserves_actual_nonempty_data_and_local_owner() {
     use engine::session::protocol::CompanyReadQuery;
@@ -272,8 +465,10 @@ async fn capture(fastest: bool, preferences: PausePreferences) {
     loop {
         if fastest {
             actor.run_fastest_batch().await;
+            actor.drain_consumed();
         } else {
             actor.tick_and_emit().await;
+            actor.drain_consumed();
         }
         while let Ok(payload) = receiver.try_recv() {
             let value: serde_json::Value = serde_json::from_str(&payload).unwrap();
@@ -318,6 +513,7 @@ async fn capture(fastest: bool, preferences: PausePreferences) {
                         .await;
                     applied.await.unwrap();
                     actor.tick_and_emit().await;
+                    actor.drain_consumed();
                     let next: serde_json::Value =
                         serde_json::from_str(&receiver.try_recv().unwrap()).unwrap();
                     let next: EngineUpdate =

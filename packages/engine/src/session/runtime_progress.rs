@@ -14,6 +14,7 @@ pub(crate) struct PreparedRuntimeProgress {
     events: Vec<Event>,
     _plans: crate::plans::PlanBook,
     _calendar: crate::runtime::drive::PreparedDriverCalendar,
+    selected_accounts: BTreeMap<AccountId, crate::account::Account>,
     receipts: BTreeMap<AccountId, crate::experience::AppendOnlyHistory<PersonalTradeConfirmation>>,
     receipt_watermark: u64,
     retail: super::retail_lifecycle::Candidate,
@@ -132,7 +133,19 @@ impl GameSession {
         input: PreparedDriverStep,
         tick: u64,
     ) -> Result<PreparedRuntimeCommit, String> {
-        if self.state.setup.runtime_sync_policy.needs_tick_flush() || input.day_end.is_some() {
+        self.prepare_runtime_publication_mode(driver, input, tick, false)
+    }
+
+    pub(crate) fn prepare_runtime_publication_mode(
+        &self,
+        driver: &mut RuntimeDriver,
+        input: PreparedDriverStep,
+        tick: u64,
+        defer_mirror: bool,
+    ) -> Result<PreparedRuntimeCommit, String> {
+        if (!defer_mirror && self.state.setup.runtime_sync_policy.needs_tick_flush())
+            || input.day_end.is_some()
+        {
             let trigger = if input.day_end.is_some() {
                 crate::runtime::sync_policy::FlushTrigger::DayEnd
             } else {
@@ -294,15 +307,140 @@ impl GameSession {
             (None, None)
         };
         let seq = driver.next_seq();
-        let mut snapshot = self.runtime_snapshot();
-        snapshot.tick = tick;
-        snapshot.seq = seq;
-        snapshot.phase = self.phase_at_tick(tick);
-        let runtime = Self::public_runtime_from_prepared(&snapshot, self.player_working_orders())
-            .map_err(|error| error.to_string())?;
-        // TickFrame 的时序事实保持当前；账户及簿读面仍标上次 mirror_origin。
-        snapshot.markets = current_markets;
-        snapshot.active_daily_candles = active;
+        let (snapshot, runtime, selected_accounts) = if defer_mirror {
+            // 只把本拍变化的经济成员账户转为 Session 的紧凑权威读面。
+            let selected: std::collections::BTreeSet<_> = self
+                .state
+                .memberships
+                .members
+                .values()
+                .map(|member| member.account_id)
+                .chain(std::iter::once(AccountId(0)))
+                .collect();
+            let mut selected_accounts = BTreeMap::new();
+            for (group, rows) in input.accounts.iter().enumerate() {
+                for (local, raw) in rows.iter() {
+                    let index = group
+                        .checked_mul(driver.accounts_per_group())
+                        .and_then(|start| start.checked_add(*local as usize))
+                        .ok_or("玩家账户坐标溢出")?;
+                    let Some(id) = driver.id_map.get(index).copied() else {
+                        continue;
+                    };
+                    if !selected.contains(&id) {
+                        continue;
+                    }
+                    let stock_count = self.state.stocks.len();
+                    if [
+                        raw.shares.len(),
+                        raw.pending_sell_qty.len(),
+                        raw.frozen_today.len(),
+                        raw.invested_cents.len(),
+                        raw.recovered_cents.len(),
+                    ]
+                    .iter()
+                    .any(|len| *len != stock_count)
+                    {
+                        return Err(format!("玩家账户股票维度错误：{id:?}"));
+                    }
+                    let mut account = self
+                        .account(id)
+                        .ok_or_else(|| format!("玩家账户缺失：{id:?}"))?
+                        .clone();
+                    let mut positions = account.positions().clone();
+                    for stock in 0..stock_count {
+                        let code = StockId(u32::try_from(stock).map_err(|_| "股票下标溢出")?);
+                        let qty = raw.shares[stock]
+                            .checked_add(raw.pending_sell_qty[stock])
+                            .ok_or("玩家股数溢出")?;
+                        if raw.frozen_today[stock] > qty {
+                            return Err("玩家 T+1 冻结超过持仓".to_owned());
+                        }
+                        if qty == 0 {
+                            positions.remove(&code);
+                        } else {
+                            positions.insert(
+                                code,
+                                crate::account::Position::from_restored_parts(
+                                    qty,
+                                    raw.frozen_today[stock],
+                                    raw.invested_cents[stock],
+                                    raw.recovered_cents[stock],
+                                ),
+                            );
+                        }
+                    }
+                    let cash = raw
+                        .cash
+                        .checked_add(raw.buy_purse_held_cents)
+                        .ok_or("玩家现金溢出")?;
+                    account.fixture_set_cash(Money::from_cents(cash));
+                    account.fixture_set_positions(positions);
+                    selected_accounts.insert(id, account);
+                }
+            }
+            let mut accounts = BTreeMap::new();
+            for id in selected {
+                let account = selected_accounts
+                    .get(&id)
+                    .or_else(|| self.account(id))
+                    .ok_or_else(|| format!("玩家 snapshot 缺少账户：{id:?}"))?;
+                accounts.insert(
+                    id,
+                    AccountSnap {
+                        cash: account.cash(),
+                        positions: account
+                            .positions()
+                            .iter()
+                            .map(|(code, pos)| {
+                                (
+                                    *code,
+                                    PositionSnap {
+                                        qty: pos.qty(),
+                                        t1_locked: pos.t1_locked(),
+                                        invested_cents: pos.invested_cents(),
+                                        recovered_cents: pos.recovered_cents(),
+                                    },
+                                )
+                            })
+                            .collect(),
+                        reserved_cash: Money::ZERO,
+                        reserved_sell_qty: BTreeMap::new(),
+                    },
+                );
+            }
+            let snapshot = Snapshot {
+                tick,
+                seq,
+                day: self.day(),
+                phase: self.phase_at_tick(tick),
+                // 公开成员账户与盘口来自此 World 版本；install_sequence 仍标识最后完整镜像。
+                mirror_origin: self.origin_from_runtime_source(
+                    source,
+                    self.runtime_mirror_origin().install_sequence,
+                    self.phase_at_tick(tick),
+                )?,
+                markets: current_markets,
+                accounts,
+                daily_candles: BTreeMap::new(),
+                active_daily_candles: active,
+            };
+            // 在途委托与预留使用本拍 desk 分片，由外围消费时投影。
+            let runtime = Self::public_runtime_from_prepared(&snapshot, Vec::new())
+                .map_err(|error| error.to_string())?;
+            (snapshot, runtime, selected_accounts)
+        } else {
+            let mut snapshot = self.runtime_snapshot();
+            snapshot.tick = tick;
+            snapshot.seq = seq;
+            snapshot.phase = self.phase_at_tick(tick);
+            let runtime =
+                Self::public_runtime_from_prepared(&snapshot, self.player_working_orders())
+                    .map_err(|error| error.to_string())?;
+            snapshot.markets = current_markets;
+            snapshot.active_daily_candles = active;
+            (snapshot, runtime, BTreeMap::new())
+        };
         let (receipts, receipt_watermark) = self.prepare_runtime_receipts(driver)?;
         let mut retail = super::retail_lifecycle::Candidate {
             events: Vec::new(),
@@ -331,6 +469,7 @@ impl GameSession {
                 events,
                 _plans: input.plans,
                 _calendar: input.calendar,
+                selected_accounts,
                 receipts,
                 receipt_watermark,
                 retail,
@@ -423,6 +562,9 @@ impl GameSession {
                 let value = *value;
                 if self.runtime_mirror_origin.is_none() {
                     self.runtime_mirror_origin = Some(value.projection.snapshot.mirror_origin);
+                }
+                for (id, account) in value.selected_accounts {
+                    self.state.accounts.insert(id, account);
                 }
                 self.state.tick = value.projection.snapshot.tick;
                 self.state.seq = value.projection.snapshot.seq;

@@ -712,6 +712,8 @@ impl World {
     pub(crate) fn collect_personal_full_for_prepared(
         &mut self,
     ) -> Result<PersonalFullSnapshot, RuntimeError> {
+        #[cfg(test)]
+        PREPARED_PERSONAL_FULL_CALLS.with(|count| count.set(count.get() + 1));
         self.collect_personal_full_inner()
     }
 
@@ -4900,3 +4902,13 @@ pub use super::protocol::{
 };
 
 mod admin_treasury_binding;
+
+#[cfg(test)]
+thread_local! {
+    static PREPARED_PERSONAL_FULL_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn take_prepared_personal_full_calls_for_test() -> usize {
+    PREPARED_PERSONAL_FULL_CALLS.with(|count| count.replace(0))
+}

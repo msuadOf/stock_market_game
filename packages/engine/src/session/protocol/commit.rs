@@ -53,6 +53,38 @@ impl<'candidate> TickCandidateProjection<'candidate> {
         }
     }
 
+    pub(in crate::session) fn capture_deferred(
+        &self,
+        facts: Vec<EventFact>,
+    ) -> Result<super::DeferredTick, StepFatal> {
+        let (snapshot, runtime) = match &self.candidate {
+            ProjectionSource::Session(candidate) => {
+                let snapshot = candidate.runtime_snapshot();
+                let runtime = candidate.public_runtime_from_snapshot(&snapshot)?;
+                (snapshot, runtime)
+            }
+            ProjectionSource::Prepared(candidate) => {
+                (candidate.snapshot.clone(), candidate.runtime.clone())
+            }
+        };
+        Ok(super::DeferredTick {
+            tick: self.tick(),
+            seq_from: self.seq_from,
+            seq_to: self.seq_to(),
+            facts,
+            snapshot,
+            runtime,
+            publication: None,
+            id_map: None,
+            accounts_per_group: 0,
+            config: None,
+            defer_mirror: false,
+            identity: std::sync::Arc::new(std::sync::OnceLock::new()),
+            #[cfg(test)]
+            consume_barrier: None,
+        })
+    }
+
     pub fn project_frame(&self, facts: Vec<EventFact>) -> Result<TickFrame, StepFatal> {
         self.project_frame_and_runtime(facts)
             .map(|(frame, _)| frame)

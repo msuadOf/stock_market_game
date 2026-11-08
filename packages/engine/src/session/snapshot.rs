@@ -141,6 +141,14 @@ impl GameSession {
         include_daily_candles: bool,
         include_npc_accounts: bool,
     ) -> Snapshot {
+        let member_accounts: std::collections::BTreeSet<AccountId> = self
+            .state
+            .memberships
+            .members
+            .values()
+            .map(|member| member.account_id)
+            .chain(std::iter::once(AccountId(0)))
+            .collect();
         let runtime_mirrored = !self.state.desk_book_mirror.is_empty();
         let mut reservations = LiveOrderReservations::default();
         if runtime_mirrored {
@@ -148,7 +156,7 @@ impl GameSession {
             // 从镜像算；A 股竞价可见性门禁的相位+截点过滤）。
             for (code, mirror) in &self.state.desk_book_mirror {
                 for (owner, side, price, qty, _serial, filled_value, _fq) in &mirror.orders {
-                    if !include_npc_accounts && *owner != AccountId(0) {
+                    if !include_npc_accounts && !member_accounts.contains(owner) {
                         continue;
                     }
                     reservations.record_order(
@@ -166,7 +174,7 @@ impl GameSession {
             for (code, market) in &self.state.markets {
                 for order in market
                     .resting_order_refs()
-                    .filter(|order| include_npc_accounts || order.owner == AccountId(0))
+                    .filter(|order| include_npc_accounts || member_accounts.contains(&order.owner))
                 {
                     reservations.record_order(
                         order.owner,
@@ -229,7 +237,6 @@ impl GameSession {
         // 高频 protocol 只发布经济成员账户（B3 远程登录前=仅账户 0 的单人
         // 优化；多成员市场=账户 0 ∪ 市场成员账户——NPC 账户仍不发）。
         // 直接查找，避免每帧扫描全部 NPC 账户。
-        let player = AccountId(0);
         let selected_accounts: Box<dyn Iterator<Item = (&AccountId, &Account)> + '_> =
             if include_npc_accounts {
                 Box::new(self.state.accounts.iter())
@@ -237,18 +244,11 @@ impl GameSession {
                 // 成员名册（BTreeMap<OpaqueSubjectId, MarketMembership>）的
                 // 账户值即发布集；单人局退化为 {local-owner→0}（与旧单人
                 // 优化等价——恰好只含账户 0）。
-                let member_accounts: std::collections::BTreeSet<AccountId> = self
-                    .state
-                    .memberships
-                    .members
-                    .values()
-                    .map(|member| member.account_id)
-                    .collect();
                 Box::new(
                     self.state
                         .accounts
                         .iter()
-                        .filter(move |(id, _)| member_accounts.contains(id) || **id == player),
+                        .filter(move |(id, _)| member_accounts.contains(id)),
                 )
             };
         let accounts = selected_accounts

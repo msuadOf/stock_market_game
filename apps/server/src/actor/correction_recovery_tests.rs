@@ -103,6 +103,9 @@ fn correction_actor(
         },
         fatal_failure: None,
         deferred_drop_reported: false,
+        consumer: None,
+        fixed_batches: std::collections::VecDeque::new(),
+        fixed_frames: Vec::new(),
     };
     (actor, sender, receiver)
 }
@@ -154,6 +157,7 @@ async fn correction_business_rejection_keeps_installed_close_and_contiguous_canc
     let (mut actor, sender, mut receiver) = correction_actor(game);
 
     actor.run_protocol_batch(1);
+    actor.collect_ticks(true).unwrap();
 
     let mut failure = None;
     let mut committed_ticks = Vec::new();
@@ -707,6 +711,7 @@ fn fatal_civil_after_market_install_keeps_committed_close_and_first_poison() {
     game.enqueue_report_correction(&epoch, request).unwrap();
     let (mut actor, _sender, mut receiver) = correction_actor(game);
     actor.run_protocol_batch(1);
+    actor.collect_ticks(true).unwrap();
     let update = receiver
         .try_recv()
         .unwrap()
@@ -975,7 +980,9 @@ fn archive_write_failure_keeps_the_previous_candidate_and_the_committed_civil_up
         })
         .unwrap();
     actor.run_protocol_batch(1);
+    actor.collect_ticks(true).unwrap();
     actor.run_protocol_batch(1);
+    actor.collect_ticks(true).unwrap();
     let mut failure = None;
     let mut civil = None;
     while let Ok(message) = receiver.try_recv() {

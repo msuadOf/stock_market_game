@@ -83,7 +83,7 @@ CivilUpdate 显式区分 `AfterClose`、`BeforeOpen` 与确有需要的普通自
 用户希望的隔夜委托不在任务 2 实现，不改变当日委托有效期、撮合或集合竞价规则。
 本节是实现约束，不表示三宿主与前端迁移已经完成。
 
-后端严格一次完整计算、结算并提交一个 tick。提交成功后，才生成一个 `TickFrame { tick, events, timeseries_payload, seq_from, seq_to }`，然后才能开始下一个 tick。`timeseries_payload` 明确包含该 tick 的分时线、竞价和绘图数据，是该 tick 时间序列数据的协议来源；前端不得依据 `Event[]` 数组顺序重建图表数据或权威状态。高加速只允许传输层把多个已完成的 `TickFrame` 按 tick 号严格递增装入有序 `TickBatch`，必须保留每一帧，不得压扁语义 tick 边界、重排 tick 或丢弃中间帧的时间序列点。`TickBatch` 可以只在最后一帧之后附带一份完整 runtime snapshot，作为批次结束后的权威最终状态。前端可以逐帧处理，也可以先吸收多帧后只渲染一次；渲染合并仅属于前端内部行为，不是协议或业务语义。现有 frontend protocol 继续保持 events-before-final-snapshot 与严格连续 seq。
+后端严格一次完整计算、结算并提交一个 tick。2026-11-08 按用户确认的核心优先要求调整外围完成边界：连续运行提交同版不可变事实后即可开始下一 tick，外围按序生成 `TickFrame { tick, events, timeseries_payload, seq_from, seq_to }`；显式单步仍同步返回完整帧。`timeseries_payload` 明确包含该 tick 的分时线、竞价和绘图数据，是该 tick 时间序列数据的协议来源；前端不得依据 `Event[]` 数组顺序重建图表数据或权威状态。高加速只允许传输层把多个已完成的 `TickFrame` 按 tick 号严格递增装入有序 `TickBatch`，必须保留每一帧，不得压扁语义 tick 边界、重排 tick 或丢弃中间帧的时间序列点。`TickBatch` 可以只在最后一帧之后附带一份完整 runtime snapshot，作为批次结束后的权威最终状态。前端可以逐帧处理，也可以先吸收多帧后只渲染一次；渲染合并仅属于前端内部行为，不是协议或业务语义。现有 frontend protocol 继续保持 events-before-final-snapshot 与严格连续 seq。
 
 帧内 `Event[]` 是事实集合。数组位置与 `seq` 都不表达业务因果或执行先后，消费者不得据此推断跨实体业务顺序；例如 `OrderAccepted` 与 `AuctionTick` 的数组排列互换，单独不能构成业务分歧。仍须保留同一实体内的 FIFO、订单 ID、收据身份和权威状态语义，但这不允许重排 tick 或丢弃事件。现有前端中依赖事件顺序的图表、提示、日志和自动下单路径，后续必须迁移到 `TickFrame.timeseries_payload` 或按事件类型分组处理；本 ADR 不声称这些迁移已经完成。
 
