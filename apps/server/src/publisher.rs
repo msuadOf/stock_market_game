@@ -59,7 +59,13 @@ impl ClientFrameBuffer {
             ProtocolUpdate::TickBatch(batch) => {
                 let first = batch.frames.first().ok_or(FrameBufferError::EmptyUpdate)?;
                 let last = batch.frames.last().ok_or(FrameBufferError::EmptyUpdate)?;
-                (first.tick, last.tick, first.seq_from, last.seq_to, false)
+                (
+                    first.tick_from.unwrap_or(first.tick),
+                    last.tick,
+                    first.seq_from,
+                    last.seq_to,
+                    false,
+                )
             }
             ProtocolUpdate::CivilUpdate(civil) => {
                 (civil.tick, civil.tick, civil.seq_from, civil.seq_to, true)

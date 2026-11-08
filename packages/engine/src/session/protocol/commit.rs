@@ -141,6 +141,8 @@ impl<'candidate> TickCandidateProjection<'candidate> {
         let timeseries_payload = project_timeseries(&facts, snapshot);
         Ok((
             TickFrame {
+                tick_from: None,
+                fact_ticks: None,
                 facts,
                 tick: self.tick(),
                 timeseries_payload,

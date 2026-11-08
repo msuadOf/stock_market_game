@@ -99,10 +99,13 @@ export type WireTickTimeseriesPayload = {
   readonly closed_daily_candles: Readonly<Record<string, DailyCandle>>;
   readonly auction_points: Readonly<Record<string, readonly AuctionPoint[]>>;
   readonly continuous_points: Readonly<Record<string, ContinuousPoint>>;
+  readonly continuous_samples?: Readonly<Record<string, readonly { readonly point: ContinuousPoint; readonly candle: DailyCandle }[]>>;
 };
 
 /** wire tick 帧。 */
 export type WireTickFrame = {
+  readonly tick_from?: number;
+  readonly fact_ticks?: readonly number[];
   readonly tick: number;
   readonly facts: readonly WireEventFact[];
   readonly timeseries_payload: WireTickTimeseriesPayload;
@@ -230,10 +233,13 @@ export type CodedTickTimeseriesPayload = {
   readonly closed_daily_candles: Readonly<Record<string, DailyCandle>>;
   readonly auction_points: Readonly<Record<string, readonly CodedAuctionPoint[]>>;
   readonly continuous_points: Readonly<Record<string, ContinuousPoint>>;
+  readonly continuous_samples?: Readonly<Record<string, readonly { readonly point: ContinuousPoint; readonly candle: DailyCandle }[]>>;
 };
 
 /** 翻译后的 tick 帧。 */
 export type CodedTickFrame = {
+  readonly tick_from?: number;
+  readonly fact_ticks?: readonly number[];
   readonly tick: number;
   readonly events: readonly CodedEvent[];
   readonly facts: readonly CodedEventFact[];
@@ -382,6 +388,8 @@ function codedFrame(frame: WireTickFrame, path: string): CodedTickFrame {
   const facts = frame.facts.map((fact, index) => codedFact(fact, `${path}.facts[${index}]`));
   return {
     tick: frame.tick,
+    ...(frame.tick_from === undefined ? {} : { tick_from: frame.tick_from }),
+    ...(frame.fact_ticks === undefined ? {} : { fact_ticks: frame.fact_ticks }),
     facts,
     // 事件视图只借用记录中的同一载荷；不再次翻译或构造事件。
     events: facts.map((fact) => fact.event),
@@ -391,6 +399,7 @@ function codedFrame(frame: WireTickFrame, path: string): CodedTickFrame {
       closed_daily_candles: codedStockKeys(payload.closed_daily_candles, `${path}.timeseries_payload.closed_daily_candles`),
       auction_points: codedStockKeys(payload.auction_points, `${path}.timeseries_payload.auction_points`, (points, pointsPath) => points.map((point, index) => ({ ...point, key: codedStableKey(point.key, `${pointsPath}[${index}].key`) }))),
       continuous_points: codedStockKeys(payload.continuous_points, `${path}.timeseries_payload.continuous_points`),
+      ...(payload.continuous_samples === undefined ? {} : { continuous_samples: codedStockKeys(payload.continuous_samples, `${path}.timeseries_payload.continuous_samples`) }),
     },
     seq_from: frame.seq_from,
     seq_to: frame.seq_to,

@@ -1,3 +1,4 @@
+const HISTORICAL_WINDOW: usize = 8;
 use super::session_fixture as fixture;
 use super::*;
 include!("../../../../packages/engine/test-support/simple_company.rs");
@@ -160,7 +161,8 @@ fn blocked_production_consumer_does_not_block_next_core_tick() {
         release: std::sync::Mutex::new(release_rx),
     });
     *CONSUMER_BLOCK_PROBE.lock().unwrap() = Some(Arc::clone(&probe));
-    let (mut actor, mut updates) = catalog_actor_fixture();
+    let (mut actor, mut updates) =
+        catalog_actor_fixture_with_policy(engine::RuntimeSyncPolicy::DayEnd);
     actor.game.step_frame().unwrap();
     actor.session_id = "consumer-block-probe".into();
     let actor_thread = std::thread::spawn(move || {
@@ -178,21 +180,20 @@ fn blocked_production_consumer_does_not_block_next_core_tick() {
     actor_thread.join().unwrap();
     *CONSUMER_BLOCK_PROBE.lock().unwrap() = None;
     assert_eq!(committed_while_blocked, 2);
-    let mut frames = Vec::new();
-    while frames.len() < 2 {
-        let update = updates.try_recv().unwrap().update.unwrap();
-        let ProtocolUpdate::TickBatch(batch) = update else {
-            panic!("必须交付市场帧")
-        };
-        frames.extend(batch.frames.iter().cloned());
-    }
-    assert_eq!(frames.len(), 2);
-    assert_eq!((frames[0].tick, frames[1].tick), (2, 3));
-    assert_eq!(frames[0].seq_to, frames[1].seq_from);
+    let update = updates.try_recv().unwrap().update.unwrap();
+    let ProtocolUpdate::TickBatch(batch) = update else {
+        panic!("必须交付市场帧")
+    };
+    assert_eq!(batch.frames.len(), 1);
+    assert_eq!(
+        (batch.frames[0].tick_from, batch.frames[0].tick),
+        (Some(2), 3)
+    );
+    batch.validate().unwrap();
 }
 
 #[test]
-fn full_consumer_window_waits_before_the_next_core_tick() {
+fn blocked_consumer_coalesces_beyond_eight_ticks() {
     let _guard = CONSUMER_PROBE_LOCK.lock().unwrap();
     let (entered_tx, entered_rx) = std::sync::mpsc::channel();
     let (release_tx, release_rx) = std::sync::mpsc::channel();
@@ -202,10 +203,10 @@ fn full_consumer_window_waits_before_the_next_core_tick() {
         release: std::sync::Mutex::new(release_rx),
     });
     *CONSUMER_BLOCK_PROBE.lock().unwrap() = Some(Arc::clone(&probe));
-    let (mut actor, _) = catalog_actor_fixture();
+    let (mut actor, _) = catalog_actor_fixture_with_policy(engine::RuntimeSyncPolicy::DayEnd);
     actor.game.step_frame().unwrap();
     actor.session_id = "consumer-block-probe".into();
-    for _ in 0..MAX_PENDING_TICKS {
+    for _ in 0..HISTORICAL_WINDOW {
         actor.run_protocol_batch(1);
     }
     entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
@@ -214,26 +215,21 @@ fn full_consumer_window_waits_before_the_next_core_tick() {
     let worker = std::thread::spawn(move || {
         actor.run_protocol_batch(1);
         let tick = actor.game.tick();
-        actor.collect_ticks(true).unwrap();
         finished_tx.send(tick).unwrap();
+        actor.collect_ticks(true).unwrap();
     });
-    let before_release = finished_rx.recv_timeout(Duration::from_millis(100));
+    let tick = finished_rx.recv_timeout(Duration::from_secs(2)).unwrap();
     let committed_while_blocked = probe.committed.load(Ordering::SeqCst);
     release_tx.send(()).unwrap();
-    let tick = finished_rx.recv_timeout(Duration::from_secs(2)).unwrap();
     worker.join().unwrap();
     *CONSUMER_BLOCK_PROBE.lock().unwrap() = None;
-    assert_eq!(pending, MAX_PENDING_TICKS);
-    assert!(matches!(
-        before_release,
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout)
-    ));
-    assert_eq!(committed_while_blocked, MAX_PENDING_TICKS);
-    assert_eq!(tick, MAX_PENDING_TICKS as u64 + 2);
+    assert_eq!(pending, HISTORICAL_WINDOW);
+    assert_eq!(committed_while_blocked, HISTORICAL_WINDOW + 1);
+    assert_eq!(tick, HISTORICAL_WINDOW as u64 + 2);
 }
 
 #[test]
-fn fixed_cycle_keeps_all_frames_in_one_batch_across_full_consumer_window() {
+fn blocked_full_consumer_coalesces_beyond_eight_ticks() {
     let _guard = CONSUMER_PROBE_LOCK.lock().unwrap();
     let (entered_tx, entered_rx) = std::sync::mpsc::channel();
     let (release_tx, release_rx) = std::sync::mpsc::channel();
@@ -246,8 +242,55 @@ fn fixed_cycle_keeps_all_frames_in_one_batch_across_full_consumer_window() {
     let (mut actor, mut updates) = catalog_actor_fixture();
     actor.game.step_frame().unwrap();
     actor.session_id = "consumer-block-probe".into();
+    for _ in 0..HISTORICAL_WINDOW {
+        actor.run_protocol_batch(1);
+    }
+    entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    let pending = actor.consumer.as_ref().unwrap().pending;
+    let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        actor.run_protocol_batch(1);
+        let tick = actor.game.tick();
+        finished_tx.send(tick).unwrap();
+        actor.collect_ticks(true).unwrap();
+    });
+    let before_release = finished_rx.recv_timeout(Duration::from_millis(100));
+    let committed_while_blocked = probe.committed.load(Ordering::SeqCst);
+    release_tx.send(()).unwrap();
+    let tick = before_release.expect("Full 累计区间不得阻塞核心推进");
+    worker.join().unwrap();
+    *CONSUMER_BLOCK_PROBE.lock().unwrap() = None;
+    assert_eq!(pending, HISTORICAL_WINDOW);
+    assert_eq!(committed_while_blocked, HISTORICAL_WINDOW + 1);
+    let update = updates.try_recv().unwrap().update.unwrap();
+    let ProtocolUpdate::TickBatch(batch) = update else {
+        panic!("必须交付 Full 累计区间")
+    };
+    assert_eq!(batch.frames.len(), 1);
+    assert_eq!(
+        (batch.frames[0].tick_from, batch.frames[0].tick),
+        (Some(2), tick)
+    );
+    assert_eq!(tick, HISTORICAL_WINDOW as u64 + 2);
+}
+
+#[test]
+fn fixed_cycle_coalesces_all_ticks_across_blocked_consumer() {
+    let _guard = CONSUMER_PROBE_LOCK.lock().unwrap();
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let probe = Arc::new(ConsumerBlockProbe {
+        committed: AtomicUsize::new(0),
+        entered: entered_tx,
+        release: std::sync::Mutex::new(release_rx),
+    });
+    *CONSUMER_BLOCK_PROBE.lock().unwrap() = Some(Arc::clone(&probe));
+    let (mut actor, mut updates) =
+        catalog_actor_fixture_with_policy(engine::RuntimeSyncPolicy::DayEnd);
+    actor.game.step_frame().unwrap();
+    actor.session_id = "consumer-block-probe".into();
     actor.injected_step_failure = Some((
-        MAX_PENDING_TICKS + 2,
+        HISTORICAL_WINDOW + 2,
         engine::session::StepFatal::InvariantViolation {
             location: "test.fixed_cycle".into(),
             description: "不应触发".into(),
@@ -255,12 +298,12 @@ fn fixed_cycle_keeps_all_frames_in_one_batch_across_full_consumer_window() {
         Arc::new(std::sync::Mutex::new(StepFailureCapture::default())),
     ));
     let worker = std::thread::spawn(move || {
-        actor.run_protocol_batch(MAX_PENDING_TICKS + 1);
+        actor.run_protocol_batch(HISTORICAL_WINDOW + 1);
         actor.collect_ticks(true).unwrap();
     });
     entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
-    while probe.committed.load(Ordering::SeqCst) < MAX_PENDING_TICKS
+    while probe.committed.load(Ordering::SeqCst) < HISTORICAL_WINDOW + 1
         && std::time::Instant::now() < deadline
     {
         std::thread::yield_now();
@@ -269,18 +312,18 @@ fn fixed_cycle_keeps_all_frames_in_one_batch_across_full_consumer_window() {
     release_tx.send(()).unwrap();
     worker.join().unwrap();
     *CONSUMER_BLOCK_PROBE.lock().unwrap() = None;
-    assert_eq!(committed, MAX_PENDING_TICKS);
+    assert_eq!(committed, HISTORICAL_WINDOW + 1);
     let update = updates.try_recv().unwrap().update.unwrap();
     let ProtocolUpdate::TickBatch(batch) = update else {
         panic!("必须发布市场帧")
     };
-    assert_eq!(batch.frames.len(), MAX_PENDING_TICKS + 1);
+    assert_eq!(batch.frames.len(), 1);
     assert_eq!(
         (
-            batch.frames.first().unwrap().tick,
+            batch.frames.first().unwrap().tick_from.unwrap(),
             batch.frames.last().unwrap().tick
         ),
-        (2, MAX_PENDING_TICKS as u64 + 2)
+        (2, HISTORICAL_WINDOW as u64 + 2)
     );
     assert!(matches!(
         updates.try_recv(),
@@ -295,10 +338,11 @@ fn disconnected_consumer_delivers_fixed_prefix_before_fatal() {
     let (input, receiver) = std::sync::mpsc::channel();
     drop(receiver);
     let (sender, output) = std::sync::mpsc::channel();
-    assert!(sender.send(Ok(first)).is_ok());
+    assert!(sender.send((1, Ok(first))).is_ok());
     drop(sender);
     actor.consumer = Some(TickConsumer {
         input: Some(input),
+        slot: None,
         output,
         pending: 1,
         worker: None,
@@ -1217,7 +1261,14 @@ fn zero_step_batch_keeps_progress_origin_and_ingress_facts() {
 }
 
 fn catalog_actor_fixture() -> (SessionActor, broadcast::Receiver<EngineUpdate>) {
+    catalog_actor_fixture_with_policy(engine::RuntimeSyncPolicy::default())
+}
+
+fn catalog_actor_fixture_with_policy(
+    policy: engine::RuntimeSyncPolicy,
+) -> (SessionActor, broadcast::Receiver<EngineUpdate>) {
     let mut setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
+    setup.runtime_sync_policy = policy;
     setup.npcs.retail_count = 0;
     setup.npcs.inst_count = 0;
     setup.npcs.hot_count = 0;

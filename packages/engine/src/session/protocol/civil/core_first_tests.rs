@@ -512,3 +512,217 @@ fn flush_rejects_pending_and_preserves_unpublished_light_tick() {
     session.prepare_public_baseline();
     session.flush_now().unwrap();
 }
+
+#[test]
+#[cfg(not(target_family = "wasm"))]
+fn coalesced_ticks_preserve_interval_and_facts() {
+    let mut setup = crate::session::protocol::civil::publication_tests::setup();
+    setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+    let mut session = ProtocolSession::new(setup, 81).unwrap();
+    session.step_frame().unwrap();
+    let first = session.advance_core_tick().unwrap();
+    let second = session.advance_core_tick().unwrap();
+    let from = first.tick;
+    let to = second.tick;
+    let seq_from = first.seq_from;
+    let seq_to = second.seq_to;
+    let fact_count = first.facts.len() + second.facts.len();
+    let consumed = super::DeferredTick::consume_interval(vec![first, second]).unwrap();
+    let frame = session.record_consumed_interval(consumed).unwrap();
+    assert_eq!(frame.tick_from, Some(from));
+    assert_eq!(frame.tick, to);
+    assert_eq!((frame.seq_from, frame.seq_to), (seq_from, seq_to));
+    assert_eq!(frame.facts.len(), fact_count);
+    frame.validate().unwrap();
+}
+
+#[test]
+#[cfg(not(target_family = "wasm"))]
+fn interval_failure_keeps_successful_prefix_and_failure_identity() {
+    let mut setup = crate::session::protocol::civil::publication_tests::setup();
+    setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+    let mut session = ProtocolSession::new(setup, 82).unwrap();
+    session.step_frame().unwrap();
+    let first = session.advance_core_tick().unwrap();
+    let first_tick = first.tick;
+    let mut second = session.advance_core_tick().unwrap();
+    let identity = std::sync::Arc::clone(&second.identity);
+    second.seq_from = second.seq_from.saturating_add(1);
+    let mut interval = super::DeferredInterval::new();
+    interval.push(first).unwrap();
+    let error = interval.push(second).err().expect("不连续区间必须失败");
+    assert_eq!(identity.get(), Some(&error));
+    let frame = session
+        .record_consumed_interval(interval.consume().unwrap())
+        .unwrap();
+    assert_eq!(frame.tick, first_tick);
+    assert!(
+        session.advance_core_tick().is_err(),
+        "后续 tick 不得掩盖外围失败"
+    );
+}
+
+#[test]
+#[cfg(not(target_family = "wasm"))]
+fn failed_interval_end_view_does_not_publish_or_repeat_committed_ticks() {
+    let mut setup = crate::session::protocol::civil::publication_tests::setup();
+    setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+    setup.runtime_sync_policy = crate::RuntimeSyncPolicy::EveryTick;
+    let mut session = ProtocolSession::new(setup, 83).unwrap();
+    session.step_frame().unwrap();
+    let history_before = session.state.intraday.len();
+    let first = session.advance_core_tick().unwrap();
+    let second = session.advance_core_tick().unwrap();
+    let committed_tick = second.tick;
+    let identity = std::sync::Arc::clone(&second.identity);
+    let mut interval = super::DeferredInterval::new();
+    interval.push(first).unwrap();
+    interval.push(second).unwrap();
+    interval.last.as_mut().unwrap().publication = None;
+    let error = interval
+        .consume()
+        .err()
+        .expect("末版 view 缺少发布版本必须失败");
+    assert_eq!(identity.get(), Some(&error));
+    assert_eq!(session.state.intraday.len(), history_before);
+    assert_eq!(session.game().tick(), committed_tick);
+    assert!(session.advance_core_tick().is_err(), "已提交 tick 不得重跑");
+}
+
+#[test]
+#[cfg(not(target_family = "wasm"))]
+fn coalesced_full_day_preserves_civil_boundary_and_next_tick() {
+    let mut setup = crate::session::protocol::civil::publication_tests::setup();
+    setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+    setup.runtime_sync_policy = crate::RuntimeSyncPolicy::EveryTick;
+    let ticks_per_day = setup.ticks_per_day;
+    let mut session = ProtocolSession::new(setup, 84).unwrap();
+    let initial = session.step_frame().unwrap();
+    let mut interval = super::DeferredInterval::new();
+    for _ in 1..ticks_per_day {
+        interval.push(session.advance_core_tick().unwrap()).unwrap();
+    }
+    let frame = session
+        .record_consumed_interval(interval.consume().unwrap())
+        .unwrap();
+    assert_eq!(
+        (frame.tick_from, frame.tick),
+        (Some(initial.tick + 1), ticks_per_day)
+    );
+    let civil = session.end_civil_day_update().unwrap();
+    civil.validate().unwrap();
+    assert_eq!(civil.refresh.intraday.len(), 2);
+    assert_eq!(civil.seq_from, frame.seq_to);
+    let next = session.advance_core_tick().unwrap();
+    let next = session
+        .record_consumed_tick(next.consume().unwrap())
+        .unwrap();
+    assert_eq!(
+        (next.tick, next.seq_from),
+        (ticks_per_day + 1, civil.seq_to)
+    );
+}
+
+#[test]
+#[cfg(all(not(target_family = "wasm"), not(feature = "simulation-diagnostics")))]
+fn every_tick_core_defers_full_view_until_interval_consumption() {
+    let mut setup = crate::session::protocol::civil::publication_tests::setup();
+    setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+    setup.runtime_sync_policy = crate::RuntimeSyncPolicy::EveryTick;
+    let mut session = ProtocolSession::new(setup, 86).unwrap();
+    session.step_frame().unwrap();
+    crate::runtime::world::take_dayend_hotpath_for_test();
+    let first = session.advance_core_tick().unwrap();
+    let second = session.advance_core_tick().unwrap();
+    let calls = crate::runtime::world::take_dayend_hotpath_for_test();
+    assert_eq!(
+        &calls[2..],
+        &[0, 0],
+        "普通核心 tick 不应逐拍构造完整外围 view"
+    );
+    let mut interval = super::DeferredInterval::new();
+    interval.push(first).unwrap();
+    interval.push(second).unwrap();
+    let frame = session
+        .record_consumed_interval(interval.consume().unwrap())
+        .unwrap();
+    let batch = session.tick_batch(vec![frame]).unwrap();
+    batch.validate().unwrap();
+}
+
+#[test]
+#[cfg(not(target_family = "wasm"))]
+fn coalesced_every_tick_matches_individual_facts_samples_and_final_view() {
+    let mut setup = crate::session::protocol::civil::publication_tests::setup();
+    setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+    let mut individual = ProtocolSession::new(setup.clone(), 87).unwrap();
+    let mut coalesced = ProtocolSession::new(setup, 87).unwrap();
+    individual.step_frame().unwrap();
+    coalesced.step_frame().unwrap();
+    let mut frames = Vec::new();
+    let mut interval = super::DeferredInterval::new();
+    for _ in 0..4 {
+        let tick = individual.advance_core_tick().unwrap();
+        frames.push(
+            individual
+                .record_consumed_tick(tick.consume().unwrap())
+                .unwrap(),
+        );
+        interval
+            .push(coalesced.advance_core_tick().unwrap())
+            .unwrap();
+    }
+    let combined = coalesced
+        .record_consumed_interval(interval.consume().unwrap())
+        .unwrap();
+    let expected_facts: Vec<_> = frames
+        .iter()
+        .flat_map(|frame| frame.facts.iter().cloned())
+        .collect();
+    assert_eq!(combined.facts, expected_facts);
+    let expected_count: usize = frames
+        .iter()
+        .map(|frame| frame.timeseries_payload.continuous_points.len())
+        .sum();
+    let actual_count: usize = combined
+        .timeseries_payload
+        .continuous_samples
+        .as_ref()
+        .unwrap()
+        .values()
+        .map(Vec::len)
+        .sum();
+    assert!(expected_count > 0, "夹具必须实际包含连续采样");
+    assert_eq!(actual_count, expected_count);
+    for (code, samples) in combined
+        .timeseries_payload
+        .continuous_samples
+        .as_ref()
+        .unwrap()
+    {
+        let expected: Vec<_> = frames
+            .iter()
+            .filter_map(|frame| {
+                frame
+                    .timeseries_payload
+                    .continuous_points
+                    .get(code)
+                    .map(|point| (point, &frame.timeseries_payload.active_daily_candles[code]))
+            })
+            .collect();
+        assert_eq!(
+            samples
+                .iter()
+                .map(|sample| (&sample.point, &sample.candle))
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
+    let expected_batch = individual.tick_batch(frames).unwrap();
+    let combined_batch = coalesced.tick_batch(vec![combined]).unwrap();
+    assert_eq!(
+        combined_batch.runtime_snapshot,
+        expected_batch.runtime_snapshot
+    );
+    assert_eq!(combined_batch.runtime_delta, expected_batch.runtime_delta);
+}

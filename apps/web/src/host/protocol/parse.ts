@@ -150,13 +150,14 @@ function auction(value: unknown, path: string): AuctionPoint {
 
 function payload(value: unknown, path: string): WireTickTimeseriesPayload {
   const source = record(value, path);
-  exact(source, ["markets", "active_daily_candles", "closed_daily_candles", "auction_points", "continuous_points"], path);
+  exact(source, ["markets", "active_daily_candles", "closed_daily_candles", "auction_points", "continuous_points", ...(Object.hasOwn(source, "continuous_samples") ? ["continuous_samples"] : [])], path);
   return {
     markets: mapEntries(field(source, "markets", path), `${path}.markets`, parseMarket),
     active_daily_candles: mapEntries(field(source, "active_daily_candles", path), `${path}.active_daily_candles`, parseDailyCandle),
     closed_daily_candles: mapEntries(field(source, "closed_daily_candles", path), `${path}.closed_daily_candles`, parseDailyCandle),
     auction_points: mapEntries(field(source, "auction_points", path), `${path}.auction_points`, (points, pointPath) => values(points, pointPath).map((point, index) => auction(point, `${pointPath}[${index}]`))),
     continuous_points: mapEntries(field(source, "continuous_points", path), `${path}.continuous_points`, continuous),
+    ...(Object.hasOwn(source, "continuous_samples") ? { continuous_samples: mapEntries(source.continuous_samples, `${path}.continuous_samples`, (entries, entryPath) => values(entries, entryPath).map((entry, index) => { const itemPath = `${entryPath}[${index}]`; const item = record(entry, itemPath); exact(item, ["point", "candle"], itemPath); return { point: continuous(field(item, "point", itemPath), `${itemPath}.point`), candle: parseDailyCandle(field(item, "candle", itemPath), `${itemPath}.candle`) }; })) } : {}),
   };
 }
 
@@ -209,8 +210,8 @@ function account(value: unknown, path: string): WireAccountSnap {
 
 function frame(value: unknown, path: string): WireTickFrame {
   const source = record(value, path);
-  exact(source, ["tick", "facts", "timeseries_payload", "seq_from", "seq_to"], path);
-  return { tick: safeInteger(field(source, "tick", path), `${path}.tick`), facts: values(field(source, "facts", path), `${path}.facts`).map((entry, index) => fact(entry, `${path}.facts[${index}]`)), timeseries_payload: payload(field(source, "timeseries_payload", path), `${path}.timeseries_payload`), seq_from: safeInteger(field(source, "seq_from", path), `${path}.seq_from`), seq_to: safeInteger(field(source, "seq_to", path), `${path}.seq_to`) };
+  exact(source, ["tick", "facts", "timeseries_payload", "seq_from", "seq_to", ...(Object.hasOwn(source, "tick_from") ? ["tick_from"] : []), ...(Object.hasOwn(source, "fact_ticks") ? ["fact_ticks"] : [])], path);
+  return { tick: safeInteger(field(source, "tick", path), `${path}.tick`), ...(Object.hasOwn(source, "tick_from") ? { tick_from: safeInteger(source.tick_from, `${path}.tick_from`) } : {}), ...(Object.hasOwn(source, "fact_ticks") ? { fact_ticks: values(source.fact_ticks, `${path}.fact_ticks`).map((tick, index) => safeInteger(tick, `${path}.fact_ticks[${index}]`)) } : {}), facts: values(field(source, "facts", path), `${path}.facts`).map((entry, index) => fact(entry, `${path}.facts[${index}]`)), timeseries_payload: payload(field(source, "timeseries_payload", path), `${path}.timeseries_payload`), seq_from: safeInteger(field(source, "seq_from", path), `${path}.seq_from`), seq_to: safeInteger(field(source, "seq_to", path), `${path}.seq_to`) };
 }
 
 function refresh(value: unknown, path: string): WireCivilRefresh {

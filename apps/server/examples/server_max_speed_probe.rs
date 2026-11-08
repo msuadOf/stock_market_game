@@ -44,11 +44,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 EngineUpdate::TickBatch(batch) => {
                     batches += 1;
                     for frame in &batch.frames {
-                        if frame.tick != last_tick + 1 {
-                            return Err(format!("tick 不连续：{last_tick} → {}", frame.tick).into());
+                        let from = frame.tick_from.unwrap_or(frame.tick);
+                        if from != last_tick + 1 || frame.tick < from {
+                            return Err(format!(
+                                "tick 不连续：{last_tick} → {from}..{}",
+                                frame.tick
+                            )
+                            .into());
                         }
+                        committed += frame.tick - from + 1;
                         last_tick = frame.tick;
-                        committed += 1;
                         events += frame.events().len();
                     }
                 }

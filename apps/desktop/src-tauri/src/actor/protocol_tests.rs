@@ -1,9 +1,10 @@
+const HISTORICAL_WINDOW: usize = 8;
 use super::*;
 use engine::session::protocol::ReplayGuard;
 include!("../../../../../packages/engine/test-support/simple_company.rs");
 
 #[test]
-fn desktop_limits_pending_ticks_until_consumer_catches_up() {
+fn desktop_coalesces_full_ticks_while_consumer_is_blocked() {
     let mut setup = super::tests::diagnostic_setup();
     setup.start_date = engine::CivilDate::from_iso("2030-01-02").unwrap();
     let game = ProtocolSession::new(setup, 7).unwrap();
@@ -12,7 +13,7 @@ fn desktop_limits_pending_ticks_until_consumer_catches_up() {
     let (entered_tx, entered_rx) = std::sync::mpsc::channel();
     let (release_tx, release_rx) = std::sync::mpsc::channel();
     harness.actor.consumer_gate = Some((entered_tx, release_rx));
-    for _ in 0..MAX_PENDING_TICKS {
+    for _ in 0..HISTORICAL_WINDOW {
         harness.actor.run_cycle(1);
     }
     entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
@@ -21,19 +22,15 @@ fn desktop_limits_pending_ticks_until_consumer_catches_up() {
     let worker = std::thread::spawn(move || {
         harness.actor.run_cycle(1);
         let tick = harness.actor.game.tick();
-        harness.actor.drain_consumed();
         finished_tx.send(tick).unwrap();
+        harness.actor.drain_consumed();
     });
-    let before_release = finished_rx.recv_timeout(Duration::from_millis(50));
+    let before_release = finished_rx.recv_timeout(Duration::from_millis(100));
     release_tx.send(()).unwrap();
-    let tick = finished_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    let tick = before_release.expect("Full 累计区间不得阻塞核心推进");
     worker.join().unwrap();
-    assert_eq!(pending, MAX_PENDING_TICKS);
-    assert!(matches!(
-        before_release,
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout)
-    ));
-    assert_eq!(tick, MAX_PENDING_TICKS as u64 + 1);
+    assert_eq!(pending, HISTORICAL_WINDOW);
+    assert_eq!(tick, HISTORICAL_WINDOW as u64 + 1);
 }
 
 #[tokio::test]

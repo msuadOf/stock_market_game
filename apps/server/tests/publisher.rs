@@ -16,6 +16,8 @@ fn update(tick: u64, seq: u64) -> EngineUpdate {
         update: Some(ProtocolUpdate::TickBatch(
             TickBatch {
                 frames: vec![TickFrame {
+                    tick_from: None,
+                    fact_ticks: None,
                     tick,
                     facts: events
                         .into_iter()
@@ -168,6 +170,8 @@ fn publisher_preserves_an_oversized_update_when_backlog_is_flushed() {
     };
     batch.frames = (1..=MAX_BUFFERED_EVENTS_PER_CLIENT + 1)
         .map(|tick| TickFrame {
+            tick_from: None,
+            fact_ticks: None,
             tick: u64::try_from(tick).unwrap(),
             facts: vec![],
             timeseries_payload: Default::default(),
@@ -181,6 +185,8 @@ fn publisher_preserves_an_oversized_update_when_backlog_is_flushed() {
         update: Some(ProtocolUpdate::TickBatch(
             TickBatch {
                 frames: vec![TickFrame {
+                    tick_from: None,
+                    fact_ticks: None,
                     tick: next_tick,
                     facts: vec![],
                     timeseries_payload: Default::default(),

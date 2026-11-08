@@ -39,7 +39,9 @@ export type NormalizedTickFrame = {
   readonly tick: number;
   readonly events: readonly CodedEvent[];
   readonly facts: readonly CodedEventFact[];
+  readonly factTicks?: readonly number[];
   readonly continuousPoints: Readonly<Record<string, ContinuousPoint>>;
+  readonly continuousSamples?: Readonly<Record<string, readonly { readonly point: ContinuousPoint; readonly candle: CodedSnapshot["active_daily_candles"][string] }[]>>;
   readonly auctionPoints: Readonly<Record<string, readonly CodedAuctionPoint[]>>;
   readonly closedDailyCandles: CodedSnapshot["active_daily_candles"];
   readonly activeDailyCandles: CodedSnapshot["active_daily_candles"];

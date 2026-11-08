@@ -357,10 +357,11 @@ fn disconnected_consumer_delivers_fixed_prefix_before_fatal() {
     let (input, receiver) = std::sync::mpsc::channel();
     drop(receiver);
     let (sender, output) = std::sync::mpsc::channel();
-    assert!(sender.send(Ok(first)).is_ok());
+    assert!(sender.send((1, Ok(first))).is_ok());
     drop(sender);
     harness.actor.consumer = Some(TickConsumer {
         input: Some(input),
+        slot: None,
         output,
         worker: None,
     });
@@ -493,4 +494,39 @@ fn producer_failure_redacts_real_bare_amount_overflow_operands() {
         "公司会计金额运算溢出（操作数已脱敏）"
     );
     assert!(value["cause"]["cause"]["cause"].is_null());
+}
+
+#[test]
+fn disconnected_output_publishes_consumed_prefix_before_error() {
+    use tauri::Listener;
+    let mut setup = super::tests::diagnostic_setup();
+    setup.start_date = engine::CivilDate::from_iso("2030-01-02").unwrap();
+    let game = ProtocolSession::new(setup, 7).unwrap();
+    let mut harness =
+        ActorHarness::new_protocol_actor(game, false, PausePreferences::default(), "prefix", "one");
+    let (events_tx, mut events_rx) = mpsc::unbounded_channel();
+    harness.app.listen(crate::ENGINE_EVENT_NAME, move |event| {
+        events_tx.send(event.payload().to_owned()).unwrap();
+    });
+    let first = harness
+        .actor
+        .game
+        .advance_core_tick()
+        .unwrap()
+        .consume()
+        .unwrap();
+    let _second = harness.actor.game.advance_core_tick().unwrap();
+    let (sender, output) = std::sync::mpsc::channel();
+    sender.send((1, Ok(first))).unwrap();
+    drop(sender);
+    harness.actor.consumer = Some(TickConsumer {
+        input: None,
+        slot: None,
+        output,
+        worker: None,
+    });
+    harness.actor.pending_ticks = 2;
+    assert!(harness.actor.collect_consumed(true).is_err());
+    let payload: serde_json::Value = serde_json::from_str(&events_rx.try_recv().unwrap()).unwrap();
+    assert_eq!(payload["update"]["TickBatch"]["frames"][0]["tick"], 1);
 }

@@ -48,7 +48,6 @@ pub const BASE_TICK_MS: u64 = 1000;
 const FASTEST_BATCH_BUDGET: Duration = Duration::from_millis(14);
 const FASTEST_BATCH_MAX_STEPS: usize = 100_000;
 const UI_PUBLISH_INTERVAL: Duration = Duration::from_millis(16);
-const MAX_PENDING_TICKS: usize = 8;
 const SPEED_SAMPLE_MIN_DURATION: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -1022,11 +1021,18 @@ struct StepFailureCapture {
     frames: Vec<engine::session::protocol::TickFrame>,
 }
 
+type IntervalSlot = Arc<std::sync::Mutex<Option<engine::session::protocol::DeferredInterval>>>;
+enum ConsumerInput {
+    Interval(IntervalSlot),
+}
+
 struct TickConsumer {
-    input: Option<std::sync::mpsc::Sender<engine::session::protocol::DeferredTick>>,
-    output: std::sync::mpsc::Receiver<
+    input: Option<std::sync::mpsc::Sender<ConsumerInput>>,
+    slot: Option<IntervalSlot>,
+    output: std::sync::mpsc::Receiver<(
+        usize,
         Result<engine::session::protocol::ConsumedTick, engine::session::StepFatal>,
-    >,
+    )>,
     worker: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -1039,9 +1045,10 @@ fn consumer_failure(description: impl Into<String>) -> engine::session::StepFata
 
 struct ConsumerWakeOnExit {
     sender: Option<
-        std::sync::mpsc::Sender<
+        std::sync::mpsc::Sender<(
+            usize,
             Result<engine::session::protocol::ConsumedTick, engine::session::StepFatal>,
-        >,
+        )>,
     >,
     notify: Arc<tokio::sync::Notify>,
 }
@@ -1182,8 +1189,7 @@ impl<R: Runtime> SessionActor<R> {
         if self.consumer.is_some() {
             return Ok(());
         }
-        let (input, receiver) =
-            std::sync::mpsc::channel::<engine::session::protocol::DeferredTick>();
+        let (input, receiver) = std::sync::mpsc::channel::<ConsumerInput>();
         let (sender, output) = std::sync::mpsc::channel();
         let notify = Arc::clone(&self.consumer_notify);
         #[cfg(test)]
@@ -1197,19 +1203,27 @@ impl<R: Runtime> SessionActor<R> {
                 };
                 #[cfg(test)]
                 let mut gate = gate;
-                for deferred in receiver {
+                for item in receiver {
                     #[cfg(test)]
                     if let Some((entered, release)) = gate.take() {
                         entered.send(()).expect("测试必须接收消费者进入通知");
                         release.recv().expect("测试必须释放消费者");
                     }
-                    let result = deferred.consume();
+                    let (count, result) = match item {
+                        ConsumerInput::Interval(slot) => {
+                            let Some(interval) = slot.lock().expect("外围槽锁不可损坏").take()
+                            else {
+                                break;
+                            };
+                            (interval.len(), interval.consume())
+                        }
+                    };
                     let failed = result.is_err();
                     let sent = wake_on_exit
                         .sender
                         .as_ref()
                         .expect("消费者输出必须存在")
-                        .send(result)
+                        .send((count, result))
                         .is_ok();
                     notify.notify_one();
                     if !sent || failed {
@@ -1220,6 +1234,7 @@ impl<R: Runtime> SessionActor<R> {
             .map_err(|error| consumer_failure(format!("无法启动外围消费者：{error}")))?;
         self.consumer = Some(TickConsumer {
             input: Some(input),
+            slot: None,
             output,
             worker: Some(worker),
         });
@@ -1246,11 +1261,11 @@ impl<R: Runtime> SessionActor<R> {
                     Err(error) => Err(consumer_failure(format!("外围消费者退出：{error}"))),
                 }
             };
-            self.pending_ticks -= 1;
-            match received
-                .and_then(|result| result)
-                .and_then(|consumed| self.game.record_consumed_tick(consumed))
-            {
+            let result = received.and_then(|(count, result)| {
+                self.pending_ticks -= count;
+                result
+            });
+            match result.and_then(|consumed| self.game.record_consumed_interval(consumed)) {
                 Ok(frame) => {
                     #[cfg(test)]
                     if let Some((_, _, capture)) = &self.injected_step_failure {
@@ -1388,22 +1403,41 @@ impl<R: Runtime> SessionActor<R> {
 
     fn run_cycle(&mut self, limit: usize) {
         let fixed = !self.pacing.is_fastest() && limit > 0;
-        if fixed {
-            self.fixed_batches.push_back((0, false));
-        }
         self.run_cycle_inner(limit, fixed);
         if fixed {
             self.finish_fixed_batch();
         }
     }
 
-    fn finish_fixed_batch(&mut self) {
-        if let Some(batch) = self.fixed_batches.back_mut() {
-            batch.1 = true;
+    fn finish_fixed_batch(&mut self) {}
+
+    fn queue_tick(
+        &mut self,
+        deferred: engine::session::protocol::DeferredTick,
+    ) -> Result<(), engine::session::StepFatal> {
+        self.start_consumer()?;
+        let consumer = self.consumer.as_mut().expect("消费者刚刚创建");
+        let input = consumer.input.as_ref().expect("消费者仍在运行");
+        let mut deferred = Some(deferred);
+        if let Some(slot) = &consumer.slot {
+            let mut value = slot
+                .lock()
+                .map_err(|error| consumer_failure(format!("外围槽锁损坏：{error}")))?;
+            if let Some(interval) = value.as_mut() {
+                interval.push(deferred.take().unwrap())?;
+            }
         }
-        if let Err(error) = self.queue_consumed_frames(Vec::new()) {
-            self.stop_after_step_failure(error);
+        if let Some(deferred) = deferred {
+            let mut interval = engine::session::protocol::DeferredInterval::new();
+            interval.push(deferred)?;
+            let slot = Arc::new(std::sync::Mutex::new(Some(interval)));
+            input
+                .send(ConsumerInput::Interval(Arc::clone(&slot)))
+                .map_err(|error| consumer_failure(format!("外围消费者接收失败：{error}")))?;
+            consumer.slot = Some(slot);
         }
+        self.pending_ticks += 1;
+        Ok(())
     }
 
     fn run_cycle_inner(&mut self, limit: usize, fixed: bool) {
@@ -1466,11 +1500,6 @@ impl<R: Runtime> SessionActor<R> {
                 }
                 *remaining -= 1;
             }
-            if self.pending_ticks == MAX_PENDING_TICKS
-                && (!self.drain_consumed() || self.cmd_rx.is_closed())
-            {
-                return;
-            }
             if let Err(error) = self.start_consumer() {
                 self.stop_after_step_failure(error);
                 return;
@@ -1494,38 +1523,18 @@ impl<R: Runtime> SessionActor<R> {
                     return;
                 }
             };
-            let consumer = self.consumer.as_ref().unwrap();
-            if let Err(error) = consumer.input.as_ref().unwrap().send(deferred) {
-                let mut failure =
-                    HostFailure::step(consumer_failure(format!("无法提交已完成 tick：{error}")));
-                failure.message.push_str(&format!(
-                    "；tick {} 已提交但未交付，内存事实保留供诊断，请重新打开有效日终档或新局",
-                    self.game.tick()
-                ));
-                if fixed {
-                    if let Some(batch) = self.fixed_batches.back_mut() {
-                        batch.1 = true;
-                    }
+            let queued = self.queue_tick(deferred);
+            if let Err(error) = queued {
+                if let Err(prefix_error) = self.collect_consumed(true) {
+                    let mut failure = HostFailure::step(error);
+                    failure
+                        .message
+                        .push_str(&format!("；成功前缀交付失败：{prefix_error}"));
+                    self.stop_after_host_failure(failure);
+                } else {
+                    self.stop_after_step_failure(error);
                 }
-                let prefix_result = self
-                    .queue_consumed_frames(Vec::new())
-                    .and_then(|_| self.collect_consumed(true));
-                if let Err(prefix_error) = prefix_result {
-                    eprintln!(
-                        "[session {}] 发送失败后的成功前缀无法交付：{prefix_error:?}",
-                        self.session_id
-                    );
-                    failure.message.push_str("；先前已提交前缀未能全部交付");
-                }
-                self.stop_after_host_failure(failure);
                 return;
-            }
-            self.pending_ticks += 1;
-            if fixed {
-                self.fixed_batches
-                    .back_mut()
-                    .expect("固定倍率批次必须存在")
-                    .0 += 1;
             }
             steps += 1;
         }

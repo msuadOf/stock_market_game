@@ -32,6 +32,7 @@ export function validateFacts(
   from: number,
   to: number,
   where: string,
+  factTicks?: readonly number[],
 ): void {
   // 单批事实记录是唯一权威：seq 覆盖、key 与事件变体映射、身份唯一都在同一集合上校验；
   // 不再对 canonical payload 做第二份序列化比对（架构项 #6）。
@@ -40,10 +41,11 @@ export function validateFacts(
   }
   const identities = new Set<string>();
   const seqs = new Set<number>();
-  for (const fact of facts) {
+  for (const [index, fact] of facts.entries()) {
+    const identity = `${factTicks?.[index] ?? ""}\u0000${factIdentity(fact)}`;
     const seq = eventSeq(fact.event);
     if (
-      identities.has(factIdentity(fact))
+      identities.has(identity)
       || seq <= from
       || seq > to
       || seqs.has(seq)
@@ -51,13 +53,26 @@ export function validateFacts(
     ) {
       malformed(where, "事实身份、稳定键或 seq 覆盖不匹配");
     }
-    identities.add(factIdentity(fact));
+    identities.add(identity);
     seqs.add(seq);
   }
 }
 
 export function validateFrame(frame: WireTickFrame, where = "protocol.frame"): void {
-  validateFacts(frame.facts, frame.seq_from, frame.seq_to, where);
+  const first = frame.tick_from ?? frame.tick;
+  if (first > frame.tick) malformed(where, "tick 区间起点不得晚于终点");
+  if (frame.fact_ticks !== undefined && (frame.fact_ticks.length !== frame.facts.length || frame.fact_ticks.some((tick, index, ticks) => tick < first || tick > frame.tick || (index > 0 && tick < ticks[index - 1]!)))) malformed(where, "fact_ticks 必须与事实逐一对应、位于区间内且非递减");
+  if (first !== frame.tick && frame.fact_ticks === undefined && frame.facts.length > 0) malformed(where, "区间事实缺少 fact_ticks");
+  validateFacts(frame.facts, frame.seq_from, frame.seq_to, where, frame.fact_ticks);
+  for (const [code, samples] of Object.entries(frame.timeseries_payload.continuous_samples ?? {})) {
+    const final = samples.at(-1);
+    if (final === undefined || canonicalJson(final.point) !== canonicalJson(frame.timeseries_payload.continuous_points[code])) malformed(where, "continuous_samples 末点必须匹配 continuous_points");
+    let previous = first - 1;
+    for (const { point } of samples) {
+      if (point.tick <= previous || point.tick > frame.tick) malformed(where, "continuous_samples 的 tick 必须在区间内严格递增");
+      previous = point.tick;
+    }
+  }
 }
 
 export function validateTickBatch(batch: Extract<WireEngineUpdate, { TickBatch: unknown }>["TickBatch"]): void {
@@ -66,7 +81,7 @@ export function validateTickBatch(batch: Extract<WireEngineUpdate, { TickBatch: 
     validateFrame(frame, `protocol.tick-batch.frames[${index}]`);
     if (index > 0) {
       const previous = batch.frames[index - 1];
-      if (previous === undefined || previous.tick + 1 !== frame.tick || previous.seq_to !== frame.seq_from) {
+      if (previous === undefined || previous.tick + 1 !== (frame.tick_from ?? frame.tick) || previous.seq_to !== frame.seq_from) {
         malformed(`protocol.tick-batch.frames[${index}]`, "TickBatch 的 tick 与 seq 必须连续");
       }
     }
@@ -147,16 +162,13 @@ export function validateCivilUpdate(update: WireCivilUpdate, identity: CatalogRe
     }
   }
   if (update.kinds.includes("AfterClose")) {
-    if (update.refresh.intraday.length !== update.refresh.ticks_per_day) {
-      malformed("protocol.civil.refresh.intraday", "收盘屏障必须保留完整日内帧");
-    }
     validateFrames(update.refresh.intraday, "protocol.civil.refresh.intraday");
     const finalFrame = update.refresh.intraday.at(-1);
     const firstFrame = update.refresh.intraday[0];
     const expectedFirstTick = update.tick - update.refresh.ticks_per_day + 1;
     if (
       firstFrame === undefined
-      || firstFrame.tick !== expectedFirstTick
+      || (firstFrame.tick_from ?? firstFrame.tick) !== expectedFirstTick
       || finalFrame === undefined
       || finalFrame.tick !== update.tick
       || finalFrame.seq_to !== update.seq_from
@@ -174,7 +186,7 @@ function validateFrames(frames: readonly WireTickFrame[], where: string): void {
     validateFrame(frame, `${where}[${index}]`);
     if (index > 0) {
       const previous = frames[index - 1];
-      if (previous === undefined || previous.tick + 1 !== frame.tick || previous.seq_to !== frame.seq_from) {
+      if (previous === undefined || previous.tick + 1 !== (frame.tick_from ?? frame.tick) || previous.seq_to !== frame.seq_from) {
         malformed(`${where}[${index}]`, "帧序列的 tick 与 seq 必须连续");
       }
     }
@@ -216,8 +228,10 @@ export function canonicalEngineUpdate(update: WireEngineUpdate): string {
 }
 
 function canonicalFrame(frame: WireTickFrame): WireTickFrame {
+  const pairs = frame.facts.map((fact, index) => ({ fact, tick: frame.fact_ticks?.[index] })).sort((left, right) => (left.tick ?? frame.tick) - (right.tick ?? frame.tick) || factIdentity(left.fact).localeCompare(factIdentity(right.fact)));
   return {
     ...frame,
-    facts: [...frame.facts].sort((left, right) => factIdentity(left).localeCompare(factIdentity(right))),
+    facts: pairs.map(pair => pair.fact),
+    ...(frame.fact_ticks === undefined ? {} : { fact_ticks: pairs.map(pair => pair.tick!) }),
   };
 }

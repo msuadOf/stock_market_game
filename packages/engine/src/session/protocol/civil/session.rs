@@ -160,9 +160,165 @@ pub struct ConsumedTick {
     frame: TickFrame,
     runtime: ConsumedRuntime,
     identity: Arc<std::sync::OnceLock<StepFatal>>,
+    interval_parts: Vec<(u64, u64, u64, usize, Arc<std::sync::OnceLock<StepFatal>>)>,
+}
+
+/// 不借用核心 owner 的可合并外围区间；只保留末版 projection。
+pub struct DeferredInterval {
+    last: Option<DeferredTick>,
+    facts: Vec<super::super::EventFact>,
+    fact_ticks: Vec<u64>,
+    parts: Vec<(u64, u64, u64, usize, Arc<std::sync::OnceLock<StepFatal>>)>,
+    samples: BTreeMap<crate::StockId, Vec<super::super::ContinuousSample>>,
+}
+
+impl DeferredInterval {
+    pub fn new() -> Self {
+        Self {
+            last: None,
+            facts: Vec::new(),
+            fact_ticks: Vec::new(),
+            parts: Vec::new(),
+            samples: BTreeMap::new(),
+        }
+    }
+    pub fn len(&self) -> usize {
+        self.parts.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.parts.is_empty()
+    }
+    pub fn push(&mut self, mut tick: DeferredTick) -> Result<(), StepFatal> {
+        let result = (|| {
+            if let Some(last) = &self.last {
+                if last.tick.checked_add(1) != Some(tick.tick) || last.seq_to != tick.seq_from {
+                    return Err(StepFatal::InvariantViolation {
+                        location: "DeferredInterval::push".into(),
+                        description: "tick 或 seq 区间不连续".into(),
+                    });
+                }
+            }
+            super::super::facts::validate_facts(&tick.facts).map_err(protocol_fatal)?;
+            super::super::validate_sequence(
+                tick.facts.iter().map(|fact| fact.event.seq()),
+                tick.facts.len(),
+                tick.seq_from,
+                tick.seq_to,
+            )
+            .map_err(protocol_fatal)?;
+            if let DeferredProjection::Light(_) = &tick.projection {
+                if tick.publication.is_none() || tick.id_map.is_none() || tick.config.is_none() {
+                    return Err(StepFatal::InvariantViolation {
+                        location: "DeferredInterval::push".into(),
+                        description: "缺少外围投影依赖".into(),
+                    });
+                }
+            }
+            Ok(())
+        })();
+        if let Err(error) = result {
+            let _ = tick.identity.set(error.clone());
+            return Err(error);
+        }
+        for fact in &tick.facts {
+            if let crate::Event::PriceTick {
+                code,
+                tick,
+                last_price,
+                daily_candle,
+                bids,
+                asks,
+                ..
+            } = &fact.event
+            {
+                self.samples
+                    .entry(*code)
+                    .or_default()
+                    .push(super::super::ContinuousSample {
+                        point: super::super::ContinuousPoint {
+                            tick: *tick,
+                            phase: crate::TradingPhase::Continuous,
+                            last_price: *last_price,
+                            cumulative_volume: daily_candle.volume,
+                            bids: bids.clone(),
+                            asks: asks.clone(),
+                        },
+                        candle: daily_candle.clone(),
+                    });
+            }
+        }
+        self.fact_ticks
+            .extend(std::iter::repeat_n(tick.tick, tick.facts.len()));
+        self.parts.push((
+            tick.tick,
+            tick.seq_from,
+            tick.seq_to,
+            tick.facts.len(),
+            Arc::clone(&tick.identity),
+        ));
+        self.facts.append(&mut tick.facts);
+        self.last = Some(tick);
+        Ok(())
+    }
+    pub fn consume(mut self) -> Result<ConsumedTick, StepFatal> {
+        let mut last = self
+            .last
+            .take()
+            .ok_or_else(|| StepFatal::InvariantViolation {
+                location: "DeferredInterval::consume".into(),
+                description: "空 tick 区间".into(),
+            })?;
+        last.facts = self.facts;
+        last.seq_from = self.parts[0].1;
+        let mut consumed =
+            last.consume_interval_inner(self.parts[0].0, self.fact_ticks, self.samples)?;
+        consumed.interval_parts = self.parts;
+        Ok(consumed)
+    }
+}
+impl Default for DeferredInterval {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl DeferredTick {
+    /// 在外围投影前合并连续 tick，保留事实原 tick 与采样。
+    pub fn consume_interval(ticks: Vec<Self>) -> Result<ConsumedTick, StepFatal> {
+        let mut interval = DeferredInterval::new();
+        for tick in ticks {
+            interval.push(tick)?;
+        }
+        interval.consume()
+    }
+
+    fn consume_interval_inner(
+        mut self,
+        first_tick: u64,
+        fact_ticks: Vec<u64>,
+        samples: BTreeMap<crate::StockId, Vec<super::super::ContinuousSample>>,
+    ) -> Result<ConsumedTick, StepFatal> {
+        // 逐拍事实已在合并前独立校验；暂时取出事实，避免单拍校验跨 tick identity。
+        let facts = std::mem::take(&mut self.facts);
+        let seq_from = self.seq_from;
+        self.seq_from = self.seq_to;
+        let mut consumed = self.consume()?;
+        consumed.frame.facts = facts;
+        consumed.frame.seq_from = seq_from;
+        consumed.frame.tick_from = Some(first_tick);
+        consumed.frame.fact_ticks = Some(fact_ticks);
+        // 汇总投影只扫描一次事实；末态来自最后一个提交版本。
+        let mut payload = super::super::project_timeseries_parts(
+            &consumed.frame.facts,
+            std::mem::take(&mut consumed.frame.timeseries_payload.markets),
+            std::mem::take(&mut consumed.frame.timeseries_payload.active_daily_candles),
+        );
+        payload.continuous_samples = Some(samples);
+        consumed.frame.timeseries_payload = payload;
+        consumed.frame.validate().map_err(protocol_fatal)?;
+        Ok(consumed)
+    }
+
     /// 从已提交输入构造 frame，不借用核心 owner。
     pub fn consume(self) -> Result<ConsumedTick, StepFatal> {
         let identity = Arc::clone(&self.identity);
@@ -224,6 +380,8 @@ impl DeferredTick {
                     light.active,
                 );
                 let frame = TickFrame {
+                    tick_from: None,
+                    fact_ticks: None,
                     tick: self.tick,
                     seq_from: self.seq_from,
                     seq_to: self.seq_to,
@@ -235,6 +393,7 @@ impl DeferredTick {
                     frame,
                     runtime: ConsumedRuntime::Light(runtime),
                     identity: self.identity,
+                    interval_parts: Vec::new(),
                 });
             }
         };
@@ -317,6 +476,8 @@ impl DeferredTick {
         }
         let timeseries_payload = super::super::project_timeseries(&self.facts, snapshot);
         let frame = TickFrame {
+            tick_from: None,
+            fact_ticks: None,
             tick: self.tick,
             seq_from: self.seq_from,
             seq_to: self.seq_to,
@@ -333,6 +494,7 @@ impl DeferredTick {
                 }
             })?),
             identity: self.identity,
+            interval_parts: Vec::new(),
         })
     }
 }
@@ -894,6 +1056,75 @@ impl ProtocolSession {
             .pending_runtime
             .insert(deferred.tick, Arc::clone(&deferred.identity));
         Ok(deferred)
+    }
+
+    /// 按原 tick 顺序登记区间，并只保留一次末版外围状态。
+    pub fn record_consumed_interval(
+        &mut self,
+        consumed: ConsumedTick,
+    ) -> Result<TickFrame, StepFatal> {
+        let identity = Arc::clone(&consumed.identity);
+        let result = self.record_consumed_interval_inner(consumed);
+        if let Err(error) = &result {
+            let _ = identity.set(error.clone());
+        }
+        result
+    }
+
+    fn record_consumed_interval_inner(
+        &mut self,
+        mut consumed: ConsumedTick,
+    ) -> Result<TickFrame, StepFatal> {
+        if consumed.interval_parts.is_empty() {
+            return self.record_consumed_tick(consumed);
+        }
+        if let Some(fatal) = self
+            .state
+            .committed_light_runtime
+            .as_ref()
+            .and_then(|value| value.identity.get())
+        {
+            return Err(fatal.clone());
+        }
+        let mut cursor = self.state.fact_cursor.clone();
+        let mut offset = 0;
+        let mut pending = self.state.pending_runtime.iter();
+        for (tick, _, _, len, identity) in &consumed.interval_parts {
+            if let Some(fatal) = identity.get() {
+                return Err(fatal.clone());
+            }
+            if !pending.next().is_some_and(|(expected, candidate)| {
+                expected == tick && Arc::ptr_eq(candidate, identity)
+            }) {
+                return Err(StepFatal::InvariantViolation {
+                    location: "ProtocolSession::record_consumed_interval".into(),
+                    description: "外围结果不是本会话连续待登记区间".into(),
+                });
+            }
+            cursor.begin_tick(*tick);
+            cursor
+                .record_committed_facts(&consumed.frame.facts[offset..offset + len])
+                .map_err(protocol_fatal)?;
+            offset += len;
+        }
+        drop(pending);
+        for (tick, _, _, _, _) in &consumed.interval_parts {
+            self.state.pending_runtime.remove(tick);
+        }
+        self.state.fact_cursor = cursor;
+        self.state.intraday.push(Arc::new(consumed.frame.clone()));
+        match consumed.runtime {
+            ConsumedRuntime::Full(runtime) => {
+                self.state.committed_runtime = Some(runtime);
+                self.state.committed_light_runtime = None;
+            }
+            ConsumedRuntime::Light(runtime) => {
+                self.state.committed_runtime = None;
+                self.state.committed_light_runtime = Some(runtime);
+            }
+        }
+        consumed.interval_parts.clear();
+        Ok(consumed.frame)
     }
 
     /// 顺序登记已完成的同版外围结果，供日界和宿主发布使用。

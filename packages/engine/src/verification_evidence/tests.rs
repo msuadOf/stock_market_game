@@ -72,6 +72,8 @@ fn assert_versioned_evidence_runtime_numbers_are_decimal_strings(value: &Value) 
 #[test]
 fn quiet_committed_tick_preserves_zero_interval_and_empty_sum_conservation() {
     let quiet = TickFrame {
+        tick_from: None,
+        fact_ticks: None,
         tick: 1,
         facts: Vec::new(),
         timeseries_payload: TickTimeseriesPayload::default(),
@@ -86,6 +88,8 @@ fn quiet_committed_tick_preserves_zero_interval_and_empty_sum_conservation() {
     assert_eq!((projected.seq_from, projected.seq_to), (1, 0));
     assert!(projected.events.is_empty());
     let second = TickFrame {
+        tick_from: None,
+        fact_ticks: None,
         tick: 2,
         ..quiet.clone()
     };
@@ -576,6 +580,8 @@ fn candle() -> DailyCandle {
 fn frame(events: Vec<Event>) -> TickFrame {
     let seq_to = u64::try_from(events.len()).unwrap();
     TickFrame {
+        tick_from: None,
+        fact_ticks: None,
         tick: 5,
         facts: fixture_facts(&events).unwrap(),
         timeseries_payload: TickTimeseriesPayload::default(),
@@ -943,6 +949,8 @@ fn tick_before_civil(stock: &StockId) -> TickFrame {
         announcement_event(3, u32::MAX - 1),
     ];
     let frame = TickFrame {
+        tick_from: None,
+        fact_ticks: None,
         tick: 5,
         facts: fixture_facts(&events).unwrap(),
         timeseries_payload: TickTimeseriesPayload::default(),
@@ -1103,6 +1111,8 @@ fn stateful_update_stream_projection_resets_ordinal_domains_on_the_next_tick() {
     let first = frame(vec![announcement_event(1, 10)]);
     let events = vec![announcement_event(2, 10)];
     let second = TickFrame {
+        tick_from: None,
+        fact_ticks: None,
         tick: 6,
         facts: fixture_facts(&events).unwrap(),
         timeseries_payload: TickTimeseriesPayload::default(),
@@ -1312,6 +1322,7 @@ fn every_runtime_integer_projection_uses_canonical_decimal_strings() {
     ));
 
     let timeseries = TickTimeseriesPayload {
+        continuous_samples: None,
         markets: BTreeMap::from([(
             code,
             MarketSnap {

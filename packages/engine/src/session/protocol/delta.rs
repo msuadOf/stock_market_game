@@ -264,7 +264,8 @@ impl PublicRuntimeState {
             .ok_or_else(|| fatal(ProtocolError::EmptyBatch))?;
         let current = self;
         if previous.is_some_and(|before| {
-            before.seq != first.seq_from || before.tick.checked_add(1) != Some(first.tick)
+            before.seq != first.seq_from
+                || before.tick.checked_add(1) != Some(first.tick_from.unwrap_or(first.tick))
         }) {
             return Err(fatal(ProtocolError::RuntimeDeltaMismatch));
         }

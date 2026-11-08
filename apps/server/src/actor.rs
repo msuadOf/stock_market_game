@@ -521,7 +521,6 @@ impl ServerPacing {
 /// 广播事件通道容量：留足缓冲以应对慢消费者短时积压；超过则 broadcast 丢旧（lagged），
 /// 订阅者靠 `seq` 检测缺口后拉快照对齐（ADR-0005 §6）。
 const EVENT_CHANNEL_CAPACITY: usize = 1024;
-const MAX_PENDING_TICKS: usize = 8;
 
 /// 草稿阶段固定保留两局的容纳能力；当前开发与验收集中于单局市场。
 const MAX_SESSIONS: usize = 2;
@@ -2034,11 +2033,18 @@ static CONSUMER_BLOCK_PROBE: std::sync::Mutex<Option<Arc<ConsumerBlockProbe>>> =
 #[cfg(test)]
 static CONSUMER_PROBE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+type IntervalSlot = Arc<std::sync::Mutex<Option<engine::session::protocol::DeferredInterval>>>;
+enum ConsumerInput {
+    Interval(IntervalSlot),
+}
+
 struct TickConsumer {
-    input: Option<std::sync::mpsc::Sender<engine::session::protocol::DeferredTick>>,
-    output: std::sync::mpsc::Receiver<
+    input: Option<std::sync::mpsc::Sender<ConsumerInput>>,
+    slot: Option<IntervalSlot>,
+    output: std::sync::mpsc::Receiver<(
+        usize,
         Result<engine::session::protocol::ConsumedTick, engine::session::StepFatal>,
-    >,
+    )>,
     pending: usize,
     worker: Option<std::thread::JoinHandle<()>>,
     cancelled: Arc<std::sync::atomic::AtomicBool>,
@@ -2047,9 +2053,10 @@ struct TickConsumer {
 
 struct ConsumerWakeOnExit {
     sender: Option<
-        std::sync::mpsc::Sender<
+        std::sync::mpsc::Sender<(
+            usize,
             Result<engine::session::protocol::ConsumedTick, engine::session::StepFatal>,
-        >,
+        )>,
     >,
     notify: Arc<tokio::sync::Notify>,
 }
@@ -2070,8 +2077,7 @@ fn consumer_failure(description: impl Into<String>) -> engine::session::StepFata
 
 impl TickConsumer {
     fn start(session_id: &str) -> Result<Self, engine::session::StepFatal> {
-        let (input, receiver) =
-            std::sync::mpsc::channel::<engine::session::protocol::DeferredTick>();
+        let (input, receiver) = std::sync::mpsc::channel::<ConsumerInput>();
         let (sender, output) = std::sync::mpsc::channel();
         let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let worker_cancelled = Arc::clone(&cancelled);
@@ -2094,7 +2100,7 @@ impl TickConsumer {
                 };
                 #[cfg(test)]
                 let mut first = true;
-                for deferred in receiver {
+                for item in receiver {
                     if worker_cancelled.load(Ordering::SeqCst) {
                         break;
                     }
@@ -2106,13 +2112,21 @@ impl TickConsumer {
                             probe.release.lock().unwrap().recv().unwrap();
                         }
                     }
-                    let result = deferred.consume();
+                    let (count, result) = match item {
+                        ConsumerInput::Interval(slot) => {
+                            let Some(interval) = slot.lock().expect("外围槽锁不可损坏").take()
+                            else {
+                                break;
+                            };
+                            (interval.len(), interval.consume())
+                        }
+                    };
                     let failed = result.is_err();
                     let sent = wake_on_exit
                         .sender
                         .as_ref()
                         .expect("消费者发送端存在")
-                        .send(result);
+                        .send((count, result));
                     worker_notify.notify_one();
                     if sent.is_err() || failed {
                         break;
@@ -2122,6 +2136,7 @@ impl TickConsumer {
             .map_err(|error| consumer_failure(format!("无法启动外围消费者：{error}")))?;
         Ok(Self {
             input: Some(input),
+            slot: None,
             output,
             pending: 0,
             worker: Some(worker),
@@ -2195,12 +2210,25 @@ impl SessionActor {
             self.consumer = Some(TickConsumer::start(&self.session_id)?);
         }
         let consumer = self.consumer.as_mut().expect("消费者刚刚创建");
-        consumer
-            .input
-            .as_ref()
-            .expect("消费者仍在运行")
-            .send(deferred)
-            .map_err(|error| consumer_failure(format!("外围消费者接收失败：{error}")))?;
+        let input = consumer.input.as_ref().expect("消费者仍在运行");
+        let mut deferred = Some(deferred);
+        if let Some(slot) = &consumer.slot {
+            let mut value = slot
+                .lock()
+                .map_err(|error| consumer_failure(format!("外围槽锁损坏：{error}")))?;
+            if let Some(interval) = value.as_mut() {
+                interval.push(deferred.take().unwrap())?;
+            }
+        }
+        if let Some(deferred) = deferred {
+            let mut interval = engine::session::protocol::DeferredInterval::new();
+            interval.push(deferred)?;
+            let slot = Arc::new(std::sync::Mutex::new(Some(interval)));
+            input
+                .send(ConsumerInput::Interval(Arc::clone(&slot)))
+                .map_err(|error| consumer_failure(format!("外围消费者接收失败：{error}")))?;
+            consumer.slot = Some(slot);
+        }
         consumer.pending += 1;
         Ok(())
     }
@@ -2219,31 +2247,8 @@ impl SessionActor {
         Ok(())
     }
 
-    fn queue_consumed_frames(
-        &mut self,
-        frame: engine::session::protocol::TickFrame,
-    ) -> Result<(), engine::session::StepFatal> {
-        self.fixed_frames.push(frame);
-        self.publish_closed_fixed_batches()
-    }
-
-    fn publish_closed_fixed_batches(&mut self) -> Result<(), engine::session::StepFatal> {
-        while let Some(&(count, closed)) = self.fixed_batches.front() {
-            if !closed || self.fixed_frames.len() < count {
-                break;
-            }
-            self.fixed_batches.pop_front();
-            let frames: Vec<_> = self.fixed_frames.drain(..count).collect();
-            self.publish_tick_frames(frames)?;
-        }
-        Ok(())
-    }
-
     fn finish_fixed_batch(&mut self) -> Result<(), engine::session::StepFatal> {
-        if let Some(batch) = self.fixed_batches.back_mut() {
-            batch.1 = true;
-        }
-        self.publish_closed_fixed_batches()
+        Ok(())
     }
 
     fn collect_ticks(&mut self, wait: bool) -> Result<(), engine::session::StepFatal> {
@@ -2265,15 +2270,15 @@ impl SessionActor {
                     Err(error) => Err(consumer_failure(format!("外围消费者中断：{error}"))),
                 }
             };
-            let result = match received {
+            let (count, result) = match received {
                 Ok(result) => result,
                 Err(error) => {
                     failure = Some(error);
                     break;
                 }
             };
-            consumer.pending -= 1;
-            let frame = match result.and_then(|result| self.game.record_consumed_tick(result)) {
+            consumer.pending -= count;
+            let frame = match result.and_then(|result| self.game.record_consumed_interval(result)) {
                 Ok(frame) => frame,
                 Err(error) => {
                     failure = Some(error);
@@ -2284,11 +2289,7 @@ impl SessionActor {
             if let Some((_, _, capture)) = &self.injected_step_failure {
                 capture.lock().unwrap().frames.push(frame.clone());
             }
-            if self.fixed_batches.is_empty() {
-                frames.push(frame);
-            } else {
-                self.queue_consumed_frames(frame)?;
-            }
+            frames.push(frame);
         }
         self.publish_tick_frames(frames)?;
         if let Some(error) = failure {
@@ -2435,9 +2436,6 @@ impl SessionActor {
 
     fn run_protocol_batch(&mut self, limit: usize) {
         let fixed = !self.pacing.is_fastest() && limit > 0;
-        if fixed {
-            self.fixed_batches.push_back((0, false));
-        }
         self.run_protocol_batch_inner(limit, fixed);
         if fixed {
             if let Err(error) = self.finish_fixed_batch() {
@@ -2465,16 +2463,6 @@ impl SessionActor {
             // Return to the biased command branch at the first tick boundary.
             if limit > 1 && !self.cmd_rx.is_empty() {
                 break;
-            }
-            if self
-                .consumer
-                .as_ref()
-                .is_some_and(|consumer| consumer.pending >= MAX_PENDING_TICKS)
-            {
-                if let Err(error) = self.collect_ticks(true) {
-                    self.stop_with_failure(HostFailure::step(&error));
-                    return;
-                }
             }
             match self.game.civil_day_ready() {
                 Ok(true) => {
@@ -2514,7 +2502,8 @@ impl SessionActor {
                     return;
                 }
             };
-            if let Err(error) = self.queue_tick(deferred) {
+            let queued = self.queue_tick(deferred);
+            if let Err(error) = queued {
                 let mut failure = HostFailure::step(&error);
                 failure
                     .message
@@ -2536,9 +2525,6 @@ impl SessionActor {
                 }
                 self.stop_with_failure(failure);
                 return;
-            }
-            if fixed {
-                self.fixed_batches.back_mut().expect("固定批次存在").0 += 1;
             }
             #[cfg(test)]
             let injecting = self.injected_step_failure.is_some();

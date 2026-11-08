@@ -30,7 +30,13 @@ impl ReplayGuard {
                 batch.validate()?;
                 let first = batch.frames.first().ok_or(ProtocolError::EmptyBatch)?;
                 let last = batch.frames.last().ok_or(ProtocolError::EmptyBatch)?;
-                (first.tick, last.tick, first.seq_from, last.seq_to, false)
+                (
+                    first.tick_from.unwrap_or(first.tick),
+                    last.tick,
+                    first.seq_from,
+                    last.seq_to,
+                    false,
+                )
             }
             EngineUpdate::CivilUpdate(update) => {
                 update.validate()?;
@@ -80,10 +86,25 @@ fn same_facts(left: &[EventFact], right: &[EventFact]) -> bool {
 
 fn same_frame(left: &TickFrame, right: &TickFrame) -> bool {
     left.tick == right.tick
+        && left.tick_from == right.tick_from
+        && left.fact_ticks == right.fact_ticks
         && left.seq_from == right.seq_from
         && left.seq_to == right.seq_to
         && left.timeseries_payload == right.timeseries_payload
-        && same_facts(&left.facts, &right.facts)
+        && if let (Some(left_ticks), Some(right_ticks)) = (&left.fact_ticks, &right.fact_ticks) {
+            let indexed: BTreeMap<_, _> = right_ticks
+                .iter()
+                .zip(&right.facts)
+                .map(|(tick, fact)| ((tick, &fact.key), &fact.event))
+                .collect();
+            left_ticks.iter().zip(&left.facts).all(|(tick, fact)| {
+                indexed
+                    .get(&(tick, &fact.key))
+                    .is_some_and(|event| **event == fact.event)
+            })
+        } else {
+            same_facts(&left.facts, &right.facts)
+        }
 }
 
 fn same_frames(left: &[TickFrame], right: &[TickFrame]) -> bool {

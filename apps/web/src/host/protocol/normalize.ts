@@ -5,11 +5,14 @@ import { codedFactIdentity, type CodedEngineUpdate, type CodedTickFrame, transla
 import { validateEngineUpdate } from "./validate.ts";
 
 function normalizeFrame(frame: CodedTickFrame): NormalizedTickFrame {
+  const sortedFacts = frame.facts.map((fact, index) => ({ fact, tick: frame.fact_ticks?.[index] })).sort((left, right) => (left.tick ?? frame.tick) - (right.tick ?? frame.tick) || codedFactIdentity(left.fact).localeCompare(codedFactIdentity(right.fact)));
   return {
     tick: frame.tick,
     events: frame.facts.map((fact) => fact.event).sort((left, right) => eventSeq(left) - eventSeq(right)),
-    facts: [...frame.facts].sort((left, right) => codedFactIdentity(left).localeCompare(codedFactIdentity(right))),
+    ...(frame.fact_ticks === undefined ? {} : { factTicks: sortedFacts.map(pair => pair.tick!) }),
+    facts: sortedFacts.map(pair => pair.fact),
     continuousPoints: frame.timeseries_payload.continuous_points,
+    ...(frame.timeseries_payload.continuous_samples === undefined ? {} : { continuousSamples: frame.timeseries_payload.continuous_samples }),
     auctionPoints: frame.timeseries_payload.auction_points,
     closedDailyCandles: frame.timeseries_payload.closed_daily_candles,
     activeDailyCandles: frame.timeseries_payload.active_daily_candles,

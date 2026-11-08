@@ -8,6 +8,8 @@ import type { TickTimeseriesPayload } from "./TickTimeseriesPayload";
  * wire 不再重复序列化独立 events 数组。
  */
 export type TickFrame = {
+  tick_from?: number;
+  fact_ticks?: number[];
   tick: number;
   facts: Array<EventFact>;
   timeseries_payload: TickTimeseriesPayload;

@@ -429,8 +429,8 @@ impl GameSession {
                         .ok_or_else(|| format!("玩家账户缺失：{id:?}"))
                 })
                 .collect::<Result<_, _>>()?;
-            let fast = self.state.setup.runtime_sync_policy == crate::RuntimeSyncPolicy::DayEnd
-                && !cfg!(feature = "simulation-diagnostics");
+            // defer_mirror 已明确延迟外围 view；同步策略仍按原路径处理核心与玩家输入。
+            let fast = !cfg!(feature = "simulation-diagnostics");
             if fast {
                 let projection = protocol::LightTickProjection {
                     tick,

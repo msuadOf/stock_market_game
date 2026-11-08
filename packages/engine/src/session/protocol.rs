@@ -41,6 +41,9 @@ pub struct TickTimeseriesPayload {
     pub closed_daily_candles: BTreeMap<StockId, DailyCandle>,
     pub auction_points: BTreeMap<StockId, Vec<AuctionPoint>>,
     pub continuous_points: BTreeMap<StockId, ContinuousPoint>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub continuous_samples: Option<BTreeMap<StockId, Vec<ContinuousSample>>>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
@@ -70,6 +73,13 @@ pub enum AuctionPointKind {
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[ts(export)]
+pub struct ContinuousSample {
+    pub point: ContinuousPoint,
+    pub candle: DailyCandle,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ContinuousPoint {
     #[serde(with = "crate::orderbook::js_safe_u64")]
     #[ts(type = "number")]
@@ -95,6 +105,12 @@ pub struct ContinuousPoint {
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct TickFrame {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number")]
+    pub tick_from: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "number[]")]
+    pub fact_ticks: Option<Vec<u64>>,
     #[serde(with = "crate::orderbook::js_safe_u64")]
     #[ts(type = "number")]
     pub tick: u64,
@@ -126,6 +142,8 @@ impl Clone for TickFrame {
             count.set((frames + 1, facts + self.facts.len()));
         });
         Self {
+            tick_from: self.tick_from,
+            fact_ticks: self.fact_ticks.clone(),
             tick: self.tick,
             facts: self.facts.clone(),
             timeseries_payload: self.timeseries_payload.clone(),
@@ -202,7 +220,30 @@ impl TickFrame {
         if self.tick > crate::orderbook::js_safe_u64::MAX {
             return Err(ProtocolError::TickContinuity { tick: self.tick });
         }
-        facts::validate_facts(&self.facts)?;
+        let from = self.tick_from.unwrap_or(self.tick);
+        if from > self.tick
+            || self.fact_ticks.as_ref().is_some_and(|ticks| {
+                ticks.len() != self.facts.len()
+                    || ticks.windows(2).any(|pair| pair[0] > pair[1])
+                    || ticks.iter().any(|tick| *tick < from || *tick > self.tick)
+            })
+            || (from != self.tick && self.fact_ticks.is_none())
+        {
+            return Err(ProtocolError::TickContinuity { tick: from });
+        }
+        if let Some(ticks) = &self.fact_ticks {
+            let mut start = 0;
+            while start < ticks.len() {
+                let mut end = start + 1;
+                while end < ticks.len() && ticks[end] == ticks[start] {
+                    end += 1;
+                }
+                facts::validate_facts(&self.facts[start..end])?;
+                start = end;
+            }
+        } else {
+            facts::validate_facts(&self.facts)?;
+        }
         validate_sequence(
             self.facts.iter().map(|fact| fact.event.seq()),
             self.facts.len(),
@@ -221,7 +262,7 @@ pub fn validate_frames(frames: &[TickFrame]) -> Result<&TickFrame, ProtocolError
     for adjacent in frames.windows(2) {
         let previous = &adjacent[0];
         let next = &adjacent[1];
-        if previous.tick.checked_add(1) != Some(next.tick) {
+        if previous.tick.checked_add(1) != Some(next.tick_from.unwrap_or(next.tick)) {
             return Err(ProtocolError::TickContinuity { tick: next.tick });
         }
         if previous.seq_to != next.seq_from {

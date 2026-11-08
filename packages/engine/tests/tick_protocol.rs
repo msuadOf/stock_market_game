@@ -13,6 +13,8 @@ fn frame(tick: u64, before: u64, count: u64) -> TickFrame {
         })
         .collect();
     TickFrame {
+        tick_from: None,
+        fact_ticks: None,
         facts: cursor.assign_session_facts(events).unwrap(),
         tick,
         seq_from: before,

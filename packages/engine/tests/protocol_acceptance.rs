@@ -21,6 +21,8 @@ fn fixture_facts(events: &[Event]) -> Vec<EventFact> {
 
 fn frame() -> TickFrame {
     TickFrame {
+        tick_from: None,
+        fact_ticks: None,
         tick: 1,
         facts: fixture_facts(&events()),
         timeseries_payload: Default::default(),

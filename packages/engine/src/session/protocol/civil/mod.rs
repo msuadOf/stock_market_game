@@ -10,7 +10,9 @@ mod session;
 use super::EventFact;
 pub use boundary::CivilBoundary;
 pub(in crate::session::protocol) use session::DeferredProjection;
-pub use session::{ConsumedTick, DeferredTick, ProtocolCheckpoint, ProtocolSession};
+pub use session::{
+    ConsumedTick, DeferredInterval, DeferredTick, ProtocolCheckpoint, ProtocolSession,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[ts(export)]
@@ -170,7 +172,11 @@ impl CivilUpdate {
         if self.kinds.contains(&CivilUpdateKind::AfterClose) {
             let history = &self.refresh.intraday;
             super::validate_frames(history)?;
-            if u64::try_from(history.len()).ok() != Some(self.refresh.ticks_per_day)
+            if history
+                .first()
+                .and_then(|first| self.tick.checked_sub(first.tick_from.unwrap_or(first.tick)))
+                .and_then(|span| span.checked_add(1))
+                != Some(self.refresh.ticks_per_day)
                 || history.last().map(|frame| (frame.tick, frame.seq_to))
                     != Some((self.tick, self.seq_from))
             {
@@ -251,7 +257,10 @@ impl GameSession {
                 .tick()
                 .checked_sub(self.state.setup.ticks_per_day)
                 .and_then(|tick| tick.checked_add(1));
-            if intraday.first().map(|frame| frame.tick) != expected_start
+            if intraday
+                .first()
+                .map(|frame| frame.tick_from.unwrap_or(frame.tick))
+                != expected_start
                 || intraday.last().map(|frame| (frame.tick, frame.seq_to))
                     != Some((self.tick(), self.seq()))
             {

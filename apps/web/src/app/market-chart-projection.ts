@@ -53,7 +53,10 @@ export class MarketChartProjection {
           }
         }
       }
-      for (const [code, point] of Object.entries(frame.continuousPoints)) {
+      const samples = Object.entries(frame.continuousPoints).flatMap(([code, point]) =>
+        frame.continuousSamples?.[code]?.map(sample => ({ code, ...sample }))
+          ?? [{ code, point, candle: frame.activeDailyCandles[code] }]);
+      for (const { code, point, candle } of samples) {
         const history = this.pricesByCode[code] ?? EMPTY_HISTORY;
         const time = this.timeline.minuteSlot(point.tick);
         const previous = history.at(-1);
@@ -62,7 +65,6 @@ export class MarketChartProjection {
         const previousPrice = previousMinute?.value ?? auctionPrice;
         const value = moneyToChartNumber(point.last_price) / 100;
         const increment = Math.max(0, point.cumulative_volume - (this.continuousVolumes[code] ?? 0));
-        const candle = frame.activeDailyCandles[code];
         const tradeStats = candle?.trade_stats;
         const projected = Object.freeze({ time, value,
           volume: increment + (previous?.time === time ? previous.volume ?? 0 : 0),

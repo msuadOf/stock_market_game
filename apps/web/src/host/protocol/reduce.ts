@@ -19,14 +19,33 @@ function updateRange(update: WireEngineUpdate): { readonly firstTick: number; re
     if (first === undefined || last === undefined) {
       throw new ProtocolError("PROTOCOL_MALFORMED", "protocol.reduce", "TickBatch 不得为空");
     }
-    return { firstTick: first.tick, tick: last.tick, from: first.seq_from, to: last.seq_to, civil: false };
+    return { firstTick: first.tick_from ?? first.tick, tick: last.tick, from: first.seq_from, to: last.seq_to, civil: false };
   }
   return { firstTick: update.CivilUpdate.tick, tick: update.CivilUpdate.tick, from: update.CivilUpdate.seq_from, to: update.CivilUpdate.seq_to, civil: true };
 }
 
 function updateEffects(update: NormalizedEngineUpdate): readonly ProtocolEffect[] {
   if (update.kind === "tick-batch") {
-    return update.frames.flatMap((frame) => effectsFromFacts(frame.facts, frame.continuousPoints, frame.tick));
+    return update.frames.flatMap((frame) => {
+      const factsByTick = new Map<number, typeof frame.facts[number][]>();
+      for (const [index, fact] of frame.facts.entries()) {
+        const tick = frame.factTicks?.[index] ?? frame.tick;
+        const group = factsByTick.get(tick) ?? [];
+        group.push(fact);
+        factsByTick.set(tick, group);
+      }
+      const byTick = new Map<number, Record<string, import("../../types/generated/ContinuousPoint.ts").ContinuousPoint>>();
+      for (const [code, point] of Object.entries(frame.continuousPoints)) {
+        const points = frame.continuousSamples?.[code]?.map(sample => sample.point) ?? [point];
+        for (const sample of points) {
+          const group = byTick.get(sample.tick) ?? {};
+          group[code] = sample;
+          byTick.set(sample.tick, group);
+        }
+      }
+      const ticks = [...new Set([...factsByTick.keys(), ...byTick.keys()])].sort((a, b) => a - b);
+      return ticks.flatMap(tick => effectsFromFacts(factsByTick.get(tick) ?? [], byTick.get(tick) ?? {}, tick));
+    });
   }
   return [
     ...effectsFromFacts(update.update.facts, {}, update.update.tick),
