@@ -1809,13 +1809,14 @@ mod tests {
                     .expect("必须真有成交才可检查方向域");
                 let tick = driver.world_committed_tick();
                 let before = serde_json::to_value(game.causal_facts()).unwrap();
+                let plans = input.plans.as_ref().expect("诊断必须取得真实计划簿");
                 let positive = game
                     .translate_runtime_causal(
                         &driver,
                         tick,
                         &raw,
                         driver.pending_decision_traces(),
-                        &input.plans,
+                        plans,
                         None,
                     )
                     .unwrap();
@@ -1830,7 +1831,7 @@ mod tests {
                         tick,
                         &bad,
                         driver.pending_decision_traces(),
-                        &input.plans,
+                        plans,
                         None,
                     )
                     .unwrap_err();

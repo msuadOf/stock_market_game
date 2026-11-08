@@ -328,3 +328,187 @@ fn second_member_buy_and_sell_reservations_match_delta_and_snapshot() {
         "第二成员买单资金及卖单股份预留必须与已交付 delta 一致"
     );
 }
+
+#[test]
+#[cfg(not(target_family = "wasm"))]
+fn dayend_ordinary_core_ticks_skip_mirror_only_work_and_preserve_day_boundary() {
+    let mut setup = crate::session::protocol::civil::publication_tests::setup();
+    setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+    setup.runtime_sync_policy = crate::RuntimeSyncPolicy::DayEnd;
+    let ticks_per_day = setup.ticks_per_day;
+    let mut session = ProtocolSession::new(setup, 85).unwrap();
+    let initial = session.step_frame().unwrap();
+    let mut last_tick = initial.tick;
+    let mut last_seq = initial.seq_to;
+    crate::runtime::world::take_dayend_hotpath_for_test();
+
+    // 仅量测两个普通核心拍；consumer 尚未运行。
+    let first = session.advance_core_tick().unwrap();
+    let second = session.advance_core_tick().unwrap();
+    let calls = crate::runtime::world::take_dayend_hotpath_for_test();
+    let mut facts = 0usize;
+    for deferred in [first, second] {
+        let frame = session
+            .record_consumed_tick(deferred.consume().unwrap())
+            .unwrap();
+        frame.validate().unwrap();
+        assert_eq!(frame.tick, last_tick + 1);
+        assert_eq!(frame.seq_from, last_seq);
+        last_tick = frame.tick;
+        last_seq = frame.seq_to;
+        facts += frame.facts.len();
+    }
+    while last_tick < ticks_per_day {
+        let deferred = session.advance_core_tick().unwrap();
+        let frame = session
+            .record_consumed_tick(deferred.consume().unwrap())
+            .unwrap();
+        frame.validate().unwrap();
+        assert_eq!(frame.tick, last_tick + 1);
+        assert_eq!(frame.seq_from, last_seq);
+        last_tick = frame.tick;
+        last_seq = frame.seq_to;
+        facts += frame.facts.len();
+    }
+    assert!(facts > 0, "必须实际交付非空逐拍事实");
+    let civil = session.end_civil_day_update().unwrap();
+    civil.validate().unwrap();
+    assert_eq!(civil.tick, ticks_per_day);
+    assert_eq!(civil.seq_from, last_seq);
+    assert_eq!(civil.refresh.intraday.len() as u64, ticks_per_day);
+    let first_next = session.advance_core_tick().unwrap();
+    let frame = session
+        .record_consumed_tick(first_next.consume().unwrap())
+        .unwrap();
+    assert_eq!(frame.tick, ticks_per_day + 1);
+    assert_eq!(frame.seq_from, civil.seq_to);
+
+    if cfg!(feature = "simulation-diagnostics") {
+        assert!(
+            calls.iter().all(|count| *count > 0),
+            "诊断需要真实完整计划与逐拍投影，四项读取均须实际执行；实际计数={calls:?}"
+        );
+    } else {
+        assert_eq!(calls, [0, 0, 0, 0],
+            "默认 feature 普通拍不得收集完整计划、镜像调度、构造 Snapshot 或 PublicRuntime；实际计数={calls:?}");
+    }
+}
+
+#[test]
+#[cfg(not(target_family = "wasm"))]
+fn dayend_explicit_flush_after_unrecorded_mirror_inputs_uses_current_world() {
+    let mut setup = crate::session::protocol::civil::publication_tests::setup();
+    setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+    setup.runtime_sync_policy = crate::RuntimeSyncPolicy::DayEnd;
+    let mut session = ProtocolSession::new(setup, 87).unwrap();
+    session.step_frame().unwrap();
+    let mut frames = Vec::new();
+    for _ in 0..2 {
+        let deferred = session.advance_core_tick().unwrap();
+        frames.push(
+            session
+                .record_consumed_tick(deferred.consume().unwrap())
+                .unwrap(),
+        );
+    }
+    session.tick_batch(frames).unwrap();
+    let tick = session.game().tick();
+    let snapshot = session.flush_now().unwrap();
+    assert_eq!(snapshot.tick, tick);
+    assert_eq!(
+        snapshot.mirror_origin.source_tick, tick,
+        "显式同步必须使用当前 World"
+    );
+    let next = session.advance_core_tick().unwrap();
+    let frame = session
+        .record_consumed_tick(next.consume().unwrap())
+        .unwrap();
+    assert_eq!(frame.tick, tick + 1);
+}
+
+#[test]
+#[cfg(all(not(target_family = "wasm"), not(feature = "simulation-diagnostics")))]
+fn dayend_batch_materializes_runtime_once_after_multiple_consumers() {
+    let mut setup = crate::session::protocol::civil::publication_tests::setup();
+    setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+    setup.runtime_sync_policy = crate::RuntimeSyncPolicy::DayEnd;
+    let mut session = ProtocolSession::new(setup, 88).unwrap();
+    session.step_frame().unwrap();
+    super::LIGHT_RUNTIME_BUILDS.with(|count| count.set(0));
+    let first = session.advance_core_tick().unwrap().consume().unwrap();
+    let second = session.advance_core_tick().unwrap().consume().unwrap();
+    assert_eq!(
+        super::LIGHT_RUNTIME_BUILDS.with(|count| count.get()),
+        0,
+        "逐拍 consumer 不得物化 PublicRuntime"
+    );
+    let first = session.record_consumed_tick(first).unwrap();
+    let second = session.record_consumed_tick(second).unwrap();
+    assert_eq!(
+        super::LIGHT_RUNTIME_BUILDS.with(|count| count.get()),
+        0,
+        "逐拍登记不得物化 PublicRuntime"
+    );
+    let expected_tick = second.tick;
+    let expected_seq = second.seq_to;
+    let batch = session.tick_batch(vec![first, second]).unwrap();
+    assert_eq!(
+        super::LIGHT_RUNTIME_BUILDS.with(|count| count.get()),
+        1,
+        "同批末帧必须恰好物化一次 PublicRuntime"
+    );
+    let runtime = batch.runtime_delta.unwrap();
+    assert_eq!(runtime.tick, expected_tick);
+    assert_eq!(runtime.seq_to, expected_seq);
+}
+
+#[test]
+#[cfg(all(not(target_family = "wasm"), not(feature = "simulation-diagnostics")))]
+fn materialization_failure_survives_later_record_flush_and_rollback() {
+    let mut setup = crate::session::protocol::civil::publication_tests::setup();
+    setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+    setup.runtime_sync_policy = crate::RuntimeSyncPolicy::DayEnd;
+    let mut session = ProtocolSession::new(setup, 89).unwrap();
+    let checkpoint = session.checkpoint().unwrap();
+    session.step_frame().unwrap();
+    let mut first = session.advance_core_tick().unwrap().consume().unwrap();
+    let second = session.advance_core_tick().unwrap().consume().unwrap();
+    match &mut first.runtime {
+        super::ConsumedRuntime::Light(runtime) => runtime
+            .accounts
+            .get_mut(&crate::AccountId(0))
+            .unwrap()
+            .fixture_set_cash(crate::Money::from_cents(-1)),
+        _ => panic!("必须使用延迟物化路径"),
+    }
+    let frame = session.record_consumed_tick(first).unwrap();
+    let failure = session.tick_batch(vec![frame]).unwrap_err();
+    assert!(matches!(session.record_consumed_tick(second), Err(ref error) if error == &failure));
+    assert!(matches!(session.flush_now(), Err(ref error) if error == &failure));
+    assert!(matches!(session.checkpoint(), Err(ref error) if error == &failure));
+    assert!(matches!(session.rollback(checkpoint), Err(ref error) if error == &failure));
+    assert!(matches!(session.advance_core_tick(), Err(ref error) if error == &failure));
+}
+
+#[test]
+#[cfg(all(not(target_family = "wasm"), not(feature = "simulation-diagnostics")))]
+fn flush_rejects_pending_and_preserves_unpublished_light_tick() {
+    let mut setup = crate::session::protocol::civil::publication_tests::setup();
+    setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+    setup.runtime_sync_policy = crate::RuntimeSyncPolicy::DayEnd;
+    let mut session = ProtocolSession::new(setup, 90).unwrap();
+    session.step_frame().unwrap();
+    let pending = session.advance_core_tick().unwrap();
+    assert!(session.flush_now().is_err());
+    let frame = session
+        .record_consumed_tick(pending.consume().unwrap())
+        .unwrap();
+    session.flush_now().unwrap();
+    let batch = session.tick_batch(vec![frame.clone()]).unwrap();
+    assert_eq!(batch.runtime_delta.unwrap().tick, frame.tick);
+    let next = session.advance_core_tick().unwrap().consume().unwrap();
+    let next = session.record_consumed_tick(next).unwrap();
+    session.tick_batch(vec![next]).unwrap();
+    session.prepare_public_baseline();
+    session.flush_now().unwrap();
+}

@@ -1,5 +1,12 @@
 use super::{Event, GameSession, RuntimeDailyHistory, SaveSlot, SessionError};
 
+type CoreTickOutput<P> = (
+    P,
+    std::sync::Arc<crate::runtime::publication::PublishedTick>,
+    std::sync::Arc<Vec<crate::AccountId>>,
+    usize,
+);
+
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, thiserror::Error)]
 pub enum StepFatal {
     #[error("invariant violation at {location}: {description}")]
@@ -748,15 +755,7 @@ impl GameSession {
             crate::session::protocol::TickCandidateProjection<'_>,
             Vec<crate::session::protocol::EventFact>,
         ) -> Result<P, StepFatal>,
-    ) -> Result<
-        (
-            P,
-            std::sync::Arc<crate::runtime::publication::PublishedTick>,
-            std::sync::Arc<Vec<crate::AccountId>>,
-            usize,
-        ),
-        StepFatal,
-    > {
+    ) -> Result<CoreTickOutput<P>, StepFatal> {
         self.check_step_start()
             .map_err(|fatal| self.poison_runtime_step(fatal))?;
         self.with_routed_runtime_driver(|session, driver| {
@@ -838,7 +837,7 @@ impl GameSession {
             .causal_time()
             .map_err(|fatal| self.poison_runtime_step(fatal))?;
         let prepared = driver
-            .prepare_driver_step_with_day_end(self, automatic_day_end)
+            .prepare_driver_step_mode(self, automatic_day_end, defer_mirror)
             .and_then(|input| {
                 self.prepare_runtime_publication_mode(driver, input, tick, defer_mirror)
             });
@@ -880,13 +879,7 @@ impl GameSession {
         let has_events = !prepared.events().is_empty();
         let facts =
             crate::runtime::event_bridge::event_facts_with_stable_keys(prepared.take_events());
-        let value = match project(
-            crate::session::protocol::TickCandidateProjection::from_prepared(
-                prepared.projection(),
-                seq_from,
-            ),
-            facts,
-        ) {
+        let value = match project(prepared.projection(seq_from), facts) {
             Ok(value) => value,
             Err(fatal) => {
                 #[cfg(feature = "simulation-diagnostics")]

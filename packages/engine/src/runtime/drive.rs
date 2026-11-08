@@ -1220,7 +1220,7 @@ impl RuntimeDriver {
             }
         }
         // EveryTick 完整读取全部组；先验证唯一归属，再一次安装镜像。
-        let plans = {
+        let plans = if capture_sync {
             let _seg = step_profile::scope(StepSegment::PlansEcho);
             let shards = self
                 .world
@@ -1230,7 +1230,12 @@ impl RuntimeDriver {
                 .plan_owners
                 .merge(shards, self.plan_policy)
                 .map_err(|error| format!("计划簿完整汇合失败：{error:?}"))?;
-            plans
+            Some(plans)
+        } else {
+            // 未收集不是空计划簿；后续静点与日界必须读取完整来源。
+            self.sync_inputs
+                .require_full(crate::runtime::driver_sync::FullReason::DomainMutationWithoutFacts);
+            None
         };
         let mut touched = Vec::new();
         for trade in &trades {

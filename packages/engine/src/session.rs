@@ -3624,6 +3624,11 @@ impl GameSession {
         self.state.setup.clone()
     }
 
+    /// 驱动热路径只读配置，避免逐拍复制整个 SessionSetup。
+    pub(crate) fn runtime_setup_ref(&self) -> &SessionSetup {
+        &self.state.setup
+    }
+
     /// 公司系统 spine 只读面（B4b）：`None` = 本局无公司线。查询/协议面随
     /// B4e 在此基础上扩展。
     pub fn company_system(&self) -> Option<&crate::company::CompanySystem> {

@@ -69,6 +69,8 @@ impl RuntimeDriver {
         let full = !self.sync_inputs.has_successful_baseline()
             || !self.pending_mirror_domains().is_empty()
             || source.day_end_stage != crate::runtime::source::MirrorDayEndStage::Tick;
+        #[cfg(test)]
+        crate::runtime::world::record_dayend_hotpath_for_test(1);
         let attention = if full {
             self.world.collect_group_attention()
         } else {

@@ -20,7 +20,7 @@ pub(crate) struct PreparedDriverStep {
     >,
     pub last_prices: Vec<i64>,
     pub personals: Vec<(usize, AccountId, crate::session::SharedRuntimePersonal)>,
-    pub plans: crate::plans::PlanBook,
+    pub plans: Option<crate::plans::PlanBook>,
     pub touched: Vec<(usize, AccountId)>,
     pub events: Vec<Event>,
     pub day_end: Option<PreparedDriverDayEnd>,
@@ -445,10 +445,20 @@ impl RuntimeDriver {
         self.prepare_driver_step_with_day_end(session, true)
     }
 
+    #[cfg(test)]
     pub(crate) fn prepare_driver_step_with_day_end(
         &mut self,
         session: &GameSession,
         automatic_day_end: bool,
+    ) -> Result<PreparedDriverStep, String> {
+        self.prepare_driver_step_mode(session, automatic_day_end, false)
+    }
+
+    pub(crate) fn prepare_driver_step_mode(
+        &mut self,
+        session: &GameSession,
+        automatic_day_end: bool,
+        defer_mirror: bool,
     ) -> Result<PreparedDriverStep, String> {
         self.ensure_session_authority(session)?;
         self.clear_information_due_after_prepare();
@@ -456,9 +466,9 @@ impl RuntimeDriver {
             .world_committed_tick()
             .checked_add(1)
             .ok_or_else(|| "driver sync 下一 tick 已耗尽".to_owned())?;
-        let registrations = if automatic_day_end
-            && next_tick.is_multiple_of(session.export_setup_for_runtime().ticks_per_day)
-        {
+        let ticks_per_day = session.runtime_setup_ref().ticks_per_day;
+        let sync_policy = session.runtime_setup_ref().runtime_sync_policy;
+        let registrations = if automatic_day_end && next_tick.is_multiple_of(ticks_per_day) {
             2
         } else {
             1
@@ -469,13 +479,15 @@ impl RuntimeDriver {
         self.world.set_civil_date(session.civil_date());
         self.world
             .set_tick_capture(crate::verification_evidence::current_phase_timing_binding());
+        let dayend_ordinary = defer_mirror
+            && sync_policy == crate::RuntimeSyncPolicy::DayEnd
+            && !next_tick.is_multiple_of(ticks_per_day)
+            && !cfg!(feature = "simulation-diagnostics");
         let result = self
-            .prepare_step_with_capture(session, true)
+            .prepare_step_with_capture(session, !dayend_ordinary)
             .and_then(|mut input| {
                 let tick = self.world.global.committed_tick;
-                if automatic_day_end
-                    && tick.is_multiple_of(session.export_setup_for_runtime().ticks_per_day)
-                {
+                if automatic_day_end && tick.is_multiple_of(ticks_per_day) {
                     input = self.prepare_day_end_input(session, input, true, true)?;
                 }
                 Ok(input)
@@ -583,15 +595,16 @@ impl RuntimeDriver {
                 })
             })
             .collect();
-        input.plans = self
-            .plan_owners
-            .merge(
-                self.world
-                    .collect_plans()
-                    .map_err(|error| error.to_string())?,
-                self.plan_policy,
-            )
-            .map_err(|error| error.to_string())?;
+        input.plans = Some(
+            self.plan_owners
+                .merge(
+                    self.world
+                        .collect_plans()
+                        .map_err(|error| error.to_string())?,
+                    self.plan_policy,
+                )
+                .map_err(|error| error.to_string())?,
+        );
         let receipts = self.collect_drained_events(session.civil_date())?;
         self.pending_receipts.extend(receipts);
         let closing_events = self.take_drained_auction_events();
@@ -651,16 +664,18 @@ impl RuntimeDriver {
                 })
             })
             .collect();
-        input.plans = super::super::plan_ownership::merge(
-            self.world
-                .collect_plans()
-                .map_err(|error| error.to_string())?,
-            &self.id_map,
-            self.world.n_groups(),
-            self.accounts_per_group,
-            self.plan_policy,
-        )
-        .map_err(|error| error.to_string())?;
+        input.plans = Some(
+            super::super::plan_ownership::merge(
+                self.world
+                    .collect_plans()
+                    .map_err(|error| error.to_string())?,
+                &self.id_map,
+                self.world.n_groups(),
+                self.accounts_per_group,
+                self.plan_policy,
+            )
+            .map_err(|error| error.to_string())?,
+        );
         // 独立完整 getter 全部成功后保留其 raw 值，不再用累计表覆盖对照臂。
         input.sync_source = None;
         Ok(input)
@@ -692,8 +707,7 @@ impl RuntimeDriver {
                 .map(|view| view.last_price)
                 .collect(),
             personals: Vec::new(),
-            plans: crate::plans::PlanBook::new(self.plan_policy)
-                .map_err(|error| error.to_string())?,
+            plans: None,
             touched: Vec::new(),
             events: Vec::new(),
             day_end: None,

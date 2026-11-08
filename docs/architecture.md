@@ -38,6 +38,9 @@ native 宿主连续运行通过 `ProtocolSession::advance_core_tick` 提交核�
 宿主仅在在途窗口满、显式读取或自然日日界等必要消费点追平，保留控制命令响应和有序交付。
 显式 `step_frame` 仍同步返回完整单步结果，并共用同一核心交易实现。
 
+`DayEnd` 普通连续拍跳过完整 PlanBook 与镜像调度采集，完整 runtime 在批末、显式 flush 或日界按需构建。
+`simulation-diagnostics` 保留诊断所需的完整来源，不采用这条普通拍快路径。
+
 核心失败阻止继续推进；外围失败显式报告并停止该交付链，已经提交的 tick 不回退重跑。
 未消费事实不能跨 checkpoint 或自然日日结，避免恢复或保存重复交付。
 

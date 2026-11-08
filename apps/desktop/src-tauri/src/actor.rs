@@ -1466,10 +1466,10 @@ impl<R: Runtime> SessionActor<R> {
                 }
                 *remaining -= 1;
             }
-            if self.pending_ticks == MAX_PENDING_TICKS {
-                if !self.drain_consumed() || self.cmd_rx.is_closed() {
-                    return;
-                }
+            if self.pending_ticks == MAX_PENDING_TICKS
+                && (!self.drain_consumed() || self.cmd_rx.is_closed())
+            {
+                return;
             }
             if let Err(error) = self.start_consumer() {
                 self.stop_after_step_failure(error);

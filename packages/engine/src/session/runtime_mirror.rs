@@ -619,7 +619,14 @@ impl GameSession {
                 .positions()
                 .keys()
                 .copied()
-                .chain(input.plans.active_investor_codes(id).copied())
+                .chain(
+                    input
+                        .plans
+                        .as_ref()
+                        .ok_or("完整镜像缺少计划簿")?
+                        .active_investor_codes(id)
+                        .copied(),
+                )
                 .collect();
             value.prune_memory(&protected);
         }
@@ -1177,11 +1184,16 @@ impl GameSession {
             decision_traces: if manual_day_end {
                 self.state.npc_decision_traces.clone()
             } else {
-                self.prepare_runtime_decision_traces(driver, tick, &input.plans, &events)?
+                self.prepare_runtime_decision_traces(
+                    driver,
+                    tick,
+                    input.plans.as_ref().ok_or("诊断缺少计划簿")?,
+                    &events,
+                )?
             },
             accounts,
             personals,
-            plans: input.plans,
+            plans: input.plans.ok_or("完整镜像缺少计划簿")?,
             markets,
             histories,
             minutes,
@@ -1816,6 +1828,8 @@ mod source_tests {
         assert!(
             input
                 .plans
+                .as_ref()
+                .expect("完整 Full 输入必须包含真实计划簿")
                 .active_investor_codes(owner)
                 .any(|code| *code == StockId(1)),
             "fixture 必须保留本人完整 active plan 的保护股"

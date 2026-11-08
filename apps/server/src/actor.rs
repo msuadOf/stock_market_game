@@ -2249,10 +2249,7 @@ impl SessionActor {
     fn collect_ticks(&mut self, wait: bool) -> Result<(), engine::session::StepFatal> {
         let mut frames = Vec::new();
         let mut failure = None;
-        loop {
-            let Some(consumer) = self.consumer.as_mut() else {
-                break;
-            };
+        while let Some(consumer) = self.consumer.as_mut() {
             if consumer.pending == 0 {
                 break;
             }

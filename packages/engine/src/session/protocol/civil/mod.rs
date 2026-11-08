@@ -9,6 +9,7 @@ mod publication_tests;
 mod session;
 use super::EventFact;
 pub use boundary::CivilBoundary;
+pub(in crate::session::protocol) use session::DeferredProjection;
 pub use session::{ConsumedTick, DeferredTick, ProtocolCheckpoint, ProtocolSession};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]

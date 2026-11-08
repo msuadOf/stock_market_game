@@ -866,3 +866,170 @@ fn stale_capture_and_retained_prepare_failure_keep_accumulated_values_for_retry(
     assert_eq!(session.receipt_watermark(), receipt_watermark);
     session.require_healthy().unwrap();
 }
+
+#[test]
+fn deferred_dayend_trade_and_nonempty_plan_survive_flush_and_day_boundary() {
+    let mut setup = crate::runtime::bridge_tests::setup_fixture();
+    setup.start_date = crate::calendar::CivilDate::from_ymd(2026, 1, 5).unwrap();
+    setup.ticks_per_day = 3;
+    setup.auction_ticks = 0;
+    setup.closing_auction_ticks = 0;
+    setup.runtime_sync_policy = crate::RuntimeSyncPolicy::DayEnd;
+    let mut session = GameSession::new(setup, 42).unwrap();
+    let seller = AccountId(1);
+    let buyer = AccountId(2);
+    let stock = crate::StockId(0);
+    let expected_buyer_qty = session
+        .account(buyer)
+        .unwrap()
+        .position(&stock)
+        .map_or(0, |position| position.qty())
+        .checked_add(100)
+        .unwrap();
+    session
+        .fixture_account_mut(&seller)
+        .unwrap()
+        .fixture_set_positions(std::collections::BTreeMap::from([(
+            stock,
+            crate::account::Position::from_restored_parts(100, 0, 100_000, 0),
+        )]));
+    let mut plans = session.runtime_plans_snapshot().clone();
+    plans
+        .create(crate::plans::PlanOpen {
+            account: seller,
+            code: crate::StockId(1),
+            direction: crate::Side::Buy,
+            target: crate::plans::PlanTarget::ShareCount(100),
+            opinion: crate::plans::PlanOpinion {
+                signal_score_bp: 3000,
+                source: crate::plans::OpinionSource::Blended,
+            },
+            confidence_bp: 8000,
+            urgency: crate::plans::Urgency::Normal,
+            horizon_trading_days: 5,
+            created_trading_day: 0,
+        })
+        .unwrap();
+    assert!(plans
+        .active_investor_codes(seller)
+        .any(|code| *code == crate::StockId(1)));
+    session.set_runtime_plans(plans);
+    let mut driver = RuntimeDriver::from_session_grouped(&mut session, 2).unwrap();
+    let ids = driver.id_map.clone();
+    driver.defer_due_for_test_at(&ids, u64::MAX);
+    let receipts = [(seller, crate::Side::Sell), (buyer, crate::Side::Buy)]
+        .into_iter()
+        .enumerate()
+        .map(
+            |(ordinal, (owner, side))| crate::session::ReceiptBearingIntent {
+                owner,
+                intent: crate::Intent::PlaceLimit {
+                    code: stock,
+                    side,
+                    price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
+                    qty: 100,
+                },
+                account_ordinal: 0,
+                stock_ordinal: ordinal as u64,
+            },
+        )
+        .collect::<Vec<_>>();
+    let upper = driver
+        .world_public_views()
+        .iter()
+        .map(|view| view.daily_upper_limit)
+        .collect::<Vec<_>>();
+    driver.inject_player_intents(&receipts, &upper).unwrap();
+    let input = driver
+        .prepare_driver_step_mode(&session, true, true)
+        .unwrap();
+    assert!(input.events.iter().any(|event| matches!(event,
+        Event::Trade { maker, taker, code, qty: 100, price, .. }
+        if *maker == seller && *taker == buyer && *code == stock && price.cents() == 1_000)));
+    let prepared = session
+        .prepare_runtime_publication(&mut driver, input, 1)
+        .unwrap();
+    assert!(session
+        .validate_runtime_publication(&driver, &prepared)
+        .unwrap()
+        .is_none());
+    session.install_runtime_publication(&mut driver, prepared);
+
+    let full = driver.prepare_flush_driver_projection(&session).unwrap();
+    let expected_plans = serde_json::to_value(&full.plans).unwrap();
+    driver.flush_now(&mut session).unwrap();
+    assert_eq!(
+        serde_json::to_value(session.runtime_plans_snapshot()).unwrap(),
+        expected_plans
+    );
+    assert!(session
+        .runtime_plans_snapshot()
+        .active_investor_codes(seller)
+        .any(|code| *code == crate::StockId(1)));
+    for (group, rows) in full.accounts.iter().enumerate() {
+        for (local, raw) in rows.iter() {
+            if let Some(id) = driver.account_by_owner((group as u16, *local)) {
+                let account = session.account(id).unwrap();
+                assert_eq!(account.cash().cents(), raw.cash + raw.buy_purse_held_cents);
+                for (index, qty) in raw.shares.iter().enumerate() {
+                    let code = crate::StockId(index as u32);
+                    assert_eq!(
+                        account.position(&code).map_or(0, |position| position.qty()),
+                        qty.checked_add(raw.pending_sell_qty[index]).unwrap()
+                    );
+                }
+            }
+        }
+    }
+    assert_eq!(
+        session
+            .account(seller)
+            .unwrap()
+            .position(&stock)
+            .map_or(0, |p| p.qty()),
+        0
+    );
+    assert_eq!(
+        session
+            .account(buyer)
+            .unwrap()
+            .position(&stock)
+            .unwrap()
+            .qty(),
+        expected_buyer_qty
+    );
+    let seller_cash = session.account(seller).unwrap().cash();
+    let buyer_cash = session.account(buyer).unwrap().cash();
+    for tick in 2..=3 {
+        let input = driver
+            .prepare_driver_step_mode(&session, true, true)
+            .unwrap();
+        let prepared = session
+            .prepare_runtime_publication(&mut driver, input, tick)
+            .unwrap();
+        let ack = session
+            .validate_runtime_publication(&driver, &prepared)
+            .unwrap();
+        session.install_runtime_publication(&mut driver, prepared);
+        if let Some(ack) = ack {
+            driver.ack_prepared_mirror(ack);
+        }
+    }
+    assert_eq!((session.tick(), session.day()), (3, 1));
+    assert_eq!(session.account(seller).unwrap().cash(), seller_cash);
+    assert_eq!(session.account(buyer).unwrap().cash(), buyer_cash);
+    assert_eq!(
+        session
+            .account(buyer)
+            .unwrap()
+            .position(&stock)
+            .unwrap()
+            .qty(),
+        expected_buyer_qty
+    );
+    assert!(session
+        .runtime_plans_snapshot()
+        .active_investor_codes(seller)
+        .any(|code| *code == crate::StockId(1)));
+    assert_eq!(session.runtime_mirror_origin().source_tick, 3);
+}

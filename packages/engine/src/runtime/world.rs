@@ -2093,6 +2093,8 @@ impl World {
     pub fn collect_plans(
         &mut self,
     ) -> Result<Vec<(GroupIdx, crate::plans::PlanBook)>, RuntimeError> {
+        #[cfg(test)]
+        record_dayend_hotpath_for_test(0);
         self.collect_plans_with(|| GroupIn::EchoPlansFull, "EchoPlansFull")
     }
 
@@ -4919,4 +4921,23 @@ thread_local! {
 #[cfg(test)]
 pub(crate) fn take_prepared_personal_full_calls_for_test() -> usize {
     PREPARED_PERSONAL_FULL_CALLS.with(|count| count.replace(0))
+}
+
+#[cfg(test)]
+thread_local! {
+    static DAYEND_HOTPATH_CALLS: std::cell::Cell<[usize; 4]> = const { std::cell::Cell::new([0; 4]) };
+}
+
+#[cfg(test)]
+pub(crate) fn record_dayend_hotpath_for_test(index: usize) {
+    DAYEND_HOTPATH_CALLS.with(|calls| {
+        let mut value = calls.get();
+        value[index] += 1;
+        calls.set(value);
+    });
+}
+
+#[cfg(test)]
+pub(crate) fn take_dayend_hotpath_for_test() -> [usize; 4] {
+    DAYEND_HOTPATH_CALLS.with(|calls| calls.replace([0; 4]))
 }

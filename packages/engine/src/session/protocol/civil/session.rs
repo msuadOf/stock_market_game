@@ -14,6 +14,7 @@ struct ProtocolState {
     fact_cursor: crate::session::protocol::SessionFactCursor,
     day_end_save: Option<Arc<crate::SaveSlot>>,
     committed_runtime: Option<super::super::PublicRuntimeState>,
+    committed_light_runtime: Option<LightRuntime>,
     published_runtime: RefCell<Option<super::super::PublicRuntimeState>>,
     pending_save_candidates: RefCell<BTreeMap<u64, Arc<crate::SaveSlot>>>,
     pending_runtime: BTreeMap<u64, Arc<std::sync::OnceLock<StepFatal>>>,
@@ -22,6 +23,13 @@ struct ProtocolState {
 impl ProtocolState {
     fn try_clone_for_checkpoint(&self) -> Result<Self, StepFatal> {
         self.game.require_healthy()?;
+        if let Some(fatal) = self
+            .committed_light_runtime
+            .as_ref()
+            .and_then(|value| value.identity.get())
+        {
+            return Err(fatal.clone());
+        }
         if !self.pending_runtime.is_empty() {
             return Err(StepFatal::InvariantViolation {
                 location: "ProtocolSession::checkpoint".to_owned(),
@@ -34,6 +42,7 @@ impl ProtocolState {
             fact_cursor: self.fact_cursor.clone(),
             day_end_save: self.day_end_save.clone(),
             committed_runtime: self.committed_runtime.clone(),
+            committed_light_runtime: self.committed_light_runtime.clone(),
             published_runtime: RefCell::new(self.published_runtime.borrow().clone()),
             pending_save_candidates: RefCell::new(self.pending_save_candidates.borrow().clone()),
             pending_runtime: self.pending_runtime.clone(),
@@ -99,14 +108,21 @@ pub struct ProtocolCheckpoint {
     state: ProtocolState,
 }
 
+pub(in crate::session::protocol) enum DeferredProjection {
+    Full {
+        snapshot: crate::Snapshot,
+        runtime: super::super::PublicRuntimeState,
+    },
+    Light(super::super::LightTickProjection),
+}
+
 /// 一次已提交的市场 tick，供外围消费。
 pub struct DeferredTick {
     pub(in crate::session::protocol) tick: u64,
     pub(in crate::session::protocol) seq_from: u64,
     pub(in crate::session::protocol) seq_to: u64,
     pub(in crate::session::protocol) facts: Vec<super::super::EventFact>,
-    pub(in crate::session::protocol) snapshot: crate::Snapshot,
-    pub(in crate::session::protocol) runtime: super::super::PublicRuntimeState,
+    pub(in crate::session::protocol) projection: DeferredProjection,
     pub(in crate::session::protocol) publication:
         Option<Arc<crate::runtime::publication::PublishedTick>>,
     pub(in crate::session::protocol) id_map: Option<Arc<Vec<crate::AccountId>>>,
@@ -119,10 +135,30 @@ pub struct DeferredTick {
         Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>,
 }
 
+#[derive(Clone)]
+struct LightRuntime {
+    tick: u64,
+    seq: u64,
+    day: u32,
+    phase: crate::TradingPhase,
+    origin: crate::RuntimeMirrorOrigin,
+    accounts: BTreeMap<crate::AccountId, crate::Account>,
+    publication: Arc<crate::runtime::publication::PublishedTick>,
+    id_map: Arc<Vec<crate::AccountId>>,
+    accounts_per_group: usize,
+    config: crate::GameConfig,
+    identity: Arc<std::sync::OnceLock<StepFatal>>,
+}
+
+enum ConsumedRuntime {
+    Full(super::super::PublicRuntimeState),
+    Light(LightRuntime),
+}
+
 /// 只能由 DeferredTick 消费所得的同版外围结果。
 pub struct ConsumedTick {
     frame: TickFrame,
-    runtime: super::super::PublicRuntimeState,
+    runtime: ConsumedRuntime,
     identity: Arc<std::sync::OnceLock<StepFatal>>,
 }
 
@@ -153,6 +189,55 @@ impl DeferredTick {
                     description: error.to_string(),
                 })?;
         }
+        let (mut snapshot, mut runtime) = match self.projection {
+            DeferredProjection::Full { snapshot, runtime } => (snapshot, Some(runtime)),
+            DeferredProjection::Light(light) => {
+                let failure = |description: String| StepFatal::InvariantViolation {
+                    location: "DeferredTick::consume".to_owned(),
+                    description,
+                };
+                let runtime = LightRuntime {
+                    tick: light.tick,
+                    seq: light.seq,
+                    day: light.day,
+                    phase: light.phase,
+                    origin: light.mirror_origin,
+                    accounts: light.accounts,
+                    publication: self
+                        .publication
+                        .take()
+                        .ok_or_else(|| failure("缺少发布版本".to_owned()))?,
+                    id_map: self
+                        .id_map
+                        .take()
+                        .ok_or_else(|| failure("缺少账户名册".to_owned()))?,
+                    accounts_per_group: self.accounts_per_group,
+                    config: self
+                        .config
+                        .take()
+                        .ok_or_else(|| failure("缺少费用配置".to_owned()))?,
+                    identity: Arc::clone(&self.identity),
+                };
+                let timeseries_payload = super::super::project_timeseries_parts(
+                    &self.facts,
+                    light.markets,
+                    light.active,
+                );
+                let frame = TickFrame {
+                    tick: self.tick,
+                    seq_from: self.seq_from,
+                    seq_to: self.seq_to,
+                    facts: self.facts,
+                    timeseries_payload,
+                };
+                frame.validate().map_err(protocol_fatal)?;
+                return Ok(ConsumedTick {
+                    frame,
+                    runtime: ConsumedRuntime::Light(runtime),
+                    identity: self.identity,
+                });
+            }
+        };
         if self.defer_mirror {
             let failure = |description: String| StepFatal::InvariantViolation {
                 location: "DeferredTick::consume".to_owned(),
@@ -171,7 +256,7 @@ impl DeferredTick {
                 .take()
                 .ok_or_else(|| failure("缺少费用配置".to_owned()))?;
             let mut orders = Vec::new();
-            for account in self.snapshot.accounts.values_mut() {
+            for account in snapshot.accounts.values_mut() {
                 account.reserved_cash = crate::Money::ZERO;
                 account.reserved_sell_qty.clear();
             }
@@ -191,7 +276,7 @@ impl DeferredTick {
                     let id = *ids
                         .get(index)
                         .ok_or_else(|| failure(format!("委托 owner 不在名册：{:?}", fact.owner)))?;
-                    let Some(account) = self.snapshot.accounts.get_mut(&id) else {
+                    let Some(account) = snapshot.accounts.get_mut(&id) else {
                         continue;
                     };
                     let price = crate::Money::from_cents(fact.price);
@@ -220,15 +305,17 @@ impl DeferredTick {
                         price,
                         fact.qty,
                         fact.order_serial,
-                        self.snapshot.phase,
+                        snapshot.phase,
                     ) {
                         orders.push(order);
                     }
                 }
             }
-            self.runtime = GameSession::public_runtime_from_prepared(&self.snapshot, orders)?;
+            runtime = Some(GameSession::public_runtime_from_prepared(
+                &snapshot, orders,
+            )?);
         }
-        let timeseries_payload = super::super::project_timeseries(&self.facts, self.snapshot);
+        let timeseries_payload = super::super::project_timeseries(&self.facts, snapshot);
         let frame = TickFrame {
             tick: self.tick,
             seq_from: self.seq_from,
@@ -239,9 +326,119 @@ impl DeferredTick {
         frame.validate().map_err(protocol_fatal)?;
         Ok(ConsumedTick {
             frame,
-            runtime: self.runtime,
+            runtime: ConsumedRuntime::Full(runtime.ok_or_else(|| {
+                StepFatal::InvariantViolation {
+                    location: "DeferredTick::consume".to_owned(),
+                    description: "缺少 runtime 投影".to_owned(),
+                }
+            })?),
             identity: self.identity,
         })
+    }
+}
+
+#[cfg(test)]
+thread_local! { static LIGHT_RUNTIME_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+
+impl LightRuntime {
+    fn materialize(&self) -> Result<super::super::PublicRuntimeState, StepFatal> {
+        #[cfg(test)]
+        LIGHT_RUNTIME_BUILDS.with(|count| count.set(count.get() + 1));
+        let failure = |description: String| StepFatal::InvariantViolation {
+            location: "LightRuntime::materialize".to_owned(),
+            description,
+        };
+        let mut accounts: BTreeMap<_, _> = self
+            .accounts
+            .iter()
+            .map(|(id, account)| {
+                (
+                    *id,
+                    crate::session::AccountSnap {
+                        cash: account.cash(),
+                        positions: account
+                            .positions()
+                            .iter()
+                            .map(|(code, pos)| {
+                                (
+                                    *code,
+                                    crate::session::PositionSnap {
+                                        qty: pos.qty(),
+                                        t1_locked: pos.t1_locked(),
+                                        invested_cents: pos.invested_cents(),
+                                        recovered_cents: pos.recovered_cents(),
+                                    },
+                                )
+                            })
+                            .collect(),
+                        reserved_cash: crate::Money::ZERO,
+                        reserved_sell_qty: BTreeMap::new(),
+                    },
+                )
+            })
+            .collect();
+        let mut orders = Vec::new();
+        for desk in &self.publication.desks {
+            let code = crate::StockId(u32::from(desk.stock));
+            for fact in desk.resting.iter() {
+                if fact.owner.1 as usize >= self.accounts_per_group {
+                    return Err(failure(format!(
+                        "委托 owner 组内坐标越界：{:?}",
+                        fact.owner
+                    )));
+                }
+                let index = usize::from(fact.owner.0)
+                    .checked_mul(self.accounts_per_group)
+                    .and_then(|start| start.checked_add(fact.owner.1 as usize))
+                    .ok_or_else(|| failure("委托 owner 坐标溢出".to_owned()))?;
+                let id = *self
+                    .id_map
+                    .get(index)
+                    .ok_or_else(|| failure(format!("委托 owner 不在名册：{:?}", fact.owner)))?;
+                let Some(account) = accounts.get_mut(&id) else {
+                    continue;
+                };
+                let price = crate::Money::from_cents(fact.price);
+                let required = crate::session::live_cash_reservation(
+                    &self.config,
+                    fact.side,
+                    price,
+                    fact.qty,
+                    crate::Money::from_cents(fact.filled_value),
+                )
+                .map_err(|error| failure(format!("委托资金预留错误：{error}")))?;
+                account.reserved_cash = account
+                    .reserved_cash
+                    .add(required)
+                    .map_err(|error| failure(format!("委托资金预留溢出：{error}")))?;
+                if fact.side == crate::Side::Sell {
+                    let qty = account.reserved_sell_qty.entry(code).or_default();
+                    *qty = qty
+                        .checked_add(fact.qty)
+                        .ok_or_else(|| failure("委托股数溢出".to_owned()))?;
+                }
+                if let Some(order) = super::super::player_working_order_from_mirror(
+                    code,
+                    id,
+                    fact.side,
+                    price,
+                    fact.qty,
+                    fact.order_serial,
+                    self.phase,
+                ) {
+                    orders.push(order);
+                }
+            }
+        }
+        GameSession::public_runtime_from_parts(
+            self.tick,
+            self.seq,
+            self.day,
+            self.phase,
+            self.origin,
+            accounts,
+            orders,
+        )
     }
 }
 
@@ -312,6 +509,7 @@ impl ProtocolSession {
 
     /// 仅允许健康 serial 的机械回放；checkpoint 不复制 live World，不能撤回 runtime 提交。
     pub fn rollback(&mut self, checkpoint: ProtocolCheckpoint) -> Result<(), StepFatal> {
+        self.require_consumers_healthy()?;
         self.state.game.require_healthy()?;
         if !self.state.pending_runtime.is_empty() || !checkpoint.state.pending_runtime.is_empty() {
             return Err(StepFatal::InvariantViolation {
@@ -502,6 +700,7 @@ impl ProtocolSession {
                 fact_cursor: crate::session::protocol::SessionFactCursor::default(),
                 day_end_save,
                 committed_runtime: None,
+                committed_light_runtime: None,
                 published_runtime: RefCell::new(None),
                 pending_save_candidates: RefCell::new(BTreeMap::new()),
                 pending_runtime: BTreeMap::new(),
@@ -547,6 +746,19 @@ impl ProtocolSession {
 
     /// 显式同步后返回当前 Snapshot；不构造市场 TickFrame。
     pub fn flush_now(&mut self) -> Result<crate::Snapshot, StepFatal> {
+        self.require_consumers_healthy()?;
+        if !self.state.pending_runtime.is_empty() {
+            return Err(StepFatal::InvariantViolation {
+                location: "ProtocolSession::flush_now".to_owned(),
+                description: "尚有未登记的已提交 tick".to_owned(),
+            });
+        }
+        if let Some(light) = &self.state.committed_light_runtime {
+            if let Err(error) = light.materialize() {
+                let _ = light.identity.set(error.clone());
+                return Err(error);
+            }
+        }
         self.state.game.flush_now()?;
         let snapshot = self.state.game.runtime_snapshot();
         let current = self
@@ -555,6 +767,7 @@ impl ProtocolSession {
             .public_runtime_state()
             .map_err(|fatal| self.state.game.poison_runtime_step(fatal))?;
         self.state.committed_runtime = Some(current);
+        self.state.committed_light_runtime = None;
         // 显式同步后的宿主可能重建基线；下一批须携带完整委托而非增量。
         *self.state.published_runtime.borrow_mut() = None;
         Ok(snapshot)
@@ -621,6 +834,14 @@ impl ProtocolSession {
 
     /// 返回最早已失败的外围消费，避免跳过无法交付的事实。
     fn require_consumers_healthy(&self) -> Result<(), StepFatal> {
+        if let Some(fatal) = self
+            .state
+            .committed_light_runtime
+            .as_ref()
+            .and_then(|value| value.identity.get())
+        {
+            return Err(fatal.clone());
+        }
         match self
             .state
             .pending_runtime
@@ -677,6 +898,15 @@ impl ProtocolSession {
 
     /// 顺序登记已完成的同版外围结果，供日界和宿主发布使用。
     pub fn record_consumed_tick(&mut self, consumed: ConsumedTick) -> Result<TickFrame, StepFatal> {
+        // 已登记版本的失败早于所有待登记版本，不能被后续版本覆盖。
+        if let Some(fatal) = self
+            .state
+            .committed_light_runtime
+            .as_ref()
+            .and_then(|value| value.identity.get())
+        {
+            return Err(fatal.clone());
+        }
         // 较晚 tick 的失败不能阻止已经成功的前缀交付。
         if let Some(fatal) = self
             .state
@@ -716,7 +946,16 @@ impl ProtocolSession {
         self.state.pending_runtime.remove(&frame.tick);
         self.state.fact_cursor = cursor;
         self.state.intraday.push(Arc::new(frame.clone()));
-        self.state.committed_runtime = Some(consumed.runtime);
+        match consumed.runtime {
+            ConsumedRuntime::Full(runtime) => {
+                self.state.committed_runtime = Some(runtime);
+                self.state.committed_light_runtime = None;
+            }
+            ConsumedRuntime::Light(runtime) => {
+                self.state.committed_runtime = None;
+                self.state.committed_light_runtime = Some(runtime);
+            }
+        }
         Ok(consumed.frame)
     }
 
@@ -809,6 +1048,7 @@ impl ProtocolSession {
         self.state.fact_cursor = cursor;
         self.state.intraday.push(retained);
         self.state.committed_runtime = Some(runtime);
+        self.state.committed_light_runtime = None;
         Ok((frame, evidence))
     }
 
@@ -873,6 +1113,7 @@ impl ProtocolSession {
         self.state.fact_cursor = cursor;
         self.state.intraday = AppendOnlyHistory::default();
         self.state.committed_runtime = None;
+        self.state.committed_light_runtime = None;
         self.state
             .pending_save_candidates
             .borrow_mut()
@@ -885,13 +1126,22 @@ impl ProtocolSession {
     pub fn tick_batch(&self, frames: Vec<TickFrame>) -> Result<TickBatch, StepFatal> {
         let mut previous = self.state.published_runtime.borrow_mut();
         self.state.game.require_healthy()?;
-        let current = self
-            .state
-            .committed_runtime
-            .as_ref()
-            .ok_or_else(|| protocol_fatal(super::super::ProtocolError::RuntimeDeltaMismatch))?;
+        let current = if let Some(light) = &self.state.committed_light_runtime {
+            match light.materialize() {
+                Ok(runtime) => runtime,
+                Err(error) => {
+                    let _ = light.identity.set(error.clone());
+                    return Err(error);
+                }
+            }
+        } else {
+            self.state
+                .committed_runtime
+                .clone()
+                .ok_or_else(|| protocol_fatal(super::super::ProtocolError::RuntimeDeltaMismatch))?
+        };
         let batch = current.tick_batch_delta(frames, previous.as_ref())?;
-        *previous = Some(current.clone());
+        *previous = Some(current);
         Ok(batch)
     }
 }

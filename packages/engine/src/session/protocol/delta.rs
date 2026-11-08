@@ -198,9 +198,29 @@ impl GameSession {
         snapshot: &crate::Snapshot,
         orders: Vec<super::PlayerWorkingOrder>,
     ) -> Result<PublicRuntimeState, StepFatal> {
-        validate_accounts(&snapshot.accounts).map_err(fatal)?;
-        validate_mirror_origin(&snapshot.mirror_origin, snapshot.tick).map_err(fatal)?;
-        if !snapshot.accounts.contains_key(&AccountId(0)) {
+        Self::public_runtime_from_parts(
+            snapshot.tick,
+            snapshot.seq,
+            snapshot.day,
+            snapshot.phase,
+            snapshot.mirror_origin,
+            snapshot.accounts.clone(),
+            orders,
+        )
+    }
+
+    pub(in crate::session) fn public_runtime_from_parts(
+        tick: u64,
+        seq: u64,
+        day: u32,
+        phase: TradingPhase,
+        mirror_origin: crate::RuntimeMirrorOrigin,
+        accounts: BTreeMap<AccountId, AccountSnap>,
+        orders: Vec<super::PlayerWorkingOrder>,
+    ) -> Result<PublicRuntimeState, StepFatal> {
+        validate_accounts(&accounts).map_err(fatal)?;
+        validate_mirror_origin(&mirror_origin, tick).map_err(fatal)?;
+        if !accounts.contains_key(&AccountId(0)) {
             return Err(fatal(ProtocolError::RuntimeDeltaMismatch));
         }
         let mut working_orders = BTreeMap::new();
@@ -211,12 +231,12 @@ impl GameSession {
             }
         }
         Ok(PublicRuntimeState {
-            tick: snapshot.tick,
-            seq: snapshot.seq,
-            day: snapshot.day,
-            phase: snapshot.phase,
-            mirror_origin: snapshot.mirror_origin,
-            accounts: snapshot.accounts.clone(),
+            tick,
+            seq,
+            day,
+            phase,
+            mirror_origin,
+            accounts,
             working_orders,
         })
     }

@@ -3,16 +3,37 @@ use super::*;
 use crate::runtime::drive::{PreparedDriverStep, RuntimeDriver};
 use crate::runtime::source::WorldMirrorSource;
 
+fn validate_deferred_member_values(
+    cash: i64,
+    held: i64,
+    qty: u32,
+    invested: i64,
+    recovered: i64,
+) -> Result<(), String> {
+    if cash < 0 || held < 0 {
+        return Err("玩家现金或买单冻结为负".to_owned());
+    }
+    if qty > 0 && (invested < 0 || recovered < 0) {
+        return Err("玩家持仓成本或回收金额为负".to_owned());
+    }
+    Ok(())
+}
+
 pub(crate) enum PreparedRuntimeCommit {
     Mirror(Box<super::runtime_mirror::PreparedRuntimeMirror>),
     Progress(Box<PreparedRuntimeProgress>),
 }
 
+enum ProgressProjection {
+    Full(protocol::PreparedTickProjection),
+    Light(protocol::LightTickProjection),
+}
+
 pub(crate) struct PreparedRuntimeProgress {
     source: WorldMirrorSource,
-    projection: protocol::PreparedTickProjection,
+    projection: ProgressProjection,
     events: Vec<Event>,
-    _plans: crate::plans::PlanBook,
+    _plans: Option<crate::plans::PlanBook>,
     _calendar: crate::runtime::drive::PreparedDriverCalendar,
     selected_accounts: BTreeMap<AccountId, crate::account::Account>,
     receipts: BTreeMap<AccountId, crate::experience::AppendOnlyHistory<PersonalTradeConfirmation>>,
@@ -26,10 +47,19 @@ pub(crate) struct PreparedRuntimeProgress {
 }
 
 impl PreparedRuntimeCommit {
-    pub(super) fn projection(&self) -> &protocol::PreparedTickProjection {
+    pub(super) fn projection(&self, seq_from: u64) -> protocol::TickCandidateProjection<'_> {
         match self {
-            Self::Mirror(value) => &value.projection,
-            Self::Progress(value) => &value.projection,
+            Self::Mirror(value) => {
+                protocol::TickCandidateProjection::from_prepared(&value.projection, seq_from)
+            }
+            Self::Progress(value) => match &value.projection {
+                ProgressProjection::Full(projection) => {
+                    protocol::TickCandidateProjection::from_prepared(projection, seq_from)
+                }
+                ProgressProjection::Light(projection) => {
+                    protocol::TickCandidateProjection::from_light(projection, seq_from)
+                }
+            },
         }
     }
     #[cfg(test)]
@@ -55,7 +85,7 @@ impl PreparedRuntimeCommit {
     pub(crate) fn plans(&self) -> &crate::plans::PlanBook {
         match self {
             Self::Mirror(value) => value.causal_plans(),
-            Self::Progress(value) => &value._plans,
+            Self::Progress(value) => value._plans.as_ref().expect("诊断必须收集真实计划簿"),
         }
     }
     #[cfg(feature = "simulation-diagnostics")]
@@ -127,6 +157,7 @@ impl GameSession {
         Ok(origin)
     }
 
+    #[cfg(test)]
     pub(crate) fn prepare_runtime_publication(
         &self,
         driver: &mut RuntimeDriver,
@@ -307,7 +338,7 @@ impl GameSession {
             (None, None)
         };
         let seq = driver.next_seq();
-        let (snapshot, runtime, selected_accounts) = if defer_mirror {
+        let (projection, selected_accounts) = if defer_mirror {
             // 只把本拍变化的经济成员账户转为 Session 的紧凑权威读面。
             let selected: std::collections::BTreeSet<_> = self
                 .state
@@ -343,6 +374,7 @@ impl GameSession {
                     {
                         return Err(format!("玩家账户股票维度错误：{id:?}"));
                     }
+                    validate_deferred_member_values(raw.cash, raw.buy_purse_held_cents, 0, 0, 0)?;
                     let mut account = self
                         .account(id)
                         .ok_or_else(|| format!("玩家账户缺失：{id:?}"))?
@@ -353,6 +385,13 @@ impl GameSession {
                         let qty = raw.shares[stock]
                             .checked_add(raw.pending_sell_qty[stock])
                             .ok_or("玩家股数溢出")?;
+                        validate_deferred_member_values(
+                            raw.cash,
+                            raw.buy_purse_held_cents,
+                            qty,
+                            raw.invested_cents[stock],
+                            raw.recovered_cents[stock],
+                        )?;
                         if raw.frozen_today[stock] > qty {
                             return Err("玩家 T+1 冻结超过持仓".to_owned());
                         }
@@ -379,67 +418,111 @@ impl GameSession {
                     selected_accounts.insert(id, account);
                 }
             }
-            let mut accounts = BTreeMap::new();
-            for id in selected {
-                let account = selected_accounts
-                    .get(&id)
-                    .or_else(|| self.account(id))
-                    .ok_or_else(|| format!("玩家 snapshot 缺少账户：{id:?}"))?;
-                accounts.insert(
-                    id,
-                    AccountSnap {
-                        cash: account.cash(),
-                        positions: account
-                            .positions()
-                            .iter()
-                            .map(|(code, pos)| {
-                                (
-                                    *code,
-                                    PositionSnap {
-                                        qty: pos.qty(),
-                                        t1_locked: pos.t1_locked(),
-                                        invested_cents: pos.invested_cents(),
-                                        recovered_cents: pos.recovered_cents(),
-                                    },
-                                )
-                            })
-                            .collect(),
-                        reserved_cash: Money::ZERO,
-                        reserved_sell_qty: BTreeMap::new(),
-                    },
-                );
+            let member_accounts: BTreeMap<_, _> = selected
+                .into_iter()
+                .map(|id| {
+                    selected_accounts
+                        .get(&id)
+                        .or_else(|| self.account(id))
+                        .cloned()
+                        .map(|account| (id, account))
+                        .ok_or_else(|| format!("玩家账户缺失：{id:?}"))
+                })
+                .collect::<Result<_, _>>()?;
+            let fast = self.state.setup.runtime_sync_policy == crate::RuntimeSyncPolicy::DayEnd
+                && !cfg!(feature = "simulation-diagnostics");
+            if fast {
+                let projection = protocol::LightTickProjection {
+                    tick,
+                    seq,
+                    day: self.day(),
+                    phase: self.phase_at_tick(tick),
+                    mirror_origin: self.origin_from_runtime_source(
+                        source,
+                        self.runtime_mirror_origin().install_sequence,
+                        self.phase_at_tick(tick),
+                    )?,
+                    markets: current_markets,
+                    active,
+                    accounts: member_accounts,
+                };
+                (ProgressProjection::Light(projection), selected_accounts)
+            } else {
+                let mut accounts = BTreeMap::new();
+                for (id, account) in &member_accounts {
+                    accounts.insert(
+                        *id,
+                        AccountSnap {
+                            cash: account.cash(),
+                            positions: account
+                                .positions()
+                                .iter()
+                                .map(|(code, pos)| {
+                                    (
+                                        *code,
+                                        PositionSnap {
+                                            qty: pos.qty(),
+                                            t1_locked: pos.t1_locked(),
+                                            invested_cents: pos.invested_cents(),
+                                            recovered_cents: pos.recovered_cents(),
+                                        },
+                                    )
+                                })
+                                .collect(),
+                            reserved_cash: Money::ZERO,
+                            reserved_sell_qty: BTreeMap::new(),
+                        },
+                    );
+                }
+                #[cfg(test)]
+                crate::runtime::world::record_dayend_hotpath_for_test(2);
+                let snapshot = Snapshot {
+                    tick,
+                    seq,
+                    day: self.day(),
+                    phase: self.phase_at_tick(tick),
+                    // 公开成员账户与盘口来自此 World 版本；install_sequence 仍标识最后完整镜像。
+                    mirror_origin: self.origin_from_runtime_source(
+                        source,
+                        self.runtime_mirror_origin().install_sequence,
+                        self.phase_at_tick(tick),
+                    )?,
+                    markets: current_markets,
+                    accounts,
+                    daily_candles: BTreeMap::new(),
+                    active_daily_candles: active,
+                };
+                // 在途委托与预留使用本拍 desk 分片，由外围消费时投影。
+                #[cfg(test)]
+                crate::runtime::world::record_dayend_hotpath_for_test(3);
+                let runtime = Self::public_runtime_from_prepared(&snapshot, Vec::new())
+                    .map_err(|error| error.to_string())?;
+                (
+                    ProgressProjection::Full(protocol::PreparedTickProjection {
+                        snapshot,
+                        runtime,
+                    }),
+                    selected_accounts,
+                )
             }
-            let snapshot = Snapshot {
-                tick,
-                seq,
-                day: self.day(),
-                phase: self.phase_at_tick(tick),
-                // 公开成员账户与盘口来自此 World 版本；install_sequence 仍标识最后完整镜像。
-                mirror_origin: self.origin_from_runtime_source(
-                    source,
-                    self.runtime_mirror_origin().install_sequence,
-                    self.phase_at_tick(tick),
-                )?,
-                markets: current_markets,
-                accounts,
-                daily_candles: BTreeMap::new(),
-                active_daily_candles: active,
-            };
-            // 在途委托与预留使用本拍 desk 分片，由外围消费时投影。
-            let runtime = Self::public_runtime_from_prepared(&snapshot, Vec::new())
-                .map_err(|error| error.to_string())?;
-            (snapshot, runtime, selected_accounts)
         } else {
+            #[cfg(test)]
+            crate::runtime::world::record_dayend_hotpath_for_test(2);
             let mut snapshot = self.runtime_snapshot();
             snapshot.tick = tick;
             snapshot.seq = seq;
             snapshot.phase = self.phase_at_tick(tick);
+            #[cfg(test)]
+            crate::runtime::world::record_dayend_hotpath_for_test(3);
             let runtime =
                 Self::public_runtime_from_prepared(&snapshot, self.player_working_orders())
                     .map_err(|error| error.to_string())?;
             snapshot.markets = current_markets;
             snapshot.active_daily_candles = active;
-            (snapshot, runtime, BTreeMap::new())
+            (
+                ProgressProjection::Full(protocol::PreparedTickProjection { snapshot, runtime }),
+                BTreeMap::new(),
+            )
         };
         let (receipts, receipt_watermark) = self.prepare_runtime_receipts(driver)?;
         let mut retail = super::retail_lifecycle::Candidate {
@@ -457,7 +540,12 @@ impl GameSession {
         self.append_runtime_retail_rejections(&mut retail, rejections)
             .map_err(|error| error.to_string())?;
         #[cfg(feature = "simulation-diagnostics")]
-        let traces = self.prepare_runtime_decision_traces(driver, tick, &input.plans, &events)?;
+        let traces = self.prepare_runtime_decision_traces(
+            driver,
+            tick,
+            input.plans.as_ref().ok_or("诊断缺少计划簿")?,
+            &events,
+        )?;
         #[cfg(test)]
         if self.runtime_install_failure {
             return Err("安装失败注入（逐拍事实 candidate 校验失败）".to_owned());
@@ -465,7 +553,7 @@ impl GameSession {
         Ok(PreparedRuntimeCommit::Progress(Box::new(
             PreparedRuntimeProgress {
                 source,
-                projection: protocol::PreparedTickProjection { snapshot, runtime },
+                projection,
                 events,
                 _plans: input.plans,
                 _calendar: input.calendar,
@@ -560,14 +648,24 @@ impl GameSession {
             }
             PreparedRuntimeCommit::Progress(value) => {
                 let value = *value;
+                let (tick, seq, origin) = match &value.projection {
+                    ProgressProjection::Full(projection) => (
+                        projection.snapshot.tick,
+                        projection.snapshot.seq,
+                        projection.snapshot.mirror_origin,
+                    ),
+                    ProgressProjection::Light(projection) => {
+                        (projection.tick, projection.seq, projection.mirror_origin)
+                    }
+                };
                 if self.runtime_mirror_origin.is_none() {
-                    self.runtime_mirror_origin = Some(value.projection.snapshot.mirror_origin);
+                    self.runtime_mirror_origin = Some(origin);
                 }
                 for (id, account) in value.selected_accounts {
                     self.state.accounts.insert(id, account);
                 }
-                self.state.tick = value.projection.snapshot.tick;
-                self.state.seq = value.projection.snapshot.seq;
+                self.state.tick = tick;
+                self.state.seq = seq;
                 self.runtime_publication_generation = value.source.generation;
                 for (account, history) in value.receipts {
                     self.state
@@ -602,5 +700,19 @@ mod transport_layout_tests {
             size <= 128,
             "PreparedRuntimeCommit 占 {size} 字节，超过 128 字节运输预算"
         );
+    }
+}
+
+#[cfg(test)]
+mod deferred_member_value_tests {
+    use super::validate_deferred_member_values;
+
+    #[test]
+    fn rejects_negative_dirty_member_balances_and_live_position_costs() {
+        assert!(validate_deferred_member_values(-1, 1, 1, 0, 0).is_err());
+        assert!(validate_deferred_member_values(1, -1, 1, 0, 0).is_err());
+        assert!(validate_deferred_member_values(1, 0, 1, -1, 0).is_err());
+        assert!(validate_deferred_member_values(1, 0, 1, 0, -1).is_err());
+        assert!(validate_deferred_member_values(1, 0, 1, 0, 0).is_ok());
     }
 }

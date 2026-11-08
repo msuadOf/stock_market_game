@@ -14,6 +14,19 @@ pub(in crate::session) struct TickCandidateProjection<'candidate> {
 enum ProjectionSource<'candidate> {
     Session(&'candidate GameSession),
     Prepared(&'candidate PreparedTickProjection),
+    Light(&'candidate LightTickProjection),
+}
+
+#[derive(Clone)]
+pub(in crate::session) struct LightTickProjection {
+    pub tick: u64,
+    pub seq: u64,
+    pub day: u32,
+    pub phase: crate::TradingPhase,
+    pub mirror_origin: crate::RuntimeMirrorOrigin,
+    pub markets: std::collections::BTreeMap<crate::StockId, crate::session::MarketSnap>,
+    pub active: std::collections::BTreeMap<crate::StockId, crate::session::DailyCandle>,
+    pub accounts: std::collections::BTreeMap<crate::AccountId, crate::Account>,
 }
 
 pub(in crate::session) struct PreparedTickProjection {
@@ -39,10 +52,21 @@ impl<'candidate> TickCandidateProjection<'candidate> {
         }
     }
 
+    pub(in crate::session) fn from_light(
+        candidate: &'candidate LightTickProjection,
+        seq_from: u64,
+    ) -> Self {
+        Self {
+            candidate: ProjectionSource::Light(candidate),
+            seq_from,
+        }
+    }
+
     pub fn tick(&self) -> u64 {
         match &self.candidate {
             ProjectionSource::Session(candidate) => candidate.tick(),
             ProjectionSource::Prepared(candidate) => candidate.snapshot.tick,
+            ProjectionSource::Light(candidate) => candidate.tick,
         }
     }
 
@@ -50,6 +74,7 @@ impl<'candidate> TickCandidateProjection<'candidate> {
         match &self.candidate {
             ProjectionSource::Session(candidate) => candidate.seq(),
             ProjectionSource::Prepared(candidate) => candidate.snapshot.seq,
+            ProjectionSource::Light(candidate) => candidate.seq,
         }
     }
 
@@ -57,14 +82,18 @@ impl<'candidate> TickCandidateProjection<'candidate> {
         &self,
         facts: Vec<EventFact>,
     ) -> Result<super::DeferredTick, StepFatal> {
-        let (snapshot, runtime) = match &self.candidate {
+        let projection = match &self.candidate {
             ProjectionSource::Session(candidate) => {
                 let snapshot = candidate.runtime_snapshot();
                 let runtime = candidate.public_runtime_from_snapshot(&snapshot)?;
-                (snapshot, runtime)
+                super::DeferredProjection::Full { snapshot, runtime }
             }
-            ProjectionSource::Prepared(candidate) => {
-                (candidate.snapshot.clone(), candidate.runtime.clone())
+            ProjectionSource::Prepared(candidate) => super::DeferredProjection::Full {
+                snapshot: candidate.snapshot.clone(),
+                runtime: candidate.runtime.clone(),
+            },
+            ProjectionSource::Light(candidate) => {
+                super::DeferredProjection::Light((**candidate).clone())
             }
         };
         Ok(super::DeferredTick {
@@ -72,8 +101,7 @@ impl<'candidate> TickCandidateProjection<'candidate> {
             seq_from: self.seq_from,
             seq_to: self.seq_to(),
             facts,
-            snapshot,
-            runtime,
+            projection,
             publication: None,
             id_map: None,
             accounts_per_group: 0,
@@ -102,6 +130,12 @@ impl<'candidate> TickCandidateProjection<'candidate> {
             }
             ProjectionSource::Prepared(candidate) => {
                 (candidate.snapshot.clone(), candidate.runtime.clone())
+            }
+            ProjectionSource::Light(_) => {
+                return Err(StepFatal::InvariantViolation {
+                    location: "TickCandidateProjection::project_frame".to_owned(),
+                    description: "轻量投影必须由 DeferredTick 消费".to_owned(),
+                })
             }
         };
         let timeseries_payload = project_timeseries(&facts, snapshot);
@@ -185,9 +219,17 @@ fn frame_fatal(error: super::ProtocolError) -> StepFatal {
 }
 
 pub fn project_timeseries(facts: &[EventFact], snapshot: crate::Snapshot) -> TickTimeseriesPayload {
+    project_timeseries_parts(facts, snapshot.markets, snapshot.active_daily_candles)
+}
+
+pub(in crate::session::protocol) fn project_timeseries_parts(
+    facts: &[EventFact],
+    markets: std::collections::BTreeMap<crate::StockId, crate::session::MarketSnap>,
+    active: std::collections::BTreeMap<crate::StockId, crate::session::DailyCandle>,
+) -> TickTimeseriesPayload {
     let mut timeseries_payload = TickTimeseriesPayload {
-        markets: snapshot.markets,
-        active_daily_candles: snapshot.active_daily_candles,
+        markets,
+        active_daily_candles: active,
         ..TickTimeseriesPayload::default()
     };
     for fact in facts {

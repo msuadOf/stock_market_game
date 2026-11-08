@@ -260,7 +260,7 @@ impl RuntimeDriver {
                 .map(|view| view.last_price)
                 .collect(),
             personals,
-            plans,
+            plans: Some(plans),
             touched: Vec::new(),
             events: Vec::new(),
             day_end: None,
