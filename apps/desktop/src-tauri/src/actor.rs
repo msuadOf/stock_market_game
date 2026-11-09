@@ -12,7 +12,6 @@
 //!
 //! 当前单玩家模式：意图固定路由给玩家 `AccountId(0)`（见 `enqueue`）。
 
-use std::collections::VecDeque;
 #[cfg(test)]
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
@@ -985,10 +984,8 @@ impl SessionManager {
             pause_preferences: PausePreferences::default(),
             consumer: None,
             pending_ticks: 0,
-            fixed_batches: VecDeque::new(),
-            fixed_frames: VecDeque::new(),
             consumer_notify: Arc::new(tokio::sync::Notify::new()),
-            #[cfg(test)]
+            #[cfg(all(test, not(feature = "simulation-diagnostics")))]
             consumer_gate: None,
         };
         tokio::spawn(actor.run());
@@ -1021,13 +1018,16 @@ struct StepFailureCapture {
     frames: Vec<engine::session::protocol::TickFrame>,
 }
 
+#[cfg(not(feature = "simulation-diagnostics"))]
 type IntervalSlot = Arc<std::sync::Mutex<Option<engine::session::protocol::DeferredInterval>>>;
 enum ConsumerInput {
+    #[cfg(not(feature = "simulation-diagnostics"))]
     Interval(IntervalSlot),
 }
 
 struct TickConsumer {
     input: Option<std::sync::mpsc::Sender<ConsumerInput>>,
+    #[cfg(not(feature = "simulation-diagnostics"))]
     slot: Option<IntervalSlot>,
     output: std::sync::mpsc::Receiver<(
         usize,
@@ -1043,6 +1043,7 @@ fn consumer_failure(description: impl Into<String>) -> engine::session::StepFata
     }
 }
 
+#[cfg(not(feature = "simulation-diagnostics"))]
 struct ConsumerWakeOnExit {
     sender: Option<
         std::sync::mpsc::Sender<(
@@ -1053,6 +1054,7 @@ struct ConsumerWakeOnExit {
     notify: Arc<tokio::sync::Notify>,
 }
 
+#[cfg(not(feature = "simulation-diagnostics"))]
 impl Drop for ConsumerWakeOnExit {
     fn drop(&mut self) {
         self.sender.take();
@@ -1093,10 +1095,8 @@ struct SessionActor<R: Runtime> {
     pause_preferences: PausePreferences,
     consumer: Option<TickConsumer>,
     pending_ticks: usize,
-    fixed_batches: VecDeque<(usize, bool)>,
-    fixed_frames: VecDeque<TickFrame>,
     consumer_notify: Arc<tokio::sync::Notify>,
-    #[cfg(test)]
+    #[cfg(all(test, not(feature = "simulation-diagnostics")))]
     consumer_gate: Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>,
 }
 
@@ -1141,9 +1141,8 @@ impl ActorHarness {
             pause_preferences,
             consumer: None,
             pending_ticks: 0,
-            fixed_batches: VecDeque::new(),
-            fixed_frames: VecDeque::new(),
             consumer_notify: Arc::new(tokio::sync::Notify::new()),
+            #[cfg(not(feature = "simulation-diagnostics"))]
             consumer_gate: None,
         };
         Self {
@@ -1185,6 +1184,7 @@ impl ActorHarness {
 }
 
 impl<R: Runtime> SessionActor<R> {
+    #[cfg(not(feature = "simulation-diagnostics"))]
     fn start_consumer(&mut self) -> Result<(), engine::session::StepFatal> {
         if self.consumer.is_some() {
             return Ok(());
@@ -1242,7 +1242,6 @@ impl<R: Runtime> SessionActor<R> {
     }
 
     fn collect_consumed(&mut self, wait: bool) -> Result<(), engine::session::StepFatal> {
-        let grouped = !self.fixed_batches.is_empty();
         let mut frames = Vec::new();
         while self.pending_ticks > 0 {
             let consumer = self
@@ -1271,22 +1270,12 @@ impl<R: Runtime> SessionActor<R> {
                     if let Some((_, _, capture)) = &self.injected_step_failure {
                         capture.lock().unwrap().frames.push(frame.clone());
                     }
-                    if grouped {
-                        self.queue_consumed_frames(vec![frame])?;
-                    } else {
-                        frames.push(frame);
-                    }
+                    frames.push(frame);
                 }
                 Err(error) => {
                     self.pending_ticks = 0;
                     if !frames.is_empty() {
                         self.publish_protocol_frames(frames)
-                            .map_err(|failure| consumer_failure(failure.message))?;
-                    }
-                    self.fixed_batches.clear();
-                    let prefix: Vec<_> = self.fixed_frames.drain(..).collect();
-                    if !prefix.is_empty() {
-                        self.publish_protocol_frames(prefix)
                             .map_err(|failure| consumer_failure(failure.message))?;
                     }
                     return Err(error);
@@ -1296,32 +1285,6 @@ impl<R: Runtime> SessionActor<R> {
         if !frames.is_empty() {
             self.publish_protocol_frames(frames)
                 .map_err(|failure| consumer_failure(failure.message))?;
-        }
-        Ok(())
-    }
-
-    fn queue_consumed_frames(
-        &mut self,
-        frames: Vec<TickFrame>,
-    ) -> Result<(), engine::session::StepFatal> {
-        if self.fixed_batches.is_empty() {
-            if !frames.is_empty() {
-                self.publish_protocol_frames(frames)
-                    .map_err(|failure| consumer_failure(failure.message))?;
-            }
-            return Ok(());
-        }
-        self.fixed_frames.extend(frames);
-        while let Some(&(count, closed)) = self.fixed_batches.front() {
-            if !closed || self.fixed_frames.len() < count {
-                break;
-            }
-            self.fixed_batches.pop_front();
-            let batch: Vec<_> = self.fixed_frames.drain(..count).collect();
-            if !batch.is_empty() {
-                self.publish_protocol_frames(batch)
-                    .map_err(|failure| consumer_failure(failure.message))?;
-            }
         }
         Ok(())
     }
@@ -1402,45 +1365,53 @@ impl<R: Runtime> SessionActor<R> {
     }
 
     fn run_cycle(&mut self, limit: usize) {
-        let fixed = !self.pacing.is_fastest() && limit > 0;
-        self.run_cycle_inner(limit, fixed);
-        if fixed {
-            self.finish_fixed_batch();
-        }
+        self.run_cycle_inner(limit);
     }
-
-    fn finish_fixed_batch(&mut self) {}
 
     fn queue_tick(
         &mut self,
         deferred: engine::session::protocol::DeferredTick,
     ) -> Result<(), engine::session::StepFatal> {
-        self.start_consumer()?;
-        let consumer = self.consumer.as_mut().expect("消费者刚刚创建");
-        let input = consumer.input.as_ref().expect("消费者仍在运行");
-        let mut deferred = Some(deferred);
-        if let Some(slot) = &consumer.slot {
-            let mut value = slot
-                .lock()
-                .map_err(|error| consumer_failure(format!("外围槽锁损坏：{error}")))?;
-            if let Some(interval) = value.as_mut() {
-                interval.push(deferred.take().unwrap())?;
+        #[cfg(feature = "simulation-diagnostics")]
+        {
+            let consumed = deferred.consume()?;
+            let frame = self.game.record_consumed_tick(consumed)?;
+            #[cfg(test)]
+            if let Some((_, _, capture)) = &self.injected_step_failure {
+                capture.lock().unwrap().frames.push(frame.clone());
             }
+            self.publish_protocol_frames(vec![frame])
+                .map_err(|failure| consumer_failure(failure.message))
         }
-        if let Some(deferred) = deferred {
-            let mut interval = engine::session::protocol::DeferredInterval::new();
-            interval.push(deferred)?;
-            let slot = Arc::new(std::sync::Mutex::new(Some(interval)));
-            input
-                .send(ConsumerInput::Interval(Arc::clone(&slot)))
-                .map_err(|error| consumer_failure(format!("外围消费者接收失败：{error}")))?;
-            consumer.slot = Some(slot);
+        #[cfg(not(feature = "simulation-diagnostics"))]
+        {
+            self.start_consumer()?;
+            let consumer = self.consumer.as_mut().expect("消费者刚刚创建");
+            let input = consumer.input.as_ref().expect("消费者仍在运行");
+            let mut deferred = Some(deferred);
+            if let Some(slot) = &consumer.slot {
+                let mut value = slot
+                    .lock()
+                    .map_err(|error| consumer_failure(format!("外围槽锁损坏：{error}")))?;
+                if let Some(interval) = value.as_mut() {
+                    interval.push(deferred.take().unwrap())?;
+                }
+            }
+            if let Some(deferred) = deferred {
+                let mut interval = engine::session::protocol::DeferredInterval::new();
+                interval.push(deferred)?;
+                let slot = Arc::new(std::sync::Mutex::new(Some(interval)));
+                input
+                    .send(ConsumerInput::Interval(Arc::clone(&slot)))
+                    .map_err(|error| consumer_failure(format!("外围消费者接收失败：{error}")))?;
+                consumer.slot = Some(slot);
+            }
+            self.pending_ticks += 1;
+            Ok(())
         }
-        self.pending_ticks += 1;
-        Ok(())
     }
 
-    fn run_cycle_inner(&mut self, limit: usize, fixed: bool) {
+    fn run_cycle_inner(&mut self, limit: usize) {
         if self.cmd_rx.is_closed() {
             return;
         }
@@ -1468,9 +1439,6 @@ impl<R: Runtime> SessionActor<R> {
                 Ok(true) => break,
                 Ok(false) => {}
                 Err(error) => {
-                    if fixed {
-                        self.finish_fixed_batch();
-                    }
                     if !self.drain_consumed() {
                         return;
                     }
@@ -1483,9 +1451,6 @@ impl<R: Runtime> SessionActor<R> {
                 if *remaining == 0 {
                     let error = error.clone();
                     let capture = Arc::clone(capture);
-                    if fixed {
-                        self.finish_fixed_batch();
-                    }
                     if !self.drain_consumed() {
                         return;
                     }
@@ -1500,6 +1465,7 @@ impl<R: Runtime> SessionActor<R> {
                 }
                 *remaining -= 1;
             }
+            #[cfg(not(feature = "simulation-diagnostics"))]
             if let Err(error) = self.start_consumer() {
                 self.stop_after_step_failure(error);
                 return;
@@ -1507,9 +1473,6 @@ impl<R: Runtime> SessionActor<R> {
             let deferred = match self.game.advance_core_tick() {
                 Ok(deferred) => deferred,
                 Err(error) => {
-                    if fixed {
-                        self.finish_fixed_batch();
-                    }
                     let pending = self.pending_ticks;
                     let mut failure = HostFailure::step(error);
                     if let Err(publication_error) = self.collect_consumed(true) {
@@ -1525,15 +1488,16 @@ impl<R: Runtime> SessionActor<R> {
             };
             let queued = self.queue_tick(deferred);
             if let Err(error) = queued {
+                let mut failure = HostFailure::step(error);
+                failure
+                    .message
+                    .push_str("；当前 tick 已提交但未交付，不能重复执行");
                 if let Err(prefix_error) = self.collect_consumed(true) {
-                    let mut failure = HostFailure::step(error);
                     failure
                         .message
                         .push_str(&format!("；成功前缀交付失败：{prefix_error}"));
-                    self.stop_after_host_failure(failure);
-                } else {
-                    self.stop_after_step_failure(error);
                 }
+                self.stop_after_host_failure(failure);
                 return;
             }
             steps += 1;
@@ -1544,9 +1508,6 @@ impl<R: Runtime> SessionActor<R> {
         }
         match self.game.civil_day_ready() {
             Ok(true) => {
-                if fixed {
-                    self.finish_fixed_batch();
-                }
                 if !self.drain_consumed() || self.cmd_rx.is_closed() {
                     return;
                 }

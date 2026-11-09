@@ -1,6 +1,8 @@
 import type { CatalogResolver } from "./catalog-resolver.ts";
 import type { EngineHost } from "./engine-host.ts";
 import type { PublicReportSummary } from "../types/engine.ts";
+import { validateSequenceCoverage } from "./protocol/sequence-coverage.ts";
+import type { QuoteCoverage } from "./protocol/stock-identity.ts";
 import type { CodedEvent } from "./protocol/stock-identity.ts";
 import type { NormalizedCivilUpdate, NormalizedTickFrame } from "./protocol/index.ts";
 import type { UnknownAction } from "@reduxjs/toolkit";
@@ -179,7 +181,7 @@ export class CompanyQueryCoordinator {
 
   acceptFrame(frame: NormalizedTickFrame, metadata: PublicMetadata = { civilDate: null, revision: null }): void {
     if (this.disposed) return;
-    this.acceptEvents(frame.events, frame.seqFrom, frame.seqTo, true);
+    this.acceptEvents(frame.events, frame.seqFrom, frame.seqTo, true, frame.quoteCoverage);
     this.dispatch(reconcileCompanyPublicMetadata({ generation: this.generation, ...metadata }));
   }
 
@@ -195,8 +197,9 @@ export class CompanyQueryCoordinator {
     seqFrom: number,
     seqTo: number,
     refreshDisclosures: boolean,
+    quoteCoverage: readonly QuoteCoverage[] = [],
   ): void {
-    this.assertEventCoverage(events, seqFrom, seqTo);
+    this.assertEventCoverage(events, seqFrom, seqTo, quoteCoverage);
     for (const event of events) {
       if ("CivilDateAdvanced" in event) {
         this.dispatch(recordCivilDateAdvanced({
@@ -223,24 +226,14 @@ export class CompanyQueryCoordinator {
     this.dispatch(advanceCompanyEventCoverage({ generation: this.generation, toSeq: seqTo }));
   }
 
-  private assertEventCoverage(events: readonly CodedEvent[], seqFrom: number, seqTo: number): void {
+  private assertEventCoverage(events: readonly CodedEvent[], seqFrom: number, seqTo: number, quoteCoverage: readonly QuoteCoverage[]): void {
     if (!Number.isSafeInteger(seqFrom) || !Number.isSafeInteger(seqTo) || seqFrom < 0 || seqTo < seqFrom) {
       throw new Error("公共公司状态事件覆盖区间无效");
     }
     if (seqFrom !== this.lastEventSeq) {
       throw new Error(`公共公司状态需要宿主重同步：期望前序 seq ${this.lastEventSeq}，收到 ${seqFrom}`);
     }
-    let previousSeq = seqFrom;
-    for (const event of events) {
-      const seq = companyEventSeq(event);
-      if (seq !== previousSeq + 1 || seq > seqTo) {
-        throw new Error("公共公司状态事件与宿主 seq 覆盖区间不一致");
-      }
-      previousSeq = seq;
-    }
-    if (previousSeq !== seqTo) {
-      throw new Error("公共公司状态事件与宿主 seq 覆盖区间不一致");
-    }
+    validateSequenceCoverage(events.map(companyEventSeq), quoteCoverage, seqFrom, seqTo, "company.event-coverage");
   }
 
   private isCurrentRequest(generation: number, key: string, request: number): boolean {

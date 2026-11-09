@@ -72,6 +72,8 @@ fn assert_versioned_evidence_runtime_numbers_are_decimal_strings(value: &Value) 
 #[test]
 fn quiet_committed_tick_preserves_zero_interval_and_empty_sum_conservation() {
     let quiet = TickFrame {
+        quote_coverage: None,
+        price_observations: None,
         tick_from: None,
         fact_ticks: None,
         tick: 1,
@@ -88,6 +90,8 @@ fn quiet_committed_tick_preserves_zero_interval_and_empty_sum_conservation() {
     assert_eq!((projected.seq_from, projected.seq_to), (1, 0));
     assert!(projected.events.is_empty());
     let second = TickFrame {
+        quote_coverage: None,
+        price_observations: None,
         tick_from: None,
         fact_ticks: None,
         tick: 2,
@@ -580,6 +584,8 @@ fn candle() -> DailyCandle {
 fn frame(events: Vec<Event>) -> TickFrame {
     let seq_to = u64::try_from(events.len()).unwrap();
     TickFrame {
+        quote_coverage: None,
+        price_observations: None,
         tick_from: None,
         fact_ticks: None,
         tick: 5,
@@ -949,6 +955,8 @@ fn tick_before_civil(stock: &StockId) -> TickFrame {
         announcement_event(3, u32::MAX - 1),
     ];
     let frame = TickFrame {
+        quote_coverage: None,
+        price_observations: None,
         tick_from: None,
         fact_ticks: None,
         tick: 5,
@@ -1111,6 +1119,8 @@ fn stateful_update_stream_projection_resets_ordinal_domains_on_the_next_tick() {
     let first = frame(vec![announcement_event(1, 10)]);
     let events = vec![announcement_event(2, 10)];
     let second = TickFrame {
+        quote_coverage: None,
+        price_observations: None,
         tick_from: None,
         fact_ticks: None,
         tick: 6,

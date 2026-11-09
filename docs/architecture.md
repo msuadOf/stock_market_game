@@ -34,12 +34,16 @@ React 应用通过 `EngineHost` 提交命令，消费统一的 `HostUpdate`：�
 native 默认使用 [ADR-0043](decisions/0043-std-thread-ownership-runtime.md) 的所有权转移 runtime：NPC 分组和各股票交易部分别处理决策与撮合，协调者收敛并提交 tick。native 的 `ENGINE_STEP_RUNTIME=0` 是临时旧管线回退口。Web 产品宿主显式启用同一 runtime，经 thread facade 使用 Workers；WASM engine 未设置 override 时仍有串行管线。ADR-0043 仍为 draft，路径存在不代表完整验收已通过。
 
 native 宿主连续运行通过 `ProtocolSession::advance_core_tick` 提交核心，交出拥有同版事实与读面输入的 `DeferredTick`。
-独立 FIFO 消费者生成外围结果，再由 `record_consumed_tick` 按序登记；普通拍不等待上一拍外围完成。
-宿主仅在在途窗口满、显式读取或自然日日界等必要消费点追平，保留控制命令响应和有序交付。
+普通连续运行在可交换槽中累计 `DeferredInterval`；消费者取走区间后，在锁外只构造并校验末版外围 view，
+再由 `record_consumed_interval` 按源 tick 与 seq 顺序登记。后续 tick 可继续在新槽累计，不设固定 8 tick 等待窗口。
+显式读取、自然日日界等必要消费点先追平；控制命令响应和区间交付顺序保持。
 显式 `step_frame` 仍同步返回完整单步结果，并共用同一核心交易实现。
 
-`DayEnd` 普通连续拍跳过完整 PlanBook 与镜像调度采集，完整 runtime 在批末、显式 flush 或日界按需构建。
-`simulation-diagnostics` 保留诊断所需的完整来源，不采用这条普通拍快路径。
+当前状态保留区间末版；可覆盖的连续报价从完整事实提取为有 seq 覆盖的最小价格观察及同股分钟槽末点，
+条件单逐点消费价格观察，图表消费分钟采样，成交、委托反馈、错误、披露和竞价事实保留原身份与顺序。
+覆盖规则与接收端验证边界见 [ADR-0010](decisions/0010-unified-host-protocol-and-local-refresh.md)。
+`DayEnd` 普通连续拍仍跳过完整 PlanBook 与镜像调度采集，完整 runtime 在批末、显式 flush 或日界按需构建。
+`simulation-diagnostics` 使用逐拍同步的外围消费与登记，保留每拍完整投影及诊断；不使用普通累计覆盖，也不建立无界 Full 队列。
 
 核心失败阻止继续推进；外围失败显式报告并停止该交付链，已经提交的 tick 不回退重跑。
 未消费事实不能跨 checkpoint 或自然日日结，避免恢复或保存重复交付。

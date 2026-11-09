@@ -91,6 +91,8 @@ fn same_frame(left: &TickFrame, right: &TickFrame) -> bool {
         && left.seq_from == right.seq_from
         && left.seq_to == right.seq_to
         && left.timeseries_payload == right.timeseries_payload
+        && left.quote_coverage == right.quote_coverage
+        && left.price_observations == right.price_observations
         && if let (Some(left_ticks), Some(right_ticks)) = (&left.fact_ticks, &right.fact_ticks) {
             let indexed: BTreeMap<_, _> = right_ticks
                 .iter()

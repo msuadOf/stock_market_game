@@ -39,6 +39,25 @@ pub struct SessionFactCursor {
 }
 
 impl SessionFactCursor {
+    /// producer 已验证整拍事实后，登记保留事实并推进被压缩报价覆盖的 seq。
+    pub(in crate::session::protocol) fn record_committed_coverage(
+        &mut self,
+        facts: &[EventFact],
+        from: u64,
+        to: u64,
+    ) -> Result<(), ProtocolError> {
+        if from > to
+            || self.last_seq.is_some_and(|previous| previous > from)
+            || facts
+                .iter()
+                .any(|fact| fact.event.seq() <= from || fact.event.seq() > to)
+        {
+            return Err(ProtocolError::SequenceCoverage { from, to });
+        }
+        self.record_committed_facts(facts)?;
+        self.last_seq = Some(to);
+        Ok(())
+    }
     /// 游标当前记录的 tick；发布流尚未开始时为 `None`。
     pub fn tick(&self) -> Option<u64> {
         self.tick

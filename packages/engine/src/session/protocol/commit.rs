@@ -107,6 +107,7 @@ impl<'candidate> TickCandidateProjection<'candidate> {
             accounts_per_group: 0,
             config: None,
             defer_mirror: false,
+            chart_timing: None,
             identity: std::sync::Arc::new(std::sync::OnceLock::new()),
             #[cfg(test)]
             consume_barrier: None,
@@ -141,6 +142,8 @@ impl<'candidate> TickCandidateProjection<'candidate> {
         let timeseries_payload = project_timeseries(&facts, snapshot);
         Ok((
             TickFrame {
+                quote_coverage: None,
+                price_observations: None,
                 tick_from: None,
                 fact_ticks: None,
                 facts,

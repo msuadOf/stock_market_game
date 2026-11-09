@@ -8,6 +8,8 @@ function normalizeFrame(frame: CodedTickFrame): NormalizedTickFrame {
   const sortedFacts = frame.facts.map((fact, index) => ({ fact, tick: frame.fact_ticks?.[index] })).sort((left, right) => (left.tick ?? frame.tick) - (right.tick ?? frame.tick) || codedFactIdentity(left.fact).localeCompare(codedFactIdentity(right.fact)));
   return {
     tick: frame.tick,
+    ...(frame.quote_coverage === undefined ? {} : { quoteCoverage: frame.quote_coverage }),
+    ...(frame.price_observations === undefined ? {} : { priceObservations: frame.price_observations }),
     events: frame.facts.map((fact) => fact.event).sort((left, right) => eventSeq(left) - eventSeq(right)),
     ...(frame.fact_ticks === undefined ? {} : { factTicks: sortedFacts.map(pair => pair.tick!) }),
     facts: sortedFacts.map(pair => pair.fact),

@@ -35,7 +35,7 @@ function updateEffects(update: NormalizedEngineUpdate): readonly ProtocolEffect[
         factsByTick.set(tick, group);
       }
       const byTick = new Map<number, Record<string, import("../../types/generated/ContinuousPoint.ts").ContinuousPoint>>();
-      for (const [code, point] of Object.entries(frame.continuousPoints)) {
+      for (const [code, point] of Object.entries(frame.priceObservations === undefined ? frame.continuousPoints : {})) {
         const points = frame.continuousSamples?.[code]?.map(sample => sample.point) ?? [point];
         for (const sample of points) {
           const group = byTick.get(sample.tick) ?? {};
@@ -43,8 +43,14 @@ function updateEffects(update: NormalizedEngineUpdate): readonly ProtocolEffect[
           byTick.set(sample.tick, group);
         }
       }
-      const ticks = [...new Set([...factsByTick.keys(), ...byTick.keys()])].sort((a, b) => a - b);
-      return ticks.flatMap(tick => effectsFromFacts(factsByTick.get(tick) ?? [], byTick.get(tick) ?? {}, tick));
+      const observationsByTick = new Map<number, import("./stock-identity.ts").CodedPriceObservation[]>();
+      for (const point of frame.priceObservations ?? []) {
+        const group = observationsByTick.get(point.tick) ?? [];
+        group.push(point);
+        observationsByTick.set(point.tick, group);
+      }
+      const ticks = [...new Set([...factsByTick.keys(), ...byTick.keys(), ...observationsByTick.keys()])].sort((a, b) => a - b);
+      return ticks.flatMap(tick => effectsFromFacts(factsByTick.get(tick) ?? [], byTick.get(tick) ?? {}, tick, frame.priceObservations === undefined ? undefined : observationsByTick.get(tick) ?? []));
     });
   }
   return [

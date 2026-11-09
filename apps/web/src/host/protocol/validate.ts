@@ -2,7 +2,9 @@ import type { CatalogResolver } from "../catalog-resolver.ts";
 import type { StockSpec } from "../../types/generated/StockSpec.ts";
 import { canonicalJson, eventStableKey, factIdentity } from "./canonical.ts";
 import { ProtocolError } from "./types.ts";
-import { type WireCivilUpdate, type WireEngineUpdate, type WireEvent, type WireEventFact, type WireTickFrame } from "./stock-identity.ts";
+import { type WireCivilUpdate, type WireEngineUpdate, type WireEvent, type WireEventFact, type WireTickFrame, type QuoteCoverage } from "./stock-identity.ts";
+
+import { validateSequenceCoverage } from "./sequence-coverage.ts";
 
 function malformed(where: string, message: string): never {
   throw new ProtocolError("PROTOCOL_MALFORMED", where, message);
@@ -33,12 +35,10 @@ export function validateFacts(
   to: number,
   where: string,
   factTicks?: readonly number[],
+  quoteCoverage: readonly QuoteCoverage[] = [],
 ): void {
-  // 单批事实记录是唯一权威：seq 覆盖、key 与事件变体映射、身份唯一都在同一集合上校验；
-  // 不再对 canonical payload 做第二份序列化比对（架构项 #6）。
-  if (to < from || facts.length !== to - from) {
-    malformed(where, `事实覆盖必须精确等于 (${from}, ${to}]`);
-  }
+  // 保留事实逐条校验稳定身份；完整源 seq 必须由它们与 producer 声明的报价范围精确覆盖。
+  validateSequenceCoverage(facts.map(fact => eventSeq(fact.event)), quoteCoverage, from, to, where);
   const identities = new Set<string>();
   const seqs = new Set<number>();
   for (const [index, fact] of facts.entries()) {
@@ -63,7 +63,30 @@ export function validateFrame(frame: WireTickFrame, where = "protocol.frame"): v
   if (first > frame.tick) malformed(where, "tick 区间起点不得晚于终点");
   if (frame.fact_ticks !== undefined && (frame.fact_ticks.length !== frame.facts.length || frame.fact_ticks.some((tick, index, ticks) => tick < first || tick > frame.tick || (index > 0 && tick < ticks[index - 1]!)))) malformed(where, "fact_ticks 必须与事实逐一对应、位于区间内且非递减");
   if (first !== frame.tick && frame.fact_ticks === undefined && frame.facts.length > 0) malformed(where, "区间事实缺少 fact_ticks");
-  validateFacts(frame.facts, frame.seq_from, frame.seq_to, where, frame.fact_ticks);
+  if ((frame.quote_coverage === undefined) !== (frame.price_observations === undefined)) malformed(where, "quote_coverage 与 price_observations 必须同时存在");
+  validateFacts(frame.facts, frame.seq_from, frame.seq_to, where, frame.fact_ticks, frame.quote_coverage);
+  if (frame.quote_coverage !== undefined && frame.price_observations !== undefined) {
+    if (frame.facts.some(fact => "PriceTick" in fact.event)) malformed(where, "报价压缩帧不得重复保留 PriceTick 事实");
+    const width = frame.quote_coverage.reduce((sum, range) => sum + range.seq_to - range.seq_from, 0);
+    if (width !== frame.price_observations.length) malformed(where, "price_observations 必须与报价 seq 一一对应");
+    let previousSeq = frame.seq_from, previousTick = first;
+    let rangeIndex = 0;
+    for (const point of frame.price_observations) {
+      if (BigInt(point.last_price) < 0n) malformed(where, "price_observations.last_price 必须是非负整数分");
+      while (rangeIndex < frame.quote_coverage.length && point.seq > frame.quote_coverage[rangeIndex]!.seq_to) rangeIndex++;
+      const range = frame.quote_coverage[rangeIndex];
+      if (point.seq <= previousSeq || point.tick < previousTick || point.tick > frame.tick || range === undefined || point.seq <= range.seq_from || point.seq > range.seq_to) malformed(where, "price_observations 的 seq/tick 与报价覆盖不匹配");
+      previousSeq = point.seq;
+      previousTick = point.tick;
+    }
+    const sequenceTicks = [
+      ...frame.facts.map((fact, index) => ({ seq: eventSeq(fact.event), tick: frame.fact_ticks?.[index] ?? frame.tick })),
+      ...frame.price_observations,
+    ].sort((left, right) => left.seq - right.seq);
+    for (let index = 1; index < sequenceTicks.length; index++) {
+      if (sequenceTicks[index]!.tick < sequenceTicks[index - 1]!.tick) malformed(where, "联合 seq 顺序中的原始 tick 不得倒退");
+    }
+  }
   for (const [code, samples] of Object.entries(frame.timeseries_payload.continuous_samples ?? {})) {
     const final = samples.at(-1);
     if (final === undefined || canonicalJson(final.point) !== canonicalJson(frame.timeseries_payload.continuous_points[code])) malformed(where, "continuous_samples 末点必须匹配 continuous_points");

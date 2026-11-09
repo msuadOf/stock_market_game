@@ -104,8 +104,6 @@ fn correction_actor(
         fatal_failure: None,
         deferred_drop_reported: false,
         consumer: None,
-        fixed_batches: std::collections::VecDeque::new(),
-        fixed_frames: Vec::new(),
     };
     (actor, sender, receiver)
 }

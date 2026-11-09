@@ -210,8 +210,27 @@ function account(value: unknown, path: string): WireAccountSnap {
 
 function frame(value: unknown, path: string): WireTickFrame {
   const source = record(value, path);
-  exact(source, ["tick", "facts", "timeseries_payload", "seq_from", "seq_to", ...(Object.hasOwn(source, "tick_from") ? ["tick_from"] : []), ...(Object.hasOwn(source, "fact_ticks") ? ["fact_ticks"] : [])], path);
-  return { tick: safeInteger(field(source, "tick", path), `${path}.tick`), ...(Object.hasOwn(source, "tick_from") ? { tick_from: safeInteger(source.tick_from, `${path}.tick_from`) } : {}), ...(Object.hasOwn(source, "fact_ticks") ? { fact_ticks: values(source.fact_ticks, `${path}.fact_ticks`).map((tick, index) => safeInteger(tick, `${path}.fact_ticks[${index}]`)) } : {}), facts: values(field(source, "facts", path), `${path}.facts`).map((entry, index) => fact(entry, `${path}.facts[${index}]`)), timeseries_payload: payload(field(source, "timeseries_payload", path), `${path}.timeseries_payload`), seq_from: safeInteger(field(source, "seq_from", path), `${path}.seq_from`), seq_to: safeInteger(field(source, "seq_to", path), `${path}.seq_to`) };
+  const optional = ["tick_from", "fact_ticks", "quote_coverage", "price_observations"].filter(key => Object.hasOwn(source, key));
+  exact(source, ["tick", "facts", "timeseries_payload", "seq_from", "seq_to", ...optional], path);
+  return {
+    tick: safeInteger(field(source, "tick", path), `${path}.tick`),
+    ...(Object.hasOwn(source, "tick_from") ? { tick_from: safeInteger(source.tick_from, `${path}.tick_from`) } : {}),
+    ...(Object.hasOwn(source, "fact_ticks") ? { fact_ticks: values(source.fact_ticks, `${path}.fact_ticks`).map((tick, index) => safeInteger(tick, `${path}.fact_ticks[${index}]`)) } : {}),
+    ...(Object.hasOwn(source, "quote_coverage") ? { quote_coverage: values(source.quote_coverage, `${path}.quote_coverage`).map((value, index) => {
+      const at = `${path}.quote_coverage[${index}]`, range = record(value, at);
+      exact(range, ["seq_from", "seq_to"], at);
+      return { seq_from: safeInteger(field(range, "seq_from", at), `${at}.seq_from`), seq_to: safeInteger(field(range, "seq_to", at), `${at}.seq_to`) };
+    }) } : {}),
+    ...(Object.hasOwn(source, "price_observations") ? { price_observations: values(source.price_observations, `${path}.price_observations`).map((value, index) => {
+      const at = `${path}.price_observations[${index}]`, point = record(value, at);
+      exact(point, ["code", "seq", "tick", "last_price"], at);
+      return { code: safeU32(field(point, "code", at), `${at}.code`), seq: safeInteger(field(point, "seq", at), `${at}.seq`), tick: safeInteger(field(point, "tick", at), `${at}.tick`), last_price: parseMoney(field(point, "last_price", at), `${at}.last_price`) };
+    }) } : {}),
+    facts: values(field(source, "facts", path), `${path}.facts`).map((entry, index) => fact(entry, `${path}.facts[${index}]`)),
+    timeseries_payload: payload(field(source, "timeseries_payload", path), `${path}.timeseries_payload`),
+    seq_from: safeInteger(field(source, "seq_from", path), `${path}.seq_from`),
+    seq_to: safeInteger(field(source, "seq_to", path), `${path}.seq_to`),
+  };
 }
 
 function refresh(value: unknown, path: string): WireCivilRefresh {

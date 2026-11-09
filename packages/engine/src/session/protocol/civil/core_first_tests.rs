@@ -1,6 +1,59 @@
 use super::ProtocolSession;
 
 #[test]
+#[cfg(all(not(target_family = "wasm"), feature = "simulation-diagnostics"))]
+fn diagnostic_first_full_projection_failure_cannot_be_hidden_by_later_tick() {
+    let mut setup = crate::session::protocol::civil::publication_tests::setup();
+    setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+    let mut session = ProtocolSession::new(setup, 87).unwrap();
+    session.step_frame().unwrap();
+    let mut first = session.advance_core_tick().unwrap();
+    assert!(matches!(
+        first.projection,
+        super::DeferredProjection::Full { .. }
+    ));
+    let identity = std::sync::Arc::clone(&first.identity);
+    first.publication = None;
+    let error = first
+        .consume()
+        .err()
+        .expect("诊断逐拍 Full 的错误必须显式报告");
+    assert_eq!(identity.get(), Some(&error));
+    assert!(session.advance_core_tick().is_err());
+}
+
+#[test]
+#[cfg(all(not(target_family = "wasm"), not(feature = "simulation-diagnostics")))]
+fn coalesced_quotes_keep_one_complete_sample_per_minute() {
+    let mut setup = crate::session::protocol::civil::publication_tests::setup();
+    setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+    setup.ticks_per_day = 14400;
+    setup.auction_ticks = 0;
+    setup.closing_auction_ticks = 0;
+    let mut session = ProtocolSession::new(setup, 87).unwrap();
+    session.step_frame().unwrap();
+    let ticks = (0..3)
+        .map(|_| session.advance_core_tick().unwrap())
+        .collect();
+    let frame = session
+        .record_consumed_interval(super::DeferredTick::consume_interval(ticks).unwrap())
+        .unwrap();
+    assert!(
+        !frame
+            .facts
+            .iter()
+            .any(|fact| matches!(fact.event, crate::Event::PriceTick { .. })),
+        "完整报价不应重复保留"
+    );
+    let samples = frame
+        .timeseries_payload
+        .continuous_samples
+        .as_ref()
+        .unwrap();
+    assert_eq!(samples.values().map(Vec::len).sum::<usize>(), 1);
+}
+
+#[test]
 #[cfg(not(target_family = "wasm"))]
 fn delayed_consumer_does_not_block_core_or_install_peripheral_state() {
     let mut setup = crate::session::protocol::civil::publication_tests::setup();
@@ -514,7 +567,7 @@ fn flush_rejects_pending_and_preserves_unpublished_light_tick() {
 }
 
 #[test]
-#[cfg(not(target_family = "wasm"))]
+#[cfg(all(not(target_family = "wasm"), not(feature = "simulation-diagnostics")))]
 fn coalesced_ticks_preserve_interval_and_facts() {
     let mut setup = crate::session::protocol::civil::publication_tests::setup();
     setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
@@ -532,7 +585,10 @@ fn coalesced_ticks_preserve_interval_and_facts() {
     assert_eq!(frame.tick_from, Some(from));
     assert_eq!(frame.tick, to);
     assert_eq!((frame.seq_from, frame.seq_to), (seq_from, seq_to));
-    assert_eq!(frame.facts.len(), fact_count);
+    assert_eq!(
+        frame.facts.len() + frame.price_observations.as_ref().unwrap().len(),
+        fact_count
+    );
     frame.validate().unwrap();
 }
 
@@ -563,7 +619,7 @@ fn interval_failure_keeps_successful_prefix_and_failure_identity() {
 }
 
 #[test]
-#[cfg(not(target_family = "wasm"))]
+#[cfg(all(not(target_family = "wasm"), not(feature = "simulation-diagnostics")))]
 fn failed_interval_end_view_does_not_publish_or_repeat_committed_ticks() {
     let mut setup = crate::session::protocol::civil::publication_tests::setup();
     setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
@@ -590,7 +646,7 @@ fn failed_interval_end_view_does_not_publish_or_repeat_committed_ticks() {
 }
 
 #[test]
-#[cfg(not(target_family = "wasm"))]
+#[cfg(all(not(target_family = "wasm"), not(feature = "simulation-diagnostics")))]
 fn coalesced_full_day_preserves_civil_boundary_and_next_tick() {
     let mut setup = crate::session::protocol::civil::publication_tests::setup();
     setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
@@ -651,7 +707,7 @@ fn every_tick_core_defers_full_view_until_interval_consumption() {
 }
 
 #[test]
-#[cfg(not(target_family = "wasm"))]
+#[cfg(all(not(target_family = "wasm"), not(feature = "simulation-diagnostics")))]
 fn coalesced_every_tick_matches_individual_facts_samples_and_final_view() {
     let mut setup = crate::session::protocol::civil::publication_tests::setup();
     setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
@@ -677,9 +733,42 @@ fn coalesced_every_tick_matches_individual_facts_samples_and_final_view() {
         .unwrap();
     let expected_facts: Vec<_> = frames
         .iter()
-        .flat_map(|frame| frame.facts.iter().cloned())
+        .flat_map(|frame| {
+            frame
+                .facts
+                .iter()
+                .filter(|fact| !matches!(fact.event, crate::Event::PriceTick { .. }))
+                .cloned()
+        })
         .collect();
     assert_eq!(combined.facts, expected_facts);
+    let expected_observations: Vec<_> = frames
+        .iter()
+        .flat_map(|frame| frame.facts.iter())
+        .filter_map(|fact| {
+            if let crate::Event::PriceTick {
+                seq,
+                tick,
+                code,
+                last_price,
+                ..
+            } = fact.event
+            {
+                Some(crate::session::protocol::PriceObservation {
+                    seq,
+                    tick,
+                    code,
+                    last_price,
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(
+        combined.price_observations.as_ref().unwrap(),
+        &expected_observations
+    );
     let expected_count: usize = frames
         .iter()
         .map(|frame| frame.timeseries_payload.continuous_points.len())

@@ -16,7 +16,7 @@ test("Money wire：条件单价格不能按字符串字典序比较", { timeout:
   const submitted: unknown[] = [];
   const manager = new AutoOrderManager((intent) => { submitted.push(intent); });
   manager.add({ code: "600101", type: "stopProfit", triggerPrice: "99", qty: 100, side: "Sell", enabled: true });
-  await manager.consumePoints([{ code: "600101", tick: 1, phase: "Continuous", last_price: "100", cumulative_volume: 0, bids: [], asks: [] }]);
+  await manager.consumePoints([{ code: "600101", tick: 1, last_price: "100" }]);
   assert.equal(submitted.length, 1);
 });
 

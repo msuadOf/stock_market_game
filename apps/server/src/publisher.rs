@@ -116,19 +116,23 @@ impl ClientFrameBuffer {
 }
 
 fn update_units(update: &ProtocolUpdate) -> usize {
+    fn frame_units(frame: &engine::session::protocol::TickFrame) -> usize {
+        // 报价改为最小观察后，源事件仍占用客户端积压预算。
+        frame
+            .facts
+            .len()
+            .saturating_add(frame.price_observations.as_ref().map_or(0, Vec::len))
+            .max(1)
+    }
     match update {
-        ProtocolUpdate::TickBatch(batch) => batch
-            .frames
-            .iter()
-            .map(|frame| frame.facts.len().max(1))
-            .sum(),
+        ProtocolUpdate::TickBatch(batch) => batch.frames.iter().map(frame_units).sum(),
         ProtocolUpdate::CivilUpdate(civil) => {
             civil.facts.len().max(1)
                 + civil
                     .refresh
                     .intraday
                     .iter()
-                    .map(|frame| frame.facts.len().max(1))
+                    .map(frame_units)
                     .sum::<usize>()
         }
     }

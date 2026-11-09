@@ -30,6 +30,8 @@ import type { Intent } from "../../types/generated/Intent.ts";
 import type { LimitPrice } from "../../types/generated/LimitPrice.ts";
 import type { MarketSnap } from "../../types/generated/MarketSnap.ts";
 import type { Money } from "../../types/generated/Money.ts";
+import type { PriceObservation } from "../../types/generated/PriceObservation.ts";
+import type { QuoteCoverage as GeneratedQuoteCoverage } from "../../types/generated/QuoteCoverage.ts";
 import type { PositionSnap } from "../../types/generated/PositionSnap.ts";
 import type { RejectionReason } from "../../types/generated/RejectionReason.ts";
 import type { RuntimeMirrorOrigin } from "../../types/generated/RuntimeMirrorOrigin.ts";
@@ -102,8 +104,17 @@ export type WireTickTimeseriesPayload = {
   readonly continuous_samples?: Readonly<Record<string, readonly { readonly point: ContinuousPoint; readonly candle: DailyCandle }[]>>;
 };
 
+/** 已由 producer 确认为 PriceTick 的源 seq 覆盖范围，语义为 (seq_from, seq_to]。 */
+export type QuoteCoverage = Readonly<GeneratedQuoteCoverage>;
+
+/** 条件单仅需价格；seq 与 tick 保留原报价身份，不能补造盘口或 candle。 */
+export type WirePriceObservation = Readonly<PriceObservation>;
+export type CodedPriceObservation = Omit<WirePriceObservation, "code"> & { readonly code: string };
+
 /** wire tick 帧。 */
 export type WireTickFrame = {
+  readonly quote_coverage?: readonly QuoteCoverage[];
+  readonly price_observations?: readonly WirePriceObservation[];
   readonly tick_from?: number;
   readonly fact_ticks?: readonly number[];
   readonly tick: number;
@@ -238,6 +249,8 @@ export type CodedTickTimeseriesPayload = {
 
 /** 翻译后的 tick 帧。 */
 export type CodedTickFrame = {
+  readonly quote_coverage?: readonly QuoteCoverage[];
+  readonly price_observations?: readonly CodedPriceObservation[];
   readonly tick_from?: number;
   readonly fact_ticks?: readonly number[];
   readonly tick: number;
@@ -388,6 +401,8 @@ function codedFrame(frame: WireTickFrame, path: string): CodedTickFrame {
   const facts = frame.facts.map((fact, index) => codedFact(fact, `${path}.facts[${index}]`));
   return {
     tick: frame.tick,
+    ...(frame.quote_coverage === undefined ? {} : { quote_coverage: frame.quote_coverage }),
+    ...(frame.price_observations === undefined ? {} : { price_observations: frame.price_observations.map((point, index) => ({ ...point, code: identity.stockCode(point.code, `${path}.price_observations[${index}].code`) })) }),
     ...(frame.tick_from === undefined ? {} : { tick_from: frame.tick_from }),
     ...(frame.fact_ticks === undefined ? {} : { fact_ticks: frame.fact_ticks }),
     facts,

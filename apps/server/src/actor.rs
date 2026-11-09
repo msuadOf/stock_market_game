@@ -1948,8 +1948,6 @@ impl SessionManager {
             fatal_failure: None,
             deferred_drop_reported: false,
             consumer: None,
-            fixed_batches: std::collections::VecDeque::new(),
-            fixed_frames: Vec::new(),
         };
         // P2①：producer 名额必须在 spawn 前同步登记。guard 作为捕获随 future 移动，
         // 未 poll/被取消/panic 的丢弃都会析构捕获并释放名额；正常路径在 run
@@ -2020,26 +2018,29 @@ struct StepFailureCapture {
     frames: Vec<engine::session::protocol::TickFrame>,
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "simulation-diagnostics")))]
 struct ConsumerBlockProbe {
     committed: AtomicUsize,
     entered: std::sync::mpsc::Sender<()>,
     release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "simulation-diagnostics")))]
 static CONSUMER_BLOCK_PROBE: std::sync::Mutex<Option<Arc<ConsumerBlockProbe>>> =
     std::sync::Mutex::new(None);
-#[cfg(test)]
+#[cfg(all(test, not(feature = "simulation-diagnostics")))]
 static CONSUMER_PROBE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+#[cfg(not(feature = "simulation-diagnostics"))]
 type IntervalSlot = Arc<std::sync::Mutex<Option<engine::session::protocol::DeferredInterval>>>;
 enum ConsumerInput {
+    #[cfg(not(feature = "simulation-diagnostics"))]
     Interval(IntervalSlot),
 }
 
 struct TickConsumer {
     input: Option<std::sync::mpsc::Sender<ConsumerInput>>,
+    #[cfg(not(feature = "simulation-diagnostics"))]
     slot: Option<IntervalSlot>,
     output: std::sync::mpsc::Receiver<(
         usize,
@@ -2051,6 +2052,7 @@ struct TickConsumer {
     notify: Arc<tokio::sync::Notify>,
 }
 
+#[cfg(not(feature = "simulation-diagnostics"))]
 struct ConsumerWakeOnExit {
     sender: Option<
         std::sync::mpsc::Sender<(
@@ -2061,6 +2063,7 @@ struct ConsumerWakeOnExit {
     notify: Arc<tokio::sync::Notify>,
 }
 
+#[cfg(not(feature = "simulation-diagnostics"))]
 impl Drop for ConsumerWakeOnExit {
     fn drop(&mut self) {
         self.sender.take();
@@ -2075,6 +2078,7 @@ fn consumer_failure(description: impl Into<String>) -> engine::session::StepFata
     }
 }
 
+#[cfg(not(feature = "simulation-diagnostics"))]
 impl TickConsumer {
     fn start(session_id: &str) -> Result<Self, engine::session::StepFatal> {
         let (input, receiver) = std::sync::mpsc::channel::<ConsumerInput>();
@@ -2187,8 +2191,6 @@ struct SessionActor {
     /// 进程级析构后端退化只在本 actor 首次观察时报告（不逐 tick 刷屏）。
     deferred_drop_reported: bool,
     consumer: Option<TickConsumer>,
-    fixed_batches: std::collections::VecDeque<(usize, bool)>,
-    fixed_frames: Vec<engine::session::protocol::TickFrame>,
 }
 
 impl SessionActor {
@@ -2206,31 +2208,44 @@ impl SessionActor {
         &mut self,
         deferred: engine::session::protocol::DeferredTick,
     ) -> Result<(), engine::session::StepFatal> {
-        if self.consumer.is_none() {
-            self.consumer = Some(TickConsumer::start(&self.session_id)?);
-        }
-        let consumer = self.consumer.as_mut().expect("消费者刚刚创建");
-        let input = consumer.input.as_ref().expect("消费者仍在运行");
-        let mut deferred = Some(deferred);
-        if let Some(slot) = &consumer.slot {
-            let mut value = slot
-                .lock()
-                .map_err(|error| consumer_failure(format!("外围槽锁损坏：{error}")))?;
-            if let Some(interval) = value.as_mut() {
-                interval.push(deferred.take().unwrap())?;
+        #[cfg(feature = "simulation-diagnostics")]
+        {
+            let consumed = deferred.consume()?;
+            let frame = self.game.record_consumed_tick(consumed)?;
+            #[cfg(test)]
+            if let Some((_, _, capture)) = &self.injected_step_failure {
+                capture.lock().unwrap().frames.push(frame.clone());
             }
+            self.publish_tick_frames(vec![frame])
         }
-        if let Some(deferred) = deferred {
-            let mut interval = engine::session::protocol::DeferredInterval::new();
-            interval.push(deferred)?;
-            let slot = Arc::new(std::sync::Mutex::new(Some(interval)));
-            input
-                .send(ConsumerInput::Interval(Arc::clone(&slot)))
-                .map_err(|error| consumer_failure(format!("外围消费者接收失败：{error}")))?;
-            consumer.slot = Some(slot);
+        #[cfg(not(feature = "simulation-diagnostics"))]
+        {
+            if self.consumer.is_none() {
+                self.consumer = Some(TickConsumer::start(&self.session_id)?);
+            }
+            let consumer = self.consumer.as_mut().expect("消费者刚刚创建");
+            let input = consumer.input.as_ref().expect("消费者仍在运行");
+            let mut deferred = Some(deferred);
+            if let Some(slot) = &consumer.slot {
+                let mut value = slot
+                    .lock()
+                    .map_err(|error| consumer_failure(format!("外围槽锁损坏：{error}")))?;
+                if let Some(interval) = value.as_mut() {
+                    interval.push(deferred.take().unwrap())?;
+                }
+            }
+            if let Some(deferred) = deferred {
+                let mut interval = engine::session::protocol::DeferredInterval::new();
+                interval.push(deferred)?;
+                let slot = Arc::new(std::sync::Mutex::new(Some(interval)));
+                input
+                    .send(ConsumerInput::Interval(Arc::clone(&slot)))
+                    .map_err(|error| consumer_failure(format!("外围消费者接收失败：{error}")))?;
+                consumer.slot = Some(slot);
+            }
+            consumer.pending += 1;
+            Ok(())
         }
-        consumer.pending += 1;
-        Ok(())
     }
 
     fn publish_tick_frames(
@@ -2244,10 +2259,6 @@ impl SessionActor {
                 self.game.civil_date().to_iso(),
             );
         }
-        Ok(())
-    }
-
-    fn finish_fixed_batch(&mut self) -> Result<(), engine::session::StepFatal> {
         Ok(())
     }
 
@@ -2293,9 +2304,6 @@ impl SessionActor {
         }
         self.publish_tick_frames(frames)?;
         if let Some(error) = failure {
-            self.fixed_batches.clear();
-            let prefix = std::mem::take(&mut self.fixed_frames);
-            self.publish_tick_frames(prefix)?;
             return Err(error);
         }
         Ok(())
@@ -2333,7 +2341,7 @@ impl SessionActor {
             None
         };
         let result = self.game.advance_core_tick();
-        #[cfg(test)]
+        #[cfg(all(test, not(feature = "simulation-diagnostics")))]
         if self.session_id == "consumer-block-probe" && result.is_ok() {
             let probe = CONSUMER_BLOCK_PROBE
                 .lock()
@@ -2435,16 +2443,10 @@ impl SessionActor {
     }
 
     fn run_protocol_batch(&mut self, limit: usize) {
-        let fixed = !self.pacing.is_fastest() && limit > 0;
-        self.run_protocol_batch_inner(limit, fixed);
-        if fixed {
-            if let Err(error) = self.finish_fixed_batch() {
-                self.stop_with_failure(HostFailure::step(&error));
-            }
-        }
+        self.run_protocol_batch_inner(limit);
     }
 
-    fn run_protocol_batch_inner(&mut self, limit: usize, fixed: bool) {
+    fn run_protocol_batch_inner(&mut self, limit: usize) {
         if self.fatal_failure.is_some() {
             return;
         }
@@ -2471,16 +2473,6 @@ impl SessionActor {
                 }
                 Ok(false) => {}
                 Err(error) => {
-                    if fixed {
-                        if let Err(publication_error) = self.finish_fixed_batch() {
-                            let mut failure = HostFailure::civil(&error);
-                            failure
-                                .message
-                                .push_str(&format!("；成功前缀交付失败：{publication_error}"));
-                            self.stop_with_failure(failure);
-                            return;
-                        }
-                    }
                     self.stop_cycle_with_unpublished_frames(Vec::new(), error);
                     return;
                 }
@@ -2488,16 +2480,6 @@ impl SessionActor {
             let deferred = match self.step_game() {
                 Ok(deferred) => deferred,
                 Err(error) => {
-                    if fixed {
-                        if let Err(publication_error) = self.finish_fixed_batch() {
-                            let mut failure = HostFailure::step(&error);
-                            failure
-                                .message
-                                .push_str(&format!("；成功前缀交付失败：{publication_error}"));
-                            self.stop_with_failure(failure);
-                            return;
-                        }
-                    }
                     self.stop_cycle_with_unpublished_frames(Vec::new(), error.into());
                     return;
                 }
@@ -2508,15 +2490,6 @@ impl SessionActor {
                 failure
                     .message
                     .push_str("；当前 tick 已提交但未交付，不能重复执行");
-                if fixed {
-                    if let Err(publication_error) = self.finish_fixed_batch() {
-                        failure
-                            .message
-                            .push_str(&format!("；成功前缀交付失败：{publication_error}"));
-                        self.stop_with_failure(failure);
-                        return;
-                    }
-                }
                 if let Err(publication_error) = self.collect_ticks(true) {
                     warn!(?publication_error, "外围消费者断连后成功前缀无法完整交付");
                     failure
@@ -2541,12 +2514,6 @@ impl SessionActor {
                     self.stop_cycle_with_unpublished_frames(Vec::new(), error);
                     return;
                 }
-            }
-        }
-        if boundary && fixed {
-            if let Err(error) = self.finish_fixed_batch() {
-                self.stop_with_failure(HostFailure::step(&error));
-                return;
             }
         }
         if let Err(error) = self.collect_ticks(boundary) {
@@ -3248,13 +3215,6 @@ impl SessionActor {
         // 提交有效，恢复推进后自动重试（18725d07 persist_day_end 语义）。
         if !failure.recoverable {
             self.consumer.take();
-            if !self.fixed_frames.is_empty() {
-                failure
-                    .message
-                    .push_str(&format!("；{} 个已登记帧未能交付", self.fixed_frames.len()));
-            }
-            self.fixed_batches.clear();
-            self.fixed_frames.clear();
             if let Err(error) = self.game.shared_ingress().close() {
                 failure
                     .message

@@ -129,6 +129,7 @@ pub struct DeferredTick {
     pub(in crate::session::protocol) accounts_per_group: usize,
     pub(in crate::session::protocol) config: Option<crate::GameConfig>,
     pub(in crate::session::protocol) defer_mirror: bool,
+    pub(in crate::session::protocol) chart_timing: Option<[u64; 3]>,
     pub(in crate::session::protocol) identity: Arc<std::sync::OnceLock<StepFatal>>,
     #[cfg(test)]
     pub(in crate::session::protocol) consume_barrier:
@@ -170,6 +171,8 @@ pub struct DeferredInterval {
     fact_ticks: Vec<u64>,
     parts: Vec<(u64, u64, u64, usize, Arc<std::sync::OnceLock<StepFatal>>)>,
     samples: BTreeMap<crate::StockId, Vec<super::super::ContinuousSample>>,
+    quote_coverage: Vec<super::super::QuoteCoverage>,
+    price_observations: Vec<super::super::PriceObservation>,
 }
 
 impl DeferredInterval {
@@ -180,6 +183,8 @@ impl DeferredInterval {
             fact_ticks: Vec::new(),
             parts: Vec::new(),
             samples: BTreeMap::new(),
+            quote_coverage: Vec::new(),
+            price_observations: Vec::new(),
         }
     }
     pub fn len(&self) -> usize {
@@ -214,13 +219,58 @@ impl DeferredInterval {
                     });
                 }
             }
+            if !cfg!(feature = "simulation-diagnostics") {
+                let timing = tick
+                    .chart_timing
+                    .ok_or_else(|| StepFatal::InvariantViolation {
+                        location: "DeferredInterval::push".into(),
+                        description: "缺少图表时间映射".into(),
+                    })?;
+                for fact in &tick.facts {
+                    if let crate::Event::PriceTick {
+                        tick: source_tick,
+                        last_price,
+                        ..
+                    } = &fact.event
+                    {
+                        if *source_tick != tick.tick || last_price.cents() < 0 {
+                            return Err(protocol_fatal(super::super::ProtocolError::FactIdentity));
+                        }
+                        super::super::quotes::minute_slot(*source_tick, timing)
+                            .map_err(protocol_fatal)?;
+                    }
+                }
+            }
             Ok(())
         })();
         if let Err(error) = result {
             let _ = tick.identity.set(error.clone());
             return Err(error);
         }
-        for fact in &tick.facts {
+        #[cfg(feature = "simulation-diagnostics")]
+        if !self.parts.is_empty() {
+            let error = StepFatal::InvariantViolation {
+                location: "DeferredInterval::push".into(),
+                description: "诊断模式必须逐拍消费外围投影".into(),
+            };
+            let _ = tick.identity.set(error.clone());
+            return Err(error);
+        }
+        if cfg!(feature = "simulation-diagnostics") {
+            self.parts.push((
+                tick.tick,
+                tick.seq_from,
+                tick.seq_to,
+                tick.facts.len(),
+                Arc::clone(&tick.identity),
+            ));
+            self.last = Some(tick);
+            return Ok(());
+        }
+        let timing = tick.chart_timing.expect("累计前已验证图表时间映射");
+        let mut retained = Vec::new();
+        tick.facts.sort_by_key(|fact| fact.event.seq());
+        for fact in std::mem::take(&mut tick.facts) {
             if let crate::Event::PriceTick {
                 code,
                 tick,
@@ -231,32 +281,61 @@ impl DeferredInterval {
                 ..
             } = &fact.event
             {
-                self.samples
-                    .entry(*code)
-                    .or_default()
-                    .push(super::super::ContinuousSample {
-                        point: super::super::ContinuousPoint {
-                            tick: *tick,
-                            phase: crate::TradingPhase::Continuous,
-                            last_price: *last_price,
-                            cumulative_volume: daily_candle.volume,
-                            bids: bids.clone(),
-                            asks: asks.clone(),
-                        },
-                        candle: daily_candle.clone(),
+                let slot =
+                    super::super::quotes::minute_slot(*tick, timing).expect("累计前已验证报价时间");
+                let sample = super::super::ContinuousSample {
+                    point: super::super::ContinuousPoint {
+                        tick: *tick,
+                        phase: crate::TradingPhase::Continuous,
+                        last_price: *last_price,
+                        cumulative_volume: daily_candle.volume,
+                        bids: bids.clone(),
+                        asks: asks.clone(),
+                    },
+                    candle: daily_candle.clone(),
+                };
+                let points = self.samples.entry(*code).or_default();
+                if points.last().is_some_and(|previous| {
+                    super::super::quotes::minute_slot(previous.point.tick, timing) == Ok(slot)
+                }) {
+                    *points.last_mut().unwrap() = sample;
+                } else {
+                    points.push(sample);
+                }
+                self.price_observations
+                    .push(super::super::PriceObservation {
+                        code: *code,
+                        seq: fact.event.seq(),
+                        tick: *tick,
+                        last_price: *last_price,
                     });
+                let seq = fact.event.seq();
+                if let Some(last) = self
+                    .quote_coverage
+                    .last_mut()
+                    .filter(|last| last.seq_to == seq - 1)
+                {
+                    last.seq_to = seq;
+                } else {
+                    self.quote_coverage.push(super::super::QuoteCoverage {
+                        seq_from: seq - 1,
+                        seq_to: seq,
+                    });
+                }
+            } else {
+                retained.push(fact);
             }
         }
         self.fact_ticks
-            .extend(std::iter::repeat_n(tick.tick, tick.facts.len()));
+            .extend(std::iter::repeat_n(tick.tick, retained.len()));
         self.parts.push((
             tick.tick,
             tick.seq_from,
             tick.seq_to,
-            tick.facts.len(),
+            retained.len(),
             Arc::clone(&tick.identity),
         ));
-        self.facts.append(&mut tick.facts);
+        self.facts.append(&mut retained);
         self.last = Some(tick);
         Ok(())
     }
@@ -268,10 +347,18 @@ impl DeferredInterval {
                 location: "DeferredInterval::consume".into(),
                 description: "空 tick 区间".into(),
             })?;
+        if cfg!(feature = "simulation-diagnostics") {
+            return last.consume();
+        }
         last.facts = self.facts;
         last.seq_from = self.parts[0].1;
-        let mut consumed =
-            last.consume_interval_inner(self.parts[0].0, self.fact_ticks, self.samples)?;
+        let mut consumed = last.consume_interval_inner(
+            self.parts[0].0,
+            self.fact_ticks,
+            self.samples,
+            self.quote_coverage,
+            self.price_observations,
+        )?;
         consumed.interval_parts = self.parts;
         Ok(consumed)
     }
@@ -297,6 +384,8 @@ impl DeferredTick {
         first_tick: u64,
         fact_ticks: Vec<u64>,
         samples: BTreeMap<crate::StockId, Vec<super::super::ContinuousSample>>,
+        quote_coverage: Vec<super::super::QuoteCoverage>,
+        price_observations: Vec<super::super::PriceObservation>,
     ) -> Result<ConsumedTick, StepFatal> {
         // 逐拍事实已在合并前独立校验；暂时取出事实，避免单拍校验跨 tick identity。
         let facts = std::mem::take(&mut self.facts);
@@ -307,12 +396,18 @@ impl DeferredTick {
         consumed.frame.seq_from = seq_from;
         consumed.frame.tick_from = Some(first_tick);
         consumed.frame.fact_ticks = Some(fact_ticks);
+        consumed.frame.quote_coverage = Some(quote_coverage);
+        consumed.frame.price_observations = Some(price_observations);
         // 汇总投影只扫描一次事实；末态来自最后一个提交版本。
         let mut payload = super::super::project_timeseries_parts(
             &consumed.frame.facts,
             std::mem::take(&mut consumed.frame.timeseries_payload.markets),
             std::mem::take(&mut consumed.frame.timeseries_payload.active_daily_candles),
         );
+        payload.continuous_points = samples
+            .iter()
+            .filter_map(|(code, points)| points.last().map(|last| (*code, last.point.clone())))
+            .collect();
         payload.continuous_samples = Some(samples);
         consumed.frame.timeseries_payload = payload;
         consumed.frame.validate().map_err(protocol_fatal)?;
@@ -380,6 +475,8 @@ impl DeferredTick {
                     light.active,
                 );
                 let frame = TickFrame {
+                    quote_coverage: None,
+                    price_observations: None,
                     tick_from: None,
                     fact_ticks: None,
                     tick: self.tick,
@@ -476,6 +573,8 @@ impl DeferredTick {
         }
         let timeseries_payload = super::super::project_timeseries(&self.facts, snapshot);
         let frame = TickFrame {
+            quote_coverage: None,
+            price_observations: None,
             tick_from: None,
             fact_ticks: None,
             tick: self.tick,
@@ -1019,12 +1118,18 @@ impl ProtocolSession {
     pub fn advance_core_tick(&mut self) -> Result<DeferredTick, StepFatal> {
         self.require_consumers_healthy()?;
         if !crate::runtime::step_runtime_enabled() {
-            let (deferred, _) = self
+            let (mut deferred, _) = self
                 .state
                 .game
                 .step_frame_and_commit(false, |projection, facts| {
                     projection.capture_deferred(facts)
                 })?;
+            let setup = self.state.game.runtime_setup_ref();
+            deferred.chart_timing = Some([
+                setup.ticks_per_day,
+                setup.auction_ticks,
+                setup.closing_auction_ticks,
+            ]);
             self.state
                 .pending_runtime
                 .insert(deferred.tick, Arc::clone(&deferred.identity));
@@ -1052,6 +1157,12 @@ impl ProtocolSession {
         deferred.accounts_per_group = per_group;
         deferred.defer_mirror = defer_mirror;
         deferred.config = Some(self.state.game.state.setup.config.clone());
+        let setup = self.state.game.runtime_setup_ref();
+        deferred.chart_timing = Some([
+            setup.ticks_per_day,
+            setup.auction_ticks,
+            setup.closing_auction_ticks,
+        ]);
         self.state
             .pending_runtime
             .insert(deferred.tick, Arc::clone(&deferred.identity));
@@ -1089,7 +1200,7 @@ impl ProtocolSession {
         let mut cursor = self.state.fact_cursor.clone();
         let mut offset = 0;
         let mut pending = self.state.pending_runtime.iter();
-        for (tick, _, _, len, identity) in &consumed.interval_parts {
+        for (tick, from, to, len, identity) in &consumed.interval_parts {
             if let Some(fatal) = identity.get() {
                 return Err(fatal.clone());
             }
@@ -1103,7 +1214,7 @@ impl ProtocolSession {
             }
             cursor.begin_tick(*tick);
             cursor
-                .record_committed_facts(&consumed.frame.facts[offset..offset + len])
+                .record_committed_coverage(&consumed.frame.facts[offset..offset + len], *from, *to)
                 .map_err(protocol_fatal)?;
             offset += len;
         }

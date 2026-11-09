@@ -21,6 +21,8 @@ fn fixture_facts(events: &[Event]) -> Vec<EventFact> {
 
 fn frame() -> TickFrame {
     TickFrame {
+        quote_coverage: None,
+        price_observations: None,
         tick_from: None,
         fact_ticks: None,
         tick: 1,

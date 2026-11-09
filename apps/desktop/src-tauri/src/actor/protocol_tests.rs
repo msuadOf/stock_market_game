@@ -1,8 +1,45 @@
+#[cfg(not(feature = "simulation-diagnostics"))]
 const HISTORICAL_WINDOW: usize = 8;
 use super::*;
 use engine::session::protocol::ReplayGuard;
 include!("../../../../../packages/engine/test-support/simple_company.rs");
 
+#[cfg(feature = "simulation-diagnostics")]
+#[test]
+fn diagnostic_ticks_are_consumed_synchronously_without_queue() {
+    let mut setup = super::tests::diagnostic_setup();
+    setup.start_date = engine::CivilDate::from_iso("2030-01-02").unwrap();
+    let game = ProtocolSession::new(setup, 7).unwrap();
+    let mut harness = ActorHarness::new_protocol_actor(
+        game,
+        false,
+        PausePreferences::default(),
+        "diagnostic",
+        "one",
+    );
+    harness.subscribe_engine_events();
+    for tick in 1..=2 {
+        let deferred = harness.actor.game.advance_core_tick().unwrap();
+        harness.actor.queue_tick(deferred).unwrap();
+        assert!(
+            harness.actor.consumer.is_none(),
+            "诊断逐拍消费不得建立异步积压队列"
+        );
+        assert_eq!(harness.actor.pending_ticks, 0);
+        let payload = harness.events_rx.as_mut().unwrap().try_recv().unwrap();
+        let value: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        let EngineUpdate::TickBatch(batch) =
+            serde_json::from_value(value["update"].clone()).unwrap()
+        else {
+            panic!("诊断必须逐拍交付完整结果")
+        };
+        assert_eq!(batch.frames.len(), 1);
+        assert_eq!(batch.frames[0].tick, tick);
+        assert_eq!(batch.frames[0].tick_from, None);
+    }
+}
+
+#[cfg(not(feature = "simulation-diagnostics"))]
 #[test]
 fn desktop_coalesces_full_ticks_while_consumer_is_blocked() {
     let mut setup = super::tests::diagnostic_setup();
@@ -33,6 +70,7 @@ fn desktop_coalesces_full_ticks_while_consumer_is_blocked() {
     assert_eq!(tick, HISTORICAL_WINDOW as u64 + 1);
 }
 
+#[cfg(not(feature = "simulation-diagnostics"))]
 #[tokio::test]
 async fn desktop_consumer_wakes_actor_before_next_tick_timer() {
     let mut setup = super::tests::diagnostic_setup();
@@ -153,6 +191,7 @@ async fn explicit_desktop_reads_match_consumed_order_delta() {
     );
 }
 
+#[cfg(not(feature = "simulation-diagnostics"))]
 #[tokio::test]
 async fn desktop_core_advances_while_prior_tick_consumption_is_blocked() {
     let mut setup = super::tests::diagnostic_setup();

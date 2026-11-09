@@ -63,12 +63,13 @@ export function effectsFromFacts(
   facts: readonly CodedEventFact[],
   continuousPoints: Readonly<Record<string, ContinuousPoint>>,
   tick: number,
+  observations?: readonly AutomaticOrderPoint[],
 ): readonly ProtocolEffect[] {
   const effects = facts
     .slice()
     .sort((left, right) => codedFactIdentity(left).localeCompare(codedFactIdentity(right)))
     .flatMap((fact) => effectsFromEvent(fact.event, tick));
-  const points = sortedPoints(continuousPoints);
+  const points = observations === undefined ? sortedPoints(continuousPoints) : observations;
   if (points.length > 0) effects.push({ kind: "automatic-order", points });
   return effects;
 }

@@ -361,3 +361,14 @@ test("缺少 company capability 的页和 by-id 请求立即结束 ticket", asyn
   }
   assert.equal(updates.filter((action) => action.type.endsWith("unavailable")).length, 4);
 });
+
+test("公司协调器与协议使用相同报价覆盖，压缩后推进到区间末 seq", { timeout: 10000 }, () => {
+  const coordinator = new CompanyQueryCoordinator(host, () => {});
+  coordinator.installBaseline({ catalogResolver: numericCompanyCatalogFixture, civilDate: "2030-01-01", revision: "1", seq: 0 });
+  const first = { ...normalizedFrame([disclosure(2, "600001")], 0, 3), quoteCoverage: [{ seq_from: 0, seq_to: 1 }, { seq_from: 2, seq_to: 3 }] };
+  coordinator.acceptFrame(first);
+  coordinator.acceptFrame(normalizedFrame([], 3, 3));
+  assert.throws(() => coordinator.acceptFrame({ ...normalizedFrame([], 3, 5), quoteCoverage: [{ seq_from: 4, seq_to: 5 }] }), /覆盖/);
+  coordinator.acceptFrame({ ...normalizedFrame([], 3, 5), quoteCoverage: [{ seq_from: 3, seq_to: 5 }] });
+  assert.throws(() => coordinator.acceptFrame({ ...normalizedFrame([disclosure(6, "600001")], 5, 6), quoteCoverage: [{ seq_from: 5, seq_to: 6 }] }), /覆盖/);
+});

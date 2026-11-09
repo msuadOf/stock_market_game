@@ -16,6 +16,8 @@ fn update(tick: u64, seq: u64) -> EngineUpdate {
         update: Some(ProtocolUpdate::TickBatch(
             TickBatch {
                 frames: vec![TickFrame {
+                    quote_coverage: None,
+                    price_observations: None,
                     tick_from: None,
                     fact_ticks: None,
                     tick,
@@ -40,6 +42,42 @@ fn update(tick: u64, seq: u64) -> EngineUpdate {
         timeline_generation: 7,
         failure: None,
     }
+}
+
+#[test]
+fn publisher_counts_compacted_quote_observations_against_backlog_budget() {
+    use engine::session::protocol::{PriceObservation, QuoteCoverage};
+    let count = MAX_BUFFERED_EVENTS_PER_CLIENT as u64;
+    let mut quoted = update(1, 1);
+    let Some(ProtocolUpdate::TickBatch(batch)) = &mut quoted.update else {
+        panic!()
+    };
+    let frame = &mut batch.frames[0];
+    frame.facts.clear();
+    frame.seq_to = count;
+    frame.quote_coverage = Some(vec![QuoteCoverage {
+        seq_from: 0,
+        seq_to: count,
+    }]);
+    frame.price_observations = Some(
+        (1..=count)
+            .map(|seq| PriceObservation {
+                code: engine::StockId(0),
+                seq,
+                tick: 1,
+                last_price: Money::from_cents(1001),
+            })
+            .collect(),
+    );
+    let mut buffer = ClientFrameBuffer::new(120, 0).unwrap();
+    buffer.push(quoted).unwrap();
+    let next = update(2, count + 1);
+    assert!(matches!(
+        buffer.push(next.clone()),
+        Err(server::FrameBufferError::BufferCapacityExceeded { .. })
+    ));
+    buffer.take().unwrap();
+    buffer.push(next).unwrap();
 }
 
 #[test]
@@ -170,6 +208,8 @@ fn publisher_preserves_an_oversized_update_when_backlog_is_flushed() {
     };
     batch.frames = (1..=MAX_BUFFERED_EVENTS_PER_CLIENT + 1)
         .map(|tick| TickFrame {
+            quote_coverage: None,
+            price_observations: None,
             tick_from: None,
             fact_ticks: None,
             tick: u64::try_from(tick).unwrap(),
@@ -185,6 +225,8 @@ fn publisher_preserves_an_oversized_update_when_backlog_is_flushed() {
         update: Some(ProtocolUpdate::TickBatch(
             TickBatch {
                 frames: vec![TickFrame {
+                    quote_coverage: None,
+                    price_observations: None,
                     tick_from: None,
                     fact_ticks: None,
                     tick: next_tick,

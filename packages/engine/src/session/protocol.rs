@@ -16,6 +16,7 @@ mod facts;
 mod optional_u64;
 mod player_orders;
 pub use player_orders::{FrozenAsset, OrderVenue, PlayerWorkingOrder, SaveCandidateKey};
+mod quotes;
 mod replay;
 pub(in crate::session::protocol) use civil::DeferredProjection;
 pub use civil::*;
@@ -27,6 +28,7 @@ pub(in crate::session) use commit::{
 pub use delta::{PlayerOrderDelta, PublicRuntimeState, RuntimeDelta};
 pub use facts::{EventFact, SessionFactCursor};
 pub(in crate::session) use player_orders::player_working_order_from_mirror;
+pub use quotes::{PriceObservation, QuoteCoverage};
 pub use replay::*;
 
 #[cfg(test)]
@@ -106,6 +108,12 @@ pub struct ContinuousPoint {
 #[ts(export)]
 pub struct TickFrame {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub quote_coverage: Option<Vec<QuoteCoverage>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub price_observations: Option<Vec<PriceObservation>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional, type = "number")]
     pub tick_from: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -142,6 +150,8 @@ impl Clone for TickFrame {
             count.set((frames + 1, facts + self.facts.len()));
         });
         Self {
+            quote_coverage: self.quote_coverage.clone(),
+            price_observations: self.price_observations.clone(),
             tick_from: self.tick_from,
             fact_ticks: self.fact_ticks.clone(),
             tick: self.tick,
@@ -244,12 +254,7 @@ impl TickFrame {
         } else {
             facts::validate_facts(&self.facts)?;
         }
-        validate_sequence(
-            self.facts.iter().map(|fact| fact.event.seq()),
-            self.facts.len(),
-            self.seq_from,
-            self.seq_to,
-        )
+        quotes::validate_coverage(self)
     }
 }
 

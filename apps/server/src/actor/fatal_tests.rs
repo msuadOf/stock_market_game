@@ -1,3 +1,4 @@
+#[cfg(not(feature = "simulation-diagnostics"))]
 const HISTORICAL_WINDOW: usize = 8;
 use super::session_fixture as fixture;
 use super::*;
@@ -102,6 +103,23 @@ fn company_read_member_request_uses_current_nonzero_membership_and_rejects_stale
     );
 }
 
+#[cfg(feature = "simulation-diagnostics")]
+#[test]
+fn diagnostic_ticks_are_consumed_synchronously_without_queue() {
+    let (mut actor, mut updates) = catalog_actor_fixture();
+    for tick in 1..=2 {
+        let deferred = actor.game.advance_core_tick().unwrap();
+        actor.queue_tick(deferred).unwrap();
+        assert!(actor.consumer.is_none(), "诊断逐拍消费不得建立异步积压队列");
+        let ProtocolUpdate::TickBatch(batch) = updates.try_recv().unwrap().update.unwrap() else {
+            panic!("诊断必须逐拍交付完整结果")
+        };
+        assert_eq!(batch.frames.len(), 1);
+        assert_eq!(batch.frames[0].tick, tick);
+        assert_eq!(batch.frames[0].tick_from, None);
+    }
+}
+
 #[test]
 fn production_actor_steps_and_delivers_tick_batches() {
     // 批 9 A3（compute 注入退役）：原 compute_context_production_actor_
@@ -132,8 +150,6 @@ fn production_actor_steps_and_delivers_tick_batches() {
         fatal_failure: None,
         deferred_drop_reported: false,
         consumer: None,
-        fixed_batches: std::collections::VecDeque::new(),
-        fixed_frames: Vec::new(),
     };
     actor.run_protocol_batch(1);
     actor.collect_ticks(true).unwrap();
@@ -150,6 +166,7 @@ fn production_actor_steps_and_delivers_tick_batches() {
     }
 }
 
+#[cfg(not(feature = "simulation-diagnostics"))]
 #[test]
 fn blocked_production_consumer_does_not_block_next_core_tick() {
     let _guard = CONSUMER_PROBE_LOCK.lock().unwrap();
@@ -192,6 +209,7 @@ fn blocked_production_consumer_does_not_block_next_core_tick() {
     batch.validate().unwrap();
 }
 
+#[cfg(not(feature = "simulation-diagnostics"))]
 #[test]
 fn blocked_consumer_coalesces_beyond_eight_ticks() {
     let _guard = CONSUMER_PROBE_LOCK.lock().unwrap();
@@ -228,6 +246,7 @@ fn blocked_consumer_coalesces_beyond_eight_ticks() {
     assert_eq!(tick, HISTORICAL_WINDOW as u64 + 2);
 }
 
+#[cfg(not(feature = "simulation-diagnostics"))]
 #[test]
 fn blocked_full_consumer_coalesces_beyond_eight_ticks() {
     let _guard = CONSUMER_PROBE_LOCK.lock().unwrap();
@@ -274,6 +293,7 @@ fn blocked_full_consumer_coalesces_beyond_eight_ticks() {
     assert_eq!(tick, HISTORICAL_WINDOW as u64 + 2);
 }
 
+#[cfg(not(feature = "simulation-diagnostics"))]
 #[test]
 fn fixed_cycle_coalesces_all_ticks_across_blocked_consumer() {
     let _guard = CONSUMER_PROBE_LOCK.lock().unwrap();
@@ -331,6 +351,7 @@ fn fixed_cycle_coalesces_all_ticks_across_blocked_consumer() {
     ));
 }
 
+#[cfg(not(feature = "simulation-diagnostics"))]
 #[test]
 fn disconnected_consumer_delivers_fixed_prefix_before_fatal() {
     let (mut actor, mut updates) = catalog_actor_fixture();
@@ -342,6 +363,7 @@ fn disconnected_consumer_delivers_fixed_prefix_before_fatal() {
     drop(sender);
     actor.consumer = Some(TickConsumer {
         input: Some(input),
+        #[cfg(not(feature = "simulation-diagnostics"))]
         slot: None,
         output,
         pending: 1,
@@ -349,8 +371,7 @@ fn disconnected_consumer_delivers_fixed_prefix_before_fatal() {
         cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         notify: Arc::new(tokio::sync::Notify::new()),
     });
-    actor.fixed_batches.push_back((1, false));
-    actor.run_protocol_batch_inner(1, true);
+    actor.run_protocol_batch_inner(1);
     let first = updates.try_recv().unwrap();
     let ProtocolUpdate::TickBatch(batch) = first.update.unwrap() else {
         panic!("必须先交付成功前缀")
@@ -367,6 +388,7 @@ fn disconnected_consumer_delivers_fixed_prefix_before_fatal() {
     ));
 }
 
+#[cfg(not(feature = "simulation-diagnostics"))]
 #[tokio::test]
 async fn consumer_completion_wakes_actor_before_next_tick_timer() {
     let _guard = CONSUMER_PROBE_LOCK.lock().unwrap();
@@ -683,8 +705,6 @@ async fn capture(successful_steps: usize) {
         fatal_failure: None,
         deferred_drop_reported: false,
         consumer: None,
-        fixed_batches: std::collections::VecDeque::new(),
-        fixed_frames: Vec::new(),
     };
 
     actor.run_protocol_batch(if successful_steps == 0 { 1 } else { 8 });
@@ -1012,8 +1032,6 @@ async fn authority_reads_reject_stale_generations() {
         fatal_failure: None,
         deferred_drop_reported: false,
         consumer: None,
-        fixed_batches: std::collections::VecDeque::new(),
-        fixed_frames: Vec::new(),
     };
 
     let (reply, response) = oneshot::channel();
@@ -1101,8 +1119,6 @@ async fn command_burst_keeps_submission_order_after_callers_stop_waiting() {
         fatal_failure: None,
         deferred_drop_reported: false,
         consumer: None,
-        fixed_batches: std::collections::VecDeque::new(),
-        fixed_frames: Vec::new(),
     };
     let expected: Vec<_> = (1..=64)
         .map(|lot_count| {
@@ -1245,8 +1261,6 @@ fn zero_step_batch_keeps_progress_origin_and_ingress_facts() {
         fatal_failure: None,
         deferred_drop_reported: false,
         consumer: None,
-        fixed_batches: std::collections::VecDeque::new(),
-        fixed_frames: Vec::new(),
     };
     let before = serde_json::to_value(actor.game.game().save().unwrap()).unwrap();
     let origin = actor.game.runtime_mirror_origin();
@@ -1295,8 +1309,6 @@ fn catalog_actor_fixture_with_policy(
             fatal_failure: None,
             deferred_drop_reported: false,
             consumer: None,
-            fixed_batches: std::collections::VecDeque::new(),
-            fixed_frames: Vec::new(),
         },
         receiver,
     )

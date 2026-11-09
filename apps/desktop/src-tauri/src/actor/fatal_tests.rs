@@ -326,6 +326,7 @@ async fn fixed_cold_batch_preserves_unfinished_tick_debt() {
     );
 }
 
+#[cfg(not(feature = "simulation-diagnostics"))]
 #[test]
 fn disconnected_consumer_delivers_fixed_prefix_before_fatal() {
     use tauri::Listener;
@@ -361,14 +362,13 @@ fn disconnected_consumer_delivers_fixed_prefix_before_fatal() {
     drop(sender);
     harness.actor.consumer = Some(TickConsumer {
         input: Some(input),
+        #[cfg(not(feature = "simulation-diagnostics"))]
         slot: None,
         output,
         worker: None,
     });
     harness.actor.pending_ticks = 1;
-    harness.actor.fixed_batches.push_back((1, false));
-    harness.actor.run_cycle_inner(1, true);
-    harness.actor.finish_fixed_batch();
+    harness.actor.run_cycle_inner(1);
     let (first_name, first_payload) = events_rx.try_recv().unwrap();
     let (second_name, failure_payload) = events_rx.try_recv().unwrap();
     assert_eq!(first_name, crate::ENGINE_EVENT_NAME);
@@ -521,6 +521,7 @@ fn disconnected_output_publishes_consumed_prefix_before_error() {
     drop(sender);
     harness.actor.consumer = Some(TickConsumer {
         input: None,
+        #[cfg(not(feature = "simulation-diagnostics"))]
         slot: None,
         output,
         worker: None,

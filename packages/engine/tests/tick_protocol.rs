@@ -13,6 +13,8 @@ fn frame(tick: u64, before: u64, count: u64) -> TickFrame {
         })
         .collect();
     TickFrame {
+        quote_coverage: None,
+        price_observations: None,
         tick_from: None,
         fact_ticks: None,
         facts: cursor.assign_session_facts(events).unwrap(),

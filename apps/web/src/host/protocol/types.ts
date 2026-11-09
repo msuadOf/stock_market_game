@@ -6,6 +6,8 @@ import type { StockSpec } from "../../types/generated/StockSpec.ts";
 import type { PlayerWorkingOrder } from "../player-working-orders.ts";
 import type {
   CodedAuctionPoint,
+  CodedPriceObservation,
+  QuoteCoverage,
   CodedCivilRefresh,
   CodedCivilUpdate,
   CodedEvent,
@@ -36,6 +38,8 @@ export type ProtocolState = {
 export type AcceptedUpdate = string;
 
 export type NormalizedTickFrame = {
+  readonly quoteCoverage?: readonly QuoteCoverage[];
+  readonly priceObservations?: readonly CodedPriceObservation[];
   readonly tick: number;
   readonly events: readonly CodedEvent[];
   readonly facts: readonly CodedEventFact[];
@@ -66,7 +70,7 @@ export type NormalizedCivilUpdate = {
 
 export type NormalizedEngineUpdate = NormalizedTickBatch | NormalizedCivilUpdate;
 
-export type AutomaticOrderPoint = ContinuousPoint & {
+export type AutomaticOrderPoint = Pick<ContinuousPoint, "tick" | "last_price"> & {
   readonly code: string;
 };
 

@@ -2809,6 +2809,8 @@ mod publisher_connection_tests {
             update: Some(engine::session::protocol::EngineUpdate::TickBatch(
                 Box::new(TickBatch {
                     frames: vec![TickFrame {
+                        quote_coverage: None,
+                        price_observations: None,
                         tick_from: None,
                         fact_ticks: None,
                         tick,
