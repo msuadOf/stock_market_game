@@ -4851,12 +4851,14 @@ impl GameSession {
                 .iter()
                 .map(|(id, participant)| (*id, participant.information().clone()))
                 .collect(),
-            belief_books: self
-                .state
-                .belief_participants
-                .iter()
-                .map(|(id, participant)| (*id, participant.belief().clone()))
-                .collect(),
+            belief_books: {
+                // 避免收集全部账户后再构造 BTreeMap 时同时持有完整临时 Vec。
+                let mut books = BTreeMap::new();
+                for (id, participant) in self.state.belief_participants.iter() {
+                    books.insert(*id, participant.belief().clone());
+                }
+                books
+            },
             watchlists: self
                 .state
                 .belief_participants

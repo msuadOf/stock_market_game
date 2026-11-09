@@ -92,10 +92,10 @@ fn runtime_book_cache_entry_matches(
 /// Session 四表与 driver 缓存共享本人的最终只读值；写入仍由各表的 COW 隔离。
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SharedRuntimePersonal {
-    attention: Arc<NpcAttentionState>,
-    participant: Arc<BeliefParticipantState>,
-    history_reads: Arc<crate::experience::PersonalHistoryReadLedger>,
-    retail_experience: Option<Arc<RetailExperienceState>>,
+    pub(super) attention: Arc<NpcAttentionState>,
+    pub(super) participant: Arc<BeliefParticipantState>,
+    pub(super) history_reads: Arc<crate::experience::PersonalHistoryReadLedger>,
+    pub(super) retail_experience: Option<Arc<RetailExperienceState>>,
 }
 
 impl From<BeliefParticipantSnapshot> for SharedRuntimePersonal {
@@ -115,6 +115,13 @@ impl From<BeliefParticipantSnapshot> for SharedRuntimePersonal {
 }
 
 impl SharedRuntimePersonal {
+    #[cfg(test)]
+    pub(crate) fn shares_retail_with(&self, value: &RetailExperienceState) -> bool {
+        self.retail_experience
+            .as_deref()
+            .is_some_and(|row| std::ptr::eq(row, value))
+    }
+
     pub(crate) fn matches_owner(&self, owner: AccountId) -> bool {
         self.participant.information().owner() == owner && self.participant.belief().npc() == owner
     }

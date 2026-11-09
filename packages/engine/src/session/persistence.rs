@@ -1935,7 +1935,7 @@ fn validate_personal_states(context: &SaveValidationContext) -> Result<(), Sessi
         }
     }
     for (id, ledger) in &save.history_reads {
-        for (code, entry) in &ledger.stocks {
+        for (code, entry) in ledger.stocks.iter() {
             if !stock_codes.contains(code)
                 || entry.read_count == 0
                 || entry.last_read_market_minute > current_market_minute

@@ -117,8 +117,7 @@ impl BeliefBook {
         as_of_anchor: InformationTradingAnchor,
     ) -> Result<(), BeliefError> {
         self.validate_information_anchor(stock, as_of_anchor)?;
-        let entry = self
-            .entries
+        let entry = std::sync::Arc::make_mut(&mut self.entries)
             .get_mut(stock)
             .ok_or(BeliefError::NoBeliefEntry)?;
         if !entry.applied_experience_orders.insert(order.0) {
@@ -253,8 +252,7 @@ impl BeliefBook {
             )
         };
         let valuation = self.valuation_for(&facts, forecast.growth_bp, inputs);
-        let entry = self
-            .entries
+        let entry = std::sync::Arc::make_mut(&mut self.entries)
             .get_mut(stock)
             .ok_or(BeliefError::NoBeliefEntry)?;
         entry.forecast = forecast;
@@ -329,8 +327,7 @@ impl BeliefBook {
         let report = inputs.ctx.report(report_id)?;
         let facts = extract_annual_facts(report, &inputs.company, observed_at)?;
         let valuation = self.valuation_for(&facts, entry.forecast.growth_bp, inputs);
-        let entry = self
-            .entries
+        let entry = std::sync::Arc::make_mut(&mut self.entries)
             .get_mut(stock)
             .ok_or(BeliefError::NoBeliefEntry)?;
         entry.valuation = valuation;
@@ -391,7 +388,7 @@ impl BeliefBook {
                 .map(|old| old.applied_experience_orders.clone())
                 .unwrap_or_default(),
         };
-        self.entries.insert(*stock, entry);
+        std::sync::Arc::make_mut(&mut self.entries).insert(*stock, entry);
     }
 
     /// 方法分发（使用纯函数链接；`None` = 零基本权重 ⇒ 类型化

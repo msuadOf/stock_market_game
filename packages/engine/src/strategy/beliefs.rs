@@ -99,7 +99,7 @@ pub struct BeliefBook {
     pub(super) profile: StrategyProfile,
     pub(super) analysis: AnalysisProfile,
     pub(super) assumptions: PersonalAssumptions,
-    pub(super) entries: BTreeMap<StockId, BeliefEntry>,
+    pub(super) entries: std::sync::Arc<BTreeMap<StockId, BeliefEntry>>,
     /// 机构本人真实成交与本人观察的事实容器；复用散户的通用事实结构，不赋予机构散户买卖规则。
     pub(super) experience: RetailExperienceState,
     #[serde(deserialize_with = "deserialize_institution_policy")]
@@ -134,7 +134,7 @@ impl BeliefBook {
             profile,
             analysis,
             assumptions,
-            entries: BTreeMap::new(),
+            entries: std::sync::Arc::new(BTreeMap::new()),
             experience: RetailExperienceState::without_equity_reference(),
             institution_policy,
             institution_account_risk_paused: false,
@@ -372,6 +372,51 @@ mod risk_owner_tests {
         book.institution_account_risk_paused = paused;
         book.experience.peak_equity = peak.map(Money::from_cents);
         book
+    }
+
+    #[test]
+    fn 日终快照共享信念条目并隔离后续写入() {
+        let mut current = book(false, None);
+        let stock = StockId(1);
+        let anchor = InformationTradingAnchor::NoPriorSession;
+        let entry = BeliefEntry {
+            company: CompanyId(1),
+            method: None,
+            forecast: ForecastState {
+                growth_bp: None,
+                basis: super::super::fundamental::ForecastBasis::InitialWithoutHistory,
+            },
+            confidence_bp: 3000,
+            valuation: ValuationOutcome::Unavailable {
+                reason: ValuationUnavailable::MethodDisabled,
+            },
+            used_report_ids: vec![],
+            anchor,
+            horizon_trading_days: 1,
+            last_cause: None,
+            applied_experience_orders: BTreeSet::new(),
+        };
+        std::sync::Arc::make_mut(&mut current.entries).insert(stock, entry);
+        let snapshot = current.clone();
+        assert!(std::sync::Arc::ptr_eq(&current.entries, &snapshot.entries));
+        let order = crate::orderbook::OrderId(1);
+        current
+            .apply_experience(
+                &stock,
+                BeliefCause::ExperienceFailure { order },
+                order,
+                -1000,
+                anchor,
+            )
+            .unwrap();
+        assert!(!std::sync::Arc::ptr_eq(&current.entries, &snapshot.entries));
+        assert_eq!(snapshot.entries[&stock].confidence_bp, 3000);
+        assert_eq!(snapshot.entries[&stock].last_cause, None);
+        assert_eq!(current.entries[&stock].confidence_bp, 2000);
+        assert!(current.entries[&stock].last_cause.is_some());
+        let restored: BeliefBook =
+            serde_json::from_value(serde_json::to_value(&snapshot).unwrap()).unwrap();
+        assert_eq!(snapshot, restored);
     }
 
     #[test]

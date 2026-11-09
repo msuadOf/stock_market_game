@@ -60,9 +60,13 @@ impl<Value> AccountPagedMap<Value> {
     }
 
     pub(super) fn get(&self, id: &AccountId) -> Option<&Value> {
+        self.get_arc(id).map(Arc::as_ref)
+    }
+
+    pub(super) fn get_arc(&self, id: &AccountId) -> Option<&Arc<Value>> {
         let page = self.page_arc(page_id(*id))?;
         let (stored_id, value) = page[page_slot(*id)].as_ref()?;
-        (stored_id == id).then_some(value.as_ref())
+        (stored_id == id).then_some(value)
     }
 
     pub(super) fn contains_key(&self, id: &AccountId) -> bool {
