@@ -15,6 +15,7 @@ import type { SpeedMetricsRequestGate } from "../host/speed.ts";
 import { store, clearAutoOrders } from "../store/store.ts";
 import { parseStartDate, setupWithStartDate } from "../components/start-date.ts";
 import type { InitialAllocation } from "../host/initial-allocation.ts";
+import type { AuthorizedDayEndFileTarget } from "./day-end-file-target.ts";
 
 export interface SaveCommandPorts {
   startupTarget: StartupTarget;
@@ -24,7 +25,7 @@ export interface SaveCommandPorts {
   autoOrderMgrRef: MutableRefObject<AutoOrderManager | null>;
   sessionReplacementGateRef: MutableRefObject<SessionReplacementGate>;
   saveSelectionGenerationRef: MutableRefObject<number>;
-  dayEndFileTargetRef: MutableRefObject<DayEndFileTarget | null>;
+  dayEndFileTargetRef: MutableRefObject<AuthorizedDayEndFileTarget | null>;
   playerOrderRefreshGateRef: MutableRefObject<PlayerOrderRefreshGate>;
   speedMetricsLoadInProgressRef: MutableRefObject<boolean>;
   speedMetricsRequestGateRef: MutableRefObject<SpeedMetricsRequestGate>;
@@ -191,7 +192,28 @@ export function createSaveCommands(ports: SaveCommandPorts) {
       const target = await selectDayEndFileTarget();
       if (host !== hostRef.current || selectionGeneration !== saveSelectionGenerationRef.current) return;
       if (target === null) { setNotice("已取消选择日终存档文件"); return; }
-      dayEndFileTargetRef.current = target;
+      if (ports.startupTarget.kind === "remote") {
+        if (host.subscribeDayEndExports === undefined) throw new Error("远程宿主不支持日终文件订阅，请检查 Server 与 WebUI 版本");
+        const previous = dayEndFileTargetRef.current;
+        dayEndFileTargetRef.current = null;
+        if (previous?.remoteExport !== undefined) await previous.remoteExport.close();
+        if (host !== hostRef.current || selectionGeneration !== saveSelectionGenerationRef.current) return;
+        let authorized: AuthorizedDayEndFileTarget | null = null;
+        let subscriptionFailure: Error | null = null;
+        const remoteExport = await host.subscribeDayEndExports(error => {
+          subscriptionFailure = error;
+          if (authorized !== null && dayEndFileTargetRef.current === authorized) {
+            dayEndFileTargetRef.current = null;
+            if (host === hostRef.current) setNotice(`日终文件导出已取消：${error.message}；请重新授权文件。`);
+          }
+        });
+        if (host !== hostRef.current || selectionGeneration !== saveSelectionGenerationRef.current) { await remoteExport.close(); return; }
+        if (subscriptionFailure !== null) { await remoteExport.close(); throw subscriptionFailure; }
+        authorized = { write: (slot, current) => target.write(slot, current), remoteExport };
+        dayEndFileTargetRef.current = authorized;
+      } else {
+        dayEndFileTargetRef.current = target;
+      }
       setNotice("已授权日终存档文件；仅在后续完整自然日日结更新，日内不写档。");
     } catch (e) {
       if (host === hostRef.current && selectionGeneration === saveSelectionGenerationRef.current) setNotice(`文件存档失败：${e}`);

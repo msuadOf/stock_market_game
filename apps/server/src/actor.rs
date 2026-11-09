@@ -25,6 +25,12 @@ use serde::Serialize;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tracing::{debug, info, warn};
 
+mod day_end_exports;
+use day_end_exports::DayEndExports;
+pub use day_end_exports::{
+    DayEndExportFailure, DayEndExportRequest, DayEndExportResponse, DEFAULT_DAY_END_EXPORT_BYTES,
+};
+
 /// 倍速基准：1x 时一个 tick 的间隔毫秒数（与前端 RemoteHost 对齐的「真实时间」尺度）。
 /// 取 1000ms（1 秒一 tick）作为可感知默认；speed=N → interval = BASE_TICK_MS / N。
 pub const BASE_TICK_MS: u64 = 1000;
@@ -537,7 +543,9 @@ pub enum SessionCommand {
         reply: oneshot::Sender<Result<(), SessionError>>,
     },
     /// 取完整快照。Ok=快照值。
-    Snapshot { reply: oneshot::Sender<Snapshot> },
+    Snapshot {
+        reply: oneshot::Sender<Snapshot>,
+    },
     PlayerWorkingOrders {
         generation: u64,
         reply: oneshot::Sender<Result<(u64, serde_json::Value), SendCommandError>>,
@@ -562,6 +570,15 @@ pub enum SessionCommand {
         generation: u64,
         candidate: Option<engine::session::protocol::SaveCandidateKey>,
         reply: oneshot::Sender<Result<SaveSlot, SessionError>>,
+    },
+    DayEndExport {
+        generation: u64,
+        subject: OpaqueSubjectId,
+        request: DayEndExportRequest,
+        reply: oneshot::Sender<Result<DayEndExportResponse, SendCommandError>>,
+    },
+    DropDayEndExportConnection {
+        connection: String,
     },
     Restore {
         slot: Box<SaveSlot>,
@@ -605,7 +622,9 @@ pub enum SessionCommand {
         reply: oneshot::Sender<Result<(), SessionError>>,
     },
     /// 永久停止 actor。会话必须先从 manager 移除，避免新请求继续取得句柄。
-    Shutdown { reply: oneshot::Sender<()> },
+    Shutdown {
+        reply: oneshot::Sender<()>,
+    },
     /// B3 远程登录：认证主体（subject）成员请求——鉴权后的成员/控制面
     /// （加入市场、解析成员、市场上下文、重置/停止、控制命令 Subject 化）。
     Member {
@@ -810,6 +829,10 @@ mod fatal_tests;
 
 #[cfg(test)]
 mod correction_recovery_tests;
+
+#[cfg(test)]
+#[path = "actor/day_end_exports_tests.rs"]
+mod day_end_exports_tests;
 
 #[cfg(test)]
 mod interval_tests {
@@ -1726,6 +1749,7 @@ pub struct SessionManager {
     sessions: Arc<DashMap<String, Arc<SessionHandles>>>,
     active_count: Arc<AtomicUsize>,
     base_ms: u64,
+    day_end_export_bytes: u64,
 }
 
 impl SessionManager {
@@ -1742,6 +1766,17 @@ impl SessionManager {
     /// 身份服务的存储入口（identity_routes 装配用）。
     pub fn database(&self) -> native_store::NativeDatabase {
         self.database.clone()
+    }
+
+    /// 配置显式文件导出的临时磁盘上限；不会改变主存档库或交易容量。
+    pub fn with_day_end_export_limit(mut self, bytes: u64) -> Result<Self, SendCommandError> {
+        if bytes == 0 {
+            return Err(SendCommandError::Rejected(
+                "日终文件导出容量必须大于零".into(),
+            ));
+        }
+        self.day_end_export_bytes = bytes;
+        Ok(self)
     }
 
     /// 批 9 A1（std-thread 迁移收官）：compute 注入退役——线程模型
@@ -1761,6 +1796,7 @@ impl SessionManager {
             sessions: Arc::new(DashMap::new()),
             active_count: Arc::new(AtomicUsize::new(0)),
             base_ms,
+            day_end_export_bytes: DEFAULT_DAY_END_EXPORT_BYTES,
         }
     }
 
@@ -1935,6 +1971,7 @@ impl SessionManager {
             members,
             controllers,
             archive,
+            day_end_exports: DayEndExports::new(self.day_end_export_bytes),
             #[cfg(test)]
             injected_step_failure: None,
             pacing: ServerPacing::new(self.base_ms, game.tick()),
@@ -2028,6 +2065,7 @@ struct SessionActor {
     /// B3 远程登录：日终归档 writer（None=无归档面——纯内存会话或 writer
     /// 失效后的降级；日终档不再写）。
     archive: Option<native_store::ArchiveWriter>,
+    day_end_exports: DayEndExports,
     #[cfg(test)]
     injected_step_failure: Option<(
         usize,
@@ -2323,23 +2361,36 @@ impl SessionActor {
     /// 日终档持久化（B3 远程登录）：写失败为可恢复失败——交易提交有效、
     /// 上一份有效日终档保留，仅广播 HostFailure::archive 提示人工反馈。
     fn persist_day_end(&mut self, update: &engine::session::protocol::CivilUpdate) {
-        let Some(writer) = &self.archive else {
+        if self.archive.is_none() && !self.day_end_exports.has_subscribers() {
+            self.game.discard_pending_save_candidates();
             return;
-        };
+        }
         let key = engine::session::protocol::SaveCandidateKey {
             seq: update.seq_to,
             settled_date: update.boundary.settled_date,
         };
-        let saved = native_store::DayEndCandidate::capture(&self.game, &key)
-            .map_err(|error| error.to_string())
-            .and_then(|slot| {
-                writer
-                    .save_day_end(&slot)
-                    .map_err(|error| error.to_string())
-            });
-        if let Err(error) = saved {
-            self.stop_with_failure(HostFailure::archive(&error));
+        match native_store::DayEndCandidate::capture(&self.game, &key) {
+            Ok(slot) => {
+                // 自动存档和各文件订阅读取同一成功候选；写入失败互不撤销。
+                if let Some(writer) = &self.archive {
+                    if let Err(error) = writer.save_day_end(&slot) {
+                        self.stop_with_failure(HostFailure::archive(&error.to_string()));
+                    }
+                }
+                self.day_end_exports.publish(&slot);
+            }
+            Err(error) => {
+                if self.archive.is_some() {
+                    self.stop_with_failure(HostFailure::archive(&error.to_string()));
+                }
+                self.day_end_exports.reset(
+                    "DAY_END_EXPORT_FAILED",
+                    &format!("日终候选捕获失败：{error}"),
+                );
+            }
         }
+        // 旧日导出由磁盘 spool 承载；engine 仅保留最近成功日，不能因无人导出累积完整历史。
+        self.game.discard_pending_save_candidates();
     }
 
     /// 控制权门禁：subject 必须在 controllers 集内。
@@ -2575,6 +2626,10 @@ impl SessionActor {
                     Err(error) => return Err(error),
                 }
                 self.game = replacement;
+                self.day_end_exports.reset(
+                    "DAY_END_EXPORT_TIMELINE_CHANGED",
+                    "市场已重置，请重新授权文件导出",
+                );
                 self.timeline_generation = next_generation;
                 self.public_revision = self.public_revision.saturating_add(1);
                 self.pacing.reset_after_restore(self.game.tick());
@@ -3066,6 +3121,51 @@ impl SessionActor {
                 };
                 let _ = reply.send(result);
             }
+            SessionCommand::DayEndExport {
+                generation,
+                subject,
+                request,
+                reply,
+            } => {
+                let result = match request {
+                    DayEndExportRequest::Subscribe {
+                        connection,
+                        failures,
+                    } => self
+                        .subscribe_day_end_exports(generation, &subject, &connection, failures)
+                        .map(|subscription| DayEndExportResponse::Subscribed {
+                            subscription,
+                            after_seq: self.game.seq(),
+                        }),
+                    DayEndExportRequest::Unsubscribe {
+                        connection,
+                        subscription,
+                    } => self
+                        .unsubscribe_day_end_exports(
+                            generation,
+                            &subject,
+                            &connection,
+                            &subscription,
+                        )
+                        .map(|()| DayEndExportResponse::Completed),
+                    DayEndExportRequest::Read {
+                        subscription,
+                        candidate,
+                    } => self
+                        .read_day_end_export(generation, &subject, &subscription, &candidate)
+                        .map(|slot| DayEndExportResponse::Saved(Box::new(slot))),
+                    DayEndExportRequest::Acknowledge {
+                        subscription,
+                        candidate,
+                    } => self
+                        .ack_day_end_export(generation, &subject, &subscription, &candidate)
+                        .map(|()| DayEndExportResponse::Completed),
+                };
+                let _ = reply.send(result);
+            }
+            SessionCommand::DropDayEndExportConnection { connection } => {
+                self.drop_day_end_export_connection(&connection)
+            }
             SessionCommand::Restore { slot, reply } => match self
                 .fatal_rejection()
                 .map_or_else(|| ProtocolSession::restore(&slot), Err)
@@ -3109,6 +3209,10 @@ impl SessionActor {
                         return;
                     }
                     self.game = restored;
+                    self.day_end_exports.reset(
+                        "DAY_END_EXPORT_TIMELINE_CHANGED",
+                        "市场已读档，请重新授权文件导出",
+                    );
                     self.timeline_generation = next_generation;
                     self.public_revision = self.public_revision.saturating_add(1);
                     self.pacing.reset_after_restore(self.game.tick());

@@ -1,5 +1,8 @@
+mod export_spool;
 pub mod identities;
 mod writer_lock;
+
+pub use export_spool::DayEndExportSpool;
 
 pub use rusqlite;
 
@@ -13,6 +16,14 @@ use std::sync::{Arc, Mutex};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
+    #[error("导出候选超过单档解码字节上限 {byte_limit}；无法保留为可读取文件导出，请减少市场规模或取消文件目标")]
+    ExportCandidateTooLarge { byte_limit: u64 },
+    #[error("导出队列容量不足：已保留 {retained_bytes} 字节，候选 {candidate_bytes} 字节，上限 {byte_limit} 字节；请完成或取消滞后的文件导出")]
+    ExportCapacity {
+        retained_bytes: u64,
+        candidate_bytes: u64,
+        byte_limit: u64,
+    },
     #[error("SQLite 操作失败：{0}")]
     Sql(#[from] rusqlite::Error),
     #[error("存档 JSON 无效：{0}")]

@@ -26,7 +26,8 @@ export class IndexedDbSaveRepository implements BrowserArchiveStore {
   }
 
   private open(): Promise<IDBDatabase> {
-    this.opening ??= new Promise((resolve, reject) => {
+    if (this.opening !== null) return this.opening;
+    const pending = new Promise<IDBDatabase>((resolve, reject) => {
       const request = this.factory.open(this.databaseName);
       let blocked = false;
       request.onupgradeneeded = (event) => {
@@ -53,12 +54,17 @@ export class IndexedDbSaveRepository implements BrowserArchiveStore {
               && !store.autoIncrement && store.indexNames.length === 0;
           });
         if (!valid) { database.close(); reject(new Error("IndexedDB 数据库结构无效；不支持旧结构或迁移，请明确删除旧数据库或选择其他存档")); return; }
-        database.onversionchange = () => { database.close(); this.opening = null; };
-        database.onclose = () => { this.opening = null; };
+        database.onversionchange = () => { database.close(); if (this.opening === opening) this.opening = null; };
+        database.onclose = () => { if (this.opening === opening) this.opening = null; };
         resolve(database);
       };
     });
-    return this.opening;
+    const opening = pending.catch((error: unknown) => {
+      if (this.opening === opening) this.opening = null;
+      throw error;
+    });
+    this.opening = opening;
+    return opening;
   }
 
   private async transact<Value>(mode: IDBTransactionMode, operation: (transaction: IDBTransaction, done: (value: Value) => void, fail: (error: unknown) => void) => void): Promise<Value> {

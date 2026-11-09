@@ -10,11 +10,11 @@ use engine::session::protocol::ReplayGuard;
 use engine::session::CompanyReportCorrection;
 include!("../../../../packages/engine/test-support/simple_company.rs");
 
-fn correction_controller() -> OpaqueSubjectId {
+pub(super) fn correction_controller() -> OpaqueSubjectId {
     OpaqueSubjectId::new("b4e-correction-controller".into()).unwrap()
 }
 
-fn correction_game(start: &str) -> (ProtocolSession, CompanyReportCorrection) {
+pub(super) fn correction_game(start: &str) -> (ProtocolSession, CompanyReportCorrection) {
     let mut setup = correction_fixture::civil_setup(engine::CivilDate::from_iso(start).unwrap());
     setup.ticks_per_day = 2;
     setup.npcs.retail_count = 0;
@@ -73,7 +73,7 @@ fn correction_game(start: &str) -> (ProtocolSession, CompanyReportCorrection) {
     (game, request)
 }
 
-fn correction_actor(
+pub(super) fn correction_actor(
     game: ProtocolSession,
 ) -> (
     SessionActor,
@@ -89,6 +89,7 @@ fn correction_actor(
         members: Arc::new(RwLock::new(game.trading_subject_accounts())),
         controllers: std::collections::BTreeSet::from([correction_controller()]),
         archive: None,
+        day_end_exports: DayEndExports::new(DEFAULT_DAY_END_EXPORT_BYTES),
         injected_step_failure: None,
         pacing,
         game,

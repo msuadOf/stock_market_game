@@ -20,7 +20,7 @@ test("App save controls schedule day-end persistence rather than writing intrada
   assert.equal(save.includes(".save("), false);
   assert.equal(file.includes(".save("), false);
   assert.ok(file.includes("selectDayEndFileTarget()"));
-  assert.ok(source.includes("dayEndPersistenceRef.current.completed("));
+  assert.ok(source.includes("persistClientCivilDayEnd({"));
 });
 
 test("App restores its initial archive before starting the memory session", () => {
