@@ -8,6 +8,9 @@ export type RemoteMessage =
   | { readonly kind: "resync"; readonly message: string }
   | { readonly kind: "empty" }
   | { readonly kind: "queued"; readonly requestId: number }
+  | { readonly kind: "day-end-export-subscribed"; readonly requestId: number; readonly subscription: string; readonly afterSeq: number }
+  | { readonly kind: "day-end-export-unsubscribed"; readonly requestId: number }
+  | { readonly kind: "day-end-export-failed"; readonly subscription: string; readonly code: string; readonly message: string }
   | { readonly kind: "gateway-error"; readonly requestId: number | null; readonly failure: HostFailure };
 
 function record(value: unknown, where: string): Readonly<Record<string, unknown>> {
@@ -83,6 +86,21 @@ export function parseRemoteMessage(raw: string, activeGeneration: string | null 
     exact(source, ["request_id"], "远程 CommandQueued");
     if (!Number.isSafeInteger(source.request_id) || Number(source.request_id) < 0) throw new Error("远程 CommandQueued.request_id 无效");
     return { kind: "queued", requestId: Number(source.request_id) };
+  }
+  for (const variant of ["DayEndExportSubscribed", "DayEndExportUnsubscribed", "DayEndExportFailed"] as const) {
+    if (!Object.hasOwn(envelope, variant)) continue;
+    const source = record(envelope[variant], `远程 ${variant}`);
+    if (variant === "DayEndExportFailed") {
+      exact(source, ["subscription", "code", "message"], `远程 ${variant}`);
+      if (typeof source.subscription !== "string" || source.subscription.length === 0 || typeof source.code !== "string" || source.code.length === 0 || typeof source.message !== "string" || source.message.length === 0) throw new Error(`远程 ${variant} 字段无效`);
+      return { kind: "day-end-export-failed", subscription: source.subscription, code: source.code, message: source.message };
+    }
+    exact(source, variant === "DayEndExportSubscribed" ? ["request_id", "subscription", "afterSeq"] : ["request_id"], `远程 ${variant}`);
+    if (!Number.isSafeInteger(source.request_id) || Number(source.request_id) < 0) throw new Error(`远程 ${variant}.request_id 无效`);
+    if (variant === "DayEndExportUnsubscribed") return { kind: "day-end-export-unsubscribed", requestId: Number(source.request_id) };
+    if (typeof source.subscription !== "string" || source.subscription.length === 0) throw new Error(`远程 ${variant}.subscription 无效`);
+    if (!Number.isSafeInteger(source.afterSeq) || Number(source.afterSeq) < 0) throw new Error(`远程 ${variant}.afterSeq 无效`);
+    return { kind: "day-end-export-subscribed", requestId: Number(source.request_id), subscription: source.subscription, afterSeq: Number(source.afterSeq) };
   }
   if (Object.hasOwn(envelope, "GatewayError")) {
     const source = record(envelope.GatewayError, "远程 GatewayError");

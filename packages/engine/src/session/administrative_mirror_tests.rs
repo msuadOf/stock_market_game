@@ -312,6 +312,7 @@ fn administrative_mirror_04_information_observation_preserves_session_only_retai
         )
         .unwrap();
     let expected = game.state.retail_experience[&owner].clone();
+    let previous_retail = game.state.retail_experience.clone();
     {
         let mut driver = game.runtime_driver.as_ref().unwrap().lock().unwrap();
         let mut cached = driver.administrative_cache_snapshot_for_test().personals[1]
@@ -371,7 +372,21 @@ fn administrative_mirror_04_information_observation_preserves_session_only_retai
         game.state.retail_experience[&owner], expected,
         "INFO行政镜像不得丢Session-only retail键"
     );
+    assert!(
+        std::ptr::eq(
+            &previous_retail[&owner],
+            &game.state.retail_experience[&owner]
+        ),
+        "未变化的 retail 状态应继续共享，避免复制整页"
+    );
     let driver = game.runtime_driver.as_ref().unwrap().lock().unwrap();
+    assert!(
+        driver
+            .cached_personal_at(1)
+            .unwrap()
+            .shares_retail_with(&game.state.retail_experience[&owner]),
+        "driver 缓存与 Session 应共享同一 retail 状态"
+    );
     assert_eq!(
         driver.administrative_cache_snapshot_for_test().personals[1]
             .as_ref()

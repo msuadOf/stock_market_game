@@ -96,6 +96,16 @@ export interface HostCapabilities {
   readonly personalTradeHistory?: boolean;
 }
 
+export type DayEndExportReference = { readonly seq: number; readonly settledDate: string };
+
+/** 远程授权文件的连接级候选租约；close 或服务端取消后不再读取或确认旧候选。 */
+export interface DayEndExportSubscription {
+  readonly afterSeq: number;
+  read(candidate: DayEndExportReference): Promise<unknown>;
+  acknowledge(candidate: DayEndExportReference): Promise<void>;
+  close(): Promise<void>;
+}
+
 /** 各部署宿主必须遵守的异步应用层契约。 */
 export interface EngineHost {
   start(
@@ -123,6 +133,8 @@ export interface EngineHost {
   flushRuntimeSync?(): Promise<void>;
   /** Captures the latest completed day, or the exact completed CivilUpdate candidate when keyed. */
   save(candidate?: { readonly seq: number; readonly settledDate: string }): Promise<unknown>;
+  /** 仅远程文件输出使用；自动 SQLite 持久化不建立该订阅。 */
+  subscribeDayEndExports?(onFailure: (error: Error) => void): Promise<DayEndExportSubscription>;
   refreshBaseline(): Promise<void>;
   playerWorkingOrders(): Promise<readonly PlayerWorkingOrder[]>;
   queryStockHistory(code: StockCode): Promise<HistoricalStockData>;

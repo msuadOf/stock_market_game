@@ -14,6 +14,7 @@ function deferred<Value>() { let resolve!: (value: Value) => void; const promise
 function fixture(archive = commandDayEndArchiveFixture()) {
   const calls: string[] = [], notices: string[] = [];
   const host = commandHostFixture({ load: async () => { calls.push("load"); }, refreshBaseline: async () => { calls.push("baseline"); },
+    subscribeDayEndExports: async () => ({ afterSeq: 0, read: async () => archive, acknowledge: async () => {}, close: async () => {} }),
     day: () => 3 });
   let setup: SessionSetup | null = null;
   const ports: SaveCommandPorts = {
@@ -66,6 +67,68 @@ test("快速槽读档等待点击前的日终写入，首次档案不会误报�
     assert.equal(loaded, f.archive);
     assert.match(f.notices.at(-1)!, /已读档/);
   }
+});
+
+test("远程文件授权等待订阅成功；更换目标先取消旧订阅，新目标取消后不再导出", { timeout: 10000 }, async () => {
+  const f = fixture(), pending = deferred<Awaited<ReturnType<NonNullable<typeof f.host.subscribeDayEndExports>>>>();
+  const lifecycle: string[] = [];
+  let cancel!: (error: Error) => void;
+  f.host.subscribeDayEndExports = onFailure => { lifecycle.push("subscribe"); cancel = onFailure; return pending.promise; };
+  const selecting = createSaveCommands(f.ports).selectFile(); await Promise.resolve();
+  assert.deepEqual(lifecycle, ["subscribe"]);
+  assert.equal(f.ports.dayEndFileTargetRef.current, null);
+  pending.resolve({ afterSeq: 0, read: async () => f.archive, acknowledge: async () => {}, close: async () => { lifecycle.push("close-old"); } });
+  await selecting;
+  const selectedTarget = () => f.ports.dayEndFileTargetRef.current;
+  assert.ok(selectedTarget()?.remoteExport);
+  assert.match(f.notices.at(-1)!, /已授权/);
+  f.host.subscribeDayEndExports = async () => { lifecycle.push("subscribe-new"); return { afterSeq: 0, read: async () => f.archive, acknowledge: async () => {}, close: async () => {} }; };
+  await createSaveCommands(f.ports).selectFile();
+  assert.deepEqual(lifecycle, ["subscribe", "close-old", "subscribe-new"]);
+  const target = f.ports.dayEndFileTargetRef.current;
+  cancel(new Error("旧订阅迟到的容量失败"));
+  assert.equal(f.ports.dayEndFileTargetRef.current, target);
+});
+
+test("远程文件订阅失败或等待期间换 generation，均不安装目标且释放迟到订阅", { timeout: 10000 }, async () => {
+  const f = fixture();
+  f.host.subscribeDayEndExports = async () => { throw new Error("无权导出"); };
+  await createSaveCommands(f.ports).selectFile();
+  assert.equal(f.ports.dayEndFileTargetRef.current, null); assert.match(f.notices.at(-1)!, /无权导出/);
+  const pending = deferred<Awaited<ReturnType<NonNullable<typeof f.host.subscribeDayEndExports>>>>();
+  let closed = 0;
+  f.host.subscribeDayEndExports = () => pending.promise;
+  const selecting = createSaveCommands(f.ports).selectFile(); await Promise.resolve();
+  f.ports.saveSelectionGenerationRef.current++;
+  pending.resolve({ afterSeq: 0, read: async () => f.archive, acknowledge: async () => {}, close: async () => { closed++; } });
+  await selecting;
+  assert.equal(closed, 1); assert.equal(f.ports.dayEndFileTargetRef.current, null);
+});
+
+test("当前远程文件订阅取消显式通知并撤销目标，本地文件不建立远程订阅", { timeout: 10000 }, async () => {
+  const f = fixture(); let cancel!: (error: Error) => void;
+  f.host.subscribeDayEndExports = async onFailure => { cancel = onFailure; return { afterSeq: 0, read: async () => f.archive, acknowledge: async () => {}, close: async () => {} }; };
+  await createSaveCommands(f.ports).selectFile();
+  cancel(new Error("2 GiB 容量已满"));
+  assert.equal(f.ports.dayEndFileTargetRef.current, null); assert.match(f.notices.at(-1)!, /2 GiB.*重新授权/);
+  f.ports.startupTarget = { kind: "wasm" };
+  f.host.subscribeDayEndExports = async () => { throw new Error("本地不应订阅"); };
+  await createSaveCommands(f.ports).selectFile();
+  const selectedTarget = () => f.ports.dayEndFileTargetRef.current;
+  assert.ok(selectedTarget()); assert.equal(selectedTarget()?.remoteExport, undefined);
+});
+
+test("旧文件选择异步失败不能覆盖新授权目标的成功提示", { timeout: 10000 }, async () => {
+  const f = fixture();
+  let fail!: (error: Error) => void;
+  const oldSelection = new Promise<Awaited<ReturnType<SaveCommandPorts["selectDayEndFileTarget"]>>>((_resolve, reject) => { fail = reject; });
+  f.ports.selectDayEndFileTarget = () => oldSelection;
+  const selecting = createSaveCommands(f.ports).selectFile();
+  f.ports.selectDayEndFileTarget = async () => ({ write: async () => {} });
+  await createSaveCommands(f.ports).selectFile();
+  const notice = f.notices.at(-1), target = f.ports.dayEndFileTargetRef.current;
+  fail(new Error("旧选择失败")); await selecting;
+  assert.equal(f.notices.at(-1), notice); assert.equal(f.ports.dayEndFileTargetRef.current, target);
 });
 
 test("读档等待的写入失败不会载入旧快速槽，错误明确展示且允许重试", { timeout: 10000 }, async () => {

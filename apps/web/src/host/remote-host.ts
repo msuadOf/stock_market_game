@@ -22,6 +22,7 @@ import { RemoteRequestScope } from "./remote-request-scope.ts";
 import { parseRemoteMessage } from "./remote-wire.ts";
 import { ReportQueryContext } from "./report-query-context.ts";
 import { RemoteCommandRegistry } from "./remote-command-registry.ts";
+import { RemoteDayEndExports } from "./remote-day-end-export.ts";
 import { RemotePublisherState } from "./remote-publisher-state.ts";
 import { isReportCorrectionPrepareRejection } from "./protocol-failure.ts";
 import { normalizePublicReportById, normalizePublicReportPage } from "./serde-normalize.ts";
@@ -69,6 +70,7 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
   let pendingRestore: { readonly generation: string | null; readonly notify: () => void; awaitingAuthority: boolean } | null = null;
   let fatalCallback: ((failure: HostFailure) => void) | null = null;
   let disposed = false;
+  let activeConnectionIdentity = 0;
   let delivery: DeliveryMode = "push";
   let baselineDelivered = false;
   let companyWriteEpoch = 0;
@@ -85,6 +87,21 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
     if (disposed) return Promise.reject(new Error("远程会话已经销毁，请求未发送"));
     return requests.request(fetchFn, url, init, decoder);
   };
+  const dayEndExports = new RemoteDayEndExports({
+    nextRequestId: () => commands.next(),
+    current: () => {
+      const connection = publisher.currentSocket(), baseline = publisher.baselineForRead();
+      if (disposed || connection === null || connection.readyState !== WebSocket.OPEN || baseline === null) throw new Error("日终文件导出需要当前连接及权威 generation");
+      return { connection, generation: baseline.generation };
+    },
+    send: value => {
+      const socket = publisher.currentSocket();
+      if (socket === null || socket.readyState !== WebSocket.OPEN) throw new Error("日终文件导出连接已中断");
+      socket.send(JSON.stringify(value));
+    },
+    request: (path, body) => requestJson(`${baseUrl}${path}`, remotePost({ session_id: created.id, ...record(body, "日终文件导出请求") }, token)),
+    interruptConnection: (error, connection) => { if (publisher.currentSocket() === connection) recover(error.message, activeConnectionIdentity); },
+  });
   const hostQuery = async (kind: string, data: unknown): Promise<unknown> => {
     const cursor = publisher.captureQueryCursor("远程基线尚未就绪，不能查询");
     const response = record(await requestJson(`${baseUrl}/api/host-query`, remotePost({ session_id: created.id, generation: cursor.generation, query: { kind, data } }, token)), "远程查询响应");
@@ -113,6 +130,7 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
   const deliver = (update: HostUpdate): boolean => {
     if (callback?.(update) !== false) return true;
     clearTransportTimers();
+    dayEndExports.interrupt(new Error("应用层拒绝远程更新，日终文件导出已取消"));
     publisher.invalidateConnection();
     publisher.beginResync();
     publisher.detachSocket()?.close();
@@ -134,6 +152,7 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
       return;
     }
     clearTransportTimers();
+    dayEndExports.interrupt(new Error(`日终文件导出已取消：${failure.message}`));
     publisher.invalidateConnection();
     const failedSocket = publisher.detachSocket();
     const waiter = publisher.takeBaselineWaiter();
@@ -150,6 +169,8 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
     if (current === null || current.readyState !== WebSocket.OPEN) {
       return Promise.reject(new Error("远程 Publisher 未连接，无法请求基线重同步"));
     }
+    const hadExports = dayEndExports.hasSubscriptions();
+    dayEndExports.interrupt(new Error("日终文件导出因权威基线重同步而取消，请重新授权文件"));
     interrupt("远程基线重同步");
     publisher.beginResync();
     const pending = new Promise<void>((resolve, reject) => {
@@ -159,7 +180,10 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
     resyncPromise = pending;
     void pending.then(() => { if (resyncPromise === pending) resyncPromise = null; }, () => { if (resyncPromise === pending) resyncPromise = null; });
     try { current.send(JSON.stringify({ Resync: {} })); }
-    catch (error) { publisher.rejectBaselineWaiter(error instanceof Error ? error : new Error(String(error))); }
+    catch (error) {
+      publisher.rejectBaselineWaiter(error instanceof Error ? error : new Error(String(error)));
+      if (hadExports) recover("日终文件导出取消的 Resync 请求发送失败", activeConnectionIdentity);
+    }
     return pending;
   };
 
@@ -176,7 +200,9 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
         if (connectionTimer !== null) clearTimeout(connectionTimer);
         connectionTimer = null;
         reconnectAttempts = 0;
+        if (baselineDelivered) dayEndExports.interrupt(new Error("日终文件导出因权威 baseline 重新安装而取消，请重新授权文件"));
         publisher.installBaseline(parsed.update, () => reports.invalidate());
+        dayEndExports.invalidateGeneration(parsed.update.generation);
         if (pendingRestore !== null) {
           if (pendingRestore.generation !== null && parsed.update.generation !== pendingRestore.generation) pendingRestore.notify();
           if (pendingRestore.awaitingAuthority) pendingRestore = null;
@@ -228,9 +254,12 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
           fail(parsed.failure);
           return;
         }
-        commands.rejectGateway(parsed.requestId, parsed.failure);
+        if (!dayEndExports.rejectGateway(parsed.requestId, new Error(`${parsed.failure.code}: ${parsed.failure.message}`))) commands.rejectGateway(parsed.requestId, parsed.failure);
         return;
       }
+      case "day-end-export-subscribed": dayEndExports.subscribed(parsed.requestId, parsed.subscription, parsed.afterSeq); return;
+      case "day-end-export-unsubscribed": dayEndExports.unsubscribed(parsed.requestId); return;
+      case "day-end-export-failed": dayEndExports.failed(parsed.subscription, parsed.code, parsed.message); return;
       default:
         return assertNever(parsed);
     }
@@ -239,6 +268,7 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
   const recover = (message: string, identity: number) => {
     if (disposed || !publisher.isCurrentConnection(identity)) return;
     clearTransportTimers();
+    dayEndExports.interrupt(new Error(`日终文件导出连接中断：${message}；请重新授权文件`));
     publisher.invalidateConnection();
     const previous = publisher.detachSocket();
     previous?.close();
@@ -260,6 +290,7 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
   const connect = () => {
     if (publisher.currentSocket() !== null || disposed) return;
     const identity = publisher.invalidateConnection();
+    activeConnectionIdentity = identity;
     commands.clearInterrupted();
     publisher.beginResync();
     const next = socketFactory(remoteWsUrl(baseUrl, created.id, delivery), remoteWsProtocols(token));
@@ -406,6 +437,7 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
       if (disposed) return;
       const disposeFatalCallback = fatalCallback;
       disposed = true;
+      dayEndExports.interrupt(new Error("日终文件导出随远程会话销毁而取消"));
       pendingRestore = null;
       clearTransportTimers();
       publisher.invalidateConnection();
@@ -442,6 +474,7 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
     setDeliveryMode(mode) {
       if (mode === delivery) return;
       delivery = mode;
+      dayEndExports.interrupt(new Error("日终文件导出因 delivery 连接切换而取消，请重新授权文件"));
       clearTransportTimers();
       interrupt("远程 delivery 模式切换");
       publisher.rejectBaselineWaiter(new Error("远程 delivery 模式切换，基线确认结果未知"));
@@ -492,6 +525,10 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
         : { session_id: created.id, generation: queryGeneration, candidate }, token));
       if (disposed || !publisher.hasGeneration(queryGeneration) || publisher.isAwaitingBaseline()) throw new Error("远程存档响应属于已过期会话 generation");
       return result;
+    },
+    subscribeDayEndExports(onFailure) {
+      if (!publisher.isProtocolReady()) return Promise.reject(new Error("日终文件导出须等待权威 baseline 就绪"));
+      return dayEndExports.subscribe(onFailure);
     },
     async refreshBaseline(): Promise<void> {
       await requestResync();

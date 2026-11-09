@@ -138,6 +138,7 @@ fn production_actor_steps_and_delivers_tick_batches() {
         members: Arc::new(RwLock::new(game.trading_subject_accounts())),
         controllers: std::collections::BTreeSet::new(),
         archive: None,
+        day_end_exports: DayEndExports::new(DEFAULT_DAY_END_EXPORT_BYTES),
         injected_step_failure: None,
         pacing: ServerPacing::new(1, game.tick()),
         game,
@@ -685,6 +686,7 @@ async fn capture(successful_steps: usize) {
         members: Arc::new(RwLock::new(Default::default())),
         controllers: std::collections::BTreeSet::new(),
         archive: None,
+        day_end_exports: DayEndExports::new(DEFAULT_DAY_END_EXPORT_BYTES),
         injected_step_failure: Some((successful_steps, fatal.clone(), Arc::clone(&capture))),
         pacing: ServerPacing {
             speed_meter: SpeedMeter::new(game.tick()),
@@ -1011,6 +1013,7 @@ async fn authority_reads_reject_stale_generations() {
         members: Arc::new(RwLock::new(game.trading_subject_accounts())),
         controllers: std::collections::BTreeSet::new(),
         archive: None,
+        day_end_exports: DayEndExports::new(DEFAULT_DAY_END_EXPORT_BYTES),
         #[cfg(test)]
         injected_step_failure: None,
         pacing: ServerPacing {
@@ -1099,6 +1102,7 @@ async fn command_burst_keeps_submission_order_after_callers_stop_waiting() {
         members: Arc::new(RwLock::new(Default::default())),
         controllers: std::collections::BTreeSet::new(),
         archive: None,
+        day_end_exports: DayEndExports::new(DEFAULT_DAY_END_EXPORT_BYTES),
         injected_step_failure: None,
         pacing: ServerPacing {
             speed_meter: SpeedMeter::new(game.tick()),
@@ -1241,6 +1245,7 @@ fn zero_step_batch_keeps_progress_origin_and_ingress_facts() {
         members: Arc::new(RwLock::new(game.trading_subject_accounts())),
         controllers: std::collections::BTreeSet::new(),
         archive: None,
+        day_end_exports: DayEndExports::new(DEFAULT_DAY_END_EXPORT_BYTES),
         injected_step_failure: None,
         pacing: ServerPacing {
             speed_meter: SpeedMeter::new(game.tick()),
@@ -1297,6 +1302,7 @@ fn catalog_actor_fixture_with_policy(
             members: Arc::new(RwLock::new(game.trading_subject_accounts())),
             controllers: std::collections::BTreeSet::new(),
             archive: None,
+            day_end_exports: DayEndExports::new(DEFAULT_DAY_END_EXPORT_BYTES),
             injected_step_failure: None,
             pacing: ServerPacing::new(1, game.tick()),
             game,

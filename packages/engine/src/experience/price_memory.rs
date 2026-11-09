@@ -256,7 +256,10 @@ mod protection_tests {
         );
         assert_eq!(memory, before);
         assert_eq!(reads.stocks[&code].read_count, 1);
-        reads.stocks.get_mut(&code).unwrap().read_count = u32::MAX;
+        std::sync::Arc::make_mut(&mut reads.stocks)
+            .get_mut(&code)
+            .unwrap()
+            .read_count = u32::MAX;
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             memory.record_public_history_read(&code, 4, &mut reads)
         }));

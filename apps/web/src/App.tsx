@@ -44,6 +44,7 @@ import {
 import { useSessionHostLifecycle } from "./app/useSessionHostLifecycle.ts";
 import { MemoryHandoverPanel } from "./app/MemoryHandoverPanel.tsx";
 import { useSaveCommands } from "./app/useSaveCommands.ts";
+import type { AuthorizedDayEndFileTarget } from "./app/day-end-file-target.ts";
 import { useTradingCommands } from "./app/useTradingCommands.ts";
 import { useSpeedMetricsPolling } from "./app/useSpeedMetricsPolling.ts";
 import { useSecurityBrowser } from "./app/useSecurityBrowser.ts";
@@ -58,10 +59,8 @@ import "ag-grid-community/styles/ag-grid.css";
 import "ag-grid-community/styles/ag-theme-alpine.css";
 import { AUTO_ORDER_LABELS, type AutoOrderType } from "./components/auto-order-manager";
 import { useOrientation } from "./hooks/useOrientation";
-import { selectDayEndFileTarget, loadFromFile, type DayEndFileTarget } from "./save/save-file";
-import { captureCivilDayEndCandidate } from "./save/civil-day-end-capture.ts";
-import { validateDayEndCandidate } from "./save/day-end-candidate.ts";
-import { writeDayEndTargets } from "./save/day-end-targets.ts";
+import { selectDayEndFileTarget, loadFromFile } from "./save/save-file";
+import { persistClientCivilDayEnd } from "./save/client-day-end-persistence.ts";
 import { SessionReplacementGate } from "./save/session-replacement.ts";
 import { CompressedIndexedDbSaveRepository } from "./save/indexed-db-save-repository";
 import { PlayerOrderRefreshGate, playerOrderFactsRequireRefresh } from "./components/player-orders.ts";
@@ -157,7 +156,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
   activeSetupRef.current = activeSetup;
   const [quickTrading] = useState(() => new QuickTrading({ setup: () => activeSetupRef.current, snapshot: () => store.getState().snapshot.snapshot, autoAllowed: () => store.getState().settings.running || TRADING_E2E_MODE, submit: async (intent) => { const host = hostRef.current; if (!host) throw new Error("游戏引擎尚未就绪"); await host.submitIntent(intent); } }));
   const stopStartupRef = useRef<() => Promise<void>>(async () => {});
-  const dayEndFileTargetRef = useRef<DayEndFileTarget | null>(null);
+  const dayEndFileTargetRef = useRef<AuthorizedDayEndFileTarget | null>(null);
   const saveSelectionGenerationRef = useRef(0);
   const sessionReplacementGateRef = useRef(new SessionReplacementGate());
   const companyCoordinatorRef = useRef<CompanyQueryCoordinator | null>(null);
@@ -293,30 +292,28 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
           companyCoordinator?.acceptCivil(reduction.update, metadata);
           clearPlayerOrders();
           const target = dayEndFileTargetRef.current;
-          const reference = { seq: reduction.update.update.seq_to, settledDate: reduction.update.update.boundary.settled_date };
-          const candidate = captureCivilDayEndCandidate(
-            host.save(reference).then((slot) => validateDayEndCandidate(slot, reference)),
-            () => {
-              const protocolStatus = protocolCoordinatorRef.current?.status();
-              return host === hostRef.current
-                && protocolStatus?.kind === "ready"
-                && protocolStatus.state.cursor.generation === reduction.state.cursor.generation;
-            },
-            () => { void refreshPlayerOrders(); },
-          );
-          void dayEndPersistenceRef.current.completed(
-            reduction.state.cursor.generation,
-            candidate,
-            async (slot, isCurrent) => {
-              return await writeDayEndTargets(slot, isCurrent, [
-                { label: "浏览器快速槽", write: (value, current) => getBrowserSaveRepository().save(value, current) },
-                ...(target === null ? [] : [{ label: "授权文件", write: (value: unknown, current: () => boolean) => target.write(value, () => current() && target === dayEndFileTargetRef.current) }]),
-              ]);
-            },
-          ).then((saved) => {
-            if (saved && host === hostRef.current) setNotice(target === null ? "日终存档已更新（浏览器快速槽）" : "日终存档已更新（快速槽与授权文件）");
+          const isCurrentDayEnd = () => {
+            const protocolStatus = protocolCoordinatorRef.current?.status();
+            return host === hostRef.current
+              && protocolStatus?.kind === "ready"
+              && protocolStatus.state.cursor.generation === reduction.state.cursor.generation;
+          };
+          void persistClientCivilDayEnd({
+            hostKind: startupTarget.kind,
+            generation: reduction.state.cursor.generation,
+            update: reduction.update.update,
+            persistence: dayEndPersistenceRef.current,
+            save: reference => host.save(reference),
+            browserQuickSlot: () => ({ label: "浏览器快速槽", write: (value, current) => getBrowserSaveRepository().save(value, current) }),
+            authorizedFile: target === null ? null : { label: "授权文件", write: (value, current) => target.write(value, () => current() && target === dayEndFileTargetRef.current) },
+            exportSubscription: target?.remoteExport,
+            isCurrent: isCurrentDayEnd,
+            isFileTargetCurrent: () => target === dayEndFileTargetRef.current,
+            refreshPlayerOrders: () => { void refreshPlayerOrders(); },
+          }).then((savedTargets) => {
+            if (savedTargets !== null && isCurrentDayEnd()) setNotice(`日终存档已更新（${savedTargets.join("与")}）`);
           }, (saveError: unknown) => {
-            if (host === hostRef.current) setNotice(`日终存档更新失败：${saveError instanceof Error ? saveError.message : String(saveError)}`);
+            if (isCurrentDayEnd()) setNotice(`日终存档更新失败：${saveError instanceof Error ? saveError.message : String(saveError)}`);
           });
         }
         acceptReductionRef.current(reduction);

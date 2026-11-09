@@ -34,6 +34,8 @@ use tracing::{debug, error, info, warn};
 
 use crate::actor::{NewSessionError, SendCommandError, SessionManager, MAX_SPEED_MULTIPLIER};
 mod archives;
+mod day_end_exports;
+pub use day_end_exports::{api_day_end_export, api_day_end_export_ack};
 
 pub(crate) fn archive_router() -> axum::Router<AppState> {
     archives::router()
@@ -882,6 +884,15 @@ enum ClientCommand {
         request_id: u64,
         generation: String,
         intent: engine::Intent,
+    },
+    SubscribeDayEndExports {
+        request_id: u64,
+        generation: String,
+    },
+    UnsubscribeDayEndExports {
+        request_id: u64,
+        generation: String,
+        subscription: String,
     },
 }
 
@@ -1944,12 +1955,13 @@ pub async fn ws_handler(
     // 视图类型族/发布协议接线一起做——本批 ws 已要求身份鉴权（非成员可
     // 连接但无控制权/下单面），帧内成员账户可见性待 W3 收口（局域网+
     // 登录门槛下低危，如实登记不静默）。
-    let (handles, _) = match authorized_market(&state, &q.session_id, token.as_deref()).await {
+    let (handles, subject) = match authorized_market(&state, &q.session_id, token.as_deref()).await
+    {
         Ok(context) => context,
         Err(response) => return *response,
     };
     ws.protocols(["stock-game"])
-        .on_upgrade(move |socket| run_ws(socket, handles, q.delivery))
+        .on_upgrade(move |socket| run_ws_authorized(socket, handles, q.delivery, Some(subject)))
 }
 
 #[derive(Default)]
@@ -2269,13 +2281,14 @@ impl WsPublisherConnection {
 /// 2. 订阅更新 broadcast，把 Event[] + 可选权威运行快照作为一个 JSON 帧推出。
 /// 3. 同时读客户端消息（仅作存活/pong 探测；当前不处理客户端业务消息）。
 /// 4. 30s 心跳：发 Ping。
-async fn run_ws(
+async fn run_ws_authorized(
     socket: axum::extract::ws::WebSocket,
     handles: Arc<crate::actor::SessionHandles>,
     delivery: DeliveryMode,
+    subject: Option<engine::session::OpaqueSubjectId>,
 ) {
     let (deadline_sender, mut deadline_receiver) = tokio::sync::watch::channel(None);
-    let connection = run_ws_connection(socket, handles, delivery, deadline_sender);
+    let connection = run_ws_connection(socket, handles, delivery, deadline_sender, subject);
     supervise_ws_connection(connection, &mut deadline_receiver).await;
 }
 
@@ -2313,8 +2326,12 @@ async fn run_ws_connection(
     handles: Arc<crate::actor::SessionHandles>,
     delivery: DeliveryMode,
     deadline_sender: tokio::sync::watch::Sender<Option<tokio::time::Instant>>,
+    subject: Option<engine::session::OpaqueSubjectId>,
 ) {
     let (mut sender, mut receiver) = socket.split();
+    let export_connection = day_end_exports::DayEndExportConnection::new(handles.clone());
+    let (export_failure_tx, mut export_failure_rx) =
+        tokio::sync::mpsc::unbounded_channel::<crate::actor::DayEndExportFailure>();
 
     // 先订阅再取基线，消除 snapshot 与 subscribe 之间丢事件的竞态；基线 seq 之前的
     // 缓冲事件在后续读取时跳过。
@@ -2383,6 +2400,10 @@ async fn run_ws_connection(
 
     loop {
         tokio::select! {
+            Some(failure) = export_failure_rx.recv() => {
+                let message = serde_json::json!({ "DayEndExportFailed": failure }).to_string();
+                if sender.send(axum::extract::ws::Message::Text(message)).await.is_err() { break; }
+            }
             // 事件到达 → 推 JSON。
             ev = rx.recv() => {
                 match ev {
@@ -2402,6 +2423,7 @@ async fn run_ws_connection(
                                 connection.failure_delivered(*failure);
                             }
                             PublisherAction::ResyncRequired { reason, capacity } => {
+                                handles.drop_day_end_export_connection(export_connection.id.clone());
                                 if let Some(limit) = capacity {
                                     warn!(limit, "ws: pull publisher buffer full; client must re-sync");
                                 }
@@ -2434,6 +2456,7 @@ async fn run_ws_connection(
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        handles.drop_day_end_export_connection(export_connection.id.clone());
                         // 慢消费者必须立即重新拉快照；显式协议消息避免客户端只看到 seq 缺口。
                         warn!(missed = n, "ws: lagged, client should re-sync via snapshot");
                         connection.require_resync();
@@ -2489,7 +2512,36 @@ async fn run_ws_connection(
                                 }
                             };
                             match command {
+                                ClientCommand::SubscribeDayEndExports { request_id, generation } => {
+                                    let generation = match parse_host_parity_generation(&generation) {
+                                        Ok(value) => value,
+                                        Err(_) => { if !send_gateway_error(&mut sender, Some(request_id), "INVALID_CLIENT_COMMAND", "generation 必须是 canonical decimal u64").await { break; } continue; }
+                                    };
+                                    let Some(subject) = subject.clone() else { if !send_gateway_error(&mut sender, Some(request_id), "DAY_END_EXPORT_FORBIDDEN", "文件导出需要登录控制主体").await { break; } continue; };
+                                    match handles.day_end_export(generation, subject, crate::actor::DayEndExportRequest::Subscribe { connection: export_connection.id.clone(), failures: export_failure_tx.clone() }).await {
+                                        Ok(crate::actor::DayEndExportResponse::Subscribed { subscription, after_seq }) => {
+                                            let message = serde_json::json!({ "DayEndExportSubscribed": { "request_id": request_id, "subscription": subscription, "afterSeq": after_seq } }).to_string();
+                                            if sender.send(axum::extract::ws::Message::Text(message)).await.is_err() { break; }
+                                        }
+                                        result => { let message = match result { Err(error) => error.to_string(), Ok(_) => "文件导出响应类型错误".into() }; if !send_gateway_error(&mut sender, Some(request_id), "DAY_END_EXPORT_REJECTED", message).await { break; } }
+                                    }
+                                }
+                                ClientCommand::UnsubscribeDayEndExports { request_id, generation, subscription } => {
+                                    let generation = match parse_host_parity_generation(&generation) {
+                                        Ok(value) => value,
+                                        Err(_) => { if !send_gateway_error(&mut sender, Some(request_id), "INVALID_CLIENT_COMMAND", "generation 必须是 canonical decimal u64").await { break; } continue; }
+                                    };
+                                    let Some(subject) = subject.clone() else { if !send_gateway_error(&mut sender, Some(request_id), "DAY_END_EXPORT_FORBIDDEN", "文件导出需要登录控制主体").await { break; } continue; };
+                                    match handles.day_end_export(generation, subject, crate::actor::DayEndExportRequest::Unsubscribe { connection: export_connection.id.clone(), subscription }).await {
+                                        Ok(crate::actor::DayEndExportResponse::Completed) => {
+                                            let message = serde_json::json!({ "DayEndExportUnsubscribed": { "request_id": request_id } }).to_string();
+                                            if sender.send(axum::extract::ws::Message::Text(message)).await.is_err() { break; }
+                                        }
+                                        result => { let message = match result { Err(error) => error.to_string(), Ok(_) => "文件导出响应类型错误".into() }; if !send_gateway_error(&mut sender, Some(request_id), "DAY_END_EXPORT_REJECTED", message).await { break; } }
+                                    }
+                                }
                                 ClientCommand::Resync {} => {
+                                    handles.drop_day_end_export_connection(export_connection.id.clone());
                                     rx = handles.subscribe_events();
                                     connection.prepare_resync();
                                     match handles.public_baseline().await {

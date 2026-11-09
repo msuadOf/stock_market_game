@@ -955,3 +955,79 @@ async fn pull_rejection_delivers_accepted_close_without_get_frame_then_allows_ci
 async fn push_rejection_delivers_accepted_close_before_failure_then_allows_civil_retry() {
     correction_rejection_flushes_before_failure("push").await;
 }
+
+#[tokio::test]
+async fn ws_file_export_retains_exact_day_until_ack_or_disconnect() {
+    ServerFixture::run(1, |fixture| async move {
+        let app = app_router_with_manager(fixture.manager.clone());
+        let mut setup: engine::SessionSetup = serde_json::from_value(sample_setup_json()).unwrap();
+        setup.start_date = engine::CivilDate::from_iso("2030-01-05").unwrap();
+        setup.npcs.retail_count = 0;
+        setup.npcs.inst_count = 0;
+        setup.npcs.hot_count = 0;
+        let (id, handles, token, generation) = fixture.session_with_setup(setup, 723).await;
+        handles.set_pause_preferences(generation.parse().unwrap(), engine::session::protocol::PausePreferences { pause_after_close: false, pause_before_open: true }).await.unwrap();
+        let request = WsRequest::builder().method("GET")
+            .uri(format!("{}/ws?session_id={id}", fixture.ws_url()))
+            .header("Host", "127.0.0.1").header("Connection", "Upgrade").header("Upgrade", "websocket")
+            .header("Sec-WebSocket-Key", generate_key()).header("Sec-WebSocket-Version", "13")
+            .header("authorization", format!("Bearer {token}")).body(()).unwrap();
+        let (mut ws, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+        let _: serde_json::Value = serde_json::from_str(ws.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
+        ws.send(tokio_tungstenite::tungstenite::Message::Text(serde_json::json!({"SubscribeDayEndExports":{"request_id":1,"generation":generation}}).to_string())).await.unwrap();
+        let subscribed: serde_json::Value = serde_json::from_str(ws.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
+        assert_eq!(subscribed["DayEndExportSubscribed"]["request_id"], 1);
+        assert!(subscribed["DayEndExportSubscribed"]["afterSeq"].is_u64());
+        let subscription = subscribed["DayEndExportSubscribed"]["subscription"].as_str().unwrap().to_owned();
+        handles.set_running(true).await.unwrap();
+        let mut candidates = Vec::new();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while candidates.len() < 2 {
+                let message = ws.next().await.unwrap().unwrap();
+                let value: serde_json::Value = serde_json::from_str(message.to_text().unwrap()).unwrap();
+                if let Some(civil) = value.pointer("/PublisherFrame/update/CivilUpdate") {
+                    candidates.push(serde_json::json!({"seq":civil["seq_to"],"settledDate":civil["boundary"]["settled_date"]}));
+                }
+            }
+        }).await.expect("周末日终必须交付");
+        let body = |candidate: &serde_json::Value| serde_json::json!({"session_id":id,"generation":generation,"subscription":subscription,"candidate":candidate});
+        for candidate in &candidates {
+            let first = file_export_response(app.clone(), "POST", "/api/day-end-export", &token, Some(body(candidate))).await;
+            assert_eq!(first.0, axum::http::StatusCode::OK);
+            let second = file_export_response(app.clone(), "POST", "/api/day-end-export", &token, Some(body(candidate))).await;
+            assert_eq!(first.1, second.1, "HTTP 重试不得消费候选");
+        }
+        assert_eq!(file_export_response(app.clone(), "POST", "/api/day-end-export/ack", &token, Some(body(&candidates[0]))).await.0, axum::http::StatusCode::NO_CONTENT);
+        assert_eq!(file_export_response(app.clone(), "POST", "/api/day-end-export", &token, Some(body(&candidates[0]))).await.0, axum::http::StatusCode::BAD_REQUEST);
+        ws.close(None).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if file_export_response(app.clone(), "POST", "/api/day-end-export", &token, Some(body(&candidates[1]))).await.0 == axum::http::StatusCode::BAD_REQUEST { break; }
+                tokio::task::yield_now().await;
+            }
+        }).await.expect("WS 断连必须回收未确认候选");
+    }).await;
+}
+
+async fn file_export_response(
+    app: axum::Router,
+    method: &str,
+    path: &str,
+    token: &str,
+    payload: Option<serde_json::Value>,
+) -> (axum::http::StatusCode, axum::body::Bytes) {
+    use tower::ServiceExt;
+    let request = axum::http::Request::builder()
+        .method(method)
+        .uri(path)
+        .header("authorization", format!("Bearer {token}"))
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(payload.unwrap().to_string()))
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    (status, bytes)
+}

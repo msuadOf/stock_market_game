@@ -4,8 +4,8 @@ use super::civil_information::PreparedCivilFields;
 use super::*;
 use crate::runtime::drive::{AdministrativeBaseline, RuntimeDriver};
 use crate::runtime::world::{
-    AdminCandidate, AdminOperation, AdminOperationStage, BeliefParticipantSnapshot,
-    InformationPreparePayload, PreparedAdministrativeSource, PreparedAdministrativeStages,
+    AdminCandidate, AdminOperation, AdminOperationStage, InformationPreparePayload,
+    PreparedAdministrativeSource, PreparedAdministrativeStages,
 };
 use crate::runtime::{GroupIdx, RuntimeError};
 use std::sync::Arc;
@@ -66,7 +66,7 @@ fn invalid(detail: impl Into<String>) -> RuntimeError {
 struct PreparedAdministrativeMirror {
     accounts: super::account_book::AccountBook,
     markets: Option<BTreeMap<crate::StockId, crate::market::Market>>,
-    personals: Vec<(usize, AccountId, BeliefParticipantSnapshot)>,
+    personals: Vec<(usize, AccountId, SharedRuntimePersonal)>,
     personal_maps: Option<AdministrativePersonalMaps>,
     library: Option<Arc<crate::information::PublicLibrary>>,
     plans: Option<crate::plans::PlanBook>,
@@ -376,7 +376,7 @@ impl GameSession {
                 Some(_) => Err(invalid("civil 付款候选后的实际行政来源已改变")),
                 None => driver.prepare_administrative_baseline(self),
             };
-            let baseline = match baseline_result {
+            let mut baseline = match baseline_result {
                 Ok(value) => value,
                 Err(error) => {
                     self.retain_administrative_terminal(&driver, &error);
@@ -384,6 +384,16 @@ impl GameSession {
                 }
             };
             self.validate_administrative_baseline(&baseline)?;
+            // 完整账户与个人态已与 World 和 Session 对拍；后续仅需原信息引用。
+            // 立即释放不再读取的快照，降低日终事务峰值内存。
+            // 保留外层组数，供回购 PlanBook 分片使用。
+            for (_, accounts) in &mut baseline.accounts {
+                *accounts = Vec::new();
+            }
+            let baseline_information: Vec<_> = std::mem::take(&mut baseline.personals)
+                .into_iter()
+                .map(|(_, id, value)| (id, value.map(|snapshot| snapshot.information)))
+                .collect();
             #[cfg(feature = "simulation-diagnostics")]
             let acquisition_time = information
                 .as_ref()
@@ -399,6 +409,7 @@ impl GameSession {
                  stages: Option<&PreparedAdministrativeStages<'_>>| {
                     let prepared = self.prepare_administrative_mirror(
                         &baseline,
+                        &baseline_information,
                         candidate,
                         source,
                         expected_information.as_ref(),
@@ -618,6 +629,7 @@ impl GameSession {
     fn prepare_administrative_mirror(
         &self,
         baseline: &AdministrativeBaseline,
+        baseline_information: &[(AccountId, Option<crate::information::NpcInformationState>)],
         candidate: &AdminCandidate,
         source: &PreparedAdministrativeSource,
         information: Option<&InformationPreparePayload>,
@@ -720,14 +732,14 @@ impl GameSession {
         }
         let library = information.map(|info| Arc::clone(&info.library));
         let reference_library = library.as_deref().unwrap_or(self.state.library.as_ref());
-        for (_, id, old) in &baseline.personals {
-            let snapshot = personals
+        for (id, old) in baseline_information {
+            let current_information = personals
                 .get(id)
-                .map(|(_, _, value)| value)
+                .map(|(_, _, value)| &value.information)
                 .or(old.as_ref());
-            if let Some(snapshot) = snapshot {
+            if let Some(current_information) = current_information {
                 let mut rebuilt = crate::information::NpcInformationState::new(*id);
-                for (_, records) in snapshot.information.companies() {
+                for (_, records) in current_information.companies() {
                     for record in records {
                         rebuilt
                             .record_acquisition(
@@ -743,7 +755,7 @@ impl GameSession {
                             })?;
                     }
                 }
-                if rebuilt != snapshot.information {
+                if &rebuilt != current_information {
                     return Err(invalid("行政完整个人引用的company/kind与库不一致"));
                 }
             }
@@ -754,34 +766,10 @@ impl GameSession {
             account_book.insert(id, account);
         }
         let personals: Vec<_> = personals.into_values().collect();
-        let personal_maps = if personals.is_empty() {
-            None
-        } else {
-            let mut maps = AdministrativePersonalMaps {
-                attention: self.state.npc_attention.clone(),
-                beliefs: self.state.belief_participants.clone(),
-                histories: self.state.history_reads.clone(),
-                retail: self.state.retail_experience.clone(),
-            };
-            for (_, id, value) in &personals {
-                maps.attention
-                    .insert(*id, baseline.attention_at(*id, &value.attention)?);
-                maps.beliefs.insert(
-                    *id,
-                    BeliefParticipantState::new(
-                        value.watchlist.clone(),
-                        value.price_memory.clone(),
-                        value.information.clone(),
-                        value.belief.clone(),
-                    ),
-                );
-                maps.histories.insert(*id, value.history_reads.clone());
-                if let Some(row) = &value.retail_experience {
-                    maps.retail.insert(*id, row.clone());
-                }
-            }
-            Some(maps)
-        };
+        // 保持 attention 缺失先于 causal 校验的既有错误优先级。
+        for (_, id, value) in &personals {
+            baseline.attention_at(*id, &value.attention)?;
+        }
         #[cfg(feature = "simulation-diagnostics")]
         let causal = {
             let mut causal = self.state.causal.clone();
@@ -841,10 +829,90 @@ impl GameSession {
             }
             causal
         };
+        // 行政候选与 driver 缓存共享同一组不可变值；不变的字段沿用 live 页。
+        let mut shared_personals = Vec::with_capacity(personals.len());
+        let personal_maps = if personals.is_empty() {
+            None
+        } else {
+            let mut maps = AdministrativePersonalMaps {
+                attention: self.state.npc_attention.clone(),
+                beliefs: self.state.belief_participants.clone(),
+                histories: self.state.history_reads.clone(),
+                retail: self.state.retail_experience.clone(),
+            };
+            for (index, id, value) in personals {
+                let adjusted = baseline.attention_at(id, &value.attention)?;
+                let mut raw_attention = Arc::new(value.attention);
+                if let Some(old) = maps
+                    .attention
+                    .get_arc(&id)
+                    .filter(|old| old.as_ref() == &adjusted)
+                {
+                    if raw_attention.as_ref() == &adjusted {
+                        raw_attention = Arc::clone(old);
+                    }
+                } else {
+                    let session_attention = if raw_attention.as_ref() == &adjusted {
+                        Arc::clone(&raw_attention)
+                    } else {
+                        Arc::new(adjusted)
+                    };
+                    let _ = maps.attention.insert_arc(id, session_attention);
+                }
+                let participant = if let Some(old) = maps.beliefs.get_arc(&id).filter(|old| {
+                    old.watchlist() == &value.watchlist
+                        && old.price_memory() == &value.price_memory
+                        && old.information() == &value.information
+                        && old.belief() == &value.belief
+                }) {
+                    Arc::clone(old)
+                } else {
+                    let next = Arc::new(BeliefParticipantState::new(
+                        value.watchlist,
+                        value.price_memory,
+                        value.information,
+                        value.belief,
+                    ));
+                    let _ = maps.beliefs.insert_arc(id, Arc::clone(&next));
+                    next
+                };
+                let history_reads = if let Some(old) = maps
+                    .histories
+                    .get_arc(&id)
+                    .filter(|old| old.as_ref() == &value.history_reads)
+                {
+                    Arc::clone(old)
+                } else {
+                    let next = Arc::new(value.history_reads);
+                    let _ = maps.histories.insert_arc(id, Arc::clone(&next));
+                    next
+                };
+                let retail_experience = value.retail_experience.map(|row| {
+                    if let Some(old) = maps.retail.get_arc(&id).filter(|old| old.as_ref() == &row) {
+                        Arc::clone(old)
+                    } else {
+                        let next = Arc::new(row);
+                        let _ = maps.retail.insert_arc(id, Arc::clone(&next));
+                        next
+                    }
+                });
+                shared_personals.push((
+                    index,
+                    id,
+                    SharedRuntimePersonal {
+                        attention: raw_attention,
+                        participant,
+                        history_reads,
+                        retail_experience,
+                    },
+                ));
+            }
+            Some(maps)
+        };
         Ok(PreparedAdministrativeMirror {
             accounts: account_book,
             markets,
-            personals,
+            personals: shared_personals,
             personal_maps,
             library,
             plans,
@@ -869,7 +937,7 @@ impl GameSession {
             self.state.markets = markets;
         }
         for (index, id, snapshot) in prepared.personals {
-            driver.install_cached_personal_at(index, id, snapshot.into());
+            driver.install_cached_personal_at(index, id, snapshot);
         }
         if let Some(maps) = prepared.personal_maps {
             self.state.npc_attention = maps.attention;

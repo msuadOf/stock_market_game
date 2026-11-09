@@ -120,6 +120,11 @@ fn app_router_with_state(state: AppState) -> Router {
             get(routes::api_npc_decision_diagnostics),
         )
         .route("/api/save", post(routes::api_save))
+        .route("/api/day-end-export", post(routes::api_day_end_export))
+        .route(
+            "/api/day-end-export/ack",
+            post(routes::api_day_end_export_ack),
+        )
         .route("/api/load", post(routes::api_load))
         .route(
             "/api/speed",

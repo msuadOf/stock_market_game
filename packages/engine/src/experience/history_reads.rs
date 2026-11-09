@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use crate::StockId;
 
@@ -6,7 +7,7 @@ use crate::StockId;
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct PersonalHistoryReadLedger {
-    pub stocks: BTreeMap<StockId, StockHistoryRead>,
+    pub stocks: Arc<BTreeMap<StockId, StockHistoryRead>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
@@ -21,14 +22,17 @@ pub struct StockHistoryRead {
 
 impl PersonalHistoryReadLedger {
     pub fn record(&mut self, code: &StockId, market_minute: u64) -> Result<(), HistoryReadError> {
-        match self.stocks.get_mut(code) {
+        if let Some(entry) = self.stocks.get(code) {
+            if market_minute < entry.last_read_market_minute {
+                return Err(HistoryReadError::TimeWentBackwards {
+                    attempted: market_minute,
+                    last: entry.last_read_market_minute,
+                });
+            }
+        }
+        let stocks = Arc::make_mut(&mut self.stocks);
+        match stocks.get_mut(code) {
             Some(entry) => {
-                if market_minute < entry.last_read_market_minute {
-                    return Err(HistoryReadError::TimeWentBackwards {
-                        attempted: market_minute,
-                        last: entry.last_read_market_minute,
-                    });
-                }
                 entry.read_count = entry
                     .read_count
                     .checked_add(1)
@@ -36,7 +40,7 @@ impl PersonalHistoryReadLedger {
                 entry.last_read_market_minute = market_minute;
             }
             None => {
-                self.stocks.insert(
+                stocks.insert(
                     *code,
                     StockHistoryRead {
                         last_read_market_minute: market_minute,
@@ -73,6 +77,26 @@ mod tests {
         assert_eq!(ledger.stocks[&code(0)].read_count, 2);
         assert_eq!(ledger.stocks[&code(0)].last_read_market_minute, 12);
         assert_eq!(ledger.stocks[&code(1)].read_count, 1);
+    }
+
+    #[test]
+    fn 日终快照共享历史并在写入时隔离() {
+        let mut live = PersonalHistoryReadLedger::default();
+        live.record(&code(0), 12).unwrap();
+        let saved = live.clone();
+        assert!(std::sync::Arc::ptr_eq(&live.stocks, &saved.stocks));
+        assert!(live.record(&code(0), 11).is_err());
+        assert!(std::sync::Arc::ptr_eq(&live.stocks, &saved.stocks));
+        live.record(&code(0), 13).unwrap();
+        assert!(!std::sync::Arc::ptr_eq(&live.stocks, &saved.stocks));
+        assert_eq!(saved.stocks[&code(0)].last_read_market_minute, 12);
+        assert_eq!(live.stocks[&code(0)].last_read_market_minute, 13);
+        let json = serde_json::to_value(&saved).unwrap();
+        assert_eq!(json["stocks"]["0"]["last_read_market_minute"], "12");
+        assert_eq!(
+            serde_json::from_value::<PersonalHistoryReadLedger>(json).unwrap(),
+            saved
+        );
     }
 
     #[test]

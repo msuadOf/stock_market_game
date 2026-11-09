@@ -48,7 +48,7 @@ name = "simulation_baseline_fixture"
 required-features = ["simulation-diagnostics"]
 
 [dependencies]
-serde = { workspace = true }
+serde = { workspace = true, features = ["rc"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 # 法定披露 ROE 精确有理数计算与 Simple 周期精确年化（公司域，main 线既有依赖）。
