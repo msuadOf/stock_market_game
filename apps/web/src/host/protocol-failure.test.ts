@@ -26,3 +26,10 @@ test("非法核心字段、恢复标志和动作在边界明确拒绝，不回�
   assert.throws(() => parseHostFailure({ code: base.code, message: base.message }), /where/);
   assert.throws(() => parseHostFailure({ ...base, where: "" }, "remote.HostFailure"), /where/);
 });
+
+test("HostFailure 保留可选原始调用栈，非法 stack 类型显式拒绝", async () => {
+  const { parseHostFailure } = await import("./protocol-failure.ts");
+  const failure = { code: "HOST_FATAL", where: "host", message: "失败", stack: "Error: 失败\n at host.ts:7:3" };
+  assert.deepEqual(parseHostFailure(failure), failure);
+  assert.throws(() => parseHostFailure({ ...failure, stack: 17 }), /stack/);
+});

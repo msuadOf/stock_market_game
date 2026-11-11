@@ -39,12 +39,12 @@ test("耗尽显示保险丝原因与全新标签页打开指引，不提供刷�
   assert.equal((html.match(/<button\b/g) || []).length, 1);
 });
 
-test("损坏终局显示真实code/位置/原因链，反馈脱敏且不改变原错误", () => {
+test("损坏终局显示真实code/位置/原因链，反馈原样保留且不改变原错误", () => {
   const error = failure("MEMORY_HANDOVER_CORRUPT");
   const html = renderToStaticMarkup(createElement(views.WasmMemoryTerminalError, { error }));
   assert.match(html, /内存残留账无法安全恢复/); assert.match(html, /MEMORY_HANDOVER_CORRUPT/);
   assert.match(html, /wasm-memory-storage\.recovery/); assert.match(html, /原始存储原因/); assert.match(html, /内部校验失败/);
-  assert.doesNotMatch(html, /private-token/);
+  assert.match(html, /private-token/);
   assert.equal((error.context as { token: string }).token, "private-token");
 });
 
@@ -66,7 +66,7 @@ test("终局码覆盖宿主恢复建议的显示和复制投影，原错误元�
   }
 });
 
-test("复用反馈复制回调，成功与失败均如实给状态并保原原因/脱敏", async () => {
+test("复用反馈复制回调，成功与失败均如实给状态并保留原始原因与 context", async () => {
   let copied = "";
   const view = views.WasmMemoryTerminalError({ error: failure("MEMORY_RESIDUAL_EXHAUSTED"), clipboard: { writeText: async (text) => { copied = text; } } });
   type CopyProps = { onCopy?: (report: (status: FeedbackCopyStatus) => void) => Promise<void> };
@@ -74,7 +74,7 @@ test("复用反馈复制回调，成功与失败均如实给状态并保原原�
   assert.ok(copy?.props.onCopy);
   const statuses: FeedbackCopyStatus[] = []; await copy.props.onCopy((status) => statuses.push(status));
   assert.deepEqual(statuses.map((status) => status.kind), ["copying", "copied"]);
-  assert.match(copied, /MEMORY_RESIDUAL_EXHAUSTED/); assert.match(copied, /原始存储原因/); assert.doesNotMatch(copied, /private-token/);
+  assert.match(copied, /MEMORY_RESIDUAL_EXHAUSTED/); assert.match(copied, /原始存储原因/); assert.match(copied, /private-token/);
   const cause = new Error("clipboard denied");
   const blocked = views.WasmMemoryTerminalError({ error: failure("MEMORY_HANDOVER_CORRUPT"), clipboard: { writeText: async () => { throw cause; } } });
   const second = (blocked.props.children as ReactElement<CopyProps>[]).find((child) => typeof child?.props?.onCopy === "function");
@@ -126,4 +126,17 @@ test("Error实例的非枚举message和cause在显示与复制中保留", async 
   assert.ok(copy?.props.onCopy); await copy.props.onCopy(() => {});
   assert.match(copied, /非枚举顶层原因/); assert.match(copied, /非枚举内层原因/);
   assert.equal(error.recoverable, true); assert.deepEqual(error.recoveryActions, ["创建新游戏"]);
+});
+
+test("终局 Error 的未知诊断 getter 与 stack getter 不执行，面板仍可显示", () => {
+  let reads = 0;
+  const error = Object.assign(new Error("原始终局错误"), { code: "MEMORY_HANDOVER_CORRUPT" as const, where: "storage" });
+  for (const field of ["custom", "name", "stack"]) Object.defineProperty(error, field, {
+    enumerable: true, get() { reads++; throw new Error(`${field} getter 不应执行`); },
+  });
+  let html = "";
+  assert.doesNotThrow(() => { html = renderToStaticMarkup(createElement(views.WasmMemoryTerminalError, { error })); });
+  assert.match(html, /原始终局错误/);
+  assert.match(html, /访问器字段未执行/);
+  assert.equal(reads, 0);
 });

@@ -1,0 +1,1743 @@
+warning: binary `std_thread_proto` should have a kebab-case name
+   |
+ 1 | /Users/asuad/workplace/stock_market_game/target/.../std_thread_proto
+   |                                                     ^^^^^^^^^^^^^^^^
+   |
+   = note: `cargo::non_kebab_case_bins` is set to `warn` by default
+help: to change the binary name to `std-thread-proto`, convert `bin.name`
+  --> packages/std-thread-proto/Cargo.toml:18:8
+   |
+18 - name = "std_thread_proto"
+18 + name = "std-thread-proto"
+   |
+warning: `std-thread-proto` (manifest) generated 1 warning
+   Compiling test v0.0.0 (/Users/asuad/.rustup/toolchains/nightly-2026-09-05-aarch64-apple-darwin/lib/rustlib/src/rust/library/test)
+   Compiling version_check v0.9.5
+   Compiling syn v2.0.118
+   Compiling icu_normalizer_data v2.2.0
+   Compiling icu_properties_data v2.2.0
+   Compiling rustc-std-workspace-std v1.99.0 (/Users/asuad/.rustup/toolchains/nightly-2026-09-05-aarch64-apple-darwin/lib/rustlib/src/rust/library/rustc-std-workspace-std)
+   Compiling zerocopy v0.8.52
+   Compiling anyhow v1.0.103
+   Compiling getopts v0.2.24
+   Compiling rand_core v0.6.4
+   Compiling siphasher v1.0.3
+   Compiling ahash v0.8.12
+   Compiling rand v0.8.6
+   Compiling smartstring v1.0.1
+   Compiling phf_shared v0.11.3
+   Compiling heck v0.5.0
+   Compiling seq-macro v0.3.6
+   Compiling libc v0.2.186
+   Compiling syn v1.0.109
+   Compiling phf_generator v0.11.3
+    Checking stable_deref_trait v1.2.1
+    Checking serde_core v1.0.228
+    Checking litemap v0.8.2
+    Checking writeable v0.6.3
+    Checking once_cell v1.21.4
+    Checking utf8_iter v1.0.4
+    Checking allocator-api2 v0.2.21
+    Checking smallvec v1.15.2
+    Checking cfg-if v1.0.4
+    Checking percent-encoding v2.3.2
+    Checking rustc-hash v2.1.2
+    Checking form_urlencoded v1.2.2
+    Checking new_debug_unreachable v1.0.6
+    Checking num-traits v0.2.19
+    Checking tracing-core v0.1.36
+    Checking bytes v1.12.0
+    Checking unicode-width v0.2.2
+    Checking pin-project-lite v0.2.17
+    Checking either v1.16.0
+    Checking scoped-tls v1.0.1
+    Checking better_scoped_tls v1.0.1
+    Checking swc_visit v2.0.2
+    Checking num-integer v0.1.47
+    Checking siphasher v0.3.11
+    Checking static_assertions v1.1.0
+    Checking unicode-id-start v1.4.0
+    Checking bitflags v2.13.0
+    Checking bumpalo v3.20.3
+    Checking equivalent v1.0.2
+    Checking itoa v1.0.18
+    Checking foldhash v0.1.5
+    Checking hashbrown v0.17.1
+    Checking termcolor v1.4.1
+    Checking data-url v0.3.2
+    Checking hashbrown v0.15.5
+    Checking deno_terminal v0.2.3
+    Checking memchr v2.8.2
+    Checking zmij v1.0.21
+   Compiling synstructure v0.13.2
+   Compiling swc_macros_common v1.0.1
+    Checking indexmap v2.14.0
+    Checking serde_json v1.0.150
+   Compiling dprint-core-macros v0.1.0
+   Compiling zerofrom-derive v0.1.7
+   Compiling yoke-derive v0.8.2
+   Compiling zerovec-derive v0.11.3
+   Compiling displaydoc v0.2.6
+   Compiling serde_derive v1.0.228
+   Compiling tracing-attributes v0.1.31
+   Compiling from_variant v3.0.0
+   Compiling phf_macros v0.11.3
+   Compiling swc_eq_ignore_macros v1.0.1
+    Checking hashbrown v0.14.5
+   Compiling ast_node v5.0.0
+   Compiling is-macro v0.3.8
+    Checking phf v0.11.3
+   Compiling string_enum v1.0.2
+   Compiling deno_error_macro v0.7.3
+   Compiling capacity_builder_macros v0.3.0
+   Compiling thiserror-impl v2.0.18
+    Checking tracing v0.1.44
+    Checking capacity_builder v0.5.0
+   Compiling ts-rs-macros v12.0.1
+    Checking zerofrom v0.1.8
+    Checking deno_error v0.7.3
+    Checking yoke v0.8.3
+    Checking zerovec v0.11.6
+    Checking zerotrie v0.2.4
+    Checking thiserror v2.0.18
+    Checking serde v1.0.228
+    Checking tinystr v0.8.3
+    Checking potential_utf v0.1.5
+    Checking icu_collections v2.2.0
+    Checking icu_locale_core v2.2.0
+    Checking triomphe v0.1.16
+    Checking num-bigint v0.4.8
+    Checking bytes-str v0.2.8
+    Checking text_lines v0.6.0
+    Checking dprint-core v0.67.4
+    Checking hstr v3.0.6
+    Checking icu_provider v2.2.0
+    Checking swc_atoms v9.0.0
+    Checking icu_properties v2.2.0
+    Checking icu_normalizer v2.2.0
+    Checking idna_adapter v1.2.2
+    Checking idna v1.1.0
+    Checking url v2.5.8
+    Checking swc_common v17.0.1
+    Checking deno_media_type v0.4.0
+    Checking swc_ecma_ast v18.0.0
+    Checking swc_ecma_parser v27.0.7
+    Checking swc_ecma_lexer v26.0.0
+    Checking dprint-swc-ext v0.26.1
+    Checking deno_ast v0.53.3
+    Checking dprint-plugin-typescript v0.95.15
+    Checking ts-rs v12.0.1
+    Checking engine v0.1.0 (/Users/asuad/workplace/stock_market_game/packages/engine)
+warning: unstable feature specified for `-Ctarget-feature`: `atomics`
+  |
+  = note: this feature is not stably supported; its behavior can change in the future
+  = note: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+  = note: for more information, see issue #162235 <https://github.com/rust-lang/rust/issues/162235>
+
+warning: unused doc comment
+  --> packages/engine/src/clock.rs:37:5
+   |
+37 | /     /// 唯一时间 import（§7.3.2 白名单符号，glue 由 vite alias 'env' →
+38 | |     /// apps/web/src/host/engine-clock-env.ts 提供）。返回
+39 | |     /// `performance.timeOrigin + performance.now()`（绝对 ms，§8.3 的 A_w）。
+   | |______________________________________________________________________________^
+40 |       #[link(wasm_import_module = "env")]
+41 | /     extern "C" {
+42 | |         fn engine_clock_now() -> f64;
+43 | |     }
+   | |_____- rustdoc does not generate documentation for extern blocks
+   |
+   = help: use `//` for a plain comment
+   = note: `#[warn(unused_doc_comments)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `AtomicBool`
+  --> packages/engine/src/session/deferred_drop.rs:27:25
+   |
+27 | use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+   |                         ^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused imports: `Receiver` and `Sender`
+  --> packages/engine/src/runtime/desk.rs:36:23
+   |
+36 | use std::sync::mpsc::{Receiver, Sender};
+   |                       ^^^^^^^^  ^^^^^^
+
+warning: unused imports: `Receiver` and `Sender`
+  --> packages/engine/src/runtime/group.rs:29:23
+   |
+29 | use std::sync::mpsc::{Receiver, Sender};
+   |                       ^^^^^^^^  ^^^^^^
+
+warning: unused imports: `Receiver`, `Sender`, and `channel`
+  --> packages/engine/src/runtime/world.rs:55:23
+   |
+55 | use std::sync::mpsc::{channel, Receiver, Sender};
+   |                       ^^^^^^^  ^^^^^^^^  ^^^^^^
+
+error[E0432]: unresolved import `crate::runtime::skeleton_tests`
+   --> packages/engine/src/runtime/world/information_handover.rs:449:25
+    |
+449 |     use crate::runtime::skeleton_tests::basic_spec;
+    |                         ^^^^^^^^^^^^^^ could not find `skeleton_tests` in `runtime`
+    |
+note: found an item that was configured out
+   --> packages/engine/src/runtime/mod.rs:220:5
+    |
+219 | #[cfg(all(test, not(target_arch = "wasm32")))]
+    |                    ------------------------ the item is gated here
+220 | mod skeleton_tests;
+    |     ^^^^^^^^^^^^^^
+
+error[E0432]: unresolved import `crate::runtime::skeleton_tests`
+   --> packages/engine/src/runtime/world/committed_calendar_tests.rs:4:21
+    |
+  4 | use crate::runtime::skeleton_tests::basic_spec;
+    |                     ^^^^^^^^^^^^^^ could not find `skeleton_tests` in `runtime`
+    |
+note: found an item that was configured out
+   --> packages/engine/src/runtime/mod.rs:220:5
+    |
+219 | #[cfg(all(test, not(target_arch = "wasm32")))]
+    |                    ------------------------ the item is gated here
+220 | mod skeleton_tests;
+    |     ^^^^^^^^^^^^^^
+
+error[E0432]: unresolved import `crate::runtime::skeleton_tests`
+   --> packages/engine/src/runtime/group_roster_consumer_tests.rs:8:21
+    |
+  8 | use crate::runtime::skeleton_tests::basic_spec;
+    |                     ^^^^^^^^^^^^^^ could not find `skeleton_tests` in `runtime`
+    |
+note: found an item that was configured out
+   --> packages/engine/src/runtime/mod.rs:220:5
+    |
+219 | #[cfg(all(test, not(target_arch = "wasm32")))]
+    |                    ------------------------ the item is gated here
+220 | mod skeleton_tests;
+    |     ^^^^^^^^^^^^^^
+
+error[E0432]: unresolved import `crate::runtime::skeleton_tests`
+    --> packages/engine/src/runtime/world/admin_transaction.rs:1166:25
+     |
+1166 |     use crate::runtime::skeleton_tests::basic_spec;
+     |                         ^^^^^^^^^^^^^^ could not find `skeleton_tests` in `runtime`
+     |
+note: found an item that was configured out
+    --> packages/engine/src/runtime/mod.rs:220:5
+     |
+ 219 | #[cfg(all(test, not(target_arch = "wasm32")))]
+     |                    ------------------------ the item is gated here
+ 220 | mod skeleton_tests;
+     |     ^^^^^^^^^^^^^^
+
+error[E0432]: unresolved import `crate::runtime::skeleton_tests`
+   --> packages/engine/src/runtime/world/admin_transaction/information_tests.rs:5:21
+    |
+  5 | use crate::runtime::skeleton_tests::basic_spec;
+    |                     ^^^^^^^^^^^^^^ could not find `skeleton_tests` in `runtime`
+    |
+note: found an item that was configured out
+   --> packages/engine/src/runtime/mod.rs:220:5
+    |
+219 | #[cfg(all(test, not(target_arch = "wasm32")))]
+    |                    ------------------------ the item is gated here
+220 | mod skeleton_tests;
+    |     ^^^^^^^^^^^^^^
+
+error[E0432]: unresolved import `crate::runtime::skeleton_tests`
+   --> packages/engine/src/runtime/world/admin_transaction/funds_cost_tests.rs:6:21
+    |
+  6 | use crate::runtime::skeleton_tests::basic_spec;
+    |                     ^^^^^^^^^^^^^^ could not find `skeleton_tests` in `runtime`
+    |
+note: found an item that was configured out
+   --> packages/engine/src/runtime/mod.rs:220:5
+    |
+219 | #[cfg(all(test, not(target_arch = "wasm32")))]
+    |                    ------------------------ the item is gated here
+220 | mod skeleton_tests;
+    |     ^^^^^^^^^^^^^^
+
+error[E0432]: unresolved import `crate::runtime::skeleton_tests`
+   --> packages/engine/src/runtime/world/admin_transaction/repurchase_funds_tests.rs:8:21
+    |
+  8 | use crate::runtime::skeleton_tests::basic_spec;
+    |                     ^^^^^^^^^^^^^^ could not find `skeleton_tests` in `runtime`
+    |
+note: found an item that was configured out
+   --> packages/engine/src/runtime/mod.rs:220:5
+    |
+219 | #[cfg(all(test, not(target_arch = "wasm32")))]
+    |                    ------------------------ the item is gated here
+220 | mod skeleton_tests;
+    |     ^^^^^^^^^^^^^^
+
+error[E0432]: unresolved import `crate::runtime::skeleton_tests`
+   --> packages/engine/src/runtime/world/admin_transaction/repurchase_approval_tests.rs:10:21
+    |
+ 10 | use crate::runtime::skeleton_tests::basic_spec;
+    |                     ^^^^^^^^^^^^^^ could not find `skeleton_tests` in `runtime`
+    |
+note: found an item that was configured out
+   --> packages/engine/src/runtime/mod.rs:220:5
+    |
+219 | #[cfg(all(test, not(target_arch = "wasm32")))]
+    |                    ------------------------ the item is gated here
+220 | mod skeleton_tests;
+    |     ^^^^^^^^^^^^^^
+
+error[E0433]: cannot find `calendar_entry_cache_tests` in `super`
+    --> packages/engine/src/session/company_corrections_tests.rs:1048:28
+     |
+1048 |         let calls = super::calendar_entry_cache_tests::EntryScope::enter();
+     |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^ could not find `calendar_entry_cache_tests` in `super`
+     |
+note: found an item that was configured out
+    --> packages/engine/src/session.rs:234:16
+     |
+ 233 | #[cfg(all(test, not(target_family = "wasm")))]
+     |                    ------------------------ the item is gated here
+ 234 | pub(crate) mod calendar_entry_cache_tests;
+     |                ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0433]: cannot find `bridge_tests` in `runtime`
+  --> packages/engine/src/runtime/drive/repurchase_funds_tests.rs:7:37
+   |
+ 7 |     let mut setup = crate::runtime::bridge_tests::setup_fixture();
+   |                                     ^^^^^^^^^^^^ could not find `bridge_tests` in `runtime`
+   |
+note: found an item that was configured out
+  --> packages/engine/src/runtime/mod.rs:92:16
+   |
+91 | #[cfg(all(test, not(target_arch = "wasm32")))]
+   |                    ------------------------ the item is gated here
+92 | pub(crate) mod bridge_tests;
+   |                ^^^^^^^^^^^^
+
+error[E0433]: cannot find `bridge_tests` in `runtime`
+  --> packages/engine/src/runtime/drive/typed_info_delivery_tests.rs:28:37
+   |
+28 |     let mut setup = crate::runtime::bridge_tests::setup_fixture();
+   |                                     ^^^^^^^^^^^^ could not find `bridge_tests` in `runtime`
+   |
+note: found an item that was configured out
+  --> packages/engine/src/runtime/mod.rs:92:16
+   |
+91 | #[cfg(all(test, not(target_arch = "wasm32")))]
+   |                    ------------------------ the item is gated here
+92 | pub(crate) mod bridge_tests;
+   |                ^^^^^^^^^^^^
+
+error[E0433]: cannot find `bridge_tests` in `runtime`
+  --> packages/engine/src/runtime/drive/typed_info_delivery_tests.rs:64:37
+   |
+64 |     let mut setup = crate::runtime::bridge_tests::setup_fixture();
+   |                                     ^^^^^^^^^^^^ could not find `bridge_tests` in `runtime`
+   |
+note: found an item that was configured out
+  --> packages/engine/src/runtime/mod.rs:92:16
+   |
+91 | #[cfg(all(test, not(target_arch = "wasm32")))]
+   |                    ------------------------ the item is gated here
+92 | pub(crate) mod bridge_tests;
+   |                ^^^^^^^^^^^^
+
+error[E0433]: cannot find `bridge_tests` in `runtime`
+   --> packages/engine/src/runtime/group/admin_transaction/information_tests.rs:556:37
+    |
+556 |     let mut setup = crate::runtime::bridge_tests::setup_fixture();
+    |                                     ^^^^^^^^^^^^ could not find `bridge_tests` in `runtime`
+    |
+note: found an item that was configured out
+   --> packages/engine/src/runtime/mod.rs:92:16
+    |
+ 91 | #[cfg(all(test, not(target_arch = "wasm32")))]
+    |                    ------------------------ the item is gated here
+ 92 | pub(crate) mod bridge_tests;
+    |                ^^^^^^^^^^^^
+
+error[E0433]: cannot find `bridge_tests` in `runtime`
+   --> packages/engine/src/runtime/group/admin_transaction/information_tests.rs:734:33
+    |
+734 |     let setup = crate::runtime::bridge_tests::setup_fixture();
+    |                                 ^^^^^^^^^^^^ could not find `bridge_tests` in `runtime`
+    |
+note: found an item that was configured out
+   --> packages/engine/src/runtime/mod.rs:92:16
+    |
+ 91 | #[cfg(all(test, not(target_arch = "wasm32")))]
+    |                    ------------------------ the item is gated here
+ 92 | pub(crate) mod bridge_tests;
+    |                ^^^^^^^^^^^^
+
+error[E0433]: cannot find `bridge_tests` in `runtime`
+   --> packages/engine/src/runtime/group/admin_transaction/information_tests.rs:762:33
+    |
+762 |     let setup = crate::runtime::bridge_tests::setup_fixture();
+    |                                 ^^^^^^^^^^^^ could not find `bridge_tests` in `runtime`
+    |
+note: found an item that was configured out
+   --> packages/engine/src/runtime/mod.rs:92:16
+    |
+ 91 | #[cfg(all(test, not(target_arch = "wasm32")))]
+    |                    ------------------------ the item is gated here
+ 92 | pub(crate) mod bridge_tests;
+    |                ^^^^^^^^^^^^
+
+error[E0433]: cannot find `bridge_tests` in `runtime`
+   --> packages/engine/src/runtime/group/admin_transaction/information_tests.rs:811:37
+    |
+811 |     let mut setup = crate::runtime::bridge_tests::setup_fixture();
+    |                                     ^^^^^^^^^^^^ could not find `bridge_tests` in `runtime`
+    |
+note: found an item that was configured out
+   --> packages/engine/src/runtime/mod.rs:92:16
+    |
+ 91 | #[cfg(all(test, not(target_arch = "wasm32")))]
+    |                    ------------------------ the item is gated here
+ 92 | pub(crate) mod bridge_tests;
+    |                ^^^^^^^^^^^^
+
+error[E0433]: cannot find module or crate `native_handoff_capture` in this scope
+  --> packages/engine/src/runtime/world/committed_calendar_tests.rs:55:13
+   |
+55 |             native_handoff_capture::Recovered::Group(who, rx) => {
+   |             ^^^^^^^^^^^^^^^^^^^^^^ use of unresolved module or unlinked crate `native_handoff_capture`
+   |
+help: there is an enum variant `crate::company::customer_finance::FinanceResult::Recovered` and 1 other; try using the variant's enum
+   |
+55 -             native_handoff_capture::Recovered::Group(who, rx) => {
+55 +             crate::company::customer_finance::FinanceResult::Group(who, rx) => {
+   |
+55 -             native_handoff_capture::Recovered::Group(who, rx) => {
+55 +             crate::runtime::group::admin_funds_cost::AccountField::Group(who, rx) => {
+   |
+help: to make use of source file packages/engine/src/runtime/world/native_handoff_capture.rs, use `mod native_handoff_capture` in this file to declare the module
+  --> packages/engine/src/lib.rs:17:1
+   |
+17 + mod native_handoff_capture;
+   |
+
+error[E0433]: cannot find module or crate `native_handoff_capture` in this scope
+  --> packages/engine/src/runtime/world/committed_calendar_tests.rs:61:13
+   |
+61 |             native_handoff_capture::Recovered::Desk(who, rx) => {
+   |             ^^^^^^^^^^^^^^^^^^^^^^ use of unresolved module or unlinked crate `native_handoff_capture`
+   |
+help: there is an enum variant `crate::company::customer_finance::FinanceResult::Recovered` and 1 other; try using the variant's enum
+   |
+61 -             native_handoff_capture::Recovered::Desk(who, rx) => {
+61 +             crate::company::customer_finance::FinanceResult::Desk(who, rx) => {
+   |
+61 -             native_handoff_capture::Recovered::Desk(who, rx) => {
+61 +             crate::runtime::group::admin_funds_cost::AccountField::Desk(who, rx) => {
+   |
+help: to make use of source file packages/engine/src/runtime/world/native_handoff_capture.rs, use `mod native_handoff_capture` in this file to declare the module
+  --> packages/engine/src/lib.rs:17:1
+   |
+17 + mod native_handoff_capture;
+   |
+
+error[E0433]: cannot find module or crate `native_handoff_capture` in this scope
+   --> packages/engine/src/runtime/world/committed_calendar_tests.rs:124:17
+    |
+124 |                 native_handoff_capture::Recovered::Group(who, rx) => {
+    |                 ^^^^^^^^^^^^^^^^^^^^^^ use of unresolved module or unlinked crate `native_handoff_capture`
+    |
+help: there is an enum variant `crate::company::customer_finance::FinanceResult::Recovered` and 1 other; try using the variant's enum
+    |
+124 -                 native_handoff_capture::Recovered::Group(who, rx) => {
+124 +                 crate::company::customer_finance::FinanceResult::Group(who, rx) => {
+    |
+124 -                 native_handoff_capture::Recovered::Group(who, rx) => {
+124 +                 crate::runtime::group::admin_funds_cost::AccountField::Group(who, rx) => {
+    |
+help: to make use of source file packages/engine/src/runtime/world/native_handoff_capture.rs, use `mod native_handoff_capture` in this file to declare the module
+   --> packages/engine/src/lib.rs:17:1
+    |
+ 17 + mod native_handoff_capture;
+    |
+
+error[E0433]: cannot find module or crate `native_handoff_capture` in this scope
+   --> packages/engine/src/runtime/world/committed_calendar_tests.rs:130:17
+    |
+130 |                 native_handoff_capture::Recovered::Desk(who, rx) => {
+    |                 ^^^^^^^^^^^^^^^^^^^^^^ use of unresolved module or unlinked crate `native_handoff_capture`
+    |
+help: there is an enum variant `crate::company::customer_finance::FinanceResult::Recovered` and 1 other; try using the variant's enum
+    |
+130 -                 native_handoff_capture::Recovered::Desk(who, rx) => {
+130 +                 crate::company::customer_finance::FinanceResult::Desk(who, rx) => {
+    |
+130 -                 native_handoff_capture::Recovered::Desk(who, rx) => {
+130 +                 crate::runtime::group::admin_funds_cost::AccountField::Desk(who, rx) => {
+    |
+help: to make use of source file packages/engine/src/runtime/world/native_handoff_capture.rs, use `mod native_handoff_capture` in this file to declare the module
+   --> packages/engine/src/lib.rs:17:1
+    |
+ 17 + mod native_handoff_capture;
+    |
+
+error[E0433]: cannot find module or crate `native_handoff_capture` in this scope
+   --> packages/engine/src/runtime/world/committed_calendar_tests.rs:182:9
+    |
+182 |         native_handoff_capture::Recovered::Group(0, rx) => Some(rx), _ => None,
+    |         ^^^^^^^^^^^^^^^^^^^^^^ use of unresolved module or unlinked crate `native_handoff_capture`
+    |
+help: there is an enum variant `crate::company::customer_finance::FinanceResult::Recovered` and 1 other; try using the variant's enum
+    |
+182 -         native_handoff_capture::Recovered::Group(0, rx) => Some(rx), _ => None,
+182 +         crate::company::customer_finance::FinanceResult::Group(0, rx) => Some(rx), _ => None,
+    |
+182 -         native_handoff_capture::Recovered::Group(0, rx) => Some(rx), _ => None,
+182 +         crate::runtime::group::admin_funds_cost::AccountField::Group(0, rx) => Some(rx), _ => None,
+    |
+help: to make use of source file packages/engine/src/runtime/world/native_handoff_capture.rs, use `mod native_handoff_capture` in this file to declare the module
+   --> packages/engine/src/lib.rs:17:1
+    |
+ 17 + mod native_handoff_capture;
+    |
+
+error[E0433]: cannot find module or crate `native_handoff_capture` in this scope
+   --> packages/engine/src/runtime/world/committed_calendar_tests.rs:205:9
+    |
+205 |         native_handoff_capture::Recovered::Group(0, rx) => Some(rx), _ => None,
+    |         ^^^^^^^^^^^^^^^^^^^^^^ use of unresolved module or unlinked crate `native_handoff_capture`
+    |
+help: there is an enum variant `crate::company::customer_finance::FinanceResult::Recovered` and 1 other; try using the variant's enum
+    |
+205 -         native_handoff_capture::Recovered::Group(0, rx) => Some(rx), _ => None,
+205 +         crate::company::customer_finance::FinanceResult::Group(0, rx) => Some(rx), _ => None,
+    |
+205 -         native_handoff_capture::Recovered::Group(0, rx) => Some(rx), _ => None,
+205 +         crate::runtime::group::admin_funds_cost::AccountField::Group(0, rx) => Some(rx), _ => None,
+    |
+help: to make use of source file packages/engine/src/runtime/world/native_handoff_capture.rs, use `mod native_handoff_capture` in this file to declare the module
+   --> packages/engine/src/lib.rs:17:1
+    |
+ 17 + mod native_handoff_capture;
+    |
+
+error[E0433]: cannot find `bridge_tests` in `runtime`
+  --> packages/engine/src/runtime/group_roster_consumer_tests.rs:24:37
+   |
+24 |     let mut setup = crate::runtime::bridge_tests::setup_fixture();
+   |                                     ^^^^^^^^^^^^ could not find `bridge_tests` in `runtime`
+   |
+note: found an item that was configured out
+  --> packages/engine/src/runtime/mod.rs:92:16
+   |
+91 | #[cfg(all(test, not(target_arch = "wasm32")))]
+   |                    ------------------------ the item is gated here
+92 | pub(crate) mod bridge_tests;
+   |                ^^^^^^^^^^^^
+
+warning: unused imports: `JournalRank`, `ReceiptLocalKey`, and `ReceiptTransition`
+ --> packages/engine/src/session/pipeline/receipt_aggregation_tests.rs:7:61
+  |
+7 |     Envelope, EnvelopeKey, EnvelopeLedger, EnvelopeReceipt, JournalRank, ReceiptDelta, ReceiptKind,
+  |                                                             ^^^^^^^^^^^
+8 |     ReceiptLocalKey, ReceiptSource, ReceiptTransition, ResVec, StepFatal,
+  |     ^^^^^^^^^^^^^^^                 ^^^^^^^^^^^^^^^^^
+
+warning: unused import: `super::ProtocolSession`
+ --> packages/engine/src/session/protocol/civil/core_first_tests.rs:1:5
+  |
+1 | use super::ProtocolSession;
+  |     ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::sync::atomic::AtomicBool`
+  --> packages/engine/src/runtime/group.rs:27:5
+   |
+27 | use std::sync::atomic::AtomicBool;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0046]: not all trait items implemented, missing: `notify_spawn_v2`
+   --> packages/engine/src/facade_slot/tests/mod.rs:185:1
+    |
+185 | impl FacadePlatform for TestPlatform {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ missing `notify_spawn_v2` in implementation
+    |
+   ::: packages/engine/src/facade_slot/platform.rs:44:5
+    |
+ 44 |     fn notify_spawn_v2(&self, slot: u32, gen: u32, name: &str, record_addr: u32);
+    |     ----------------------------------------------------------------------------- `notify_spawn_v2` from trait
+
+warning: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+  --> packages/engine/src/session/company_corrections.rs:80:14
+   |
+80 |             .fetch_update(
+   |              ^^^^^^^^^^^^
+   |
+   = note: `#[warn(deprecated)]` on by default
+help: replace the use of the deprecated method
+   |
+80 -             .fetch_update(
+80 +             .try_update(
+   |
+
+error[E0308]: mismatched types
+   --> packages/engine/src/libos/fault_domain.rs:118:46
+    |
+118 |         let closed = receiver.close_and_wait(std::time::Instant::now() + std::time::Duration::from_millis(500)).unwrap();
+    |                               -------------- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `clock::wasm_impl::Instant`, found `std::time::Instant`
+    |                               |
+    |                               arguments to this method are incorrect
+    |
+    = note: `std::time::Instant` and `clock::wasm_impl::Instant` have similar names, but are actually distinct types
+note: `std::time::Instant` is defined in crate `std`
+   --> /Users/asuad/.rustup/toolchains/nightly-2026-09-05-aarch64-apple-darwin/lib/rustlib/src/rust/library/std/src/time.rs:156:1
+    |
+156 | pub struct Instant(time::Instant);
+    | ^^^^^^^^^^^^^^^^^^
+note: `clock::wasm_impl::Instant` is defined in the current crate
+   --> packages/engine/src/clock.rs:89:5
+    |
+ 89 |     pub struct Instant {
+    |     ^^^^^^^^^^^^^^^^^^
+note: method defined here
+   --> packages/engine/src/libos/downlink.rs:74:19
+    |
+ 74 |     pub(crate) fn close_and_wait(&self, deadline: crate::clock::Instant) -> Result<Closed<'_, T>, AdmissionWaitError> {
+    |                   ^^^^^^^^^^^^^^        -------------------------------
+
+warning: unreachable statement
+   --> packages/engine/src/session/pipeline/npc_decisions.rs:439:5
+    |
+426 |           return select_stream_error(errors);
+    |           ---------------------------------- any code following this expression is unreachable
+...
+439 | /     let (pooled, _drive_slot) = if compute.is_worker() {
+440 | |         match compute.try_enter_pool_drive_slot() {
+441 | |             Some(slot) => (true, Some(slot)),
+...   |
+454 | |         (false, None)
+455 | |     };
+    | |______^ unreachable statement
+    |
+    = note: `#[warn(unreachable_code)]` (part of `#[warn(unused)]`) on by default
+
+error[E0308]: mismatched types
+   --> packages/engine/src/libos/mod.rs:18:46
+    |
+ 18 |         let closed = receiver.close_and_wait(std::time::Instant::now() + std::time::Duration::from_millis(10)).unwrap();
+    |                               -------------- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `clock::wasm_impl::Instant`, found `std::time::Instant`
+    |                               |
+    |                               arguments to this method are incorrect
+    |
+    = note: `std::time::Instant` and `clock::wasm_impl::Instant` have similar names, but are actually distinct types
+note: `std::time::Instant` is defined in crate `std`
+   --> /Users/asuad/.rustup/toolchains/nightly-2026-09-05-aarch64-apple-darwin/lib/rustlib/src/rust/library/std/src/time.rs:156:1
+    |
+156 | pub struct Instant(time::Instant);
+    | ^^^^^^^^^^^^^^^^^^
+note: `clock::wasm_impl::Instant` is defined in the current crate
+   --> packages/engine/src/clock.rs:89:5
+    |
+ 89 |     pub struct Instant {
+    |     ^^^^^^^^^^^^^^^^^^
+note: method defined here
+   --> packages/engine/src/libos/downlink.rs:74:19
+    |
+ 74 |     pub(crate) fn close_and_wait(&self, deadline: crate::clock::Instant) -> Result<Closed<'_, T>, AdmissionWaitError> {
+    |                   ^^^^^^^^^^^^^^        -------------------------------
+
+error[E0308]: mismatched types
+   --> packages/engine/src/libos/mod.rs:23:45
+    |
+ 23 |         let retry = receiver.close_and_wait(std::time::Instant::now() + std::time::Duration::from_millis(500)).unwrap();
+    |                              -------------- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `clock::wasm_impl::Instant`, found `std::time::Instant`
+    |                              |
+    |                              arguments to this method are incorrect
+    |
+    = note: `std::time::Instant` and `clock::wasm_impl::Instant` have similar names, but are actually distinct types
+note: `std::time::Instant` is defined in crate `std`
+   --> /Users/asuad/.rustup/toolchains/nightly-2026-09-05-aarch64-apple-darwin/lib/rustlib/src/rust/library/std/src/time.rs:156:1
+    |
+156 | pub struct Instant(time::Instant);
+    | ^^^^^^^^^^^^^^^^^^
+note: `clock::wasm_impl::Instant` is defined in the current crate
+   --> packages/engine/src/clock.rs:89:5
+    |
+ 89 |     pub struct Instant {
+    |     ^^^^^^^^^^^^^^^^^^
+note: method defined here
+   --> packages/engine/src/libos/downlink.rs:74:19
+    |
+ 74 |     pub(crate) fn close_and_wait(&self, deadline: crate::clock::Instant) -> Result<Closed<'_, T>, AdmissionWaitError> {
+    |                   ^^^^^^^^^^^^^^        -------------------------------
+
+error[E0308]: mismatched types
+   --> packages/engine/src/libos/mod.rs:37:51
+    |
+ 37 |         let closed = exit.receiver.close_and_wait(std::time::Instant::now() + std::time::Duration::from_millis(500)).unwrap();
+    |                                    -------------- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `clock::wasm_impl::Instant`, found `std::time::Instant`
+    |                                    |
+    |                                    arguments to this method are incorrect
+    |
+    = note: `std::time::Instant` and `clock::wasm_impl::Instant` have similar names, but are actually distinct types
+note: `std::time::Instant` is defined in crate `std`
+   --> /Users/asuad/.rustup/toolchains/nightly-2026-09-05-aarch64-apple-darwin/lib/rustlib/src/rust/library/std/src/time.rs:156:1
+    |
+156 | pub struct Instant(time::Instant);
+    | ^^^^^^^^^^^^^^^^^^
+note: `clock::wasm_impl::Instant` is defined in the current crate
+   --> packages/engine/src/clock.rs:89:5
+    |
+ 89 |     pub struct Instant {
+    |     ^^^^^^^^^^^^^^^^^^
+note: method defined here
+   --> packages/engine/src/libos/downlink.rs:74:19
+    |
+ 74 |     pub(crate) fn close_and_wait(&self, deadline: crate::clock::Instant) -> Result<Closed<'_, T>, AdmissionWaitError> {
+    |                   ^^^^^^^^^^^^^^        -------------------------------
+
+error[E0308]: mismatched types
+   --> packages/engine/src/libos/mod.rs:60:51
+    |
+ 60 |         let closed = exit.receiver.close_and_wait(std::time::Instant::now() + std::time::Duration::from_millis(500)).unwrap();
+    |                                    -------------- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `clock::wasm_impl::Instant`, found `std::time::Instant`
+    |                                    |
+    |                                    arguments to this method are incorrect
+    |
+    = note: `std::time::Instant` and `clock::wasm_impl::Instant` have similar names, but are actually distinct types
+note: `std::time::Instant` is defined in crate `std`
+   --> /Users/asuad/.rustup/toolchains/nightly-2026-09-05-aarch64-apple-darwin/lib/rustlib/src/rust/library/std/src/time.rs:156:1
+    |
+156 | pub struct Instant(time::Instant);
+    | ^^^^^^^^^^^^^^^^^^
+note: `clock::wasm_impl::Instant` is defined in the current crate
+   --> packages/engine/src/clock.rs:89:5
+    |
+ 89 |     pub struct Instant {
+    |     ^^^^^^^^^^^^^^^^^^
+note: method defined here
+   --> packages/engine/src/libos/downlink.rs:74:19
+    |
+ 74 |     pub(crate) fn close_and_wait(&self, deadline: crate::clock::Instant) -> Result<Closed<'_, T>, AdmissionWaitError> {
+    |                   ^^^^^^^^^^^^^^        -------------------------------
+
+error[E0599]: no associated function or constant named `run_serial_checkpoint_probe_for_test` found for struct `civil::session::ProtocolSession` in the current scope
+   --> packages/engine/src/session/serial_b2_surface_tests.rs:221:52
+    |
+221 |         crate::session::protocol::ProtocolSession::run_serial_checkpoint_probe_for_test();
+    |                                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ associated function or constant not found in `civil::session::ProtocolSession`
+    |
+   ::: packages/engine/src/session/protocol/civil/session.rs:99:1
+    |
+ 99 | pub struct ProtocolSession {
+    | -------------------------- associated function or constant `run_serial_checkpoint_probe_for_test` not found for this struct
+    |
+note: if you're trying to build a new `civil::session::ProtocolSession` consider using one of the following associated functions:
+      civil::session::ProtocolSession::restore
+      civil::session::ProtocolSession::new
+      civil::session::ProtocolSession::restore_initial_checkpoint_for_test
+   --> packages/engine/src/session/protocol/civil/session.rs:856:5
+    |
+856 |       pub fn restore(slot: &crate::SaveSlot) -> Result<Self, SessionError> {
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+900 |       pub fn new(setup: SessionSetup, seed: u64) -> Result<Self, SessionError> {
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+948 | /     pub(in crate::session) fn restore_initial_checkpoint_for_test(
+949 | |         slot: &crate::SaveSlot,
+950 | |     ) -> Result<Self, SessionError> {
+    | |___________________________________^
+
+warning: unused variable: `compute`
+   --> packages/engine/src/session/pipeline/npc_decisions.rs:406:5
+    |
+406 |     compute: &std::sync::Arc<crate::compute::ComputeContext>,
+    |     ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_compute`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+error[E0308]: mismatched types
+   --> packages/engine/src/runtime/worker_admission.rs:204:49
+    |
+204 |         assert_eq!(exit.receiver.close_and_wait(Instant::now()), Err(AdmissionWaitError::TimedOut));
+    |                                  -------------- ^^^^^^^^^^^^^^ expected `clock::wasm_impl::Instant`, found `std::time::Instant`
+    |                                  |
+    |                                  arguments to this method are incorrect
+    |
+    = note: `std::time::Instant` and `clock::wasm_impl::Instant` have similar names, but are actually distinct types
+note: `std::time::Instant` is defined in crate `std`
+   --> /Users/asuad/.rustup/toolchains/nightly-2026-09-05-aarch64-apple-darwin/lib/rustlib/src/rust/library/std/src/time.rs:156:1
+    |
+156 | pub struct Instant(time::Instant);
+    | ^^^^^^^^^^^^^^^^^^
+note: `clock::wasm_impl::Instant` is defined in the current crate
+   --> packages/engine/src/clock.rs:89:5
+    |
+ 89 |     pub struct Instant {
+    |     ^^^^^^^^^^^^^^^^^^
+note: method defined here
+   --> packages/engine/src/runtime/worker_admission.rs:136:19
+    |
+136 |     pub(super) fn close_and_wait(&self, deadline: crate::clock::Instant) -> Result<(), AdmissionWaitError> {
+    |                   ^^^^^^^^^^^^^^        -------------------------------
+
+error[E0308]: mismatched types
+   --> packages/engine/src/runtime/worker_admission.rs:208:38
+    |
+208 |         exit.receiver.close_and_wait(Instant::now() + Duration::from_millis(500)).unwrap();
+    |                       -------------- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `clock::wasm_impl::Instant`, found `std::time::Instant`
+    |                       |
+    |                       arguments to this method are incorrect
+    |
+    = note: `std::time::Instant` and `clock::wasm_impl::Instant` have similar names, but are actually distinct types
+note: `std::time::Instant` is defined in crate `std`
+   --> /Users/asuad/.rustup/toolchains/nightly-2026-09-05-aarch64-apple-darwin/lib/rustlib/src/rust/library/std/src/time.rs:156:1
+    |
+156 | pub struct Instant(time::Instant);
+    | ^^^^^^^^^^^^^^^^^^
+note: `clock::wasm_impl::Instant` is defined in the current crate
+   --> packages/engine/src/clock.rs:89:5
+    |
+ 89 |     pub struct Instant {
+    |     ^^^^^^^^^^^^^^^^^^
+note: method defined here
+   --> packages/engine/src/runtime/worker_admission.rs:136:19
+    |
+136 |     pub(super) fn close_and_wait(&self, deadline: crate::clock::Instant) -> Result<(), AdmissionWaitError> {
+    |                   ^^^^^^^^^^^^^^        -------------------------------
+
+error[E0308]: mismatched types
+   --> packages/engine/src/runtime/worker_admission.rs:221:43
+    |
+221 |         assert!(matches!(gate.wait_closed(Instant::now()), Err(super::AdmissionWaitError::TimedOut)));
+    |                               ----------- ^^^^^^^^^^^^^^ expected `clock::wasm_impl::Instant`, found `std::time::Instant`
+    |                               |
+    |                               arguments to this method are incorrect
+    |
+    = note: `std::time::Instant` and `clock::wasm_impl::Instant` have similar names, but are actually distinct types
+note: `std::time::Instant` is defined in crate `std`
+   --> /Users/asuad/.rustup/toolchains/nightly-2026-09-05-aarch64-apple-darwin/lib/rustlib/src/rust/library/std/src/time.rs:156:1
+    |
+156 | pub struct Instant(time::Instant);
+    | ^^^^^^^^^^^^^^^^^^
+note: `clock::wasm_impl::Instant` is defined in the current crate
+   --> packages/engine/src/clock.rs:89:5
+    |
+ 89 |     pub struct Instant {
+    |     ^^^^^^^^^^^^^^^^^^
+note: method defined here
+   --> packages/engine/src/libos/admission.rs:44:19
+    |
+ 44 |     pub(crate) fn wait_closed(&self, deadline: crate::clock::Instant) -> Result<(), AdmissionWaitError> {
+    |                   ^^^^^^^^^^^        -------------------------------
+
+error[E0308]: mismatched types
+   --> packages/engine/src/runtime/worker_admission.rs:227:35
+    |
+227 |             wait_gate.wait_closed(Instant::now() + Duration::from_millis(500))
+    |                       ----------- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `clock::wasm_impl::Instant`, found `std::time::Instant`
+    |                       |
+    |                       arguments to this method are incorrect
+    |
+    = note: `std::time::Instant` and `clock::wasm_impl::Instant` have similar names, but are actually distinct types
+note: `std::time::Instant` is defined in crate `std`
+   --> /Users/asuad/.rustup/toolchains/nightly-2026-09-05-aarch64-apple-darwin/lib/rustlib/src/rust/library/std/src/time.rs:156:1
+    |
+156 | pub struct Instant(time::Instant);
+    | ^^^^^^^^^^^^^^^^^^
+note: `clock::wasm_impl::Instant` is defined in the current crate
+   --> packages/engine/src/clock.rs:89:5
+    |
+ 89 |     pub struct Instant {
+    |     ^^^^^^^^^^^^^^^^^^
+note: method defined here
+   --> packages/engine/src/libos/admission.rs:44:19
+    |
+ 44 |     pub(crate) fn wait_closed(&self, deadline: crate::clock::Instant) -> Result<(), AdmissionWaitError> {
+    |                   ^^^^^^^^^^^        -------------------------------
+
+error[E0308]: mismatched types
+   --> packages/engine/src/runtime/worker_admission.rs:237:55
+    |
+237 |         assert!(matches!(Admission::new().wait_closed(std::time::Instant::now()), Err(super::AdmissionWaitError::NotClosed)));
+    |                                           ----------- ^^^^^^^^^^^^^^^^^^^^^^^^^ expected `clock::wasm_impl::Instant`, found `std::time::Instant`
+    |                                           |
+    |                                           arguments to this method are incorrect
+    |
+    = note: `std::time::Instant` and `clock::wasm_impl::Instant` have similar names, but are actually distinct types
+note: `std::time::Instant` is defined in crate `std`
+   --> /Users/asuad/.rustup/toolchains/nightly-2026-09-05-aarch64-apple-darwin/lib/rustlib/src/rust/library/std/src/time.rs:156:1
+    |
+156 | pub struct Instant(time::Instant);
+    | ^^^^^^^^^^^^^^^^^^
+note: `clock::wasm_impl::Instant` is defined in the current crate
+   --> packages/engine/src/clock.rs:89:5
+    |
+ 89 |     pub struct Instant {
+    |     ^^^^^^^^^^^^^^^^^^
+note: method defined here
+   --> packages/engine/src/libos/admission.rs:44:19
+    |
+ 44 |     pub(crate) fn wait_closed(&self, deadline: crate::clock::Instant) -> Result<(), AdmissionWaitError> {
+    |                   ^^^^^^^^^^^        -------------------------------
+
+error[E0308]: mismatched types
+   --> packages/engine/src/runtime/worker_admission.rs:251:44
+    |
+251 |         assert_eq!(receiver.close_and_wait(Instant::now()), Err(AdmissionWaitError::TimedOut));
+    |                             -------------- ^^^^^^^^^^^^^^ expected `clock::wasm_impl::Instant`, found `std::time::Instant`
+    |                             |
+    |                             arguments to this method are incorrect
+    |
+    = note: `std::time::Instant` and `clock::wasm_impl::Instant` have similar names, but are actually distinct types
+note: `std::time::Instant` is defined in crate `std`
+   --> /Users/asuad/.rustup/toolchains/nightly-2026-09-05-aarch64-apple-darwin/lib/rustlib/src/rust/library/std/src/time.rs:156:1
+    |
+156 | pub struct Instant(time::Instant);
+    | ^^^^^^^^^^^^^^^^^^
+note: `clock::wasm_impl::Instant` is defined in the current crate
+   --> packages/engine/src/clock.rs:89:5
+    |
+ 89 |     pub struct Instant {
+    |     ^^^^^^^^^^^^^^^^^^
+note: method defined here
+   --> packages/engine/src/runtime/worker_admission.rs:136:19
+    |
+136 |     pub(super) fn close_and_wait(&self, deadline: crate::clock::Instant) -> Result<(), AdmissionWaitError> {
+    |                   ^^^^^^^^^^^^^^        -------------------------------
+
+error[E0308]: mismatched types
+   --> packages/engine/src/runtime/worker_admission.rs:254:33
+    |
+254 |         receiver.close_and_wait(Instant::now() + Duration::from_millis(500)).unwrap();
+    |                  -------------- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `clock::wasm_impl::Instant`, found `std::time::Instant`
+    |                  |
+    |                  arguments to this method are incorrect
+    |
+    = note: `std::time::Instant` and `clock::wasm_impl::Instant` have similar names, but are actually distinct types
+note: `std::time::Instant` is defined in crate `std`
+   --> /Users/asuad/.rustup/toolchains/nightly-2026-09-05-aarch64-apple-darwin/lib/rustlib/src/rust/library/std/src/time.rs:156:1
+    |
+156 | pub struct Instant(time::Instant);
+    | ^^^^^^^^^^^^^^^^^^
+note: `clock::wasm_impl::Instant` is defined in the current crate
+   --> packages/engine/src/clock.rs:89:5
+    |
+ 89 |     pub struct Instant {
+    |     ^^^^^^^^^^^^^^^^^^
+note: method defined here
+   --> packages/engine/src/runtime/worker_admission.rs:136:19
+    |
+136 |     pub(super) fn close_and_wait(&self, deadline: crate::clock::Instant) -> Result<(), AdmissionWaitError> {
+    |                   ^^^^^^^^^^^^^^        -------------------------------
+
+error[E0599]: no method named `approve_repurchase_for_runtime_test` found for mutable reference `&mut session::GameSession` in the current scope
+  --> packages/engine/src/runtime/drive/repurchase_funds_tests.rs:40:27
+   |
+40 |     let receipt = session.approve_repurchase_for_runtime_test(plan).unwrap();
+   |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ method not found in `&mut session::GameSession`
+
+error[E0308]: mismatched types
+    --> packages/engine/src/runtime/group/admin_transaction/repurchase_source_tests.rs:939:38
+     |
+ 939 |     state.handle_start(2, &desk_txs, &up_tx).unwrap();
+     |           ------------               ^^^^^^ expected `&Sender<UpMsg>`, found `&Sender<_>`
+     |           |
+     |           arguments to this method are incorrect
+     |
+     = note: `std::sync::mpsc::Sender<_>` and `Sender<UpMsg>` have similar names, but are actually distinct types
+note: `std::sync::mpsc::Sender<_>` is defined in crate `std`
+    --> /Users/asuad/.rustup/toolchains/nightly-2026-09-05-aarch64-apple-darwin/lib/rustlib/src/rust/library/std/src/sync/mpsc.rs:340:1
+     |
+ 340 | pub struct Sender<T> {
+     | ^^^^^^^^^^^^^^^^^^^^
+note: `Sender<UpMsg>` is defined in the current crate
+    --> packages/engine/src/libos/mailbox.rs:89:1
+     |
+  89 | pub struct Sender<T> {
+     | ^^^^^^^^^^^^^^^^^^^^
+note: method defined here
+    --> packages/engine/src/runtime/group.rs:2625:8
+     |
+2625 |     fn handle_start(
+     |        ^^^^^^^^^^^^
+...
+2629 |         up_tx: &UpSender<UpMsg>,
+     |         -----------------------
+
+error[E0308]: mismatched types
+   --> packages/engine/src/runtime/world/native_construction.rs:33:25
+    |
+ 33 |     match recv_deadline(up, Phase::TickConverge, watchdog).expect("部分构造 worker 原错误握手")
+    |           ------------- ^^ expected `&Receiver<_>`, found `&Receiver<UpMsg>`
+    |           |
+    |           arguments to this function are incorrect
+    |
+    = note: `Receiver<UpMsg>` and `mailbox::Receiver<_>` have similar names, but are actually distinct types
+note: `Receiver<UpMsg>` is defined in crate `std`
+   --> /Users/asuad/.rustup/toolchains/nightly-2026-09-05-aarch64-apple-darwin/lib/rustlib/src/rust/library/std/src/sync/mpsc.rs:181:1
+    |
+181 | pub struct Receiver<T> {
+    | ^^^^^^^^^^^^^^^^^^^^^^
+note: `mailbox::Receiver<_>` is defined in the current crate
+   --> packages/engine/src/libos/mailbox.rs:94:1
+    |
+ 94 | pub struct Receiver<T> {
+    | ^^^^^^^^^^^^^^^^^^^^^^
+note: function defined here
+   --> packages/engine/src/runtime/upstream.rs:22:15
+    |
+ 22 | pub(super) fn recv_up_deadline<T>(
+    |               ^^^^^^^^^^^^^^^^
+ 23 |     rx: &UpReceiver<T>,
+    |     ------------------
+
+error[E0308]: mismatched types
+   --> packages/engine/src/runtime/world/owned_worker_exit_tests.rs:19:47
+    |
+ 19 |     let closed = exit.receiver.close_and_wait(Instant::now() + Duration::from_millis(500)).unwrap();
+    |                                -------------- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `clock::wasm_impl::Instant`, found `std::time::Instant`
+    |                                |
+    |                                arguments to this method are incorrect
+    |
+    = note: `std::time::Instant` and `clock::wasm_impl::Instant` have similar names, but are actually distinct types
+note: `std::time::Instant` is defined in crate `std`
+   --> /Users/asuad/.rustup/toolchains/nightly-2026-09-05-aarch64-apple-darwin/lib/rustlib/src/rust/library/std/src/time.rs:156:1
+    |
+156 | pub struct Instant(time::Instant);
+    | ^^^^^^^^^^^^^^^^^^
+note: `clock::wasm_impl::Instant` is defined in the current crate
+   --> packages/engine/src/clock.rs:89:5
+    |
+ 89 |     pub struct Instant {
+    |     ^^^^^^^^^^^^^^^^^^
+note: method defined here
+   --> packages/engine/src/libos/downlink.rs:74:19
+    |
+ 74 |     pub(crate) fn close_and_wait(&self, deadline: crate::clock::Instant) -> Result<Closed<'_, T>, AdmissionWaitError> {
+    |                   ^^^^^^^^^^^^^^        -------------------------------
+
+error[E0308]: mismatched types
+   --> packages/engine/src/runtime/world/owned_worker_exit_tests.rs:36:47
+    |
+ 36 |     let closed = exit.receiver.close_and_wait(Instant::now() + Duration::from_millis(500)).unwrap();
+    |                                -------------- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `clock::wasm_impl::Instant`, found `std::time::Instant`
+    |                                |
+    |                                arguments to this method are incorrect
+    |
+    = note: `std::time::Instant` and `clock::wasm_impl::Instant` have similar names, but are actually distinct types
+note: `std::time::Instant` is defined in crate `std`
+   --> /Users/asuad/.rustup/toolchains/nightly-2026-09-05-aarch64-apple-darwin/lib/rustlib/src/rust/library/std/src/time.rs:156:1
+    |
+156 | pub struct Instant(time::Instant);
+    | ^^^^^^^^^^^^^^^^^^
+note: `clock::wasm_impl::Instant` is defined in the current crate
+   --> packages/engine/src/clock.rs:89:5
+    |
+ 89 |     pub struct Instant {
+    |     ^^^^^^^^^^^^^^^^^^
+note: method defined here
+   --> packages/engine/src/libos/downlink.rs:74:19
+    |
+ 74 |     pub(crate) fn close_and_wait(&self, deadline: crate::clock::Instant) -> Result<Closed<'_, T>, AdmissionWaitError> {
+    |                   ^^^^^^^^^^^^^^        -------------------------------
+
+error[E0308]: mismatched types
+   --> packages/engine/src/runtime/world/owned_worker_exit_tests.rs:55:47
+    |
+ 55 |     let closed = exit.receiver.close_and_wait(Instant::now() + Duration::from_millis(500)).unwrap();
+    |                                -------------- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `clock::wasm_impl::Instant`, found `std::time::Instant`
+    |                                |
+    |                                arguments to this method are incorrect
+    |
+    = note: `std::time::Instant` and `clock::wasm_impl::Instant` have similar names, but are actually distinct types
+note: `std::time::Instant` is defined in crate `std`
+   --> /Users/asuad/.rustup/toolchains/nightly-2026-09-05-aarch64-apple-darwin/lib/rustlib/src/rust/library/std/src/time.rs:156:1
+    |
+156 | pub struct Instant(time::Instant);
+    | ^^^^^^^^^^^^^^^^^^
+note: `clock::wasm_impl::Instant` is defined in the current crate
+   --> packages/engine/src/clock.rs:89:5
+    |
+ 89 |     pub struct Instant {
+    |     ^^^^^^^^^^^^^^^^^^
+note: method defined here
+   --> packages/engine/src/libos/downlink.rs:74:19
+    |
+ 74 |     pub(crate) fn close_and_wait(&self, deadline: crate::clock::Instant) -> Result<Closed<'_, T>, AdmissionWaitError> {
+    |                   ^^^^^^^^^^^^^^        -------------------------------
+
+error[E0433]: cannot find module or crate `native_handoff_capture` in this scope
+  --> packages/engine/src/runtime/world/committed_calendar_tests.rs:44:20
+   |
+44 |     let captured = native_handoff_capture::capture_next_world();
+   |                    ^^^^^^^^^^^^^^^^^^^^^^ use of unresolved module or unlinked crate `native_handoff_capture`
+   |
+help: to make use of source file packages/engine/src/runtime/world/native_handoff_capture.rs, use `mod native_handoff_capture` in this file to declare the module
+  --> packages/engine/src/lib.rs:17:1
+   |
+17 + mod native_handoff_capture;
+   |
+
+error[E0433]: cannot find module or crate `native_handoff_capture` in this scope
+  --> packages/engine/src/runtime/world/committed_calendar_tests.rs:94:24
+   |
+94 |         let captured = native_handoff_capture::capture_next_world();
+   |                        ^^^^^^^^^^^^^^^^^^^^^^ use of unresolved module or unlinked crate `native_handoff_capture`
+   |
+help: to make use of source file packages/engine/src/runtime/world/native_handoff_capture.rs, use `mod native_handoff_capture` in this file to declare the module
+  --> packages/engine/src/lib.rs:17:1
+   |
+17 + mod native_handoff_capture;
+   |
+
+error[E0433]: cannot find module or crate `native_handoff_capture` in this scope
+   --> packages/engine/src/runtime/world/committed_calendar_tests.rs:147:10
+    |
+147 |     drop(native_handoff_capture::capture_next_world());
+    |          ^^^^^^^^^^^^^^^^^^^^^^ use of unresolved module or unlinked crate `native_handoff_capture`
+    |
+help: to make use of source file packages/engine/src/runtime/world/native_handoff_capture.rs, use `mod native_handoff_capture` in this file to declare the module
+   --> packages/engine/src/lib.rs:17:1
+    |
+ 17 + mod native_handoff_capture;
+    |
+
+error[E0433]: cannot find module or crate `native_handoff_capture` in this scope
+   --> packages/engine/src/runtime/world/committed_calendar_tests.rs:148:10
+    |
+148 |     drop(native_handoff_capture::capture_next_world());
+    |          ^^^^^^^^^^^^^^^^^^^^^^ use of unresolved module or unlinked crate `native_handoff_capture`
+    |
+help: to make use of source file packages/engine/src/runtime/world/native_handoff_capture.rs, use `mod native_handoff_capture` in this file to declare the module
+   --> packages/engine/src/lib.rs:17:1
+    |
+ 17 + mod native_handoff_capture;
+    |
+
+error[E0433]: cannot find module or crate `native_handoff_capture` in this scope
+   --> packages/engine/src/runtime/world/committed_calendar_tests.rs:153:17
+    |
+153 |     let first = native_handoff_capture::capture_next_world();
+    |                 ^^^^^^^^^^^^^^^^^^^^^^ use of unresolved module or unlinked crate `native_handoff_capture`
+    |
+help: to make use of source file packages/engine/src/runtime/world/native_handoff_capture.rs, use `mod native_handoff_capture` in this file to declare the module
+   --> packages/engine/src/lib.rs:17:1
+    |
+ 17 + mod native_handoff_capture;
+    |
+
+error[E0433]: cannot find module or crate `native_handoff_capture` in this scope
+   --> packages/engine/src/runtime/world/committed_calendar_tests.rs:154:38
+    |
+154 |     assert!(std::panic::catch_unwind(native_handoff_capture::capture_next_world).is_err());
+    |                                      ^^^^^^^^^^^^^^^^^^^^^^ use of unresolved module or unlinked crate `native_handoff_capture`
+    |
+help: to make use of source file packages/engine/src/runtime/world/native_handoff_capture.rs, use `mod native_handoff_capture` in this file to declare the module
+   --> packages/engine/src/lib.rs:17:1
+    |
+ 17 + mod native_handoff_capture;
+    |
+
+error[E0433]: cannot find module or crate `native_handoff_capture` in this scope
+   --> packages/engine/src/runtime/world/committed_calendar_tests.rs:162:20
+    |
+162 |     let captured = native_handoff_capture::capture_next_world();
+    |                    ^^^^^^^^^^^^^^^^^^^^^^ use of unresolved module or unlinked crate `native_handoff_capture`
+    |
+help: to make use of source file packages/engine/src/runtime/world/native_handoff_capture.rs, use `mod native_handoff_capture` in this file to declare the module
+   --> packages/engine/src/lib.rs:17:1
+    |
+ 17 + mod native_handoff_capture;
+    |
+
+error[E0433]: cannot find module or crate `native_handoff_capture` in this scope
+   --> packages/engine/src/runtime/world/committed_calendar_tests.rs:193:20
+    |
+193 |     let captured = native_handoff_capture::capture_next_world();
+    |                    ^^^^^^^^^^^^^^^^^^^^^^ use of unresolved module or unlinked crate `native_handoff_capture`
+    |
+help: to make use of source file packages/engine/src/runtime/world/native_handoff_capture.rs, use `mod native_handoff_capture` in this file to declare the module
+   --> packages/engine/src/lib.rs:17:1
+    |
+ 17 + mod native_handoff_capture;
+    |
+
+error[E0308]: mismatched types
+    --> packages/engine/src/runtime/world/admin_transaction.rs:2315:23
+     |
+2315 |             w.up_rx = rx;
+     |             -------   ^^ expected `Receiver<UpMsg>`, found a different `Receiver<UpMsg>`
+     |             |
+     |             expected due to the type of this binding
+     |
+     = note: `Receiver<UpMsg>` and `Receiver<UpMsg>` have similar names, but are actually distinct types
+note: `Receiver<UpMsg>` is defined in crate `std`
+    --> /Users/asuad/.rustup/toolchains/nightly-2026-09-05-aarch64-apple-darwin/lib/rustlib/src/rust/library/std/src/sync/mpsc.rs:181:1
+     |
+ 181 | pub struct Receiver<T> {
+     | ^^^^^^^^^^^^^^^^^^^^^^
+note: `Receiver<UpMsg>` is defined in the current crate
+    --> packages/engine/src/libos/mailbox.rs:94:1
+     |
+  94 | pub struct Receiver<T> {
+     | ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: methods `domain_aborted` and `notified` are never used
+  --> packages/engine/src/libos/fault_domain.rs:91:19
+   |
+90 | impl Registration {
+   | ----------------- methods in this implementation
+91 |     pub(super) fn domain_aborted(&self) -> bool {
+   |                   ^^^^^^^^^^^^^^
+...
+94 |     pub fn notified(&self) -> bool {
+   |            ^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `registration` is never read
+  --> packages/engine/src/libos/mailbox.rs:98:5
+   |
+94 | pub struct Receiver<T> {
+   |            -------- field in this struct
+...
+98 |     registration: Option<Arc<super::fault_domain::Registration>>,
+   |     ^^^^^^^^^^^^
+
+warning: method `is_aborted` is never used
+   --> packages/engine/src/libos/mailbox.rs:111:19
+    |
+109 | impl<T> Sender<T> {
+    | ----------------- method in this implementation
+110 |     pub(crate) fn wake(&self) { self.signal.notify(); }
+111 |     pub(crate) fn is_aborted(&self) -> bool {
+    |                   ^^^^^^^^^^
+
+warning: function `channel` is never used
+   --> packages/engine/src/libos/mailbox.rs:127:8
+    |
+127 | pub fn channel<T>() -> (Sender<T>, Receiver<T>) {
+    |        ^^^^^^^
+
+warning: struct `AbortHandle` is never constructed
+   --> packages/engine/src/libos/mailbox.rs:184:12
+    |
+184 | pub struct AbortHandle {
+    |            ^^^^^^^^^^^
+
+warning: method `abort` is never used
+   --> packages/engine/src/libos/mailbox.rs:197:12
+    |
+188 | impl AbortHandle {
+    | ---------------- method in this implementation
+...
+197 |     pub fn abort(&self) {
+    |            ^^^^^
+
+warning: methods `is_aborted` and `abort_handle` are never used
+   --> packages/engine/src/libos/mailbox.rs:203:19
+    |
+202 | impl<T> Receiver<T> {
+    | ------------------- methods in this implementation
+203 |     pub(crate) fn is_aborted(&self) -> bool {
+    |                   ^^^^^^^^^^
+...
+220 |     pub fn abort_handle(&self) -> AbortHandle {
+    |            ^^^^^^^^^^^^
+
+warning: function `receive_interruptible` is never used
+   --> packages/engine/src/libos/mailbox.rs:233:8
+    |
+233 | pub fn receive_interruptible<T>(rx: &Receiver<T>, timeout: Duration) -> Result<T, ReceiveError<T>> {
+    |        ^^^^^^^^^^^^^^^^^^^^^
+
+warning: enum `WorkerReceiveError` is never used
+ --> packages/engine/src/libos/worker_wait.rs:7:17
+  |
+7 | pub(crate) enum WorkerReceiveError {
+  |                 ^^^^^^^^^^^^^^^^^^
+
+warning: enum `WorkerTryReceiveError` is never used
+  --> packages/engine/src/libos/worker_wait.rs:15:17
+   |
+15 | pub(crate) enum WorkerTryReceiveError { HostAborted }
+   |                 ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `try_receive` is never used
+  --> packages/engine/src/libos/worker_wait.rs:18:15
+   |
+18 | pub(crate) fn try_receive<T>(
+   |               ^^^^^^^^^^^
+
+warning: function `receive` is never used
+  --> packages/engine/src/libos/worker_wait.rs:79:15
+   |
+79 | pub(crate) fn receive<T>(
+   |               ^^^^^^^
+
+warning: constant `CLOSED` is never used
+ --> packages/engine/src/libos/admission.rs:5:7
+  |
+5 | const CLOSED: usize = 1usize << (usize::BITS - 1);
+  |       ^^^^^^
+
+warning: struct `Admission` is never constructed
+ --> packages/engine/src/libos/admission.rs:8:19
+  |
+8 | pub(crate) struct Admission {
+  |                   ^^^^^^^^^
+
+warning: enum `AdmissionWaitError` is never used
+  --> packages/engine/src/libos/admission.rs:16:17
+   |
+16 | pub(crate) enum AdmissionWaitError {
+   |                 ^^^^^^^^^^^^^^^^^^
+
+warning: multiple associated items are never used
+  --> packages/engine/src/libos/admission.rs:26:19
+   |
+25 | impl Admission {
+   | -------------- associated items in this implementation
+26 |     pub(crate) fn new() -> Self {
+   |                   ^^^
+...
+29 |     pub(crate) fn acquire(&self) -> Option<Permit<'_>> {
+   |                   ^^^^^^^
+...
+40 |     pub(crate) fn close(&self) { self.state.fetch_or(CLOSED, Ordering::AcqRel); }
+   |                   ^^^^^
+41 |     pub(crate) fn is_closed_and_quiescent(&self) -> bool { self.state.load(Ordering::Acquire) == CLOSED }
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^
+...
+44 |     pub(crate) fn wait_closed(&self, deadline: crate::clock::Instant) -> Result<(), AdmissionWaitError> {
+   |                   ^^^^^^^^^^^
+...
+48 |     pub(super) fn wait_closed_with_clock(&self, deadline: crate::clock::Instant, now: impl Fn() -> crate::clock::Instant) -> Result<...
+   |                   ^^^^^^^^^^^^^^^^^^^^^^
+...
+71 |     pub(super) fn sample_clock(&self, now: impl FnOnce() -> crate::clock::Instant) -> Result<crate::clock::Instant, AdmissionWaitErr...
+   |                   ^^^^^^^^^^^^
+
+warning: struct `Permit` is never constructed
+  --> packages/engine/src/libos/admission.rs:85:19
+   |
+85 | pub(crate) struct Permit<'a>(&'a Admission);
+   |                   ^^^^^^
+
+warning: enum `Outcome` is never used
+ --> packages/engine/src/libos/worker_exit.rs:3:17
+  |
+3 | pub(crate) enum Outcome<E> {
+  |                 ^^^^^^^
+
+warning: struct `Exit` is never constructed
+ --> packages/engine/src/libos/worker_exit.rs:8:19
+  |
+8 | pub(crate) struct Exit<R, E> {
+  |                   ^^^^
+
+warning: function `run` is never used
+  --> packages/engine/src/libos/worker_exit.rs:14:15
+   |
+14 | pub(super) fn run<T, E>(receiver: super::downlink::Receiver<T>, worker: impl FnOnce(&super::downlink::Receiver<T>) -> Result<(), E>)...
+   |               ^^^
+
+warning: struct `Sender` is never constructed
+ --> packages/engine/src/libos/downlink.rs:8:19
+  |
+8 | pub(crate) struct Sender<T> {
+  |                   ^^^^^^
+
+warning: methods `stop`, `send`, `send_with_hook`, and `send_with_fault` are never used
+  --> packages/engine/src/libos/downlink.rs:20:19
+   |
+19 | impl<T> Sender<T> {
+   | ----------------- methods in this implementation
+20 |     pub(crate) fn stop(&self) {
+   |                   ^^^^
+...
+24 |     pub(crate) fn send(&self, message: T) -> Result<(), mpsc::SendError<T>> {
+   |                   ^^^^
+...
+29 |     fn send_with_hook(&self, message: T, after_check: impl FnOnce()) -> Result<(), mpsc::SendError<T>> {
+   |        ^^^^^^^^^^^^^^
+...
+34 |     fn send_with_fault(&self, message: T, instance_failed: impl FnOnce() -> bool, after_check: impl FnOnce()) -> Result<(), mpsc::Se...
+   |        ^^^^^^^^^^^^^^^
+
+warning: struct `Receiver` is never constructed
+  --> packages/engine/src/libos/downlink.rs:43:19
+   |
+43 | pub(crate) struct Receiver<T> {
+   |                   ^^^^^^^^
+
+warning: function `pair` is never used
+  --> packages/engine/src/libos/downlink.rs:48:4
+   |
+48 | fn pair<T>((sender, receiver): (mailbox::Sender<T>, mailbox::Receiver<T>)) -> (Sender<T>, Receiver<T>) {
+   |    ^^^^
+
+warning: function `channel` is never used
+  --> packages/engine/src/libos/downlink.rs:53:15
+   |
+53 | pub(crate) fn channel<T>() -> (Sender<T>, Receiver<T>) { pair(mailbox::channel()) }
+   |               ^^^^^^^
+
+warning: function `registered_channel` is never used
+  --> packages/engine/src/libos/downlink.rs:55:15
+   |
+55 | pub(crate) fn registered_channel<T>(domain: &Arc<FaultDomain>) -> Result<(Sender<T>, Receiver<T>), RegisterError> {
+   |               ^^^^^^^^^^^^^^^^^^
+
+warning: methods `close_admission`, `run`, `receive`, `try_receive`, `close_and_wait`, and `close_and_wait_with_clock` are never used
+  --> packages/engine/src/libos/downlink.rs:60:19
+   |
+59 | impl<T> Receiver<T> {
+   | ------------------- methods in this implementation
+60 |     pub(super) fn close_admission(&self) { self.admission.close(); }
+   |                   ^^^^^^^^^^^^^^^
+61 |     pub(crate) fn run<E>(self, worker: impl FnOnce(&Self) -> Result<(), E>) -> super::worker_exit::Exit<Self, E> {
+   |                   ^^^
+...
+65 |     pub(crate) fn receive(&self, shutdown: &std::sync::atomic::AtomicBool) -> Result<Option<T>, super::worker_wait::WorkerReceiveErr...
+   |                   ^^^^^^^
+...
+69 |     pub(crate) fn try_receive(&self) -> Result<Result<T, mpsc::TryRecvError>, super::worker_wait::WorkerTryReceiveError> {
+   |                   ^^^^^^^^^^^
+...
+74 |     pub(crate) fn close_and_wait(&self, deadline: crate::clock::Instant) -> Result<Closed<'_, T>, AdmissionWaitError> {
+   |                   ^^^^^^^^^^^^^^
+...
+78 |     fn close_and_wait_with_clock(&self, deadline: crate::clock::Instant, now: impl Fn() -> crate::clock::Instant) -> Result<Closed<'...
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: struct `Closed` is never constructed
+  --> packages/engine/src/libos/downlink.rs:90:19
+   |
+90 | pub(crate) struct Closed<'a, T> { receiver: &'a Receiver<T>, deadline: crate::clock::Instant }
+   |                   ^^^^^^
+
+warning: enum `DrainState` is never used
+  --> packages/engine/src/libos/downlink.rs:93:17
+   |
+93 | pub(crate) enum DrainState {
+   |                 ^^^^^^^^^^
+
+warning: struct `Drain` is never constructed
+   --> packages/engine/src/libos/downlink.rs:102:19
+    |
+102 | pub(crate) struct Drain<T> {
+    |                   ^^^^^
+
+warning: methods `drain`, `drain_with_clock`, and `drain_with_hook` are never used
+   --> packages/engine/src/libos/downlink.rs:109:19
+    |
+107 | impl<T> Closed<'_, T> {
+    | --------------------- methods in this implementation
+108 |     /// 移交队列中的消息，不执行消息或推断资产归属。
+109 |     pub(crate) fn drain(&self, budget: NonZeroUsize) -> Drain<T> {
+    |                   ^^^^^
+...
+113 |     fn drain_with_clock(&self, budget: NonZeroUsize, now: impl Fn() -> crate::clock::Instant) -> Drain<T> {
+    |        ^^^^^^^^^^^^^^^^
+...
+117 |     fn drain_with_hook(&self, budget: NonZeroUsize, now: impl Fn() -> crate::clock::Instant, after_message: impl Fn()) -> Drain<T> {
+    |        ^^^^^^^^^^^^^^^
+
+warning: constant `FACADE_RA_TOTAL` is never used
+  --> packages/engine/src/facade_slot/arena.rs:57:11
+   |
+57 | pub const FACADE_RA_TOTAL: usize = 11;
+   |           ^^^^^^^^^^^^^^^
+
+warning: struct `Accounts` is never constructed
+   --> packages/engine/src/facade_slot/arena.rs:123:12
+    |
+123 | pub struct Accounts {
+    |            ^^^^^^^^
+
+warning: methods `available` and `identity_holds` are never used
+   --> packages/engine/src/facade_slot/arena.rs:134:12
+    |
+132 | impl Accounts {
+    | ------------- methods in this implementation
+133 |     /// 可用账 = 空闲表 + bump 未及（§14.1 升格口径）。
+134 |     pub fn available(&self) -> u32 {
+    |            ^^^^^^^^^
+...
+138 |     pub fn identity_holds(&self, arena: &SlotArena) -> bool {
+    |            ^^^^^^^^^^^^^^
+
+warning: methods `set_join_dead_code`, `retired_gen_exhausted_word`, `facade_ra_total_word`, `is_free`, `accounts`, and `h1_try_lock` are never used
+   --> packages/engine/src/facade_slot/arena.rs:327:12
+    |
+211 | impl SlotArena {
+    | -------------- methods in this implementation
+...
+327 |     pub fn set_join_dead_code(&self, index: u32, code: u32) {
+    |            ^^^^^^^^^^^^^^^^^^
+...
+337 |     pub fn retired_gen_exhausted_word(&self) -> &AtomicU32 {
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+340 |     pub fn facade_ra_total_word(&self) -> &AtomicU32 {
+    |            ^^^^^^^^^^^^^^^^^^^^
+...
+369 |     pub fn is_free(&self, index: u32) -> bool {
+    |            ^^^^^^^
+...
+388 |     pub fn accounts(&self) -> Accounts {
+    |            ^^^^^^^^
+...
+444 |     pub fn h1_try_lock(&self) -> bool {
+    |            ^^^^^^^^^^^
+
+warning: function `all_slot_states` is never used
+  --> packages/engine/src/facade_slot/codec.rs:61:14
+   |
+61 | pub const fn all_slot_states() -> [SlotState; 8] {
+   |              ^^^^^^^^^^^^^^^
+
+warning: function `all_join_states` is never used
+  --> packages/engine/src/facade_slot/codec.rs:75:14
+   |
+75 | pub const fn all_join_states() -> [JoinState; 6] {
+   |              ^^^^^^^^^^^^^^^
+
+warning: methods `notify_spawn`, `terminate_child`, `seam_supervisor_msg_entry`, `seam_supervisor_after_acquire`, `seam_dead_after_acquire`, and `seam_recovery_before_lock` are never used
+  --> packages/engine/src/facade_slot/platform.rs:42:8
+   |
+29 | pub trait FacadePlatform: Sync {
+   |           -------------- methods in this trait
+...
+42 |     fn notify_spawn(&self, slot: u32, gen: u32, name: &str);
+   |        ^^^^^^^^^^^^
+...
+49 |     fn terminate_child(&self, worker_id: u32);
+   |        ^^^^^^^^^^^^^^^
+...
+59 |     fn seam_supervisor_msg_entry(&self, _slot: u32) {}
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+60 |     /// SEAM-C1：supervisor A1 成功后、A2 首次载荷 store 前（§13.1）。
+61 |     fn seam_supervisor_after_acquire(&self, _slot: u32) {}
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+62 |     /// D5 已领 join 载荷写权、尚未写 code（仅确定性交错测试）。
+63 |     fn seam_dead_after_acquire(&self, _join: u32) {}
+   |        ^^^^^^^^^^^^^^^^^^^^^^^
+64 |     /// 回收门链初检完成，H1取锁之前。
+65 |     fn seam_recovery_before_lock(&self) {}
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: struct `NullPlatform` is never constructed
+  --> packages/engine/src/facade_slot/platform.rs:69:12
+   |
+69 | pub struct NullPlatform;
+   |            ^^^^^^^^^^^^
+
+warning: function `facade_spawn_notify` is never used
+   --> packages/engine/src/facade_slot/platform.rs:106:12
+    |
+106 |         fn facade_spawn_notify(slot_index: u32, gen: u32, name_ptr: u32, name_len: u32);
+    |            ^^^^^^^^^^^^^^^^^^^
+
+warning: function `facade_terminate_child` is never used
+   --> packages/engine/src/facade_slot/platform.rs:117:12
+    |
+117 |         fn facade_terminate_child(worker_id: u32);
+    |            ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: enum `CancelOutcome` is never used
+   --> packages/engine/src/facade_slot/roles.rs:316:10
+    |
+316 | pub enum CancelOutcome {
+    |          ^^^^^^^^^^^^^
+
+warning: function `engine_cancel` is never used
+   --> packages/engine/src/facade_slot/roles.rs:323:8
+    |
+323 | pub fn engine_cancel<P: FacadePlatform>(
+    |        ^^^^^^^^^^^^^
+
+warning: variant `HardTrap` is never constructed
+  --> packages/engine/src/wasm_tombstone.rs:30:5
+   |
+28 | pub enum DeathKind {
+   |          --------- variant in this enum
+29 |     Panic = 1,
+30 |     HardTrap = 2,
+   |     ^^^^^^^^
+   |
+   = note: `DeathKind` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: struct `TombstoneSnapshot` is never constructed
+  --> packages/engine/src/wasm_tombstone.rs:39:12
+   |
+39 | pub struct TombstoneSnapshot {
+   |            ^^^^^^^^^^^^^^^^^
+
+warning: enum `TombstoneRead` is never used
+  --> packages/engine/src/wasm_tombstone.rs:47:10
+   |
+47 | pub enum TombstoneRead {
+   |          ^^^^^^^^^^^^^
+
+warning: enum `TombstoneInvalid` is never used
+  --> packages/engine/src/wasm_tombstone.rs:54:10
+   |
+54 | pub enum TombstoneInvalid {
+   |          ^^^^^^^^^^^^^^^^
+
+warning: method `read` is never used
+   --> packages/engine/src/wasm_tombstone.rs:105:12
+    |
+ 68 | impl TombstoneRecord {
+    | -------------------- method in this implementation
+...
+105 |     pub fn read(&self) -> TombstoneRead {
+    |            ^^^^
+
+warning: constant `QUEUE_CAPACITY` is never used
+   --> packages/engine/src/session/deferred_drop.rs:159:7
+    |
+159 | const QUEUE_CAPACITY: usize = 64;
+    |       ^^^^^^^^^^^^^^
+
+warning: function `produce_decision_output` is never used
+   --> packages/engine/src/session/pipeline/npc_tick_preparation.rs:932:27
+    |
+932 | pub(in crate::session) fn produce_decision_output(
+    |                           ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `can_prepare` is never used
+  --> packages/engine/src/session/pipeline/read_only_start.rs:35:15
+   |
+35 | pub(super) fn can_prepare(session: &GameSession) -> bool {
+   |               ^^^^^^^^^^^
+
+warning: function `prepare` is never used
+  --> packages/engine/src/session/pipeline/read_only_start.rs:45:15
+   |
+45 | pub(super) fn prepare(session: &GameSession) -> ReadOnlyStart {
+   |               ^^^^^^^
+
+warning: function `prepare_with_observer` is never used
+   --> packages/engine/src/session/pipeline/read_only_start.rs:134:4
+    |
+134 | fn prepare_with_observer(
+    |    ^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `map_worker_receive_error` is never used
+  --> packages/engine/src/runtime/worker_inbox.rs:50:4
+   |
+50 | fn map_worker_receive_error(who: WorkerId, error: crate::libos::worker_wait::WorkerReceiveError) -> RuntimeError {
+   |    ^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: enum `OwnedWorkerExit` is never used
+  --> packages/engine/src/runtime/world.rs:61:6
+   |
+61 | enum OwnedWorkerExit {
+   |      ^^^^^^^^^^^^^^^
+
+warning: associated functions `group` and `desk` are never used
+  --> packages/engine/src/runtime/world.rs:73:8
+   |
+72 | impl OwnedWorkerExit {
+   | -------------------- associated functions in this implementation
+73 |     fn group(
+   |        ^^^^^
+...
+81 |     fn desk(
+   |        ^^^^
+
+warning: `engine` (lib) generated 65 warnings (run `cargo fix --lib -p engine` to apply 6 suggestions)
+warning: `engine` (test "runtime_diagnostics_d2") generated 1 warning (1 duplicate)
+warning: `engine` (test "stock_identity_view") generated 1 warning (1 duplicate)
+warning: `engine` (test "company_decision_session") generated 1 warning (1 duplicate)
+warning: `engine` (test "runtime_flip_batch4") generated 1 warning (1 duplicate)
+warning: `engine` (test "technical_memory") generated 1 warning (1 duplicate)
+warning: `engine` (test "calendar") generated 1 warning (1 duplicate)
+warning: `engine` (test "plan_identity_behavior") generated 1 warning (1 duplicate)
+warning: `engine` (test "account") generated 1 warning (1 duplicate)
+warning: `engine` (test "auction") generated 1 warning (1 duplicate)
+warning: `engine` (test "publications") generated 1 warning (1 duplicate)
+warning: `engine` (test "protocol_civil") generated 1 warning (1 duplicate)
+warning: `engine` (test "experience") generated 1 warning (1 duplicate)
+warning: `engine` (test "mixed_calendar_feedback") generated 1 warning (1 duplicate)
+warning: `engine` (test "personal_full_validation") generated 1 warning (1 duplicate)
+warning: `engine` (test "config") generated 1 warning (1 duplicate)
+warning: `engine` (test "company_source_selection") generated 1 warning (1 duplicate)
+warning: `engine` (test "insurance_accounting") generated 1 warning (1 duplicate)
+warning: `engine` (test "company_query_contract") generated 1 warning (1 duplicate)
+warning: `engine` (test "urgency") generated 1 warning (1 duplicate)
+warning: `engine` (test "session_company_assembly") generated 1 warning (1 duplicate)
+warning: `engine` (test "fundamental_beliefs") generated 1 warning (1 duplicate)
+warning: `engine` (test "company_opening") generated 1 warning (1 duplicate)
+warning: `engine` (test "strategy_state_adversarial") generated 1 warning (1 duplicate)
+warning: `engine` (test "company_catalog_view") generated 1 warning (1 duplicate)
+warning: `engine` (test "runtime_diagnostics_d1") generated 1 warning (1 duplicate)
+warning: `engine` (test "step_skeleton") generated 1 warning (1 duplicate)
+warning: `engine` (test "save_contract") generated 1 warning (1 duplicate)
+warning: `engine` (test "protocol_runtime_delta") generated 1 warning (1 duplicate)
+warning: `engine` (test "runtime_flip_batch3") generated 1 warning (1 duplicate)
+warning: `engine` (test "behavior") generated 1 warning (1 duplicate)
+warning: `engine` (test "protocol_acceptance") generated 1 warning (1 duplicate)
+warning: `engine` (test "attention_discovery") generated 1 warning (1 duplicate)
+warning: `engine` (test "event_mapping_contract") generated 1 warning (1 duplicate)
+warning: `engine` (test "orderbook") generated 1 warning (1 duplicate)
+warning: `engine` (test "plan_identity") generated 1 warning (1 duplicate)
+warning: `engine` (test "compute") generated 1 warning (1 duplicate)
+warning: `engine` (test "mixed_calendar_c2c_feedback") generated 1 warning (1 duplicate)
+warning: `engine` (test "information_acquisition") generated 1 warning (1 duplicate)
+warning: `engine` (test "company_public_financials") generated 1 warning (1 duplicate)
+warning: `engine` (test "extraction_replay") generated 1 warning (1 duplicate)
+warning: `engine` (test "company_history_sharing") generated 1 warning (1 duplicate)
+warning: `engine` (test "tick_protocol") generated 1 warning (1 duplicate)
+warning: `engine` (test "company_scenarios") generated 1 warning (1 duplicate)
+warning: `engine` (test "strategy_state") generated 1 warning (1 duplicate)
+warning: `engine` (test "bank_accounting") generated 1 warning (1 duplicate)
+warning: `engine` (test "runtime_semantics_anchor") generated 1 warning (1 duplicate)
+warning: `engine` (test "runtime_flip_batch2") generated 1 warning (1 duplicate)
+warning: `engine` (test "session_company_read_views") generated 1 warning (1 duplicate)
+warning: `engine` (test "analysis_profiles") generated 1 warning (1 duplicate)
+warning: `engine` (test "protocol_projection") generated 1 warning (1 duplicate)
+warning: `engine` (test "runtime_diagnostics_contract") generated 1 warning (1 duplicate)
+warning: `engine` (test "diagnostic_absence") generated 1 warning (1 duplicate)
+warning: `engine` (test "observations") generated 1 warning (1 duplicate)
+warning: `engine` (test "plan_allocation") generated 1 warning (1 duplicate)
+warning: `engine` (test "policy_manifest") generated 1 warning (1 duplicate)
+warning: `engine` (test "mixed_calendar_c2c") generated 1 warning (1 duplicate)
+warning: `engine` (test "company_state_domain_strict") generated 1 warning (1 duplicate)
+warning: `engine` (test "company_capital_restore") generated 1 warning (1 duplicate)
+warning: `engine` (test "company_player_commands") generated 1 warning (1 duplicate)
+warning: `engine` (test "company_r4_tax_production") generated 1 warning (1 duplicate)
+warning: `engine` (test "experience_feedback") generated 1 warning (1 duplicate)
+warning: `engine` (test "wasm_wait_primitives") generated 1 warning (1 duplicate)
+warning: `engine` (test "scope_boundary") generated 1 warning (1 duplicate)
+warning: `engine` (test "session") generated 1 warning (1 duplicate)
+warning: `engine` (test "tick_frame_commit") generated 1 warning (1 duplicate)
+warning: `engine` (test "company_event_contract") generated 1 warning (1 duplicate)
+warning: `engine` (test "industry_reports") generated 1 warning (1 duplicate)
+warning: `engine` (test "runtime_flip_batch5") generated 1 warning (1 duplicate)
+warning: `engine` (test "audit_restore_guards") generated 1 warning (1 duplicate)
+warning: `engine` (test "civil_clock") generated 1 warning (1 duplicate)
+warning: `engine` (test "runtime_flip_batch1") generated 1 warning (1 duplicate)
+warning: `engine` (test "real_estate_accounting") generated 1 warning (1 duplicate)
+warning: `engine` (test "session_company_foundation") generated 1 warning (1 duplicate)
+warning: `engine` (test "strategy") generated 1 warning (1 duplicate)
+warning: `engine` (test "protocol_host_restore") generated 1 warning (1 duplicate)
+warning: `engine` (test "pipeline_contract") generated 1 warning (1 duplicate)
+warning: `engine` (test "accounting") generated 1 warning (1 duplicate)
+warning: `engine` (test "plans") generated 1 warning (1 duplicate)
+warning: `engine` (test "market") generated 1 warning (1 duplicate)
+warning: `engine` (test "money") generated 1 warning (1 duplicate)
+warning: `engine` (test "consolidation") generated 1 warning (1 duplicate)
+warning: `engine` (test "verification_evidence") generated 1 warning (1 duplicate)
+warning: `engine` (test "company_r4_production_gap") generated 1 warning (1 duplicate)
+warning: `engine` (test "company_state") generated 1 warning (1 duplicate)
+warning: `engine` (test "scale_restore_limits") generated 1 warning (1 duplicate)
+warning: `engine` (test "industrial_accounting") generated 1 warning (1 duplicate)
+warning: `engine` (test "company_operations") generated 1 warning (1 duplicate)
+Some errors have detailed explanations: E0046, E0308, E0432, E0433, E0599.
+For more information about an error, try `rustc --explain E0046`.
+warning: `engine` (lib test) generated 11 warnings (8 duplicates)
+error: could not compile `engine` (lib test) due to 52 previous errors; 11 warnings emitted

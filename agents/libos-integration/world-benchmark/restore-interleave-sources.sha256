@@ -1,0 +1,3 @@
+b3326bbcd4cd7f70c7482f566386b9d189ee87fe153a544ef07cefe316cbb619  agents/web-architecture-diagnosis/bare-world/src/bin/restore_probe.rs
+baef54da35b92068ef698f0f67d2b05a3d67c44d2c2474883a5c6eceb974b68d  agents/web-architecture-diagnosis/bare-world/Cargo.lock
+544c55ecd82c53d101ab060e1e5810e58bd367c4badbe0b033244e041fa7b66f  agents/libos-integration/world-benchmark/restore-run.mjs

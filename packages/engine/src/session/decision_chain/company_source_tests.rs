@@ -256,6 +256,35 @@ fn legacy_notice_three_group_global_local_route_keeps_personal_owner() {
 }
 
 #[test]
+#[cfg(not(target_family = "wasm"))]
+fn 非空信息回执后宿主故障不得部分安装_session_个人态() {
+    fn prepared() -> (GameSession, crate::runtime::drive::RuntimeDriver, Vec<AccountId>) {
+        let mut setup = probe_session().state.setup.clone();
+        setup.npcs.inst_count = 5;
+        setup.npcs.retail_count = 1;
+        let mut session = GameSession::new(setup, 42).unwrap();
+        let ids = prepare_company_source_personal_inputs(&mut session, false);
+        let mut driver = crate::runtime::drive::RuntimeDriver::from_session_grouped(&mut session, 3).unwrap();
+        driver.step_frame_equivalent(&mut session).unwrap();
+        (session, driver, ids)
+    }
+    let (mut control, mut control_driver, control_ids) = prepared();
+    assert_eq!(control_driver.deliver_information_for_test(&mut control).unwrap(), control_ids.len());
+    assert!(control_ids.iter().all(|id| control.state.belief_participants[id].information().acquired_count() > 0), "对照组必须实际安装非空公开信息");
+
+    let (mut session, mut driver, ids) = prepared();
+    let before: Vec<_> = ids.iter().map(|id| session.state.belief_participants[id].clone()).collect();
+    let before_attention = session.runtime_attention_full_states();
+    driver.inject_delivery_host_abort_for_test(1);
+    let error = driver.deliver_information_for_test(&mut session).expect_err("部分回执后的宿主故障必须失败");
+    assert!(error.contains("HostAborted"));
+    assert!(driver.first_delivery_reply_updates_for_test().is_some_and(|count| count > 0), "故障前必须实际收到非空更新");
+    let after: Vec<_> = ids.iter().map(|id| session.state.belief_participants[id].clone()).collect();
+    assert_eq!(after, before, "部分组更新不得写回 Session");
+    assert_eq!(session.runtime_attention_full_states(), before_attention, "部分组注意力不得写回 Session");
+}
+
+#[test]
 fn selected_company_source_root_parts_keep_independent_numeric_namespaces_and_typed_missing() {
     let company = crate::company::CompanyId(17);
     let stock = StockId(0);

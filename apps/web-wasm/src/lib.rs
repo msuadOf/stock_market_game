@@ -2,11 +2,11 @@
 //!
 //! native 缺省使用 std::thread 运行时（ADR-0043）；WASM 的 `World` 也保留，
 //! worker 创建经 `thread_facade` 接入。WASM engine 内部在宿主未设置 override 时
-//! 缺省走串行管线；Web 产品宿主在首次读取前显式设置 `runtimeOverride: true` 并
-//! 传入 `waitSettings`，`runtimeOverride: false` 会被拒绝。WASM 多 worker 产物由
-//! wasm32 nightly build 配置（`+atomics`、`build-std`）构建，宿主以 COOP/COEP 与
-//! 共享内存门禁提供运行环境。本注释描述当前接线；完整 WASM cfg、ABI、`World` 与
-//! Browser 验收仍以对应验收记录为准，不在此宣称通过。
+//! 缺省走串行管线；Web 产品宿主在首次读取前显式设置 `runtimeOverride: true`，并
+//! 初始化 `libos_host_fault_layout` 对应的共享故障域；`runtimeOverride: false` 会被拒绝。
+//! WASM 多 worker 产物由 wasm32 nightly build 配置（`+atomics`、`build-std`）构建，
+//! 宿主以 COOP/COEP 与共享内存门禁提供运行环境。本注释描述当前接线；完整 WASM cfg、
+//! ABI、`World` 与 Browser 验收仍以对应验收记录为准，不在此宣称通过。
 //!
 //! GameSession 不可序列化（含 `Box<dyn Strategy + Send + Sync>`），故存于 thread_local
 //! 句柄注册表；仅 `Snapshot`/`Event`/`Intent`/`SessionSetup` 经 serde-wasm-bindgen 跨界。
@@ -413,10 +413,7 @@ impl SessionRegistry {
     }
 }
 
-/// Fatal engine failure delivered across the WASM boundary.
-///
-/// This deliberately mirrors ADR-0010's host-level contract instead of exposing a
-/// Rust display string that JavaScript would have to classify heuristically.
+/// 经 WASM 边界交付的致命错误；机器码遵循 ADR-0010，原始 Display 与 source 链供诊断使用。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct HostFailure {
     pub code: &'static str,
@@ -451,101 +448,60 @@ pub struct FailureCause {
     cause: Option<Box<FailureCause>>,
 }
 
-fn failure_description(error: &(dyn std::error::Error + 'static)) -> (&'static str, &'static str) {
+fn failure_code(error: &(dyn std::error::Error + 'static)) -> &'static str {
     if let Some(error) = error.downcast_ref::<SessionError>() {
         return match error {
-            SessionError::ReportCorrectionDayEnd(source) => failure_description(source),
-            SessionError::CivilInformation(_) => (
-                "CIVIL_INFORMATION_FAILED",
-                "自然日信息事务失败（内部详情已脱敏）",
-            ),
-            SessionError::Closing(_) => (
-                "SESSION_CLOSING_FAILED",
-                "自然日日终封账失败（私有详情已脱敏）",
-            ),
-            SessionError::ReportCorrectionRestore(_) => (
-                "SESSION_STATE_INVALID",
-                "更正完成事实与真实会计和公开版本不一致（原始详情已脱敏）",
-            ),
+            SessionError::ReportCorrectionDayEnd(source) => failure_code(source),
+            SessionError::CivilInformation(_) => "CIVIL_INFORMATION_FAILED",
+            SessionError::Closing(_) => "SESSION_CLOSING_FAILED",
+            SessionError::ReportCorrectionRestore(_) => "SESSION_STATE_INVALID",
             SessionError::InvalidSave(fault)
                 if fault.code == engine::error::SAVE_TARGET_DAY_NOT_READY =>
             {
-                (
-                    "SAVE_TARGET_DAY_NOT_READY",
-                    "目标自然日尚未完成日终，当前日存档不可用（原始详情已脱敏）",
-                )
+                "SAVE_TARGET_DAY_NOT_READY"
             }
-            SessionError::InvalidSave(_) => (
-                "SESSION_STATE_INVALID",
-                "日终存档或协议状态校验失败（原始详情已脱敏）",
-            ),
-            SessionError::Step(_) => (
-                "INVARIANT_VIOLATION",
-                "引擎不变量校验失败（原始详情已脱敏）",
-            ),
-            _ => ("SESSION_OPERATION_FAILED", "会话操作失败（原始详情已脱敏）"),
+            SessionError::InvalidSave(_) => "SESSION_STATE_INVALID",
+            SessionError::Step(_) => "INVARIANT_VIOLATION",
+            _ => "SESSION_OPERATION_FAILED",
         };
     }
     if let Some(error) = error.downcast_ref::<engine::session::ReportCorrectionDayEndError>() {
         return if error.classification() == engine::company::CompanyErrorClass::SystemState {
-            (
-                "REPORT_CORRECTION_FAILED",
-                "报表更正日终准备失败（内部详情已脱敏）",
-            )
+            "REPORT_CORRECTION_FAILED"
         } else {
-            (
-                "REPORT_CORRECTION_REJECTED",
-                "报表更正未满足提交条件（内部详情已脱敏）",
-            )
+            "REPORT_CORRECTION_REJECTED"
         };
     }
     if error.is::<engine::session::CivilInformationError>() {
-        return (
-            "CIVIL_INFORMATION_FAILED",
-            "自然日信息事务失败（内部详情已脱敏）",
-        );
+        return "CIVIL_INFORMATION_FAILED";
     }
     if let Some(error) = error.downcast_ref::<engine::accounting::closing::ClosingError>() {
         return match error {
-            engine::accounting::closing::ClosingError::Accounting(_) => (
-                "CLOSING_ACCOUNTING_FAILED",
-                "日终封账的会计处理失败（私有详情已脱敏）",
-            ),
-            engine::accounting::closing::ClosingError::Report(_) => (
-                "CLOSING_REPORT_FAILED",
-                "日终封账的报表处理失败（私有详情已脱敏）",
-            ),
-            _ => (
-                "CLOSING_VALIDATION_FAILED",
-                "日终封账校验失败（私有详情已脱敏）",
-            ),
+            engine::accounting::closing::ClosingError::Accounting(_) => "CLOSING_ACCOUNTING_FAILED",
+            engine::accounting::closing::ClosingError::Report(_) => "CLOSING_REPORT_FAILED",
+            _ => "CLOSING_VALIDATION_FAILED",
         };
     }
     if let Some(error) = error.downcast_ref::<engine::accounting::AccountingError>() {
         return match error {
-            engine::accounting::AccountingError::AmountOverflow { .. } => (
-                "ACCOUNTING_AMOUNT_OVERFLOW",
-                "公司会计金额运算溢出（操作数已脱敏）",
-            ),
-            _ => (
-                "ACCOUNTING_VALIDATION_FAILED",
-                "公司会计校验失败（私有详情已脱敏）",
-            ),
+            engine::accounting::AccountingError::AmountOverflow { .. } => {
+                "ACCOUNTING_AMOUNT_OVERFLOW"
+            }
+            _ => "ACCOUNTING_VALIDATION_FAILED",
         };
     }
     if error.is::<engine::session::StepFatal>() {
-        return (
-            "INVARIANT_VIOLATION",
-            "引擎不变量校验失败（原始详情已脱敏）",
-        );
+        return "INVARIANT_VIOLATION";
     }
     if error.is::<engine::session::ReportCorrectionRestoreError>() {
-        return (
-            "REPORT_CORRECTION_RESTORE_FAILED",
-            "报表更正存档关联校验失败（原始详情已脱敏）",
-        );
+        return "REPORT_CORRECTION_RESTORE_FAILED";
     }
-    ("ERROR_DETAILS_REDACTED", "原始错误类型未识别，详情未公开")
+    // 保留历史机器码以兼容现有消费者；未知类型的原始 Display 同样完整交付。
+    "ERROR_DETAILS_REDACTED"
+}
+
+fn failure_description(error: &(dyn std::error::Error + 'static)) -> (&'static str, String) {
+    (failure_code(error), error.to_string())
 }
 
 fn failure_cause(error: &(dyn std::error::Error + 'static)) -> Option<Box<FailureCause>> {
@@ -553,7 +509,7 @@ fn failure_cause(error: &(dyn std::error::Error + 'static)) -> Option<Box<Failur
         let (code, message) = failure_description(source);
         Box::new(FailureCause {
             code,
-            message: message.to_owned(),
+            message,
             cause: failure_cause(source),
         })
     })
@@ -611,14 +567,14 @@ impl HostFailure {
         let engine::session::StepFatal::InvariantViolation { ref location, .. } = error;
         Self {
             code: "STEP_FATAL",
-            message: failure_description(&error).1.to_owned(),
+            message: failure_description(&error).1,
             r#where: location.clone(),
             cause: failure_cause(&error),
             context: FailureContext::new("step"),
             recoverable: false,
             recovery_actions: vec![
                 "停止当前会话；重新打开上一份有效日终存档或新局",
-                "复制脱敏错误详情反馈",
+                "复制原始错误详情反馈",
             ],
         }
     }
@@ -628,14 +584,14 @@ impl HostFailure {
             SessionError::Step(fatal) => Self::step(fatal),
             other => Self {
                 code: "CIVIL_DAY_SETTLEMENT_FAILED",
-                message: failure_description(&other).1.to_owned(),
+                message: failure_description(&other).1,
                 r#where: "web-wasm.end_civil_day_update".into(),
                 cause: failure_cause(&other),
                 context: FailureContext::new("endCivilDay"),
                 recoverable: false,
                 recovery_actions: vec![
                     "停止当前会话；重新打开上一份有效日终存档或新局",
-                    "复制脱敏错误详情反馈",
+                    "复制原始错误详情反馈",
                 ],
             },
         }
@@ -1116,6 +1072,18 @@ pub fn restore_prepared() -> Result<u32, JsValue> {
         .map_err(host_session_init_error_to_js)
 }
 
+/// 仅消费指定 token 已完成接收并预检的存档。
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen]
+pub fn restore_prepared_chunks(token: u32) -> Result<u32, JsValue> {
+    let slot = PREPARED_RESTORE
+        .with(|prepared| prepared.borrow_mut().take_chunks(token))
+        .map_err(JsValue::from_str)?;
+    REGISTRY
+        .with(|registry| registry.borrow_mut().restore(&slot))
+        .map_err(host_session_init_error_to_js)
+}
+
 /// 取消尚未消费的初始恢复并释放存档。
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen]
@@ -1183,7 +1151,14 @@ fn facade_slot_capacity_for_restore_json(save_json: &str) -> Result<u32, Restore
 
 #[cfg(any(target_family = "wasm", test))]
 fn decode_restore_and_capacity(save_json: &str) -> Result<(SaveSlot, u32), RestoreFacadeInitError> {
-    let save: SaveSlot = serde_json::from_str(save_json).map_err(RestoreFacadeInitError::Decode)?;
+    decode_restore_bytes_and_capacity(save_json.as_bytes())
+}
+
+#[cfg(any(target_family = "wasm", test))]
+fn decode_restore_bytes_and_capacity(
+    bytes: &[u8],
+) -> Result<(SaveSlot, u32), RestoreFacadeInitError> {
+    let save: SaveSlot = serde_json::from_slice(bytes).map_err(RestoreFacadeInitError::Decode)?;
     require_wasm_runtime().map_err(RestoreFacadeInitError::WasmRuntimeRequired)?;
     let (groups, desks) = save
         .restore_runtime_topology()
@@ -1194,9 +1169,23 @@ fn decode_restore_and_capacity(save_json: &str) -> Result<(SaveSlot, u32), Resto
 }
 
 #[cfg(any(target_family = "wasm", test))]
-#[derive(Default)]
 struct PreparedRestore {
     slot: Option<SaveSlot>,
+    slot_token: Option<u32>,
+    chunks: Option<(u32, usize, Vec<u8>)>,
+    next_token: Option<u32>,
+}
+
+#[cfg(any(target_family = "wasm", test))]
+impl Default for PreparedRestore {
+    fn default() -> Self {
+        Self {
+            slot: None,
+            slot_token: None,
+            chunks: None,
+            next_token: Some(1),
+        }
+    }
 }
 
 #[cfg(any(target_family = "wasm", test))]
@@ -1206,7 +1195,7 @@ impl PreparedRestore {
         json: &str,
         initialize: impl FnOnce(u32) -> Result<(), &'static str>,
     ) -> Result<u32, RestoreFacadeInitError> {
-        if self.slot.is_some() {
+        if self.slot.is_some() || self.chunks.is_some() {
             return Err(RestoreFacadeInitError::Capacity("已存在待消费的恢复档"));
         }
         let (slot, capacity) = decode_restore_and_capacity(json)?;
@@ -1214,11 +1203,98 @@ impl PreparedRestore {
         self.slot = Some(slot);
         Ok(capacity)
     }
+    fn begin_chunks(&mut self, total: usize) -> Result<u32, &'static str> {
+        if self.slot.is_some() || self.chunks.is_some() {
+            return Err("已存在待消费或正在接收的恢复档");
+        }
+        let token = self.next_token.ok_or("恢复档接收 token 已耗尽")?;
+        let mut bytes = Vec::new();
+        bytes
+            .try_reserve_exact(total)
+            .map_err(|_| "无法为恢复档输入分配声明的空间")?;
+        self.next_token = token.checked_add(1);
+        self.chunks = Some((token, total, bytes));
+        Ok(token)
+    }
+    fn push_chunk(&mut self, token: u32, chunk: &[u8]) -> Result<(), &'static str> {
+        let Some((owner, total, bytes)) = &mut self.chunks else {
+            return Err("尚未开始接收恢复档");
+        };
+        if *owner != token {
+            return Err("恢复档接收 token 不匹配");
+        }
+        if chunk.len() > total.saturating_sub(bytes.len()) {
+            self.chunks = None;
+            return Err("恢复档分块长度超过声明总长");
+        }
+        bytes.extend_from_slice(chunk);
+        Ok(())
+    }
+    fn finish_chunks(
+        &mut self,
+        token: u32,
+        initialize: impl FnOnce(u32) -> Result<(), &'static str>,
+    ) -> Result<u32, RestoreFacadeInitError> {
+        if !self
+            .chunks
+            .as_ref()
+            .is_some_and(|(owner, _, _)| *owner == token)
+        {
+            return Err(RestoreFacadeInitError::Capacity(
+                "恢复档接收 token 不匹配或不存在",
+            ));
+        }
+        let (_, total, bytes) = self
+            .chunks
+            .take()
+            .ok_or(RestoreFacadeInitError::Capacity("尚未开始接收恢复档"))?;
+        if bytes.len() != total {
+            return Err(RestoreFacadeInitError::Capacity(
+                "恢复档分块长度未达到声明总长",
+            ));
+        }
+        let decoded = decode_restore_bytes_and_capacity(&bytes);
+        drop(bytes);
+        let (slot, capacity) = decoded?;
+        initialize(capacity).map_err(RestoreFacadeInitError::Capacity)?;
+        self.slot = Some(slot);
+        self.slot_token = Some(token);
+        Ok(capacity)
+    }
     fn take(&mut self) -> Result<SaveSlot, &'static str> {
+        if self.slot_token.is_some() {
+            return Err("分块恢复档必须使用所属 token 消费");
+        }
         self.slot.take().ok_or("没有待消费的恢复档")
+    }
+    fn take_chunks(&mut self, token: u32) -> Result<SaveSlot, &'static str> {
+        if self.slot_token != Some(token) {
+            return Err("恢复档消费 token 不匹配或不存在");
+        }
+        let slot = self.slot.take().ok_or("没有待消费的恢复档")?;
+        self.slot_token = None;
+        Ok(slot)
+    }
+    fn clear_chunks(&mut self, token: u32) -> bool {
+        if self
+            .chunks
+            .as_ref()
+            .is_some_and(|(owner, _, _)| *owner == token)
+        {
+            self.chunks = None;
+            true
+        } else if self.slot_token == Some(token) {
+            self.slot = None;
+            self.slot_token = None;
+            true
+        } else {
+            false
+        }
     }
     fn clear(&mut self) {
         self.slot = None;
+        self.slot_token = None;
+        self.chunks = None;
     }
 }
 
@@ -1244,19 +1320,62 @@ pub fn facade_slot_init_for_setup(setup: JsValue) -> Result<(), JsValue> {
 pub fn facade_slot_init_for_restore_json(save_json: String) -> Result<(), JsValue> {
     let capacity = PREPARED_RESTORE
         .with(|prepared| prepared.borrow_mut().prepare(&save_json, |_| Ok(())))
-        .map_err(|error| match error {
-            RestoreFacadeInitError::Decode(error) => JsValue::from_str(&error.to_string()),
-            RestoreFacadeInitError::WasmRuntimeRequired(error) => {
-                JsValue::from_str(&error.to_string())
-            }
-            RestoreFacadeInitError::Topology(error) => session_error_to_js(error),
-            RestoreFacadeInitError::Capacity(error) => JsValue::from_str(error),
-        })?;
+        .map_err(restore_facade_error_to_js)?;
+    initialize_prepared_facade(capacity)
+}
+
+#[cfg(target_family = "wasm")]
+fn restore_facade_error_to_js(error: RestoreFacadeInitError) -> JsValue {
+    match error {
+        RestoreFacadeInitError::Decode(error) => JsValue::from_str(&error.to_string()),
+        RestoreFacadeInitError::WasmRuntimeRequired(error) => JsValue::from_str(&error.to_string()),
+        RestoreFacadeInitError::Topology(error) => session_error_to_js(error),
+        RestoreFacadeInitError::Capacity(error) => JsValue::from_str(error),
+    }
+}
+
+#[cfg(target_family = "wasm")]
+fn initialize_prepared_facade(capacity: u32) -> Result<(), JsValue> {
     if let Err(error) = facade_slot_init(capacity) {
         clear_prepared_restore();
         return Err(error);
     }
     Ok(())
+}
+
+/// 声明 UTF-8 JSON 字节总长并为分块输入安全预留空间。
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen]
+pub fn facade_restore_chunks_begin(total_bytes: u32) -> Result<u32, JsValue> {
+    PREPARED_RESTORE
+        .with(|prepared| prepared.borrow_mut().begin_chunks(total_bytes as usize))
+        .map_err(JsValue::from_str)
+}
+
+/// 按顺序追加分块；超过声明总长时丢弃本次输入。
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen]
+pub fn facade_restore_chunks_push(token: u32, chunk: &[u8]) -> Result<(), JsValue> {
+    PREPARED_RESTORE
+        .with(|prepared| prepared.borrow_mut().push_chunk(token, chunk))
+        .map_err(JsValue::from_str)
+}
+
+/// 完成接收、验证完整存档前缀并初始化 facade；完整恢复仍由 restore_prepared_chunks 使用同一 token 执行。
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen]
+pub fn facade_restore_chunks_finish(token: u32) -> Result<(), JsValue> {
+    let capacity = PREPARED_RESTORE
+        .with(|prepared| prepared.borrow_mut().finish_chunks(token, |_| Ok(())))
+        .map_err(restore_facade_error_to_js)?;
+    initialize_prepared_facade(capacity)
+}
+
+/// 仅取消指定 token 所属输入或待消费档；旧 token 不影响当前所有者。
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen]
+pub fn facade_restore_chunks_clear(token: u32) -> bool {
+    PREPARED_RESTORE.with(|prepared| prepared.borrow_mut().clear_chunks(token))
 }
 
 #[cfg(test)]
@@ -1336,39 +1455,6 @@ pub fn facade_slot_layout() -> Result<JsValue, JsValue> {
 #[wasm_bindgen]
 pub fn facade_child_trampoline(slot: u32, gen: u32, worker_id: u32) -> u32 {
     engine::thread_facade::child_trampoline(slot, gen, worker_id)
-}
-
-/// wasm 收件显式一次初始化：四参数单位均为微秒；无默认策略，不允许同 memory 重置。
-#[cfg(target_family = "wasm")]
-#[wasm_bindgen]
-pub fn init_wasm_wait(
-    spin_us: u32,
-    quiet_us: u32,
-    fine_us: u32,
-    coarse_us: u32,
-) -> Result<(), JsValue> {
-    engine::runtime::watchdog::init_wasm_wait(spin_us, quiet_us, fine_us, coarse_us)
-        .map_err(|error| JsValue::from_str(&error))
-}
-
-/// 返回同一 memory 的单向宿主 abort 字布局；只允许 Uint8Array 原子写入 1，bytes 必须为 1。
-#[cfg(target_family = "wasm")]
-#[wasm_bindgen]
-pub fn wasm_wait_abort_layout() -> Result<JsValue, JsValue> {
-    let layout = engine::runtime::watchdog::wasm_wait_abort_layout()
-        .map_err(|error| JsValue::from_str(&error))?;
-    serde_wasm_bindgen::to_value(&layout)
-        .map_err(|error| JsValue::from_str(&format!("wasm abort 布局序列化失败：{error}")))
-}
-
-/// 返回同一 memory 的单向 Worker 死亡字布局；宿主只能观察，不能写入。
-#[cfg(target_family = "wasm")]
-#[wasm_bindgen]
-pub fn wasm_wait_death_layout() -> Result<JsValue, JsValue> {
-    let layout = engine::runtime::watchdog::wasm_wait_death_layout()
-        .map_err(|error| JsValue::from_str(&error))?;
-    serde_wasm_bindgen::to_value(&layout)
-        .map_err(|error| JsValue::from_str(&format!("wasm death 布局序列化失败：{error}")))
 }
 
 /// WASM 主 Worker 的预登记记录；身份值在单个共享 memory 内唯一。
@@ -1668,83 +1754,127 @@ pub fn verification_world_stop_run(mode: u32) -> Result<String, JsValue> {
 }
 
 #[cfg(all(target_family = "wasm", feature = "verification-harness"))]
-thread_local! {
-    static WATCHDOG_PROBE: RefCell<Option<std::sync::Arc<engine::runtime::watchdog_verification::WatchdogProbe>>> =
-        const { RefCell::new(None) };
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LibosVerificationLayout {
+    session: u32,
+    wait_word: u32,
+    active: u32,
 }
 
-/// 验证专用：首次实际收件前准备共享阶段字，不替代生产 watchdog。
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LibosVerificationReceive {
+    status: u32,
+    value: u32,
+    waited_ms: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    phase: Option<u32>,
+}
+
+/// 验证专用：创建真实 LibOS mailbox（mode 0）或 downlink（mode 1）会话。
+/// session 是 Rust registry 校验的 opaque ID；观察地址只在 finish 前有效。
 #[cfg(all(target_family = "wasm", feature = "verification-harness"))]
 #[wasm_bindgen]
-pub fn verification_watchdog_prepare(mode: u32) -> Result<u32, JsValue> {
-    WATCHDOG_PROBE.with(|store| {
-        let mut store = store.borrow_mut();
-        if store.is_some() {
-            return Err(JsValue::from_str("watchdog probe 已准备，必须换独立实例"));
-        }
-        let probe = std::sync::Arc::new(
-            engine::runtime::watchdog_verification::WatchdogProbe::new(mode)
-                .map_err(|error| JsValue::from_str(&error))?,
-        );
-        engine::runtime::watchdog_verification::WatchdogProbe::install_panic_probe(&probe);
-        let address = probe.address();
-        *store = Some(probe);
-        Ok(address)
+pub fn libos_verification_prepare(mode: u32) -> Result<JsValue, JsValue> {
+    let layout = engine::verification::prepare(mode).map_err(|error| JsValue::from_str(&error))?;
+    to_js(&LibosVerificationLayout {
+        session: layout.session,
+        wait_word: layout.wait_word,
+        active: layout.active,
     })
 }
 
-/// 验证专用：执行三种原生产入口中的一种，保留 FIFO 和排空后断连断言。
+/// 验证专用：向真实 LibOS 验证通道发送消息。
 #[cfg(all(target_family = "wasm", feature = "verification-harness"))]
 #[wasm_bindgen]
-pub fn verification_watchdog_run(mode: u32) -> Result<String, JsValue> {
-    WATCHDOG_PROBE.with(|store| {
-        let store = store.borrow();
-        let probe = store
-            .as_ref()
-            .ok_or_else(|| JsValue::from_str("watchdog probe 尚未准备"))?;
-        engine::runtime::watchdog_verification::verify_watchdog_recv(mode, probe)
-            .map_err(|error| JsValue::from_str(&error))
+pub fn libos_verification_send(session: u32, value: u32) -> Result<(), JsValue> {
+    engine::verification::send(session, value).map_err(|error| JsValue::from_str(&error))
+}
+
+/// 验证专用：关闭 mailbox 最后一个发送端，以检查缓冲消息排空后的断连。
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+#[wasm_bindgen]
+pub fn libos_verification_disconnect(session: u32) -> Result<(), JsValue> {
+    engine::verification::disconnect(session).map_err(|error| JsValue::from_str(&error))
+}
+
+/// 验证专用：经真实 LibOS FaultDomain 发布故障并唤醒 mailbox 接收者。
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+#[wasm_bindgen]
+pub fn libos_verification_abort(session: u32) -> Result<(), JsValue> {
+    engine::verification::abort(session).map_err(|error| JsValue::from_str(&error))
+}
+
+/// 验证专用：发布永久停止并通过真实 downlink 通知接收者。
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+#[wasm_bindgen]
+pub fn libos_verification_stop(session: u32) -> Result<(), JsValue> {
+    engine::verification::stop(session).map_err(|error| JsValue::from_str(&error))
+}
+
+/// 验证专用：真实阻塞接收；状态 0=消息、1=停止、2=断连、3=故障、4=超时。
+/// downlink 接收必须使用 timeoutMillis=0；mailbox 使用有限真实时限。
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+#[wasm_bindgen]
+pub fn libos_verification_run_receive(
+    session: u32,
+    timeout_millis: u32,
+) -> Result<JsValue, JsValue> {
+    let (status, value, waited_ms) = engine::verification::run_receive(session, timeout_millis)
+        .map_err(|error| JsValue::from_str(&error))?;
+    to_js(&LibosVerificationReceive {
+        status,
+        value,
+        waited_ms,
+        phase: None,
     })
 }
 
-#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
-thread_local! {
-    static WATCHDOG_WAIT_PROBE: RefCell<Option<std::sync::Arc<engine::runtime::watchdog_wait_verification::WaitProbe>>> =
-        const { RefCell::new(None) };
-}
-
-/// 验证专用：同一 memory 一次准备实际收件边界 probe，配置仍由调用者显式初始化。
+/// 验证专用：使用真实时钟执行 coordinator phase deadline 并保留 phase 编码。
 #[cfg(all(target_family = "wasm", feature = "verification-harness"))]
 #[wasm_bindgen]
-pub fn verification_watchdog_wait_prepare(mode: u32) -> Result<u32, JsValue> {
-    WATCHDOG_WAIT_PROBE.with(|store| {
-        let mut store = store.borrow_mut();
-        if store.is_some() {
-            return Err(JsValue::from_str("wait probe 已准备，必须换独立 memory"));
-        }
-        let probe = std::sync::Arc::new(
-            engine::runtime::watchdog_wait_verification::WaitProbe::new(mode)
-                .map_err(|error| JsValue::from_str(&error))?,
-        );
-        let address = probe.address();
-        *store = Some(probe);
-        Ok(address)
+pub fn libos_verification_run_phase_receive(
+    session: u32,
+    phase: u32,
+    normal_millis: u32,
+    long_millis: u32,
+) -> Result<JsValue, JsValue> {
+    let (status, value, waited_ms, phase) = engine::verification::run_phase_receive(
+        session,
+        phase,
+        normal_millis,
+        long_millis,
+    )
+    .map_err(|error| JsValue::from_str(&error))?;
+    to_js(&LibosVerificationReceive {
+        status,
+        value,
+        waited_ms,
+        phase: Some(phase),
     })
 }
 
-/// 验证专用：执行实际相位/Hot/quiet/裸 recv 选路与返回前过滤；不模拟 clock/channel。
+/// 验证专用：读取仍在真实 LibOS 队列中的下一条消息；空队列状态为 1，断连状态为 2。
 #[cfg(all(target_family = "wasm", feature = "verification-harness"))]
 #[wasm_bindgen]
-pub fn verification_watchdog_wait_boundary(mode: u32) -> Result<String, JsValue> {
-    WATCHDOG_WAIT_PROBE.with(|store| {
-        let probe = store
-            .borrow()
-            .as_ref()
-            .cloned()
-            .ok_or_else(|| JsValue::from_str("wait probe 尚未准备"))?;
-        engine::runtime::watchdog_wait_verification::verify_wait_boundary(mode, probe)
-            .map_err(|error| JsValue::from_str(&error))
+pub fn libos_verification_try_receive(session: u32) -> Result<JsValue, JsValue> {
+    let (status, value) = engine::verification::try_receive(session)
+        .map_err(|error| JsValue::from_str(&error))?;
+    to_js(&LibosVerificationReceive {
+        status,
+        value,
+        waited_ms: 0,
+        phase: None,
     })
+}
+
+/// 验证专用：全部真实 Worker join 后释放正常完成的验证会话；hard trap 后不得调用。
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+#[wasm_bindgen]
+pub fn libos_verification_finish(session: u32) -> Result<(), JsValue> {
+    engine::verification::finish(session).map_err(|error| JsValue::from_str(&error))
 }
 
 /// 句柄内执行闭包；句柄无效 → 抛 JsValue。
@@ -1798,4 +1928,77 @@ mod runtime_sync_policy_tests;
 #[wasm_bindgen]
 pub fn verification_tombstone_primary_panic() {
     panic!("WASM_PRIMARY_TOMBSTONE_PROBE");
+}
+
+/// 验证专用：登记故障域通道并取得等待字地址。
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+#[wasm_bindgen]
+pub fn verification_fault_prepare() -> Result<u32, JsValue> {
+    engine::thread_facade::verification_fault_prepare().map_err(JsValue::from_str)
+}
+
+/// 验证专用：让已登记的通道等待实例故障。
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+#[wasm_bindgen]
+pub fn verification_fault_wait() -> Result<(), JsValue> {
+    engine::thread_facade::verification_fault_wait().map_err(JsValue::from_str)
+}
+
+/// 验证专用：取得可由宿主释放的 child gate。
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+#[wasm_bindgen]
+pub fn verification_fault_gate_address() -> u32 {
+    engine::thread_facade::verification_fault_gate_address()
+}
+
+/// 验证专用：在 gate 释放后制造真实 child panic。
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+#[wasm_bindgen]
+pub fn verification_fault_spawn(mode: u32) -> Result<u32, JsValue> {
+    if mode > 1 {
+        return Err(JsValue::from_str("未知验证故障模式"));
+    }
+    if FACADE_VERIFY_HANDLES.with(|slot| slot.borrow().is_some()) {
+        return Err(JsValue::from_str("验证 child 句柄已存在"));
+    }
+    let handle = engine::thread_facade::Builder::new()
+        .name("verification-fault-wake".to_owned())
+        .spawn(move || -> u32 {
+            if !engine::thread_facade::verification_fault_gate_wait() {
+                return 0xBAD;
+            }
+            if mode == 1 {
+                core::arch::wasm32::unreachable();
+            }
+            panic!("LIBOS_FAULT_WAKE_PROBE")
+        })
+        .map_err(|error| JsValue::from_str(&format!("验证 child 启动失败：{error}")))?;
+    let index = facade_join_index_of(&handle);
+    FACADE_VERIFY_HANDLES.with(|slot| {
+        let mut store = slot.borrow_mut();
+        if store.is_some() {
+            return Err(JsValue::from_str("验证 child 句柄已存在"));
+        }
+        *store = Some(handle);
+        Ok(index)
+    })
+}
+
+/// 验证专用：返回宿主故障广播使用的共享 memory 布局。
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+#[wasm_bindgen]
+pub fn verification_host_fault_layout() -> Result<JsValue, JsValue> {
+    let layout =
+        engine::thread_facade::verification_host_fault_layout().map_err(JsValue::from_str)?;
+    serde_wasm_bindgen::to_value(&layout)
+        .map_err(|error| JsValue::from_str(&format!("故障域布局序列化失败：{error}")))
+}
+
+/// 返回正式 LibOS 宿主故障广播使用的共享 memory 布局。
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen]
+pub fn libos_host_fault_layout() -> Result<JsValue, JsValue> {
+    let layout = engine::thread_facade::libos_host_fault_layout().map_err(JsValue::from_str)?;
+    serde_wasm_bindgen::to_value(&layout)
+        .map_err(|error| JsValue::from_str(&format!("故障域布局序列化失败：{error}")))
 }

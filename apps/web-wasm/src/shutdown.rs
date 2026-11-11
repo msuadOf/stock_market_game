@@ -36,18 +36,16 @@ impl SessionRegistry {
             .sessions
             .remove(&handle)
             .ok_or_else(|| ShutdownFailure {
-                primary: ShutdownIssue {
-                    stage: "registry_handle".to_owned(),
-                    worker: None,
-                    detail: format!("未知或已消费的 session handle：{handle}"),
-                },
+                primary: ShutdownIssue::new(
+                    "registry_handle",
+                    None,
+                    format!("未知或已消费的 session handle：{handle}"),
+                ),
                 secondary: Vec::new(),
                 completion: None,
             })?;
-        let revoke_failure = revoke(handle).err().map(|error| ShutdownIssue {
-            stage: "registry_ingress_revoke".to_owned(),
-            worker: None,
-            detail: error.to_string(),
+        let revoke_failure = revoke(handle).err().map(|error| {
+            ShutdownIssue::new("registry_ingress_revoke", None, error.to_string())
         });
         let stopped = session.shutdown();
         match (revoke_failure, stopped) {

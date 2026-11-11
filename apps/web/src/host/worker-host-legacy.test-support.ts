@@ -57,7 +57,10 @@ export class LegacyWorker extends EventTarget {
       words[CAPACITY] = 4; words[GEN_BITS] = 29;
       port.addEventListener("message", (event) => {
         if ((event.data as { type?: string }).type === "facadeEngineMemoryRegistered") {
-          port.postMessage({ type: "facadeEngineConfiguration", allocationId: 1, module: new WebAssembly.Module(new Uint8Array([0,97,115,109,1,0,0,0])), layout, diagnostics: false, waitAbort: { address: 4096, bytes: 1 } });
+          port.postMessage({ type: "facadeEngineDeath", allocationId: 1, primary: { engine: { workerId: 0, address: 4200 }, ingress: { workerId: 0xffffffff, address: 4456 }, death: { address: 4100, bytes: 4 } } });
+        }
+        if ((event.data as { type?: string }).type === "facadeEngineDeathRegistered") {
+          port.postMessage({ type: "facadeEngineConfiguration", allocationId: 1, module: new WebAssembly.Module(new Uint8Array([0,97,115,109,1,0,0,0])), layout, diagnostics: false });
         }
       });
       port.postMessage({ type: "facadeEngineMemory", allocationId: 1, memory });

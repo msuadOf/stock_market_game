@@ -42,9 +42,13 @@ import type { WasmLifecycleObservation } from "./wasm-lifecycle-observation.ts";
 import { InitializationDeadline } from "./initialization-deadline.ts";
 import { parseVerifiedRestoreCapability } from "./wasm-restore-package-capability.ts";
 import { parseWasmSessionShutdown, type WasmSessionShutdown } from "./wasm-shutdown-report.ts";
-import { requireAdmittedLoadArchive } from "./wasm-document-memory-owner.ts";
+import { requireAdmittedChunkedLease, requireAdmittedLoadArchive } from "./wasm-document-memory-owner.ts";
 import type { VerifiedWasmRestoreCapability, WasmFinalRelease, WasmMemoryAdmissionTicket } from "./wasm-document-memory-owner.ts";
 import { parseWasmRuntimeOptions, type WasmRuntimeOptions } from "./wasm-runtime-options.ts";
+import { inspectValidatedArchiveLease, type ValidatedArchiveLease, type ValidatedArchiveLeaseDetails } from "../save/validated-archive-lease.ts";
+import { replayValidatedArchive } from "../save/validated-archive-replay.ts";
+import { sendRestoreChunks } from "./restore-chunk-port.ts";
+import { confirmChunkedSourceRelease, type ChunkedSourceOutcome } from "./wasm-chunked-source-release.ts";
 
 type WorkerMessage = {
   readonly type: string;
@@ -73,7 +77,7 @@ function generation(value: unknown, where: string): number {
 
 export function parseWorkerFailure(value: unknown): HostFailure {
   const source = record(value, "Worker failure");
-  const allowed = ["code", "where", "message", "cause", "context", "recoverable", "recoveryActions"];
+  const allowed = ["code", "where", "message", "stack", "cause", "context", "recoverable", "recoveryActions"];
   const fields = Object.fromEntries(Object.entries(source).filter(([key]) => allowed.includes(key)));
   return parseHostFailure(fields, "worker-host.message");
 }
@@ -198,6 +202,9 @@ type WorkerHostOptions = {
   readonly onSpawnFailure: (failure: HostFailure) => void;
   readonly onInitializationProgress?: (message: string) => void;
   readonly initialArchive?: StrictSaveEnvelope | null;
+  /** 使用已验证租约作为初始存档；必须与对应的 Memory ticket 配合。 */
+  readonly initialChunkedLease?: ValidatedArchiveLease;
+  readonly initialChunkedSignal?: AbortSignal;
 } & WasmRuntimeOptions;
 
 export function createWorkerHost(
@@ -210,6 +217,11 @@ export function createWorkerHost(
     let rejectRelease: ((error: Error) => void) | undefined;
     let memoryTicket: WasmMemoryAdmissionTicket | undefined;
     let initialArchive: StrictSaveEnvelope | null = null;
+    let chunkedLease: ValidatedArchiveLease | undefined;
+    let chunkedDetails: ValidatedArchiveLeaseDetails | undefined;
+    let sourceController: AbortController | undefined;
+    let sourceOutcome: Promise<ChunkedSourceOutcome> = Promise.resolve({ ok: true });
+    let removeChunkAbort = () => {};
     let restoreCapability: VerifiedWasmRestoreCapability | undefined;
     let runtimeOptions: WasmRuntimeOptions;
     try {
@@ -223,11 +235,18 @@ export function createWorkerHost(
       if (options === null || typeof options !== "object" || typeof options.onSpawnFailure !== "function") throw new Error("WorkerHost 必须提供 onSpawnFailure callback");
       const override = options.runtimeOverride;
       if (override === false) throw new Error("WorkerHost 必须启用 runtime，不支持 runtimeOverride: false");
-      const waitSettings = options.waitSettings;
-      if (override === undefined && waitSettings !== undefined) throw new Error("waitSettings 必须与显式 runtimeOverride 一同提供");
-      runtimeOptions = override === undefined ? parseWasmRuntimeOptions("") : { runtimeOverride: override, waitSettings };
+      runtimeOptions = override === undefined ? parseWasmRuntimeOptions("") : { runtimeOverride: override };
       // 只读一次外部 getter；失败明确发生在 Worker/Memory 之前。
       const suppliedArchive = options.initialArchive;
+      const suppliedLease = options.initialChunkedLease;
+      if (suppliedLease !== undefined) {
+        if (suppliedArchive !== null && suppliedArchive !== undefined) throw new Error("String 与 chunked 初始档不能同时提供");
+        if (ticket === undefined || ticket.restoreMode !== "chunked" || ticket.restoreCapability === null) throw new Error("chunked 初始档需要专属 admission ticket");
+        options.initialChunkedSignal?.throwIfAborted();
+        chunkedLease = requireAdmittedChunkedLease(ticket, suppliedLease);
+        chunkedDetails = inspectValidatedArchiveLease(chunkedLease);
+        restoreCapability = parseVerifiedRestoreCapability(ticket.restoreCapability, runtimeOptions.runtimeOverride, "chunked");
+      } else if (ticket?.restoreMode === "chunked") throw new Error("chunked admission ticket 缺少对应的初始存档租约，不能创建 Worker");
       if (suppliedArchive !== null && suppliedArchive !== undefined) {
         const ticket = memoryTicket;
         if (ticket === undefined) validateDayEndArchive(parseSaveSlot(structuredClone(suppliedArchive)));
@@ -286,11 +305,21 @@ export function createWorkerHost(
       if (!initialized) notifyFailure({ code: "WASM_WORKER_INIT_TIMEOUT", where: "worker-host.initialize", message: `行情引擎初始化在${phase}超时，请反馈详情。` });
     }, (message) => options.onInitializationProgress?.(message));
 
+    let chunkCancelRequested = false;
+    const cancelChunkedSource = (error: Error) => {
+      if (chunkedLease === undefined || currentGeneration !== 0 || sourceController === undefined || chunkCancelRequested) return;
+      chunkCancelRequested = true;
+      sourceController.abort(error);
+      try { worker.postMessage({ type: "cancelInitialChunked" }); }
+      catch (cancelError) { controlClient.abortShutdown(new Error("分块初始化取消消息发送失败；release 保持 unknown", { cause: cancelError })); }
+    };
+
     const beginFailurePending = (failure: HostFailure) => {
       if (disposed || pendingFailure !== null) return;
       pendingFailure = failure;
       const until = performance.now() + 2000;
       pendingDeadline = until;
+      cancelChunkedSource(new Error(`${failure.code} @ ${failure.where}: ${failure.message}`, { cause: failure }));
       if (!closing) {
         closing = true;
         const error = new Error(`${failure.code} @ ${failure.where}: ${failure.message}`, { cause: failure });
@@ -308,11 +337,13 @@ export function createWorkerHost(
         if (disposal !== undefined) return;
       }
       disposed = true;
+      removeChunkAbort();
       callback = null;
       if (!preserveVisibleBaseline) cachedBaseline = null;
       const reportFailure = fatalCallback;
       fatalCallback = null;
       const error = new Error(`${failure.code} @ ${failure.where}: ${failure.message}`, { cause: failure });
+      cancelChunkedSource(error);
       const cleanupRequests: Promise<unknown>[] = [];
       if (currentGeneration > 0) {
         try {
@@ -385,6 +416,7 @@ export function createWorkerHost(
           || cachedBaseline?.generation !== String(boundGeneration)) return;
         if (!deadline.complete()) return;
         initialized = true;
+        removeChunkAbort();
         resolve(host());
       }, (error: unknown) => {
         if (!stillCurrent() || error === closingCancellation) return;
@@ -429,8 +461,13 @@ export function createWorkerHost(
           case "ready":
             await controlClient.configured;
             if (disposed || closing) return;
+            if (chunkedLease !== undefined) {
+              const source = await sourceOutcome;
+              if (disposed || closing) return;
+              if (!source.ok) throw new Error("分块源未验证完成，禁止消费初始档", { cause: source.error });
+            }
             deadline.advance("restore");
-            worker.postMessage(initialArchive === null ? { type: "create", seed } : { type: "restoreInitial" });
+            worker.postMessage(initialArchive === null && chunkedLease === undefined ? { type: "create", seed } : { type: "restoreInitial" });
             return;
           case "created":
             currentGeneration = generation(incoming.generation, "Worker created generation");
@@ -493,7 +530,7 @@ export function createWorkerHost(
           }
           case "failure":
             if (Object.hasOwn(incoming, "engineQuiescent")) {
-              if (initialized || !(incoming.engineQuiescent === "initialization-failed" && currentGeneration === 0 || incoming.engineQuiescent === "initial-session-failed" && initialArchive !== null)) throw new Error("engine initialization quiescence 阶段或字段无效");
+              if (initialized || !(incoming.engineQuiescent === "initialization-failed" && currentGeneration === 0 || incoming.engineQuiescent === "initial-session-failed" && (initialArchive !== null || chunkedLease !== undefined))) throw new Error("engine initialization quiescence 阶段或字段无效");
               if (Object.hasOwn(incoming, "memoryAllocation")) {
                 if (incoming.engineQuiescent !== "initialization-failed" || incoming.memoryAllocation !== "not-allocated" || currentGeneration !== 0) throw new Error("pre-Memory 分配证明阶段或字段无效");
               }
@@ -517,17 +554,46 @@ export function createWorkerHost(
 
     try {
       worker.addEventListener("message", onMessage);
-      void controlClient.release.then((result) => { resolveRelease?.(result); }, (error: unknown) => {
+      void controlClient.release.then(async (result) => {
+        resolveRelease?.(await confirmChunkedSourceRelease(result, sourceOutcome));
+      }).catch((error: unknown) => {
         if (rejectRelease !== undefined) rejectRelease(error instanceof Error ? error : new Error("controlWorker release 失败", { cause: error }));
       });
       controlClient.start();
       deadline.advance("package");
-      controlClient.sendInitialization({
-        type: "init",
-        ...(initialArchive === null ? { setup } : { initialArchive, restoreCapability }),
-        ...(runtimeOptions.runtimeOverride === undefined ? {} : { runtimeOverride: runtimeOptions.runtimeOverride }),
-        ...(runtimeOptions.waitSettings === undefined ? {} : { waitSettings: runtimeOptions.waitSettings }),
-      });
+      const runtimeFields = { ...(runtimeOptions.runtimeOverride === undefined ? {} : { runtimeOverride: runtimeOptions.runtimeOverride }) };
+      if (chunkedLease !== undefined && chunkedDetails !== undefined && memoryTicket !== undefined) {
+        const channel = new MessageChannel();
+        const transferGeneration = controlClient.instanceId;
+        const availableWasmBytes = memoryTicket.selection.liveUpperBoundBytes - memoryTicket.selection.initialPages * 65536;
+        sourceController = new AbortController();
+        const controller = sourceController;
+        const externalSignal = options.initialChunkedSignal;
+        const onAbort = () => {
+          controller.abort(externalSignal?.reason);
+          if (!initialized && !disposed) notifyFailure({ code: "WASM_CHUNKED_START_CANCELLED", where: "worker-host.initial-chunked", message: "分块恢复启动已取消", cause: externalSignal?.reason });
+        };
+        externalSignal?.addEventListener("abort", onAbort, { once: true });
+        removeChunkAbort = () => { externalSignal?.removeEventListener("abort", onAbort); removeChunkAbort = () => {}; };
+        if (externalSignal?.aborted) onAbort();
+        try {
+          if (disposed) throw new Error("分块恢复启动已取消");
+          controlClient.sendInitialization({ type: "init", initialChunked: { port: channel.port2, generation: transferGeneration, contentDigest: chunkedDetails.contentDigest, availableWasmBytes }, restoreCapability, ...runtimeFields }, [channel.port2]);
+          sourceOutcome = sendRestoreChunks(channel.port1, transferGeneration, chunkedDetails.utf8Bytes, replayValidatedArchive(chunkedLease, controller.signal), controller.signal, (reason) => controller.abort(reason)).then(
+            () => ({ ok: true as const }),
+            (error: unknown) => {
+              if (!disposed) {
+                try { notifyFailure({ code: "WASM_CHUNKED_SOURCE_FAILED", where: "worker-host.initial-chunked", message: error instanceof Error ? error.message : String(error), cause: error }); }
+                catch (reportError) { return { ok: false as const, error: new AggregateError([error, reportError], "分块源失败且关停报告失败") }; }
+              }
+              return { ok: false as const, error };
+            },
+          );
+        } catch (error) {
+          removeChunkAbort();
+          channel.port1.close(); channel.port2.close(); throw error;
+        }
+      } else controlClient.sendInitialization({ type: "init", ...(initialArchive === null ? { setup } : { initialArchive, restoreCapability }), ...runtimeFields });
     } catch (error) {
       notifyFailure({ code: "WASM_WORKER_TRANSPORT", where: "worker-host.initialize", message: error instanceof Error ? error.message : String(error) });
     }

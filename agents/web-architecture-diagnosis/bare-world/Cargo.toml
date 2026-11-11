@@ -1,0 +1,9 @@
+[package]
+name = "bare-world-diagnostic"
+version = "0.1.0"
+edition = "2021"
+[workspace]
+[dependencies]
+engine = { path = "../../../packages/engine", features = ["verification-harness"] }
+serde_json = "1"
+libm = "=0.2.16"

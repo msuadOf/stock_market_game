@@ -33,7 +33,7 @@ fn world() -> World {
             stock: 1,
         },
     ];
-    spec.watchdog = WatchdogConfig {
+    spec.deadline = DeadlineConfig {
         normal: Duration::from_millis(300),
         long: Duration::from_millis(300),
     };

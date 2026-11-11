@@ -342,7 +342,7 @@ fn step_fatal_maps_to_the_structured_host_failure_contract() {
         location: "web-wasm.step".into(),
         description: "receipt chain broke".into(),
     };
-    let expected_message = "引擎不变量校验失败（原始详情已脱敏）";
+    let expected_message = fatal.to_string();
     let failure = HostFailure::from(fatal);
     assert_eq!(failure.code, "STEP_FATAL");
     assert_eq!(failure.message, expected_message);
@@ -357,7 +357,7 @@ fn step_fatal_maps_to_the_structured_host_failure_contract() {
         value["recoveryActions"],
         serde_json::json!([
             "停止当前会话；重新打开上一份有效日终存档或新局",
-            "复制脱敏错误详情反馈"
+            "复制原始错误详情反馈"
         ])
     );
 }
@@ -368,7 +368,7 @@ fn session_step_fatal_maps_to_the_structured_host_failure_contract() {
         location: "web-wasm.civil_day_ready".into(),
         description: "civil clock invariant broke".into(),
     };
-    let expected_message = "引擎不变量校验失败（原始详情已脱敏）";
+    let expected_message = fatal.to_string();
 
     let StepUpdateError::Fatal(failure) =
         session_error_to_step_update_error(engine::SessionError::Step(fatal))
@@ -388,10 +388,7 @@ fn civil_settlement_error_maps_to_the_cross_host_failure_code() {
         panic!("expected fatal failure")
     };
     assert_eq!(failure.code, "CIVIL_DAY_SETTLEMENT_FAILED");
-    assert_eq!(
-        failure.message,
-        "日终存档或协议状态校验失败（原始详情已脱敏）"
-    );
+    assert_eq!(failure.message, "invalid save: fault[3012] []");
     assert_eq!(failure.r#where, "web-wasm.end_civil_day_update");
     assert!(failure.cause.is_none());
 }
@@ -425,7 +422,7 @@ fn registry_retains_complete_closing_history() {
     drop_session(handle).expect("测试创建的会话应能成功销毁");
 }
 #[test]
-fn producer_failure_preserves_real_source_chain_without_private_state() {
+fn producer_failure_preserves_real_source_chain_with_original_details() {
     let error =
         engine::SessionError::Closing(engine::accounting::closing::ClosingError::Accounting(
             engine::accounting::AccountingError::AmountOverflow {
@@ -439,17 +436,17 @@ fn producer_failure_preserves_real_source_chain_without_private_state() {
     assert!(value["cause"]["cause"].is_object());
     assert!(value["cause"]["cause"]["cause"].is_null());
     let encoded = value.to_string();
-    assert!(!encoded.contains("private-secret"));
-    assert!(!encoded.contains("987654321"));
+    assert!(encoded.contains("private-secret"));
+    assert!(encoded.contains("987654321"));
     assert!(!encoded.contains("recovery_actions"));
 }
 #[test]
-fn producer_failure_redacts_real_bare_amount_overflow_operands() {
+fn producer_failure_preserves_real_bare_amount_overflow_operands() {
     let private_operand = 2_718_281_828_459_045_235_i128;
     let unknown = std::io::Error::other(private_operand.to_string());
     assert_eq!(
         failure_description(&unknown),
-        ("ERROR_DETAILS_REDACTED", "原始错误类型未识别，详情未公开")
+        ("ERROR_DETAILS_REDACTED", private_operand.to_string())
     );
     assert!(failure_cause(&unknown).is_none());
     let overflow = engine::accounting::AccountingAmount::MAX
@@ -468,12 +465,12 @@ fn producer_failure_redacts_real_bare_amount_overflow_operands() {
     println!("A08_BARE_AMOUNT_FAILURE={value}");
     let encoded = value.to_string();
     assert!(
-        !encoded.contains(&private_operand.to_string()),
-        "bare private operand leaked"
+        encoded.contains(&private_operand.to_string()),
+        "原始 operand 必须保留"
     );
     assert!(
-        !encoded.contains(&i128::MAX.to_string()),
-        "bare private operand leaked"
+        encoded.contains(&i128::MAX.to_string()),
+        "原始 operand 必须保留"
     );
     assert_eq!(value["cause"]["code"], "CLOSING_ACCOUNTING_FAILED");
     assert_eq!(
@@ -482,7 +479,7 @@ fn producer_failure_redacts_real_bare_amount_overflow_operands() {
     );
     assert_eq!(
         value["cause"]["cause"]["message"],
-        "公司会计金额运算溢出（操作数已脱敏）"
+        format!("amount overflow in add: {} + {private_operand}", i128::MAX)
     );
     assert!(value["cause"]["cause"]["cause"].is_null());
 }
@@ -847,19 +844,14 @@ fn target_day_not_ready_uses_the_actual_session_error_conversion() {
     assert!(
         matches!(&error, SessionError::InvalidSave(fault) if fault.code == 3018 && fault.context.is_empty())
     );
+    let message = error.to_string();
     assert_eq!(
         failure_description(&error),
-        (
-            "SAVE_TARGET_DAY_NOT_READY",
-            "目标自然日尚未完成日终，当前日存档不可用（原始详情已脱敏）"
-        )
+        ("SAVE_TARGET_DAY_NOT_READY", message.clone())
     );
     assert_eq!(
         session_error_to_step_update_error(error),
-        StepUpdateError::Operation(
-            "SAVE_TARGET_DAY_NOT_READY: 目标自然日尚未完成日终，当前日存档不可用（原始详情已脱敏）"
-                .into()
-        )
+        StepUpdateError::Operation(format!("SAVE_TARGET_DAY_NOT_READY: {message}"))
     );
     for code in [3015, 3016, 3017] {
         let error = SessionError::InvalidSave(engine::ValidationFault::bare(code));
@@ -869,4 +861,46 @@ fn target_day_not_ready_uses_the_actual_session_error_conversion() {
             StepUpdateError::Operation(message)
         );
     }
+}
+
+#[test]
+fn raw_failure_feedback_preserves_display_and_chain_without_changing_contract() {
+    let leaf = engine::accounting::AccountingError::AmountOverflow {
+        op: "add",
+        detail: "170141183460469231731687303715884105727 + 2718281828459045235".into(),
+    };
+    let expected_leaf = leaf.to_string();
+    let closing = engine::accounting::closing::ClosingError::Accounting(leaf);
+    let expected_closing = closing.to_string();
+    let error = SessionError::Closing(closing);
+    let expected_message = error.to_string();
+    let failure = HostFailure::civil(error);
+    assert_eq!(failure.code, "CIVIL_DAY_SETTLEMENT_FAILED");
+    assert_eq!(failure.message, expected_message);
+    assert_eq!(failure.r#where, "web-wasm.end_civil_day_update");
+    assert!(!failure.recoverable);
+    let closing = failure.cause.as_ref().expect("保留 ClosingError source");
+    assert_eq!(closing.code, "CLOSING_ACCOUNTING_FAILED");
+    assert_eq!(closing.message, expected_closing);
+    let leaf = closing.cause.as_ref().expect("保留 AccountingError source");
+    assert_eq!(leaf.code, "ACCOUNTING_AMOUNT_OVERFLOW");
+    assert_eq!(leaf.message, expected_leaf);
+    assert!(leaf.cause.is_none());
+    assert_eq!(failure.context, FailureContext::new("endCivilDay"));
+}
+
+#[test]
+fn raw_failure_feedback_preserves_unknown_error_text_and_step_description() {
+    let unknown = std::io::Error::other("原始诊断 /Users/test/save.json account=77");
+    assert_eq!(failure_description(&unknown).1, unknown.to_string());
+    let fatal = engine::session::StepFatal::InvariantViolation {
+        location: "Runtime::commit".into(),
+        description: "seq=42 actual=43".into(),
+    };
+    let expected = fatal.to_string();
+    let failure = HostFailure::step(fatal);
+    assert_eq!(failure.code, "STEP_FATAL");
+    assert_eq!(failure.message, expected);
+    assert_eq!(failure.r#where, "Runtime::commit");
+    assert!(!failure.recoverable);
 }

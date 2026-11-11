@@ -323,6 +323,7 @@ mod early {
                 }
             }
         });
+        crate::libos::fault_domain::GLOBAL_FAULT.abort();
     }
 }
 

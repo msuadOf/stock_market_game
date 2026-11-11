@@ -1,14 +1,14 @@
 //! 批 2 骨架协议测试（G 批 2 验收判据）：收束计数、时序因果、Abort 回滚等价
 //! （含多轮 Continue 后失败）、panic 运输（resume_unwind 原 payload）、断连显式
-//! 失败、Drain→Shutdown→Final 对账、看门狗相位感知。
+//! 失败、Drain→Shutdown→Final 对账、业务相位 deadline。
 
 use super::coordinator::{no_op_validator, Validator};
 use super::group::{GroupScript, PlaceSpec, TickPlan};
-use super::watchdog::{recv_deadline, Phase, WatchdogConfig};
+use super::upstream::recv_up_deadline;
+use super::wait_contract::{DeadlineConfig, Phase};
 use super::world::{ShutdownReport, World, WorldSpec};
 use super::GroupIdx;
 use crate::orderbook::Side;
-use std::sync::mpsc;
 use std::time::Duration;
 
 /// 空闲脚本：每轮空计划（无操作、无续行）。
@@ -47,7 +47,7 @@ pub(crate) fn basic_spec(
         civil_start_date: crate::calendar::CivilDate::from_ymd(2026, 1, 5).expect("测试日期合法"),
         script_for,
         chunk: 8,
-        watchdog: WatchdogConfig {
+        deadline: DeadlineConfig {
             normal: Duration::from_secs(5),
             long: Duration::from_secs(10),
         },
@@ -638,7 +638,7 @@ fn severed_control_channels_fail_explicitly() {
     // 看门狗空闲超时显式上报（断连路径由 worker 退出后的 Final 错位兜底）——
     // 两条检测路径都是显式失败，不允许静默挂死。
     let mut spec = basic_spec(2, 2, 1, Box::new(|_| idle_script()));
-    spec.watchdog = WatchdogConfig {
+    spec.deadline = DeadlineConfig {
         normal: Duration::from_millis(200),
         long: Duration::from_millis(500),
     };
@@ -651,7 +651,7 @@ fn severed_control_channels_fail_explicitly() {
     world.sever();
     let err = world.run_ticks(1).expect_err("失联须显式失败");
     match &err {
-        super::protocol::RuntimeError::Watchdog { phase, .. } => {
+        super::protocol::RuntimeError::DeadlineExceeded { phase, .. } => {
             assert_eq!(*phase, Phase::TickConverge, "协调者侧超时携相位");
         }
         super::protocol::RuntimeError::WorkerFailed { who, error } => {
@@ -659,20 +659,20 @@ fn severed_control_channels_fail_explicitly() {
             assert!(
                 matches!(
                     error.as_ref(),
-                    super::protocol::RuntimeError::Watchdog { .. }
+                    super::protocol::RuntimeError::DeadlineExceeded { .. }
                 ),
                 "worker 失联上报应为看门狗超时，收到 {error:?}"
             );
         }
         super::protocol::RuntimeError::Disconnected { .. } => {}
-        other => panic!("应为显式失败（Watchdog/WorkerFailed/Disconnected），收到 {other:?}"),
+        other => panic!("应为显式失败（DeadlineExceeded/WorkerFailed/Disconnected），收到 {other:?}"),
     }
 }
 
-// ── 8. 看门狗相位感知 ──
+// ── 8. 业务相位 deadline ──
 
 #[test]
-fn watchdog_timeout_carries_phase_context() {
+fn deadline_exceeded_carries_phase_context() {
     // 组在 tick1 决策期停顿 400ms；协调者正常档 100ms → TickConverge 超时。
     let script = |_g: GroupIdx| -> GroupScript {
         Box::new(|tick, _round| {
@@ -684,7 +684,7 @@ fn watchdog_timeout_carries_phase_context() {
         })
     };
     let mut spec = basic_spec(1, 1, 1, Box::new(script));
-    spec.watchdog = WatchdogConfig {
+    spec.deadline = DeadlineConfig {
         normal: Duration::from_millis(100),
         long: Duration::from_secs(10),
     };
@@ -696,7 +696,7 @@ fn watchdog_timeout_carries_phase_context() {
     .expect("世界构造");
     let err = world.run_ticks(1).expect_err("停顿须触发看门狗");
     match &err {
-        super::protocol::RuntimeError::Watchdog { phase, waited, .. } => {
+        super::protocol::RuntimeError::DeadlineExceeded { phase, waited, .. } => {
             // Q2 Seal 后停顿可能落在收束或 Seal 相位（取决于停顿时点
             // ——断言放宽为两者之一；相位上下文携带本身是判据）。
             assert!(
@@ -709,15 +709,15 @@ fn watchdog_timeout_carries_phase_context() {
                 "消息含相位名"
             );
         }
-        other => panic!("应为 Watchdog，收到 {other:?}"),
+        other => panic!("应为 DeadlineExceeded，收到 {other:?}"),
     }
     let _ = world.shutdown();
 }
 
 #[test]
-fn watchdog_phase_limits_differ_for_long_phases() {
+fn business_phase_limits_differ_for_long_phases() {
     // 单元：Drain/FinalCollection 走长档，正常相位走紧档（不静默放大全局阈值）。
-    let cfg = WatchdogConfig {
+    let cfg = DeadlineConfig {
         normal: Duration::from_millis(50),
         long: Duration::from_secs(5),
     };
@@ -732,15 +732,15 @@ fn watchdog_phase_limits_differ_for_long_phases() {
         Duration::from_secs(5)
     );
     // 空通道超时上报携带相位（用小阈值验证，避免单测等满长档时长）。
-    let (_tx, rx) = mpsc::channel::<u8>();
-    let tiny = WatchdogConfig {
+    let (_tx, rx) = super::upstream::channel::<u8>().expect("LibOS 上行通道");
+    let tiny = DeadlineConfig {
         normal: Duration::from_millis(20),
         long: Duration::from_millis(80),
     };
-    let err = recv_deadline(&rx, Phase::Drain, &tiny).expect_err("空通道必超时");
+    let err = recv_up_deadline(&rx, Phase::Drain, &tiny).expect_err("空通道必超时");
     assert!(matches!(
         err,
-        super::protocol::RuntimeError::Watchdog {
+        super::protocol::RuntimeError::DeadlineExceeded {
             phase: Phase::Drain,
             ..
         }

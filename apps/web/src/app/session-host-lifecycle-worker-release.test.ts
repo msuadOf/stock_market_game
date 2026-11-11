@@ -55,7 +55,7 @@ test("真实WorkerHost关闭时drain在途TickBatch且内部ACK最终baseline，
         ticket!.registerRelease(Promise.resolve({ kind: "released", finalBytes: 64 * MiB, growthStopped: true, referencesDropped: true }));
         return { ...host, initialAllocation: async () => ({ stocks: [] }) };
       }, onSpawnFailure: no, createSeed: () => 42n, checkWasmEnvironment: no, isDocumentHidden: () => false,
-      getBrowserSaveRepository: () => ({ load: async () => null }), setActiveSetup: no, configureMarketTiming: no, setStartDateDraft: no,
+      getBrowserSaveRepository: () => ({ load: async () => null, loadFrozen: async () => null }), setActiveSetup: no, configureMarketTiming: no, setStartDateDraft: no,
       setPriceCageEnabledDraft: no, setFloatAllocationDraft: no, setInitialAllocation: no, setDeliveryModes: no, setDeliveryModeState: no,
       setNotice: no, setReady: no, setError: no, onRunning: no, onAutoTriggered: no,
     };

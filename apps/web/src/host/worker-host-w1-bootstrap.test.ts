@@ -132,7 +132,7 @@ for (const initial of ["create", "restoreInitial"] as const) {
         // 可信 producer 的传输 fixture，不作为真实发布包能力证据。
         const owner = new WasmDocumentMemoryOwner({ maximumBytes: storage.options.maximumBytes, reclaimBytes: storage.options.reclaimBytes,
           readCapacity: () => ({ kind: "enforced-capacity", initialPages: 1024, maximumPages: 4096, liveUpperBoundBytes: 256 * MiB }),
-          restoreCapabilities: { forArchive: () => ({ kind: "verified-package", wasmSha256: "a".repeat(64), glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "wasm_tombstone_init_primary", "wasm_tombstone_bind_ingress", "set_step_runtime_override", "init_wasm_wait", "wasm_wait_abort_layout", "wasm_wait_death_layout", "shutdown_session"] }) },
+          restoreCapabilities: { forArchive: () => ({ kind: "verified-package", wasmSha256: "a".repeat(64), glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "wasm_tombstone_init_primary", "wasm_tombstone_bind_ingress", "set_step_runtime_override", "libos_host_fault_layout", "shutdown_session"] }) },
           createStorage: (liveUpperBoundBytes) => new WasmMemoryStorage({ ...storage.options, liveUpperBoundBytes }) });
         const admission = owner.admit({ kind: "load", archive: commandDayEndArchiveFixture() });
         if (admission.kind !== "admitted" || admission.intent.kind !== "load") throw new Error("需要载入票");

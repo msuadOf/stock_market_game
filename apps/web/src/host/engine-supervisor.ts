@@ -7,7 +7,7 @@ import { parseHostFailure } from "./protocol-failure.ts";
 import { classifyWasmFailure, describeWasmFailure } from "./wasm-failure.ts";
 import { answerFail, answerOk, createSupervisorState, evaluateOkRecovery, onWorkerExit, recoverPending, registerChild, writeDead, type FacadeArenaView } from "./facade-supervisor.ts";
 import { CAPACITY, GEN_BITS, GEN_BITS_DEFAULT, HEADER_WORDS, SLOT_STRIDE, JOIN_STRIDE, SLOT_JOIN_INDEX, SlotState, JoinState, decodeGen, decodeJoinState, encodeW, slotWordOffset, slotFieldOffset, joinWordOffset } from "./facade-slot-protocol.ts";
-import { abortWasmWait, parseWasmWaitAbortLayout, type WasmWaitAbortLayout } from "./wasm-wait-abort.ts";
+import { abortLibosHostFault, activateLibosHostFault, overlapsLibosHostFault, parseLibosHostFaultLayout, type LibosHostFaultLayout } from "./libos-host-fault.ts";
 import { parseWasmWaitDeathLayout, watchWasmDeath, type WasmWaitDeathLayout } from "./wasm-wait-death.ts";
 import type { WasmLifecycleObservation } from "./wasm-lifecycle-observation.ts";
 import { readWasmTombstone } from "./wasm-tombstone.ts";
@@ -25,9 +25,8 @@ export interface FacadeSubstrate {
   readonly memory: WebAssembly.Memory;
   readonly layout: FacadeSlotLayout;
   readonly diagnostics: boolean;
-  readonly waitAbort?: WasmWaitAbortLayout;
-  readonly waitDeath?: WasmWaitDeathLayout;
   readonly primary?: FacadePrimaryLayout;
+  readonly libosFault?: unknown;
 }
 export interface SupervisorTimers {
   now(): number;
@@ -91,6 +90,7 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
   const resources = new Map<Worker, Resource>();
   const protocol = createSupervisorState();
   let substrate: FacadeSubstrate | undefined;
+  let libosFault: LibosHostFaultLayout | undefined;
   let engineResource: Resource | undefined;
   let nextWorkerId = 1;
   const records: Array<{ address: number; identity: Readonly<FacadeThreadIdentity> }> = [];
@@ -107,7 +107,7 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
   let allocationStarted = false;
   let allocationConfirmedAbsent = false;
   let unprovenTermination = false;
-  let requireWaitAbort = false;
+  let requireLibosFault = false;
   let finalRelease: WasmFinalRelease | Error | undefined;
   let drain: { readonly promise: Promise<void>; readonly resolve: () => void; readonly reject: (error: Error) => void } | undefined;
 
@@ -211,6 +211,7 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
     } catch (error) { receipt = error instanceof Error ? error : new Error("Memory 最终释放失败", { cause: error }); }
     protocol.manifest.clear(); protocol.pendingRecovery.length = 0;
     substrate = undefined;
+    libosFault = undefined;
     allocatedMemory = undefined;
     memory = undefined;
     engineResource = undefined;
@@ -221,19 +222,29 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
       : receipt.kind === "released" ? { type: "finalRelease", kind: "released", finalBytes: receipt.finalBytes } : { type: "finalRelease", kind: "not-allocated" });
     return receipt;
   }
-  function finalizeFatal(detail: HostFailure): void {
-    if (disposed) return;
+  function abortFaultWaiters(): void {
+    if (substrate === undefined) return;
+    if (libosFault !== undefined) abortLibosHostFault(substrate.memory, libosFault);
+  }
+  function withUnknownCommittedTick(detail: HostFailure): HostFailure {
     const context = detail.context;
-    let reported: HostFailure = { ...detail, context: context !== null && typeof context === "object" && !Array.isArray(context)
+    return { ...detail, context: context !== null && typeof context === "object" && !Array.isArray(context)
       ? { ...context, last_committed_tick: "unknown" }
       : context === undefined ? { last_committed_tick: "unknown" } : { original: context, last_committed_tick: "unknown" } };
-    try { if (substrate?.waitAbort !== undefined) abortWasmWait(substrate.memory, substrate.waitAbort); }
+  }
+  function finalizeFatal(detail: HostFailure): void {
+    if (disposed) return;
+    let reported: HostFailure = withUnknownCommittedTick(detail);
+    try { abortFaultWaiters(); }
     catch (error) { reported = { ...reported, cause: { primary: detail.cause, abort: failure("WASM_ABORT_WRITE", "fatal", error) } }; }
-    try { dispose(); }
-    catch (error) { reported = { ...reported, cause: { primary: reported.cause, releaseReporter: failure("WASM_RELEASE_REPORTER", "fatal", error) } }; }
+    try {
+      const release = dispose();
+      if (release instanceof Error) reported = { ...reported, cause: { primary: reported.cause, cleanup: failure("WASM_RELEASE_UNKNOWN", "fatal.cleanup", release) } };
+    }
+    catch (error) { reported = { ...reported, cause: { primary: reported.cause, cleanup: failure("WASM_RELEASE_REPORTER", "fatal.cleanup", error) } }; }
     try { onFatalFailure(reported); }
     catch (error) {
-      const report = new AggregateError([detail, error], "EngineSupervisor fatal callback 失败；全部本人资源已清理");
+      const report = new AggregateError([detail, error], "EngineSupervisor fatal callback 失败；资源清理与 Memory 释放结论见原始故障详情");
       if (reportError !== undefined) reportError(report);
       else if (typeof globalThis.reportError === "function") globalThis.reportError(report);
       else throw error;
@@ -241,14 +252,17 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
   }
   function fatal(detail: HostFailure): void {
     if (disposed) return;
-    if (substrate?.waitDeath === undefined && primary === undefined) { finalizeFatal(detail); return; }
+    detail = withUnknownCommittedTick(detail);
+    try { signalPrimaryDeath(); }
+    catch (error) { detail = { ...detail, cause: { primary: detail.cause, deathSignal: failure("WASM_PRIMARY_DEATH_SIGNAL", "death", error, { workerId: 0 }) } }; }
+    if (primary === undefined) { finalizeFatal(detail); return; }
     if (pendingFailure !== undefined) { subsequentFailures.push(detail); return; }
     pendingFailure = detail;
     shuttingDown = true;
-    try { if (substrate?.waitAbort !== undefined) abortWasmWait(substrate.memory, substrate.waitAbort); }
+    try { abortFaultWaiters(); }
     catch (error) { subsequentFailures.push(failure("WASM_ABORT_WRITE", "failurePending", error)); }
     try {
-      if (options.onFailurePending === undefined) throw new Error("waitDeath 需要 failurePending 控制端");
+      if (options.onFailurePending === undefined) throw new Error("primary DEAD 需要 failurePending 控制端");
       options.onFailurePending(detail);
       schedulePendingFailure();
     } catch (error) { finalizeFatal({ ...detail, cause: { primary: detail.cause, pendingReporter: describeWasmFailure(error) } }); }
@@ -278,7 +292,12 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
     if (resource !== undefined) cleanup(resource, true);
     if (disposed) return;
     answerFail(arena(), identity.slot, identity.gen, FacadeSpawnError[code]);
-    const original = detail === undefined ? failure(code, "spawn", error, identity) : detail;
+    const original = detail === undefined ? failure(code, "spawn", error, identity) : {
+      ...detail,
+      context: detail.context !== null && typeof detail.context === "object" && !Array.isArray(detail.context)
+        ? { ...detail.context, workerId: identity.workerId, slot: identity.slot, gen: identity.gen }
+        : { workerId: identity.workerId, slot: identity.slot, gen: identity.gen, original: detail.context },
+    };
     try { onSpawnFailure(original); }
     catch (callbackError) { fatal(failure("FACADE_SPAWN_REPORTER_ERROR", "onSpawnFailure", callbackError, { original })); }
   }
@@ -290,10 +309,19 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
     if (resource.recordAddr === undefined || resource.identity === undefined || substrate === undefined) return detail;
     try {
       const tombstone = readWasmTombstone(substrate.memory, resource.recordAddr, resource.identity.workerId);
-      return { ...detail, context: { original: detail.context, tombstone } };
+      return { ...detail, context: { workerId: resource.identity.workerId, slot: resource.identity.slot, gen: resource.identity.gen, original: detail.context, tombstone } };
     } catch (error) {
-      return { ...detail, context: { original: detail.context, tombstoneReadError: describeWasmFailure(error) } };
+      return { ...detail, context: { workerId: resource.identity.workerId, slot: resource.identity.slot, gen: resource.identity.gen, original: detail.context, tombstoneReadError: describeWasmFailure(error) } };
     }
+  }
+  function signalPrimaryDeath(): void {
+    const memory = substrate?.memory ?? allocatedMemory;
+    if (primary === undefined || memory === undefined) return;
+    const death = new Int32Array(memory.buffer, primary.death.address, 1);
+    const state = Atomics.load(death, 0);
+    if (state === 0) Atomics.store(death, 0, 1);
+    else if (state !== 1) throw new Error(`宿主观察到 engine 故障时 primary DEAD 状态非法：${state}`);
+    Atomics.notify(death, 0);
   }
   function evaluateWorkerError(resource: Resource, detail: HostFailure, eventMessage: string): void {
     if (resource.role === "child" && resource.identity !== undefined) {
@@ -320,7 +348,7 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
       nativeEventMessage = typeof rawMessage === "string" ? rawMessage : "";
       const rawError: unknown = errorEvent.error;
       const original = rawError === undefined || rawError === null ? new Error(nativeEventMessage || `Worker ${event.type}`) : rawError;
-      const detail = failure(resource.role === "child" && !resource.ready ? "SCRIPT_LOAD" : "FACADE_WORKER_ERROR", resource.role, original, { nativeEventMessage });
+      const detail = failure(resource.role === "child" && !resource.ready ? "SCRIPT_LOAD" : "FACADE_WORKER_ERROR", resource.role, original, { ...workerIdentityContext(resource), nativeEventMessage });
       // engine 保留公开错误壳；分类器取得的原错误及 reporter 故障仍完整留在 cause。
       originalFailure = resource.role === "engine" && detail.code !== "FACADE_FAILURE_REPORTER_ERROR" ? {
         ...detail, code: "WASM_WORKER_SCRIPT", where: "worker-host",
@@ -331,7 +359,7 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
     }
     catch (error) {
       if (disposed) throw error;
-      fatal(failure("FACADE_WORKER_PROTOCOL_ERROR", resource.role, error, { originalFailure, nativeEventMessage }));
+      fatal(failure("FACADE_WORKER_PROTOCOL_ERROR", resource.role, error, { ...workerIdentityContext(resource), originalFailure, nativeEventMessage }));
     }
   }
   function attach(worker: Worker, role: Resource["role"], identity?: FacadeThreadIdentity): Resource {
@@ -360,6 +388,13 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
     const id = resource.identity;
     return id !== undefined && id.workerId === message.workerId && id.slot === message.slot && id.gen === message.gen;
   }
+  function workerIdentityContext(resource: Resource): Record<string, unknown> {
+    if (resource.role === "engine") return { workerId: 0, role: "engine" };
+    if (resource.role === "ingress") return { workerId: 0xffffffff, role: "ingress" };
+    return resource.identity === undefined
+      ? { workerId: "unknown", role: "child" }
+      : { workerId: resource.identity.workerId, slot: resource.identity.slot, gen: resource.identity.gen, role: "child" };
+  }
   function validatePair(slot: number, gen: number): void {
     const view = arena();
     if (slot >= view.capacity || gen >= 2 ** view.genBits) throw new Error("facade slot/gen 超出当前 layout");
@@ -380,8 +415,8 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
       if (recordAddr === 0 || recordAddr % 4 !== 0 || recordAddr + 256 > memory.buffer.byteLength ||
           (recordAddr < arenaEnd && recordAddr + 256 > layout.baseAddr) ||
           (primary !== undefined && [primary.engine.address, primary.ingress.address].some((address) => recordAddr < address + 256 && address < recordAddr + 256)) ||
-          (substrate.waitDeath !== undefined && recordAddr < substrate.waitDeath.address + 4 && substrate.waitDeath.address < recordAddr + 256) ||
-          (substrate.waitAbort !== undefined && recordAddr <= substrate.waitAbort.address && substrate.waitAbort.address < recordAddr + 256) ||
+          (primary !== undefined && recordAddr < primary.death.address + 4 && primary.death.address < recordAddr + 256) ||
+          (libosFault !== undefined && overlapsLibosHostFault(libosFault, recordAddr, 256)) ||
           records.some(({ address }) => recordAddr < address + 256 && address < recordAddr + 256)) {
         throw new Error("facadeSpawnV2 记录地址非法、重叠或已登记");
       }
@@ -426,24 +461,24 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
       if (resource.role !== "engine" || resource.port === undefined || allocatedMemory === undefined || substrate !== undefined || primary !== undefined) throw new Error("primary 只能在首次 Memory 登记后配置");
       primary = parsePrimary(message.primary, allocatedMemory);
       cancelDeathWatch = watchWasmDeath(allocatedMemory, primary.death, () => {
-        if (!disposed) fatal({ code: "WASM_WORKER_DEATH", where: "engine-supervisor.death", message: "WASM Worker 报告死亡；诊断记录可能尚未发布", recoverable: false, recoveryActions: ["请保留错误详情并反馈"] });
+        if (!disposed) fatal({ code: "WASM_WORKER_DEATH", where: "engine-supervisor.death", message: "共享 DEAD 字已发布；来源 Worker 身份需结合已取得的记录确认", context: { deathWord: "shared", workerId: "unknown" }, recoverable: false, recoveryActions: ["请保留错误详情并反馈"] });
       }, (error) => { if (!disposed) fatal(failure("WASM_DEATH_WATCH_ERROR", "death", error)); });
       resource.port.postMessage({ type: "facadeEngineDeathRegistered", allocationId: 1 });
       return;
     }
     if (message.type === "facadeEngineConfiguration") {
       if (resource.role !== "engine" || resource.localPort !== undefined || resource.port === undefined || allocatedMemory === undefined) throw new Error("配置必须关联本控制端已登记的唯一 Memory");
-      if (requireWaitAbort && message.waitAbort === undefined) throw new Error("runtime true 缺少真实 wait abort 布局");
-      if (requireWaitAbort && primary === undefined) throw new Error("runtime true 缺少提前登记 primary 布局");
-      const waitAbort = message.waitAbort === undefined ? undefined : parseWasmWaitAbortLayout(message.waitAbort, allocatedMemory);
-      installSubstrate({ module: message.module, memory: allocatedMemory, layout: message.layout, diagnostics: message.diagnostics, ...(waitAbort === undefined ? {} : { waitAbort }), ...(message.waitDeath === undefined ? {} : { waitDeath: message.waitDeath as WasmWaitDeathLayout }) });
+      if (pendingFailure !== undefined) throw new Error("failurePending 后禁止激活 LibOS host-ready");
+      if (requireLibosFault && message.libosFault === undefined) throw new Error("runtime true 缺少正式 LibOS 故障域布局");
+      if (requireLibosFault && primary === undefined) throw new Error("runtime true 缺少提前登记 primary 布局");
+      installSubstrate({ module: message.module, memory: allocatedMemory, layout: message.layout, diagnostics: message.diagnostics, ...(message.libosFault === undefined ? {} : { libosFault: message.libosFault }) });
       resource.port.postMessage({ type: "facadeEngineConfigured" });
       options.onLifecycleObservation?.({ type: "allocationConfigured", allocationId: 1, role: "engine", workerId: null, slot: null, gen: null });
       return;
     }
     if (message.type === "facadeEngineSubstrate") {
       if (resource.role !== "engine" || resource.localPort !== undefined || resource.port === undefined) throw new Error("substrate 只能来自已接收首次 bootstrap 的 engine 自身控制端");
-      if (allocatedMemory !== undefined || requireWaitAbort) throw new Error("已登记 Memory 或 runtime true 必须使用 allocation configuration，禁止重传 Memory");
+      if (allocatedMemory !== undefined || requireLibosFault) throw new Error("已登记 Memory 或 runtime true 必须使用 allocation configuration，禁止重传 Memory");
       installSubstrate(message);
       resource.port.postMessage({ type: "facadeEngineConfigured" });
       options.onLifecycleObservation?.({ type: "allocationConfigured", allocationId: 1, role: "engine", workerId: null, slot: null, gen: null });
@@ -531,7 +566,7 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
       dispatch(resource, message, global); return true;
     } catch (error) {
       if (disposed) throw error;
-      fatal(failure("FACADE_PROTOCOL_ERROR", "control", error)); return true;
+      fatal(failure("FACADE_PROTOCOL_ERROR", "control", error, workerIdentityContext(resource))); return true;
     }
   }
   function lifecycleCounts() {
@@ -628,20 +663,35 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
     const view = new Int32Array(buffer, layout.baseAddr, length);
     if ((Atomics.load(view, CAPACITY) >>> 0) !== layout.capacity || (Atomics.load(view, GEN_BITS) >>> 0) !== layout.genBits) throw new Error("facade layout header 不匹配");
     if (Object.keys(layout).sort().join(",") !== "baseAddr,capacity,genBits,headerWords,joinStride,slotStride") throw new Error("facade layout 字段不完整或有未知字段");
-    const waitAbort = input.waitAbort === undefined ? undefined : parseWasmWaitAbortLayout(input.waitAbort, memory);
-    const waitDeath = input.waitDeath === undefined ? primary?.death : parseWasmWaitDeathLayout(input.waitDeath, memory);
-    if (waitDeath !== undefined) {
-      const overlaps = (start: number, length: number) => waitDeath.address < start + length && start < waitDeath.address + 4;
-      if (overlaps(layout.baseAddr, length * 4) || (waitAbort !== undefined && overlaps(waitAbort.address, 1))) throw new Error("wasm DEAD 布局与 arena 或 abort 重叠");
+    const activePrimary = primary;
+    const primaryDeath = activePrimary?.death;
+    if (primaryDeath !== undefined && (primaryDeath.address < layout.baseAddr + length * 4 && layout.baseAddr < primaryDeath.address + 4)) throw new Error("wasm DEAD 布局与 arena 重叠");
+    if (activePrimary !== undefined && (activePrimary.engine.address < layout.baseAddr + length * 4 && layout.baseAddr < activePrimary.engine.address + 256 || activePrimary.ingress.address < layout.baseAddr + length * 4 && layout.baseAddr < activePrimary.ingress.address + 256)) throw new Error("primary 记录与 arena 重叠");
+    const parsedLibosFault = input.libosFault === undefined ? undefined : (() => {
+      if (allocatedMemory !== memory) throw new Error("LibOS 故障域必须关联已登记的 Memory");
+      if (activePrimary === undefined || primaryDeath === undefined) throw new Error("LibOS 故障域需要 primary DEAD 布局");
+      return parseLibosHostFaultLayout(input.libosFault, memory, { capacity: layout.capacity, protectedRanges: {
+        arena: { start: layout.baseAddr, length: length * 4 },
+        engine: { start: activePrimary.engine.address, length: 256 },
+        ingress: { start: activePrimary.ingress.address, length: 256 },
+        death: { start: primaryDeath.address, length: 4 },
+      } });
+    })();
+    if (requireLibosFault && parsedLibosFault === undefined) throw new Error("runtime true 缺少正式 LibOS 故障域布局");
+    if (parsedLibosFault !== undefined) {
+      try { activateLibosHostFault(memory, parsedLibosFault); }
+      catch (activationError) {
+        // host-ready 发布竞争到故障时，仍须通过已验证布局唤醒所有 LibOS 等待者。
+        try { abortLibosHostFault(memory, parsedLibosFault); }
+        catch (abortError) {
+          throw new AggregateError([activationError, abortError], "LibOS host-ready 发布失败且故障等待者唤醒失败", { cause: { activationError, abortError } });
+        }
+        throw activationError;
+      }
     }
-    substrate = Object.freeze({ module, memory, layout: Object.freeze({ ...layout }), diagnostics, ...(waitAbort === undefined ? {} : { waitAbort }), ...(waitDeath === undefined ? {} : { waitDeath }) });
-    if (primary !== undefined && (waitDeath === undefined || waitDeath.address !== primary.death.address)) throw new Error("配置 DEAD 地址与提前登记不一致");
-    if (primary !== undefined && (primary.engine.address < layout.baseAddr + length * 4 && layout.baseAddr < primary.engine.address + 256 || primary.ingress.address < layout.baseAddr + length * 4 && layout.baseAddr < primary.ingress.address + 256)) throw new Error("primary 记录与 arena 重叠");
-    if (primary !== undefined && waitAbort !== undefined && [primary.engine.address, primary.ingress.address].some((address) => address <= waitAbort.address && waitAbort.address < address + 256)) throw new Error("primary 记录与 abort 重叠");
-    if (primary !== undefined) substrate = Object.freeze({ ...substrate, primary });
-    if (waitDeath !== undefined && primary === undefined) cancelDeathWatch = watchWasmDeath(memory, waitDeath, () => {
-      if (!disposed) fatal({ code: "WASM_WORKER_DEATH", where: "engine-supervisor.death", message: "WASM Worker 报告死亡；诊断记录可能尚未发布", recoverable: false, recoveryActions: ["请保留错误详情并反馈"] });
-    }, (error) => { if (!disposed) fatal(failure("WASM_DEATH_WATCH_ERROR", "death", error)); });
+    primary = activePrimary;
+    libosFault = parsedLibosFault;
+    substrate = Object.freeze({ module, memory, layout: Object.freeze({ ...layout }), diagnostics, ...(activePrimary === undefined ? {} : { primary: activePrimary }) });
     scheduleSweep();
   }
   function assertConfigured(): void {
@@ -654,7 +704,7 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
       const engine = engineResource;
       if (disposed || engine === undefined || engine.localPort === undefined) throw new Error("engine bootstrap 只允许发送一次");
       allocationStarted = true;
-      requireWaitAbort = message.runtimeOverride === true;
+      requireLibosFault = message.runtimeOverride === true;
       try { engine.worker.postMessage({ ...message, controlPort: engine.localPort }, [engine.localPort]); engine.localPort = undefined; }
       catch (error) { fatal(failure("FACADE_ENGINE_BOOTSTRAP", "engine", error)); }
     },
@@ -662,7 +712,7 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
       const engine = engineResource;
       if (disposed || engine === undefined || engine.localPort === undefined) throw new Error("engine transport bootstrap 只允许发送一次");
       allocationStarted = true;
-      requireWaitAbort = runtimeOverride;
+      requireLibosFault = runtimeOverride;
       try {
         engine.worker.postMessage({ type: "bindEngineTransport", instanceId, dataPort, controlPort: engine.localPort }, [dataPort, engine.localPort]);
         engine.localPort = undefined;

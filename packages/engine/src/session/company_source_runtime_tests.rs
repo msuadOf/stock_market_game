@@ -807,6 +807,118 @@ fn info_delivery_failure_after_intraday_publication_is_terminal_and_reported() {
 }
 
 #[test]
+#[cfg(not(target_family = "wasm"))]
+fn 实际月报投递的非空回执后宿主故障锁定_session_并拒绝存档() {
+    fn prepared() -> (GameSession, crate::runtime::drive::RuntimeDriver) {
+        let mut setup = monthly_intraday_setup();
+        setup.npcs.retail_count = 2;
+        let mut session = GameSession::new(setup, 42).unwrap();
+        for account in [AccountId(1), AccountId(2)] {
+            session.state.belief_participants.get_mut(&account).unwrap()
+                .watchlist_mut().record_attention(&StockId(0), 0, 0).unwrap();
+            let attention = session.state.npc_attention.get_mut(&account).unwrap();
+            attention.information_cadence = crate::session::notices::NpcInformationCadence::Immediate;
+        }
+        let mut driver = crate::runtime::drive::RuntimeDriver::from_session_grouped(&mut session, 2).unwrap();
+        for _ in 0..29 { session.runtime_step_with_install(&mut driver).unwrap(); }
+        (session, driver)
+    }
+
+    let (mut control, mut control_driver) = prepared();
+    let events = control.runtime_step_with_install(&mut control_driver).unwrap();
+    let publication = events.iter().find_map(|event| match event {
+        Event::CompanyDisclosurePublished { publication_id, .. } => Some(*publication_id),
+        _ => None,
+    }).expect("对照组必须实际公布月报");
+    for account in [AccountId(1), AccountId(2)] {
+        assert!(control.state.belief_participants[&account].information().observed_at_of(publication).is_some(), "对照组必须实际获知月报");
+    }
+
+    let (mut session, mut driver) = prepared();
+    let before_world_tick = driver.world_committed_tick();
+    let before_reports = session.state.library.report_count();
+    let before_information: Vec<_> = [AccountId(1), AccountId(2)].iter()
+        .map(|account| session.state.belief_participants[account].information().clone()).collect();
+    driver.inject_delivery_host_abort_for_test(1);
+    let fatal = session.runtime_step_with_install(&mut driver).expect_err("投递阶段宿主故障必须终止 Session");
+    assert!(matches!(&fatal, StepFatal::InvariantViolation { location, description }
+        if location == "runtime_mirror::information_delivery" && description.contains("HostAborted")));
+    assert!(driver.first_delivery_reply_updates_for_test().is_some_and(|count| count > 0), "故障前必须真实收到非空更新");
+    assert_eq!(driver.world_committed_tick(), before_world_tick + 1, "World tick 已在信息投递之前提交");
+    assert_eq!(session.state.library.report_count(), before_reports + 1, "故障发生前月报已真实公开");
+    assert!(session.state.library.save().reports.iter().any(|report| report.id == publication), "故障组必须包含对照组同一公开事实");
+    let after_information: Vec<_> = [AccountId(1), AccountId(2)].iter()
+        .map(|account| session.state.belief_participants[account].information().clone()).collect();
+    assert_eq!(after_information, before_information, "部分信息回执不得安装到 Session");
+    assert_eq!(session.runtime_attention_full_states(), driver.delivery_start_attention_for_test().expect("必须记录真实投递前的注意力"), "部分回执不得安装注意力");
+    assert_eq!(session.poison_reason(), Some(&fatal));
+    assert!(matches!(session.save(), Err(SessionError::Step(actual)) if actual == fatal));
+    let tick_after_failure = session.tick();
+    assert_eq!(session.step().unwrap_err(), fatal);
+    assert_eq!(session.tick(), tick_after_failure);
+}
+
+#[test]
+#[cfg(not(target_family = "wasm"))]
+fn 内置_driver_实际月报投递宿主故障锁定首错并拒绝存档() {
+    assert!(crate::runtime::step_runtime_enabled(), "本测试必须使用生产 runtime");
+    fn prepared() -> GameSession {
+        let mut setup = monthly_intraday_setup();
+        setup.npcs.retail_count = 2;
+        let mut session = GameSession::new_with_runtime_groups(setup, 42, 2).unwrap();
+        for account in [AccountId(1), AccountId(2)] {
+            session.state.belief_participants.get_mut(&account).unwrap()
+                .watchlist_mut().record_attention(&StockId(0), 0, 0).unwrap();
+            session.state.npc_attention.get_mut(&account).unwrap().information_cadence =
+                crate::session::notices::NpcInformationCadence::Immediate;
+        }
+        for _ in 0..29 { session.step().unwrap(); }
+        session
+    }
+
+    let mut control = prepared();
+    let events = control.step().unwrap();
+    let publication = events.iter().find_map(|event| match event {
+        Event::CompanyDisclosurePublished { publication_id, .. } => Some(*publication_id),
+        _ => None,
+    }).expect("对照组必须实际公布月报");
+    for account in [AccountId(1), AccountId(2)] {
+        assert!(control.state.belief_participants[&account].information().observed_at_of(publication).is_some());
+    }
+
+    let mut session = prepared();
+    let before_reports = session.state.library.report_count();
+    let before_information: Vec<_> = [AccountId(1), AccountId(2)].iter()
+        .map(|account| session.state.belief_participants[account].information().clone()).collect();
+    let before_world_tick = {
+        let mut driver = session.runtime_driver_for_test().expect("必须使用内置 driver").lock().unwrap();
+        let tick = driver.world_committed_tick();
+        driver.inject_delivery_host_abort_for_test(1);
+        tick
+    };
+    let fatal = session.step().expect_err("信息投递宿主故障必须终止 Session");
+    assert!(matches!(&fatal, StepFatal::InvariantViolation { location, description }
+        if location == "runtime_mirror::information_delivery" && description.contains("HostAborted")));
+    {
+        let driver = session.runtime_driver_for_test().expect("失败后仍须可观察原 driver").lock().unwrap();
+        assert_eq!(driver.world_committed_tick(), before_world_tick + 1);
+        assert!(driver.world_terminal_for_test(), "宿主永久故障必须使内置 World 判死");
+        assert!(driver.first_delivery_reply_updates_for_test().is_some_and(|count| count > 0));
+        assert_eq!(session.runtime_attention_full_states(), driver.delivery_start_attention_for_test().expect("必须记录投递起始注意力"));
+    }
+    assert_eq!(session.state.library.report_count(), before_reports + 1);
+    assert!(session.state.library.save().reports.iter().any(|report| report.id == publication));
+    let after_information: Vec<_> = [AccountId(1), AccountId(2)].iter()
+        .map(|account| session.state.belief_participants[account].information().clone()).collect();
+    assert_eq!(after_information, before_information, "部分回执不得安装 Session 信息态");
+    assert_eq!(session.poison_reason(), Some(&fatal));
+    assert!(matches!(session.save(), Err(SessionError::Step(actual)) if actual == fatal));
+    let tick_after_failure = session.tick();
+    assert_eq!(session.step().unwrap_err(), fatal);
+    assert_eq!(session.tick(), tick_after_failure);
+}
+
+#[test]
 fn restored_day_end_monthly_report_is_learned_at_next_day_1100() {
     use crate::information::{MonthlyReportDelay, MonthlyReportSchedule, ReportFrequency};
     let mut setup = monthly_intraday_setup();

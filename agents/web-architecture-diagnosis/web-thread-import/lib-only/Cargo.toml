@@ -1,0 +1,86 @@
+[package]
+categories = ["api-bindings", "concurrency", "wasm"]
+description = "Drop-in replacement for std::thread for Wasm in browsers"
+edition = "2021"
+include = ["CHANGELOG.md", "LICENSE-*", "src/**/*", "examples/**/*"]
+keywords = ["worker", "worklet", "wasm", "web", "thread"]
+license = "MIT OR Apache-2.0"
+name = "web-thread"
+repository = "https://github.com/daxpedda/web-thread"
+rust-version = "1.70"
+version = "0.0.0"
+
+[features]
+audio-worklet = [
+	"web-sys/AudioContextState",
+	"web-sys/AudioWorklet",
+	"web-sys/AudioWorkletGlobalScope",
+	"web-sys/AudioWorkletNode",
+	"web-sys/AudioWorkletNodeOptions",
+	"web-sys/AudioWorkletProcessor",
+	"web-sys/BaseAudioContext",
+	"web-sys/DomException",
+]
+message = [
+	"web-sys/AudioData",
+	"web-sys/CryptoKey",
+	"web-sys/DomException",
+	"web-sys/DomMatrix",
+	"web-sys/DomPoint",
+	"web-sys/DomQuad",
+	"web-sys/DomRect",
+	"web-sys/File",
+	"web-sys/FileList",
+	"web-sys/FileSystemDirectoryHandle",
+	"web-sys/FileSystemFileHandle",
+	"web-sys/FileSystemHandle",
+	"web-sys/GpuCompilationInfo",
+	"web-sys/GpuCompilationMessage",
+	"web-sys/ImageBitmap",
+	"web-sys/ImageData",
+	"web-sys/MessageEvent",
+	"web-sys/OffscreenCanvas",
+	"web-sys/ReadableStream",
+	"web-sys/RtcCertificate",
+	"web-sys/RtcDataChannel",
+	"web-sys/TransformStream",
+	"web-sys/VideoFrame",
+	"web-sys/WritableStream",
+]
+
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+js-sys = "0.3.75"
+pin-project = "1"
+wasm-bindgen = { version = "0.2.98", default-features = false }
+wasm-bindgen-futures = "0.4.48"
+web-sys = { version = "0.3.75", features = [
+	"AbortController",
+	"AbortSignal",
+	"DedicatedWorkerGlobalScope",
+	"MessageChannel",
+	"MessagePort",
+	"Navigator",
+	"Scheduler",
+	"SchedulerPostTaskOptions",
+	"SharedWorkerGlobalScope",
+	"TaskPriority",
+	"Window",
+	"WorkerNavigator",
+] }
+
+[target.'cfg(all(target_family = "wasm", target_os = "unknown", target_feature = "atomics"))'.dependencies]
+atomic-waker = "1"
+web-sys = { version = "0.3", features = [
+	"Blob",
+	"BlobPropertyBag",
+	"Url",
+	"Worker",
+	"WorkerOptions",
+	"WorkerType",
+] }
+
+
+[lib]
+path = "src/lib.rs"
+
+[workspace]

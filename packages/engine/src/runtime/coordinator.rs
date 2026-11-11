@@ -11,9 +11,10 @@
 //! 批 5 日结接线接入。
 
 use super::protocol::{RuntimeError, TickSnapshot, UpMsg, WorkerId};
-use super::watchdog::{recv_deadline, Phase, WatchdogConfig};
+use super::upstream::{recv_up_deadline as recv_deadline, UpReceiver};
+use super::wait_contract::{DeadlineConfig, Phase};
 use super::{GroupIdx, StockIdx};
-use std::sync::mpsc::{Receiver, Sender};
+use super::downstream::Sender;
 use std::sync::Arc;
 
 /// 协调者全局域（已收敛态；失败路径只触碰 candidate，不触碰本结构）。
@@ -136,12 +137,12 @@ pub enum RoundOutcome {
 
 /// 收束一轮：收齐 G 个 `GroupReport` + N 个 `DeskReport`。
 pub(crate) fn converge_round(
-    up_rx: &Receiver<UpMsg>,
+    up_rx: &UpReceiver<UpMsg>,
     n_groups: usize,
     n_stocks: usize,
     tick: u64,
     round: u32,
-    watchdog: &WatchdogConfig,
+    deadline: &DeadlineConfig,
 ) -> RoundOutcome {
     let wrap = |r: Result<TickEvidence, RuntimeError>| match r {
         Ok(ev) => RoundOutcome::Converged(Box::new(ev)),
@@ -174,7 +175,12 @@ pub(crate) fn converge_round(
         vec![None; n_stocks];
     let mut desk_serial_cursors = vec![0u64; n_stocks];
     while groups_left > 0 || desks_left > 0 {
-        let msg = match recv_deadline(up_rx, Phase::TickConverge, watchdog) {
+        let received = {
+            #[cfg(feature = "verification-harness")]
+            let _profile = super::step_profile::scope(super::step_profile::StepSegment::ConvergeReceive);
+            recv_deadline(up_rx, Phase::TickConverge, deadline)
+        };
+        let msg = match received {
             Ok(m) => m,
             Err(e) => return RoundOutcome::Failed(e),
         };

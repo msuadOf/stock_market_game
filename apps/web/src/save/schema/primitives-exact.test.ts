@@ -23,3 +23,12 @@ test("常见短键表复用成员索引，避免每个对象重复分配 Set", {
     assert.equal(constructions, 0);
   } finally { globalThis.Set = original; }
 });
+
+test("map 保留原型同名键为普通自有字段", async () => {
+  const { map } = await import("./primitives.ts");
+  const source = JSON.parse('{"__proto__":1,"constructor":2,"normal":3}');
+  const parsed = map(source, "测试", () => {}, (value) => value);
+  assert.deepEqual(parsed, source);
+  assert.equal(Object.getPrototypeOf(parsed), Object.prototype);
+  assert.ok(Object.hasOwn(parsed, "__proto__"));
+});

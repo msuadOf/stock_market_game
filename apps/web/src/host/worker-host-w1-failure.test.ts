@@ -55,6 +55,7 @@ test("W1 sink 抛错由 supervisor 统一 fatal 清理初始化在途资源", { 
   const f = fixture({ childConstructError: new Error("child 失败"), spawnSink: () => { throw new Error("UI sink 失败"); } });
   try {
     f.launch(); await drain(); f.spawn(); await drain();
+    f.clock.advance(2000); await drain();
     assert.equal(f.outcome.status, "rejected");
     if (f.outcome.status === "rejected") assert.match(String(f.outcome.error), /UI sink 失败|FACADE_SPAWN_REPORTER_ERROR/);
     assert.equal(f.workers[0].terminations, 1);
@@ -75,6 +76,7 @@ test("W1 native engine ErrorEvent 保留 WASM_WORKER_SCRIPT 壳与原 cause", { 
     f.workers[0].emit({ type: "started", generation: 1, requestId: request.requestId }); await starting;
     const original = new Error("原始脚本异常", { cause: { marker: "保真" } });
     f.workers[0].error(original, "浏览器脚本异常"); await drain();
+    f.clock.advance(2000); await drain();
     assert.equal(failures.length, 1);
     const failure = failures[0] as { code: string; cause?: { message?: string; cause?: unknown } };
     assert.equal(failure.code, "WASM_WORKER_SCRIPT");

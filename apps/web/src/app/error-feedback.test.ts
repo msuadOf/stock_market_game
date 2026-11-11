@@ -37,7 +37,7 @@ const failure = {
   recoveryActions: ["复制反馈后检查运行环境"],
 };
 
-test("结构化错误显示真实详情、原因链与建议，context 脱敏且不改变原对象", () => {
+test("结构化错误显示真实详情、原因链与建议，context 原样保留且不改变原对象", () => {
   let html = "";
   assert.doesNotThrow(() => { html = renderToStaticMarkup(createElement(views.FatalHostError, { error: failure, onRetry: () => {} })); });
   assert.match(html, /STEP_FATAL/);
@@ -50,7 +50,7 @@ test("结构化错误显示真实详情、原因链与建议，context 脱敏且
   assert.match(html, /不可直接恢复/);
   assert.match(html, /复制反馈后检查运行环境/);
   assert.match(html, /复制错误反馈/);
-  assert.doesNotMatch(html, /private-token|private-password|private-save-contents/);
+  for (const value of ["private-token", "private-password", "private-save-contents"]) assert.ok(html.includes(value));
   assert.equal(failure.context.token, "private-token");
 });
 
@@ -80,7 +80,7 @@ function copyCallback(props: Parameters<typeof views.FatalHostError>[0]): NonNul
   return copy.props.onCopy!;
 }
 
-test("复制回调使用注入 Clipboard 并报告真实成功，不把敏感 context 放入剪贴板", async () => {
+test("复制回调使用注入 Clipboard 并报告真实成功，原始 context 与调用栈放入剪贴板", async () => {
   const copied: string[] = [];
   const statuses: CopyStatus[] = [];
   const copy = copyCallback({
@@ -93,7 +93,7 @@ test("复制回调使用注入 Clipboard 并报告真实成功，不把敏感 co
   assert.match(copied[0]!, /STEP_FATAL/);
   assert.match(copied[0]!, /engine\.commit_tick/);
   assert.match(copied[0]!, /内部收据不一致/);
-  assert.doesNotMatch(copied[0]!, /private-token|private-password|private-save-contents/);
+  for (const value of ["private-token", "private-password", "private-save-contents"]) assert.ok(copied[0]!.includes(value));
   assert.deepEqual(statuses.map((status) => status.kind), ["copying", "copied"]);
 });
 

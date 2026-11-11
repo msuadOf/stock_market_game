@@ -65,6 +65,78 @@ export function describeWasmFailure(error: unknown, coreFields?: { readonly code
   return safeString(error);
 }
 
+/** structuredClone 会删除 Error 的自定义字段与 AggregateError.errors，传输前保留这些诊断。 */
+export function cloneWasmFailureDetails(value: unknown): unknown {
+  const seen = new Map<object, unknown>();
+  function project(source: unknown): unknown {
+    if (source === null || typeof source !== "object") return source;
+    if (seen.has(source)) return seen.get(source);
+    if (source instanceof Date || source instanceof RegExp || source instanceof ArrayBuffer || (typeof SharedArrayBuffer !== "undefined" && source instanceof SharedArrayBuffer) || ArrayBuffer.isView(source)) return source;
+    if (source instanceof Map) {
+      const result = new Map(); seen.set(source, result);
+      for (const [key, entry] of source) result.set(project(key), project(entry));
+      return result;
+    }
+    if (source instanceof Set) {
+      const result = new Set(); seen.set(source, result);
+      for (const entry of source) result.add(project(entry));
+      return result;
+    }
+    const nativeError = source instanceof Error;
+    const prototype = Object.getPrototypeOf(source);
+    const constructor = prototype === null ? undefined : Object.getOwnPropertyDescriptor(prototype, "constructor");
+    // 未知原生对象仍由 structuredClone 决定可传输性，不能把 Promise/WeakMap 等变成空对象。
+    if (!nativeError && !Array.isArray(source) && prototype !== null && prototype !== Object.prototype
+      && typeof constructor?.value === "function" && Function.prototype.toString.call(constructor.value).includes("[native code]")) return source;
+    const result: Record<string, unknown> | unknown[] = Array.isArray(source) ? new Array(source.length) : {};
+    seen.set(source, result);
+    const descriptors = Object.getOwnPropertyDescriptors(source);
+    if (nativeError) {
+      const stack = wasmFailureStack(source);
+      if (stack !== undefined) descriptors.stack = { value: stack, enumerable: true };
+      if (!Object.hasOwn(descriptors, "name")) {
+        let prototype = Object.getPrototypeOf(source);
+        while (prototype !== null) {
+          const name = Object.getOwnPropertyDescriptor(prototype, "name");
+          if (name !== undefined) { descriptors.name = name; break; }
+          prototype = Object.getPrototypeOf(prototype);
+        }
+      }
+    }
+    for (const [key, descriptor] of Object.entries(descriptors)) {
+      if (!nativeError && !descriptor.enumerable) continue;
+      const detail = Object.hasOwn(descriptor, "value") ? descriptor.value
+        : nativeError ? "[详情读取失败：访问器字段未执行]" : Reflect.get(source, key);
+      Object.defineProperty(result, key, { value: project(detail), enumerable: true, configurable: true, writable: true });
+    }
+    return result;
+  }
+  return structuredClone(project(value));
+}
+
+/** 不重复执行核心 getter；V8 惰性 stack 仅在 message 为数据字段时读取。 */
+export function wasmFailureStack(error: unknown): string | undefined {
+  if (error === null || typeof error !== "object") return undefined;
+  const stack = Object.getOwnPropertyDescriptor(error, "stack");
+  if (stack === undefined) return undefined;
+  if (Object.hasOwn(stack, "value")) return typeof stack.value === "string" ? stack.value : undefined;
+  function hasDataProperty(key: "message" | "name"): boolean {
+    let target: object | null = error as object;
+    while (target !== null) {
+      const descriptor = Object.getOwnPropertyDescriptor(target, key);
+      if (descriptor !== undefined) return Object.hasOwn(descriptor, "value");
+      target = Object.getPrototypeOf(target);
+    }
+    return true;
+  }
+  if (error instanceof Error && stack.get !== undefined && Function.prototype.toString.call(stack.get).includes("[native code]")
+    && hasDataProperty("message") && hasDataProperty("name")) {
+    const value: unknown = stack.get.call(error);
+    return typeof value === "string" ? value : undefined;
+  }
+  return undefined;
+}
+
 export function classifyWasmFailure(error: unknown): WasmFailureClassification {
   if (error !== null && typeof error === "object") {
     let field = "object";
@@ -94,7 +166,19 @@ export function classifyWasmFailure(error: unknown): WasmFailureClassification {
         if (where === null || ["string", "number", "boolean", "bigint"].includes(typeof where)) cause.where = where;
       }
       const description = describeWasmFailure(error, coreFields);
-      const supplemental = { ...cause };
+      try {
+        if (error instanceof Error) {
+          const stack = wasmFailureStack(error);
+          if (stack !== undefined) cause.stack = stack;
+          for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(error))) {
+            if (["code", "message", "where", "stack"].includes(key)) continue;
+            Object.defineProperty(cause, key, { value: Object.hasOwn(descriptor, "value") ? descriptor.value : "[详情读取失败：访问器字段未执行]", enumerable: true });
+          }
+        }
+      } catch (diagnosticError) {
+        cause.diagnosticReadError = describeWasmFailure(diagnosticError);
+      }
+      const supplemental = Object.fromEntries(Object.entries(cause).filter(([key]) => ["code", "message", "where"].includes(key)));
       // 标准 Error 的说明就是原 message；其他形态统一附上已读 primitive 诊断。
       if (Object.hasOwn(cause, "message") && description === String(cause.message)) delete supplemental.message;
       return { kind: "unstructured", description: `${description}${describeReadFailureFields(supplemental)}`, cause };

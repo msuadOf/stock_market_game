@@ -266,6 +266,8 @@ pub struct RuntimeDriver {
     /// INFO 安装后失败注入：验证 terminal/poison 契约，不制造静默半安装。
     #[cfg(test)]
     info_delivery_failure_for_test: bool,
+    #[cfg(test)]
+    delivery_start_attention: Option<Vec<(crate::AccountId, crate::session::NpcAttentionState)>>,
     /// P2-2a：信念全量缓存（全局名册序——稀疏上行增量合并；构造期
     /// =belief_seeds 同源投影，collect_belief 读面由它承载全量语义）。
     belief_cache: Vec<Option<crate::session::SharedRuntimePersonal>>,
@@ -828,6 +830,8 @@ impl RuntimeDriver {
             candle_knob_drop_turnover: false,
             #[cfg(test)]
             info_delivery_failure_for_test: false,
+            #[cfg(test)]
+            delivery_start_attention: None,
             belief_cache,
             drained_events: Vec::new(),
             pending_receipts: Vec::new(),
@@ -1377,6 +1381,11 @@ impl RuntimeDriver {
     /// world 已转正 tick（D0 锁步不变量的驱动器侧读数）。
     pub fn world_committed_tick(&self) -> u64 {
         self.world.global.committed_tick
+    }
+
+    #[cfg(test)]
+    pub(crate) fn world_terminal_for_test(&self) -> bool {
+        self.world.is_terminal()
     }
 
     /// Q1 发布槽句柄（驱动器侧转发——session/server/测试读者经此取
@@ -2231,6 +2240,11 @@ impl RuntimeDriver {
         self.world.sever();
     }
 
+    #[cfg(all(test, not(target_family = "wasm")))]
+    pub(crate) fn disconnect_upstream_for_test(&mut self) {
+        self.world.disconnect_upstream_for_test();
+    }
+
     /// D5 #4 fixture 通道：推远名册账户 next_due（cfg(test)——组权威
     /// 调度面的"无 due tick"形态构造）。
     #[cfg(test)]
@@ -2356,6 +2370,8 @@ impl RuntimeDriver {
             return Ok(0);
         }
         let version_changed = Some(version) != self.last_library_version;
+        #[cfg(test)]
+        { self.delivery_start_attention = Some(session.runtime_attention_full_states()); }
         let (updates, group_floor) = self.collect_delivery(session, library, clock, anchors)?;
         self.last_library_version = Some(version);
         if version_changed {
@@ -2405,6 +2421,22 @@ impl RuntimeDriver {
         // 新局首拍不自动补投既有 cadence；恢复档已有 library 基线，
         // 新局首次公开则走 intraday_published 分支。
         self.information_due_after_prepare && self.last_library_version.is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_delivery_host_abort_for_test(&mut self, after: usize) {
+        self.world.set_delivery_host_abort_after_for_test(after);
+        self.delivery_start_attention = None;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn delivery_start_attention_for_test(&self) -> Option<Vec<(crate::AccountId, crate::session::NpcAttentionState)>> {
+        self.delivery_start_attention.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn first_delivery_reply_updates_for_test(&self) -> Option<usize> {
+        self.world.delivery_first_reply_updates_for_test()
     }
 
     /// 测试面：跳过版本判据强制投递（机制验证用）。

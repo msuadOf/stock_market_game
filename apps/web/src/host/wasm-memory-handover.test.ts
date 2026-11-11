@@ -13,6 +13,12 @@ function frozen() {
 test("冻结历史handover严格roundtrip，null意图仍是待确认事件", () => {
   assert.deepEqual(parseWasmMemoryHandover(frozen(), maximum), frozen());
 });
+test("固定分块源描述严格往返且拒绝伪造摘要", { timeout: 10000 }, () => {
+  const descriptor = { kind: "load-chunked-source", sourceId: "ab".repeat(16), utf8Bytes: 2, seed: "1", contentDigest: { algorithm: "sha256-chain-v1", blockBytes: 65536, byteLength: "2", blocks: "1", digest: "cd".repeat(32) } };
+  const input = { ...frozen(), pendingIntent: descriptor };
+  assert.deepEqual(parseWasmMemoryHandover(input, maximum), input);
+  assert.throws(() => parseWasmMemoryHandover({ ...input, pendingIntent: { ...descriptor, contentDigest: { ...descriptor.contentDigest, blocks: "2" } } }, maximum), /摘要/);
+});
 test("lost只保目标丢失原因，不伪造历史账/nonce/tick", () => {
   for (const reason of ["checksum-invalid", "schema-invalid", "intent-invalid", "carrier-unavailable"]) {
     assert.deepEqual(parseWasmMemoryHandover({ kind: "lost", reason }, maximum), { kind: "lost", reason });

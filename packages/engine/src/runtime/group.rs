@@ -16,7 +16,8 @@ use super::protocol::{
     AdminRight, DayEndDirective, DeskBatch, DeskIn, GroupIn, GroupReport, RoutedPrice,
     RuntimeError, UpMsg, WorkerId,
 };
-use super::watchdog::{spin_config, worker_recv_spin};
+use super::upstream::UpSender;
+use super::worker_inbox::{WorkerInbox, WorkerSender};
 use super::{Entity, FillFact, GroupIdx, LocalIdx, OrderRef, StockIdx};
 use crate::config::GameConfig;
 use crate::money::Money;
@@ -638,6 +639,12 @@ pub(crate) fn desk_order_serial(id: u64) -> u64 {
 /// 覆盖：决策期扣除（purse/股票）、实体落账、`foreign_active` 增减。
 #[derive(Clone, Debug)]
 enum GroupUndo {
+    /// 组级累计计数在每拍起点的基线；逆序回放时最后恢复。
+    Totals {
+        skipped_orders: u64,
+        decide_calls_total: u64,
+        cancel_intents_total: u64,
+    },
     /// 现金变动（扣除为负、落账为正）。
     Cash { local: LocalIdx, delta: i64 },
     /// 持仓变动（卖出扣除为负、回流为正）。
@@ -658,10 +665,15 @@ enum GroupUndo {
         stock: StockIdx,
         delta: i32,
     },
-    /// attention 重排（decide 后 next_due 前移；`prev`=重排前值）。
-    /// Sol 二审修复集 5：不记则失败 tick Abort 后 NPC 已被排到未来，
-    /// 重跑同 tick 时少一次决策。
-    NextDue { local: LocalIdx, prev: u64 },
+    /// attention 重排（恢复 next_due、RNG seed 与基础概率的变更前值）。
+    /// evaluate_attention 消费 profile.seed；Abort 必须恢复共享 RNG 续流，
+    /// 只还原 next_due 会令重跑同拍产生不同决策。
+    NextDue {
+        local: LocalIdx,
+        prev: u64,
+        prev_seed: u64,
+        prev_attention_base: f64,
+    },
     /// 成本基变动（D3a-2c 件1：FillFact 落账的 invested/recovered 增量，
     /// 含清仓清零的负增量；回滚时逆序减回）。
     CostBasis {
@@ -674,11 +686,11 @@ enum GroupUndo {
     /// 与 session 版"个人候选私有、失败不 install"语义对齐）。
     Personal {
         local: LocalIdx,
-        prev: Box<super::world::BeliefParticipantSnapshot>,
+        prev: std::sync::Arc<super::world::BeliefParticipantSnapshot>,
     },
     /// 计划簿创建前快照（D3a-3：组内开仓 create 的可逆化——Abort 恢复；
     /// tick 内首个创建时保存一次）。
-    PlanBook { prev: Box<crate::plans::PlanBook> },
+    PlanBook { prev: std::sync::Arc<crate::plans::PlanBook> },
     /// 曾持有位回滚（D3a-3 收口：清仓置位/再持有复位的逆操作）。
     EverHeld {
         local: LocalIdx,
@@ -802,6 +814,20 @@ pub enum Observed {
     Shutdown,
 }
 
+/// 失败轮未发送的委托诊断，不是可重新执行的交易指令或独立资产。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UndeliveredGroupOps {
+    /// 失败拍与轮次。
+    pub tick: u64,
+    pub round: u32,
+    /// 首个发送失败的股票下标；此前非空且已尝试的目标发送成功，空目标可能跳过。
+    pub first_failed_stock: usize,
+    /// 本次是否为本轮最终发送。
+    pub final_flush: bool,
+    /// 仅保存本次缓冲中已生成的失败批次和尾部；已发送目标为空。
+    pub by_stock: Vec<Vec<DeskIn>>,
+}
+
 /// 组线程期末上交状态。
 #[derive(Clone, Debug)]
 pub struct GroupFinalState {
@@ -810,6 +836,9 @@ pub struct GroupFinalState {
     pub plan_book_for_test: crate::plans::PlanBook,
     /// 组索引。
     pub group: GroupIdx,
+    /// 仅诊断发送失败时的未发送载荷；不得与回滚后的账户资产重复计算或重放。
+    /// 诊断依赖 Final 成功送达和收集，宿主故障等情况下不保证可见。
+    pub undelivered_ops: Option<UndeliveredGroupOps>,
     /// 期末账户（含 Drain 回流落账）。
     pub accounts: Vec<GroupAccount>,
     /// 累计跳过单量。
@@ -836,6 +865,45 @@ pub struct GroupFinalState {
     pub seal_shard_ns: u128,
     /// 消息观察日志。
     pub observed: Vec<Observed>,
+    abort_proof: Option<GroupAbortProof>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct GroupAbortProof {
+    committed_tick: u64,
+    failed_tick: u64,
+    round: u32,
+    proven: bool,
+}
+
+impl GroupFinalState {
+    /// 只有逐项核验了同一 FatalTick 的完整权威基线后才能证明 Abort 可恢复。
+    /// 当前 GroupUndo 未覆盖计划链内部状态、全部决策态及部分组级计数的统一
+    /// 起始快照，因此不能把哈希或日志清空当作恢复证明；失败时调用方必须保留
+    /// 原始退出载荷。
+    pub(crate) fn verify_rollback(
+        &self,
+        context: &super::world::ExitReconcileContext,
+    ) -> Result<(), String> {
+        if context.phase != super::world::ExitReconcilePhase::FatalTick {
+            return Err("Group 不支持该退出阶段的完整 Abort 证明".into());
+        }
+        if !context.candidate_unpublished || context.active_tick.is_none() || context.round.is_none() {
+            return Err("Group Abort 证明缺少未发布事务的 tick/round 身份".into());
+        }
+        let proof = self.abort_proof.ok_or_else(|| "Group 没有此 FatalTick 的 Abort 基线证明".to_owned())?;
+        if Some(proof.failed_tick) != context.active_tick
+            || Some(proof.round) != context.round
+            || Some(proof.committed_tick) != context.last_committed_tick
+        {
+            return Err("Group Abort 证明与退出事务身份不匹配".into());
+        }
+        if proof.proven {
+            Ok(())
+        } else {
+            Err("Group 事务不满足有限封闭场景，或 Abort 后逐项比较未恢复完整权威状态".into())
+        }
+    }
 }
 
 /// 新建组测试使用的完整初始事实。
@@ -870,11 +938,18 @@ pub struct GroupState {
     admin_fault: Option<(super::protocol::AdminPhase, super::protocol::AdminFault)>,
     /// 组索引。
     pub group: GroupIdx,
+    /// 失败后保留原始发送上下文，供 Final 诊断；不是第二份可用资产。
+    undelivered_ops: Option<UndeliveredGroupOps>,
     /// 组内账户（下标=LocalIdx；Seal 攻顶刀 A-1：Arc+COW——写点经
     /// `Arc::make_mut`（独占时零拷贝原地改；分片共享后首写 COW 一次），
     /// SealAck 分片构建=Arc 指针共享（原全量 GroupAccount 深拷贝×
     /// 活跃集 234μs 的搬运税消除——2000 账户×~450B→2000×8B）。
     pub accounts: Vec<std::sync::Arc<GroupAccount>>,
+    profile_baselines: std::collections::BTreeMap<LocalIdx, (u64, u64, f64)>,
+    belief_baselines: std::collections::BTreeMap<LocalIdx, std::sync::Arc<super::world::BeliefParticipantSnapshot>>,
+    child_baselines: std::collections::BTreeMap<(crate::AccountId, crate::StockId), Option<ChildTicket>>,
+    abort_proof_supported: bool,
+    abort_counters: (u64, u64, u64),
     /// 可逆日志（本 tick 内累积；Start 转正时清空）。
     undo: Vec<GroupUndo>,
     /// eager 分域延迟载荷（F4/F5/F6 序敏感族——即时相暂存，延迟相
@@ -1062,6 +1137,7 @@ pub struct GroupState {
     /// 本组账户的计划权威；构造时按 AccountId 移交全部计划与游标。
     /// native 运行期间 session 只保留完整镜像，不作为特例 writer。
     plan_book: crate::plans::PlanBook,
+    plan_book_abort_baseline: Option<std::sync::Arc<crate::plans::PlanBook>>,
     /// ⑤a 收袋刀：attention due 筛选堆（延迟删除模式）。不变式：∀local，
     /// (profiles[local].next_due, local) 在堆中——除非该项已被某轮
     /// 筛选 pop 消费（消费即处理，evaluate 必重排并 push 新值）。写点：
@@ -1077,6 +1153,7 @@ pub struct GroupState {
     plan_book_dirty: bool,
     /// 决策脚本。
     script: GroupScript,
+    abort_proof: Option<GroupAbortProof>,
 }
 
 impl GroupState {
@@ -1260,7 +1337,13 @@ impl GroupState {
             #[cfg(test)]
             admin_fault: None,
             group,
+            undelivered_ops: None,
             accounts: accounts.into_iter().map(std::sync::Arc::new).collect(),
+            profile_baselines: Default::default(),
+            belief_baselines: Default::default(),
+            child_baselines: Default::default(),
+            abort_proof_supported: false,
+            abort_counters: (0, 0, 0),
             undo: Vec::new(),
             staging_deferred: Vec::new(),
             account_dirty_set: Default::default(),
@@ -1338,9 +1421,11 @@ impl GroupState {
             #[cfg(test)]
             disconnected_flush_for_test: None,
             plan_book: crate::plans::PlanBook::default(),
+            plan_book_abort_baseline: None,
             due_heap: due_heap_seed,
             plan_book_dirty: true,
             script,
+            abort_proof: None,
         };
         if let Some(facts) = initial_company_facts {
             state
@@ -1562,12 +1647,14 @@ impl GroupState {
                         .frozen_today[stock as usize];
                     *slot = (*slot as i64 - delta as i64) as u32;
                 }
-                GroupUndo::NextDue { local, prev } => {
+                GroupUndo::NextDue { local, prev, prev_seed, prev_attention_base } => {
                     // Sol 二审修复集 5：回放恢复重排前 due——重跑同 tick
                     // 时该 NPC 仍到期（决策次数不少一次）。
                     if let Some((profiles, _)) = &mut self.decision {
                         if let Some(p) = profiles.get_mut(local as usize) {
                             p.next_due = prev;
+                            p.seed = prev_seed;
+                            p.attention_base = prev_attention_base;
                             // ⑤a：恢复也是变化——push 恢复值（失败尝试的
                             // 重排项变陈旧，pop 核验自然丢弃）。
                             self.due_heap.push(std::cmp::Reverse((prev, local)));
@@ -1586,11 +1673,11 @@ impl GroupState {
                 }
                 GroupUndo::Personal { local, prev } => {
                     if let Some(slot) = self.belief_states.get_mut(local as usize) {
-                        *slot = Some(*prev);
+                        *slot = Some((*prev).clone());
                     }
                 }
                 GroupUndo::PlanBook { prev } => {
-                    self.plan_book = *prev;
+                    self.plan_book = (*prev).clone();
                     // ⑤b：回滚恢复也是变化——置 dirty 使下拍全量上行
                     // 恢复值（驱动器装恢复值==session 回滚后镜像值，
                     // 同值无害；漏置则镜像漏更新红证抓）。
@@ -1613,6 +1700,15 @@ impl GroupState {
                 GroupUndo::BuyPurseHeld { local, delta } => {
                     std::sync::Arc::make_mut(&mut self.accounts[local as usize])
                         .buy_purse_held_cents -= delta;
+                }
+                GroupUndo::Totals {
+                    skipped_orders,
+                    decide_calls_total,
+                    cancel_intents_total,
+                } => {
+                    self.skipped_orders = skipped_orders;
+                    self.decide_calls_total = decide_calls_total;
+                    self.cancel_intents_total = cancel_intents_total;
                 }
                 GroupUndo::ChildInFlight {
                     account,
@@ -1657,6 +1753,16 @@ impl GroupState {
         // Sol 二审修复集 4：未消费的 ForceDue 待办一并作废（指令失效
         // 需重发）；已入日志域的由上方 undo 逆序回放冲回。
         self.pending_force_due.clear();
+        self.retail_traces.clear();
+        self.attention_evolved.clear();
+        self.belief_dirty.iter_mut().for_each(|dirty| *dirty = false);
+        self.due_heap.clear();
+        if let Some((profiles, _)) = &self.decision {
+            for (local, profile) in profiles.iter().enumerate() {
+                self.due_heap
+                    .push(std::cmp::Reverse((profile.next_due, local as LocalIdx)));
+            }
+        }
         #[cfg(feature = "simulation-diagnostics")]
         {
             self.round_decision_traces.clear();
@@ -1665,6 +1771,165 @@ impl GroupState {
         }
         self.cur_tick = self.committed_tick;
         self.cur_round = 0;
+    }
+
+    /// Abort 前只复制 journal 涉及的账户；该失败路径见证包括完整账户字段，
+    /// 不给正常 tick 增加 GroupAccount clone。覆盖契约：任何新增账户写点都必须
+    /// 同步增加下方可逆 GroupUndo 变体，并在 account writer 与逆放审计中接线；
+    /// 否则该写点不属于可证明路径。
+    fn capture_account_abort_witness(
+        &self,
+    ) -> Option<std::collections::BTreeMap<LocalIdx, GroupAccount>> {
+        let mut witness = std::collections::BTreeMap::new();
+        for entry in &self.undo {
+            let local = match entry {
+                GroupUndo::Cash { local, .. }
+                | GroupUndo::Shares { local, .. }
+                | GroupUndo::ForeignActive { local, .. }
+                | GroupUndo::Frozen { local, .. }
+                | GroupUndo::CostBasis { local, .. }
+                | GroupUndo::EverHeld { local, .. }
+                | GroupUndo::PendingSell { local, .. }
+                | GroupUndo::BuyPurseHeld { local, .. } => Some(*local),
+                _ => None,
+            };
+            if let Some(local) = local {
+                let account = self.accounts.get(local as usize)?;
+                witness.entry(local).or_insert_with(|| (**account).clone());
+            }
+        }
+        Some(witness)
+    }
+
+    fn account_abort_witness_matches(
+        &self,
+        journal: &[GroupUndo],
+        mut expected: std::collections::BTreeMap<LocalIdx, GroupAccount>,
+    ) -> bool {
+        for entry in journal.iter().rev() {
+            let restored = match entry {
+                GroupUndo::Cash { local, delta } => expected
+                    .get_mut(local)
+                    .map(|account| account.cash -= *delta),
+                GroupUndo::Shares { local, stock, delta } => expected
+                    .get_mut(local)
+                    .and_then(|account| account.shares.get_mut(*stock as usize))
+                    .map(|slot| *slot = (*slot as i64 - *delta as i64) as u32),
+                GroupUndo::ForeignActive { local, stock, delta } => expected
+                    .get_mut(local)
+                    .and_then(|account| account.foreign_active.get_mut(*stock as usize))
+                    .map(|slot| *slot = (*slot as i32 - *delta as i32) as u16),
+                GroupUndo::Frozen { local, stock, delta } => expected
+                    .get_mut(local)
+                    .and_then(|account| account.frozen_today.get_mut(*stock as usize))
+                    .map(|slot| *slot = (*slot as i64 - *delta as i64) as u32),
+                GroupUndo::CostBasis { local, stock, d_invested, d_recovered } => expected
+                    .get_mut(local)
+                    .and_then(|account| {
+                        let index = *stock as usize;
+                        let invested = account.invested_cents.get_mut(index)?;
+                        let recovered = account.recovered_cents.get_mut(index)?;
+                        *invested -= *d_invested;
+                        *recovered -= *d_recovered;
+                        Some(())
+                    }),
+                GroupUndo::EverHeld { local, stock, prev } => expected
+                    .get_mut(local)
+                    .and_then(|account| account.ever_held.get_mut(*stock as usize))
+                    .map(|slot| *slot = *prev),
+                GroupUndo::PendingSell { local, stock, delta } => expected
+                    .get_mut(local)
+                    .and_then(|account| account.pending_sell_qty.get_mut(*stock as usize))
+                    .map(|slot| *slot = (*slot as i64 - *delta).max(0) as u32),
+                GroupUndo::BuyPurseHeld { local, delta } => expected
+                    .get_mut(local)
+                    .map(|account| account.buy_purse_held_cents -= *delta),
+                GroupUndo::Totals { .. }
+                | GroupUndo::NextDue { .. }
+                | GroupUndo::Personal { .. }
+                | GroupUndo::PlanBook { .. }
+                | GroupUndo::ChildInFlight { .. }
+                | GroupUndo::RepurchaseTail { .. } => Some(()),
+            };
+            if restored.is_none() { return false; }
+        }
+        expected.iter().all(|(local, expected)| {
+            self.accounts.get(*local as usize).is_some_and(|actual| actual.as_ref() == expected)
+        })
+    }
+
+    fn abort_domains_restored(
+        &self,
+        journal: &[GroupUndo],
+        account_witness: std::collections::BTreeMap<LocalIdx, GroupAccount>,
+    ) -> bool {
+        let accounts_restored = self.account_abort_witness_matches(journal, account_witness);
+        let profiles_restored = self.profile_baselines.iter().all(|(local, expected)| {
+            self.decision
+                .as_ref()
+                .and_then(|(profiles, _)| profiles.get(*local as usize))
+                .is_some_and(|profile| {
+                    (profile.seed, profile.next_due, profile.attention_base) == *expected
+                })
+        });
+        let beliefs_restored = self.belief_baselines.iter().all(|(local, expected)| {
+            self.belief_states
+                .get(*local as usize)
+                .and_then(Option::as_ref)
+                .is_some_and(|actual| actual == expected)
+        });
+        let child_tickets_restored = self.child_baselines.iter().all(|(key, expected)| {
+            self.child_in_flight.get(key) == expected.as_ref()
+        });
+        let plan_book_restored = self
+            .plan_book_abort_baseline
+            .as_ref()
+            .is_none_or(|baseline| self.plan_book.eq(baseline.as_ref()));
+        let due_index_restored = match &self.decision {
+            Some((profiles, _)) => {
+                let expected: std::collections::BTreeSet<_> = profiles
+                    .iter()
+                    .enumerate()
+                    .map(|(local, profile)| (profile.next_due, local as LocalIdx))
+                    .collect();
+                let actual: std::collections::BTreeSet<_> = self
+                    .due_heap
+                    .iter()
+                    .map(|std::cmp::Reverse(key)| *key)
+                    .collect();
+                actual == expected && actual.len() == self.due_heap.len()
+            }
+            None => self.due_heap.is_empty(),
+        };
+        self.abort_proof_supported
+            && accounts_restored
+            && profiles_restored
+            && beliefs_restored
+            && child_tickets_restored
+            && plan_book_restored
+            && (self.skipped_orders, self.decide_calls_total, self.cancel_intents_total)
+                == self.abort_counters
+            && self.cur_tick == self.committed_tick
+            && self.cur_round == 0
+            && self.undo.is_empty()
+            && self.account_dirty_set.is_empty()
+            && self.staging_deferred.is_empty()
+            && self.plan_fills.is_empty()
+            && self.retail_orders.is_empty()
+            && self.retail_before.is_empty()
+            && self.external_pending.is_empty()
+            && self.external_cancels.is_empty()
+            && self.round_rejections.is_empty()
+            && self.retail_traces.is_empty()
+            && self.pending_force_due.is_empty()
+            && self.attention_evolved.is_empty()
+            && self.belief_dirty.iter().all(|dirty| !dirty)
+            && self.belief_pending_dirty.is_empty()
+            && self.plans.is_empty()
+            && self.admin_pending.is_none()
+            && self.repurchase_projections.is_empty()
+            && self.repurchase_pending_tails.is_empty()
+            && due_index_restored
     }
 
     fn acct_mut(&mut self, local: LocalIdx) -> Result<&mut GroupAccount, RuntimeError> {
@@ -1686,6 +1951,29 @@ impl GroupState {
     /// 逐族一致，等价替换）。
     fn push_undo(&mut self, entry: GroupUndo) {
         match &entry {
+            GroupUndo::NextDue {
+                local,
+                prev,
+                prev_seed,
+                prev_attention_base,
+            } => {
+                self.profile_baselines
+                    .entry(*local)
+                    .or_insert((*prev_seed, *prev, *prev_attention_base));
+            }
+            GroupUndo::Personal { local, prev } => {
+                self.belief_baselines
+                    .entry(*local)
+                    .or_insert_with(|| std::sync::Arc::clone(prev));
+            }
+            GroupUndo::ChildInFlight { account, code, prev } => {
+                self.child_baselines
+                    .entry((*account, *code))
+                    .or_insert_with(|| prev.clone());
+            }
+            _ => {}
+        }
+        match &entry {
             GroupUndo::Cash { local, .. }
             | GroupUndo::Shares { local, .. }
             | GroupUndo::ForeignActive { local, .. }
@@ -1696,6 +1984,7 @@ impl GroupState {
             | GroupUndo::BuyPurseHeld { local, .. } => {
                 self.account_dirty_set.insert(*local);
             }
+            GroupUndo::Totals { .. } => {}
             GroupUndo::NextDue { .. }
             | GroupUndo::Personal { .. }
             | GroupUndo::PlanBook { .. }
@@ -1880,6 +2169,9 @@ impl GroupState {
         // cost_price 漂移）。曾持有翻转（F4）随 touched 延迟到批尾重放。
         self.clear_flat_cost_basis(&touched);
         deferred.touched = touched;
+        if !repurchase.is_empty() {
+            self.abort_proof_supported = false;
+        }
         self.install_repurchase_batch(repurchase);
         self.staging_deferred.push(deferred);
         Ok(())
@@ -2040,7 +2332,7 @@ impl GroupState {
             *experience = next;
             self.push_undo(GroupUndo::Personal {
                 local,
-                prev: Box::new(prev),
+                prev: std::sync::Arc::new(prev),
             });
             self.belief_dirty[local as usize] = true;
             *running = after;
@@ -2300,7 +2592,7 @@ impl GroupState {
             .expect("上方已核在位");
         self.push_undo(GroupUndo::Personal {
             local,
-            prev: Box::new(prev),
+            prev: std::sync::Arc::new(prev),
         });
         if let Some(slot) = self.belief_states.get_mut(local as usize) {
             *slot = Some(snap);
@@ -2603,8 +2895,8 @@ impl GroupState {
     fn handle_start(
         &mut self,
         tick: u64,
-        desk_txs: &[Sender<super::protocol::DeskMsg>],
-        up_tx: &Sender<UpMsg>,
+        desk_txs: &[impl WorkerSender<super::protocol::DeskMsg>],
+        up_tx: &UpSender<UpMsg>,
     ) -> Result<(), RuntimeError> {
         if tick != self.cur_tick + 1 {
             return Err(RuntimeError::ProtocolInvariant {
@@ -2678,6 +2970,15 @@ impl GroupState {
         self.apply_deferred()?;
         // 转正点：丢弃上一 tick 可逆日志；committed 推进到 N−1（旧 cur_tick）。
         self.undo.clear();
+        self.profile_baselines.clear();
+        self.belief_baselines.clear();
+        self.child_baselines.clear();
+        self.plan_book_abort_baseline = None;
+        self.undo.push(GroupUndo::Totals {
+            skipped_orders: self.skipped_orders,
+            decide_calls_total: self.decide_calls_total,
+            cancel_intents_total: self.cancel_intents_total,
+        });
         self.account_dirty_set.clear();
         self.seal_acked_len = None;
         self.batches_after_seal = 0;
@@ -2690,25 +2991,34 @@ impl GroupState {
         // 归本 tick 日志域（Abort 冲回强制前值、指令失效需重发）。
         // push_undo 封装（&mut self）与 decision 借用互斥——undo 条目
         // 先攒后入（同拍序不变）。
+        let had_pending_force_due = !self.pending_force_due.is_empty();
         let mut force_due_undo: Vec<GroupUndo> = Vec::new();
         let mut force_due_evolved: Vec<LocalIdx> = Vec::new();
         for (local, target, ensure_observe) in std::mem::take(&mut self.pending_force_due) {
             if let Some((profiles, _)) = &mut self.decision {
                 if let Some(p) = profiles.get_mut(local as usize) {
-                    if p.next_due > target {
-                        force_due_undo.push(GroupUndo::NextDue {
-                            local,
-                            prev: p.next_due,
-                        });
+                    let prev_due = p.next_due;
+                    let prev_seed = p.seed;
+                    let prev_attention_base = p.attention_base;
+                    let due_changed = prev_due > target;
+                    let attention_changed = ensure_observe && prev_attention_base != 1.0;
+                    if due_changed {
                         p.next_due = target;
                         // ⑤a：改排即 dirty 项——push 新值（延迟删除）。
                         self.due_heap.push(std::cmp::Reverse((target, local)));
                         // P2-3e：ForceDue 改排=演进位（稀疏上行须携带）。
                         force_due_evolved.push(local);
                     }
-                    // D5 #2：强制观察登记（evaluate 门绕行——仍续流）。
-                    if ensure_observe {
+                    if attention_changed {
                         p.attention_base = 1.0;
+                    }
+                    if due_changed || attention_changed {
+                        force_due_undo.push(GroupUndo::NextDue {
+                            local,
+                            prev: prev_due,
+                            prev_seed,
+                            prev_attention_base,
+                        });
                     }
                 }
             }
@@ -2725,6 +3035,21 @@ impl GroupState {
         self.retail_traces.clear();
         // T+1 日界解冻移至 DayEnd 相位（F §6.2，批 5）：Start 不再承担。
         self.committed_hash = (0xcbf2_9ce4_8422_2325u64 ^ tick).wrapping_mul(0x100000001b3);
+        self.abort_proof = None;
+        self.abort_proof_supported = self.plans.is_empty()
+            && self.decision.is_some()
+            && self.external_pending.is_empty()
+            && self.external_cancels.is_empty()
+            && !had_pending_force_due
+            && self.admin_pending.is_none()
+            && self.repurchase_projections.is_empty()
+            && self.repurchase_pending_tails.is_empty()
+            && self.belief_pending_dirty.is_empty();
+        self.abort_counters = (
+            self.skipped_orders,
+            self.decide_calls_total,
+            self.cancel_intents_total,
+        );
         self.run_round(tick, 0, desk_txs, up_tx)
     }
 
@@ -2996,8 +3321,8 @@ impl GroupState {
         &mut self,
         tick: u64,
         round: u32,
-        desk_txs: &[Sender<super::protocol::DeskMsg>],
-        up_tx: &Sender<UpMsg>,
+        desk_txs: &[impl WorkerSender<super::protocol::DeskMsg>],
+        up_tx: &UpSender<UpMsg>,
     ) -> Result<(), RuntimeError> {
         if tick != self.cur_tick || round != self.cur_round + 1 {
             return Err(RuntimeError::ProtocolInvariant {
@@ -3064,7 +3389,7 @@ impl GroupState {
             Some(s) => {
                 self.push_undo(GroupUndo::Personal {
                     local,
-                    prev: Box::new(s.clone()),
+                    prev: std::sync::Arc::new(s.clone()),
                 });
                 s
             }
@@ -3920,7 +4245,7 @@ impl GroupState {
             }
             self.push_undo(GroupUndo::Personal {
                 local,
-                prev: Box::new(snap),
+                prev: std::sync::Arc::new(snap),
             });
             if let Some(slot) = self.belief_states.get_mut(local as usize) {
                 *slot = Some(super::world::BeliefParticipantSnapshot {
@@ -4141,9 +4466,9 @@ impl GroupState {
         // 的统一前奏=置位完备性由写点纪律保证，见字段注释）。
         self.plan_book_dirty = true;
         if !self.plan_undo_saved {
-            self.push_undo(GroupUndo::PlanBook {
-                prev: Box::new(self.plan_book.clone()),
-            });
+            let prev = std::sync::Arc::new(self.plan_book.clone());
+            self.plan_book_abort_baseline = Some(std::sync::Arc::clone(&prev));
+            self.push_undo(GroupUndo::PlanBook { prev });
             self.plan_undo_saved = true;
         }
     }
@@ -4618,8 +4943,8 @@ impl GroupState {
         &mut self,
         tick: u64,
         round: u32,
-        desk_txs: &[Sender<super::protocol::DeskMsg>],
-        up_tx: &Sender<UpMsg>,
+        desk_txs: &[impl WorkerSender<super::protocol::DeskMsg>],
+        up_tx: &UpSender<UpMsg>,
     ) -> Result<(), RuntimeError> {
         #[cfg(feature = "simulation-diagnostics")]
         self.round_decision_traces.clear();
@@ -4650,7 +4975,7 @@ impl GroupState {
         let mut pendings: Vec<Pending> = Vec::new();
         // D3a-3：profiles 借用期内的 next_due 重排待办（undo 入账延后到
         // 借用释放——Sol 二审修复集 5 语义不变）。
-        let mut pending_next_due: Vec<(LocalIdx, u64)> = Vec::new();
+        let mut pending_next_due: Vec<(LocalIdx, u64, u64, f64)> = Vec::new();
         let mut continuation = false;
         let mut due_npcs = 0u64;
         let mut decide_calls = 0u64;
@@ -4767,13 +5092,15 @@ impl GroupState {
                             // observe 门+wait 采样；observe=false 只重排不
                             // 决策（链轮跳过——决策频率语义与旧管线对齐，
                             // 此前均匀 gap 近似使 epoch 双轨显红）。
+                            let prev_seed = profiles[local as usize].seed;
+                            let prev_attention_base = profiles[local as usize].attention_base;
                             let (observes, prev_due) = super::decision::evaluate_attention(
                                 &mut profiles[local as usize],
                                 shared_signal,
                                 tick,
                             );
                             due_npcs += 1;
-                            pending_next_due.push((local, prev_due));
+                            pending_next_due.push((local, prev_due, prev_seed, prev_attention_base));
                             // ⑤a：重排即 dirty 项——push 新值（延迟删除：
                             // 旧堆项留给 pop 时核验丢弃）。
                             self.due_heap.push(std::cmp::Reverse((
@@ -4801,13 +5128,15 @@ impl GroupState {
                         let account = &self.accounts[local as usize];
                         // D5 #2：retail 同式 evaluate 门（observe=false 只
                         // 重排不决策）。
+                        let prev_seed = profiles[local as usize].seed;
+                        let prev_attention_base = profiles[local as usize].attention_base;
                         let (observes, prev_due) = super::decision::evaluate_attention(
                             &mut profiles[local as usize],
                             shared_signal,
                             tick,
                         );
                         due_npcs += 1;
-                        pending_next_due.push((local, prev_due));
+                        pending_next_due.push((local, prev_due, prev_seed, prev_attention_base));
                         // ⑤a：重排即 dirty 项——push 新值（同上链位分支）。
                         self.due_heap.push(std::cmp::Reverse((
                             profiles[local as usize].next_due,
@@ -4903,11 +5232,13 @@ impl GroupState {
                     }
                 }
                 // retail 的 undo 入账 + belief 位 observe 链（借用已释放）。
-                for (local, prev_due) in std::mem::take(&mut pending_next_due) {
+                for (local, prev_due, prev_seed, prev_attention_base) in std::mem::take(&mut pending_next_due) {
                     self.decide_calls_total += 1;
                     self.push_undo(GroupUndo::NextDue {
                         local,
                         prev: prev_due,
+                        prev_seed,
+                        prev_attention_base,
                     });
                 }
                 let information_anchors = if !chain_due.is_empty() || !retail_due.is_empty() {
@@ -5011,6 +5342,7 @@ impl GroupState {
                 }
             }
         } else {
+            self.abort_proof_supported = false;
             let plan = (self.script)(tick, round);
             panic_payload = plan.panic_payload;
             stall = plan.stall;
@@ -5316,7 +5648,7 @@ impl GroupState {
                 }
             }
             if buffered >= self.chunk {
-                ops_sent += flush_buffers(&mut buffers, desk_txs, tick, round, group, false)?;
+                ops_sent += self.flush_or_record(&mut buffers, desk_txs, tick, round, false)?;
                 buffered = 0;
             }
         }
@@ -5406,7 +5738,7 @@ impl GroupState {
                 })?;
         }
         // 名册末尾：每股发 final_flush 空批作为本组本轮提交标记（可空）。
-        ops_sent += flush_buffers(&mut buffers, desk_txs, tick, round, group, true)?;
+        ops_sent += self.flush_or_record(&mut buffers, desk_txs, tick, round, true)?;
         #[cfg(test)]
         if let Some(sent) = self.final_flush_sent_once_for_test.take() {
             sent.send(()).map_err(|_| RuntimeError::SendFailed {
@@ -5470,12 +5802,35 @@ impl GroupState {
             .collect()
     }
 
-    /// 期末上交。
-    fn final_state(&self) -> GroupFinalState {
+    /// 发送失败时把局部缓冲和原拍上下文留给 Final 诊断；不重复发送。
+    fn flush_or_record(
+        &mut self,
+        buffers: &mut Vec<Vec<DeskIn>>,
+        desk_txs: &[impl WorkerSender<super::protocol::DeskMsg>],
+        tick: u64,
+        round: u32,
+        final_flush: bool,
+    ) -> Result<u64, RuntimeError> {
+        match flush_buffers(buffers, desk_txs, tick, round, self.group, final_flush) {
+            Ok(sent) => Ok(sent),
+            Err((error, first_failed_stock)) => {
+                assert!(self.undelivered_ops.is_none(), "未发送委托诊断不得被覆盖");
+                self.undelivered_ops = Some(UndeliveredGroupOps {
+                    tick, round, first_failed_stock, final_flush,
+                    by_stock: std::mem::take(buffers),
+                });
+                Err(error)
+            }
+        }
+    }
+
+    /// 期末上交；未发送委托诊断只移交一次。
+    fn final_state(&mut self) -> GroupFinalState {
         GroupFinalState {
             #[cfg(test)]
             plan_book_for_test: self.plan_book.clone(),
             group: self.group,
+            undelivered_ops: self.undelivered_ops.take(),
             // 低频（shutdown 一次）：展开为值（Arc COW 的分片收益在
             // SealAck 高频面——此处保持协议形状）。
             accounts: self.accounts.iter().map(|a| (**a).clone()).collect(),
@@ -5490,6 +5845,7 @@ impl GroupState {
             seal_deferred_ns: self.seal_deferred_ns,
             seal_shard_ns: self.seal_shard_ns,
             observed: self.observed.clone(),
+            abort_proof: self.abort_proof,
         }
     }
 }
@@ -6039,12 +6395,12 @@ fn build_chain_observation(
 /// 分段 flush：非空缓冲直发目标交易部；`final` 时每股必发（空批=提交标记）。
 fn flush_buffers(
     buffers: &mut [Vec<DeskIn>],
-    desk_txs: &[Sender<super::protocol::DeskMsg>],
+    desk_txs: &[impl WorkerSender<super::protocol::DeskMsg>],
     tick: u64,
     round: u32,
     group: GroupIdx,
     final_flush: bool,
-) -> Result<u64, RuntimeError> {
+) -> Result<u64, (RuntimeError, usize)> {
     let mut sent = 0u64;
     for (stock, buf) in buffers.iter_mut().enumerate() {
         if buf.is_empty() && !final_flush {
@@ -6052,17 +6408,22 @@ fn flush_buffers(
         }
         let ops = std::mem::take(buf);
         sent += ops.len() as u64;
-        desk_txs[stock]
+        if let Err(std::sync::mpsc::SendError(message)) = desk_txs[stock]
             .send(super::protocol::DeskMsg::Ops {
                 tick,
                 round,
                 group,
                 ops,
                 final_flush,
-            })
-            .map_err(|_| RuntimeError::SendFailed {
+            }) {
+            match message {
+                super::protocol::DeskMsg::Ops { ops, .. } => *buf = ops,
+                _ => unreachable!("发送错误必须交还原始 Ops"),
+            }
+            return Err((RuntimeError::SendFailed {
                 detail: format!("组 {group} → 交易部 {stock} Ops 发送失败"),
-            })?;
+            }, stock));
+        }
     }
     Ok(sent)
 }
@@ -6081,15 +6442,24 @@ fn fnv(state: u64, value: u64) -> u64 {
 /// overlay → `TaskDied`（原 payload）→ Final 上交 → 退出。
 pub(crate) fn group_main(
     state: GroupState,
-    desk_txs: Vec<Sender<super::protocol::DeskMsg>>,
-    rx: Receiver<GroupIn>,
+    desk_txs: Vec<super::downstream::Sender<super::protocol::DeskMsg>>,
+    rx: super::downstream::Receiver<GroupIn>,
+    context: super::worker_context::WorkerContext,
+) -> Result<(), RuntimeError> {
+    group_main_borrowed(state, desk_txs, &rx, context)
+}
+
+/// 接收器由调用方持有，供后续有界退出协议移交；现有入口仍消费它。
+pub(super) fn group_main_borrowed<S: WorkerSender<super::protocol::DeskMsg>>(
+    state: GroupState,
+    desk_txs: Vec<S>,
+    rx: &impl WorkerInbox<GroupIn>,
     context: super::worker_context::WorkerContext,
 ) -> Result<(), RuntimeError> {
     let super::worker_context::WorkerContext {
         up_tx,
         abort,
         shutdown,
-        watchdog,
         capture,
     } = context;
     /// D4：每条消息处理期安装当前捕获绑定（无捕获=None 零开销；完成
@@ -6109,10 +6479,7 @@ pub(crate) fn group_main(
     loop {
         // Sol 终审三审：退出判定用 shutdown（永久关停——sever/Drop）；
         // abort 只管本 tick 回滚语义（本 worker 失败时置位通知对端）。
-        // B-1' 分级自旋（协调者批 2026-10-19——首版只组线程，desk 走
-        // 原 worker_recv）：热态自旋窗免深 C-state futex 唤醒延迟
-        //（spread 94μs 无归属段归因——seal-spread-wakeup-design.md）。
-        let msg = match worker_recv_spin(&rx, &watchdog, &shutdown, who, spin_config()) {
+        let msg = match rx.receive(&shutdown, who) {
             Ok(Some(m)) => m,
             Ok(None) => break,
             Err(e) => {
@@ -6190,8 +6557,7 @@ pub(crate) fn group_main(
                 witness,
                 after_final_flush,
             } => {
-                let (disconnected, receiver) = std::sync::mpsc::channel();
-                drop(receiver);
+                let disconnected = S::disconnected_for_test();
                 // 只替换本组已持有的 clone；World 与其他组的真实通道均保持连通。
                 *desk_txs
                     .get_mut(usize::from(stock))
@@ -6212,6 +6578,7 @@ pub(crate) fn group_main(
                 information_clock,
                 repurchase,
             } => {
+                state.abort_proof_supported = false;
                 if !state.handle_admin_message(
                     id,
                     super::protocol::AdminPhase::Prepare,
@@ -6229,6 +6596,7 @@ pub(crate) fn group_main(
                 }
             }
             GroupIn::AdminCommit { id } => {
+                state.abort_proof_supported = false;
                 if !state.handle_admin_message(
                     id,
                     super::protocol::AdminPhase::Commit,
@@ -6246,6 +6614,7 @@ pub(crate) fn group_main(
                 }
             }
             GroupIn::AdminAbort { id } => {
+                state.abort_proof_supported = false;
                 if !state.handle_admin_message(
                     id,
                     super::protocol::AdminPhase::Abort,
@@ -6365,7 +6734,7 @@ pub(crate) fn group_main(
                         // 回滚自身 overlay（可逆日志逆序回放），上交已收敛态后退出。
                         state.rollback();
                         abort.store(true, Ordering::SeqCst);
-                        let _ = up_tx.send(UpMsg::TaskDied { who, payload });
+                        if let Err(error) = super::upstream::send_task_died(&up_tx, who, payload) { result = Err(error); }
                         break;
                     }
                 }
@@ -6391,7 +6760,7 @@ pub(crate) fn group_main(
                     Err(payload) => {
                         state.rollback();
                         abort.store(true, Ordering::SeqCst);
-                        let _ = up_tx.send(UpMsg::TaskDied { who, payload });
+                        if let Err(error) = super::upstream::send_task_died(&up_tx, who, payload) { result = Err(error); }
                         break;
                     }
                 }
@@ -6408,7 +6777,26 @@ pub(crate) fn group_main(
             }
             GroupIn::Abort { tick } => {
                 state.observed.push(Observed::Abort(tick));
+                let failed_tick = state.cur_tick;
+                let round = state.cur_round;
+                let committed_tick = state.committed_tick;
+                let journal = state.undo.clone();
+                let account_witness = state.capture_account_abort_witness();
                 state.rollback();
+                let proven = tick == failed_tick
+                    && account_witness.is_some_and(|witness| {
+                        state.abort_domains_restored(&journal, witness)
+                    });
+                state.abort_proof = Some(GroupAbortProof {
+                    committed_tick,
+                    failed_tick,
+                    round,
+                    proven,
+                });
+                state.profile_baselines.clear();
+                state.belief_baselines.clear();
+                state.child_baselines.clear();
+                state.plan_book_abort_baseline = None;
             }
             GroupIn::AbortDayEnd { tick } => {
                 state.observed.push(Observed::Abort(tick));
@@ -6462,12 +6850,13 @@ pub(crate) fn group_main(
                     Err(payload) => {
                         state.rollback();
                         abort.store(true, Ordering::SeqCst);
-                        let _ = up_tx.send(UpMsg::TaskDied { who, payload });
+                        if let Err(error) = super::upstream::send_task_died(&up_tx, who, payload) { result = Err(error); }
                         break;
                     }
                 }
             }
             GroupIn::ExternalPlan { ops, cancels } => {
+                state.abort_proof_supported = false;
                 // 玩家意图路由（D2 批）：外部计划存缓冲，run_round 消费。
                 state.external_pending.extend(ops);
                 state.external_cancels.extend(cancels);
@@ -6478,6 +6867,7 @@ pub(crate) fn group_main(
                 library,
                 attentions,
             } => {
+                state.abort_proof_supported = false;
                 // Belief-1b·下：组内纯函数推进（与 session 版同输入同
                 // 演进）。codes=当前持仓∪watchlist（组账户无"曾持有"
                 // 零量条目面——差异登记）。快照缺席（未跑 tick 即投递）
@@ -6705,6 +7095,7 @@ pub(crate) fn group_main(
                 attention,
                 inherited_calendar,
             } => {
+                state.abort_proof_supported = false;
                 match state.install_initial_information_handover(
                     source,
                     &roster,
@@ -6877,6 +7268,7 @@ pub(crate) fn group_main(
             }
             #[cfg(test)]
             GroupIn::InstallPersonal { local, snapshot } => {
+                state.abort_proof_supported = false;
                 // D3b 件 5：个人态注入——组权威覆盖（Personal undo 可逆；
                 // Abort 冲回后需重发）。缺位/越界=注入面漂移，显式失败。
                 let prev = state.belief_states.get(local as usize).cloned().flatten();
@@ -6884,7 +7276,7 @@ pub(crate) fn group_main(
                     Some(prev) => {
                         state.undo.push(GroupUndo::Personal {
                             local,
-                            prev: Box::new(prev),
+                            prev: std::sync::Arc::new(prev),
                         });
                         if let Some(slot) = state.belief_states.get_mut(local as usize) {
                             *slot = Some(snapshot);
@@ -7000,6 +7392,7 @@ pub(crate) fn group_main(
             }
             #[cfg(test)]
             GroupIn::MutateBeliefForTest { account, mutate } => {
+                state.abort_proof_supported = false;
                 // D3b 件 4 fixture 通道：belief 簿测试变换（account→local
                 // 经投影名册映射——目标位缺失=显式失败）。
                 //
@@ -7028,7 +7421,7 @@ pub(crate) fn group_main(
                         let prev = snapshot.clone();
                         state.undo.push(GroupUndo::Personal {
                             local,
-                            prev: Box::new(prev),
+                            prev: std::sync::Arc::new(prev),
                         });
                         mutate(&mut snapshot.belief);
                     }
@@ -7050,6 +7443,7 @@ pub(crate) fn group_main(
             }
             #[cfg(test)]
             GroupIn::DeferDueForTest { locals, tick } => {
+                state.abort_proof_supported = false;
                 // D5 #4 fixture 通道（cfg(test)）：推远 next_due——"无 due
                 // tick"形态构造（组权威调度面的测试控制；效果入可逆日志）。
                 for local in locals {
@@ -7057,7 +7451,12 @@ pub(crate) fn group_main(
                         if let Some(p) = profiles.get_mut(local as usize) {
                             let prev = p.next_due;
                             if prev < tick {
-                                state.undo.push(GroupUndo::NextDue { local, prev });
+                                state.undo.push(GroupUndo::NextDue {
+                                    local,
+                                    prev,
+                                    prev_seed: p.seed,
+                                    prev_attention_base: p.attention_base,
+                                });
                                 p.next_due = tick;
                                 // ⑤a：推远也是变化——push 新值。
                                 state.due_heap.push(std::cmp::Reverse((tick, local)));
@@ -7072,6 +7471,7 @@ pub(crate) fn group_main(
                 tick,
                 ensure_observe,
             } => {
+                state.abort_proof_supported = false;
                 // Sol 整改注入通道（cfg(test) 语义）：显式强制到期——组
                 // 验证目标 tick 晚于已转正 tick 后登记待办；效果延迟到
                 // 下一 Start 应用（Sol 二审修复集 4：归下一 tick 的日志
@@ -7390,7 +7790,7 @@ pub(crate) fn group_main(
                     // 铁律二收口（seal_failed_injection_tests 发现的缺口）：
                     // 协议错位退出必须 Failed 上行+abort 置位（对齐其他
                     // 失败分支——不静默只 break 会使协调者退化为
-                    // watchdog/断连超时发现）。
+                    // deadline/断连后才发现问题）。
                     abort.store(true, Ordering::SeqCst);
                     let e = RuntimeError::ProtocolInvariant {
                         detail: format!(
@@ -7416,7 +7816,16 @@ pub(crate) fn group_main(
                 // 竞态——Seal 处理期到达的 Abort 是合法产物，非错位。
                 let mut seal_aborted = false;
                 loop {
-                    match rx.try_recv() {
+                    let received = match rx.try_receive(who) {
+                        Ok(received) => received,
+                        Err(error) => {
+                            abort.store(true, Ordering::SeqCst);
+                            let _ = up_tx.send(UpMsg::Failed { who, error: error.clone() });
+                            result = Err(error);
+                            break;
+                        }
+                    };
+                    match received {
                         Ok(GroupIn::Batch(batch)) => {
                             // eager 分域即时相（Seal drain 批次与等待窗批次
                             // 同路径——S4 FIFO 锁步语义不变）。
@@ -7679,15 +8088,17 @@ pub(crate) fn group_main(
     }
     state.discard_pending_admin();
     let final_state = state.final_state();
-    let send = up_tx.send(UpMsg::GroupFinal(Box::new(final_state)));
-    if result.is_ok() {
-        if let Err(_e) = send {
-            result = Err(RuntimeError::SendFailed {
-                detail: format!("组 {} GroupFinal 发送失败", who),
-            });
+    match up_tx.send(UpMsg::GroupFinal(Box::new(final_state))) {
+        Ok(()) => result,
+        Err(std::sync::mpsc::SendError(UpMsg::GroupFinal(final_state))) => {
+            Err(RuntimeError::GroupFinalUndelivered {
+                who,
+                primary: result.err().map(Box::new),
+                final_state: super::protocol::RetainedGroupFinal::new(final_state),
+            })
         }
+        Err(_) => unreachable!("发送错误必须交还原始 GroupFinal"),
     }
-    result
 }
 
 // Sol 二审修复集 3 红证（受理身份关联）：组内最小决策链态直调
@@ -7698,24 +8109,72 @@ pub(crate) fn group_main(
 mod v5_shutdown_idle_window_tests {
     #[cfg(test)]
     use super::{
-        group_main, Arc, AtomicBool, DeskBatch, Entity, GroupAccount, GroupIn, GroupSetup,
+        group_main, group_main_borrowed, Arc, AtomicBool, DeskBatch, Entity, GroupAccount, GroupIn, GroupSetup,
         GroupState, Observed, Ordering, TickPlan, UpMsg,
     };
 
+    #[test]
+    fn 上行断连时真实组把未送达_final_随线程结果移交() {
+        for bad_continue in [false, true] {
+            let (group_tx, group_rx) = std::sync::mpsc::channel::<GroupIn>();
+            let (desk_tx, _desk_rx) = std::sync::mpsc::channel::<crate::runtime::protocol::DeskMsg>();
+            let (up_tx, up_rx) = crate::libos::mailbox::channel::<UpMsg>();
+            drop(up_rx);
+            let mut account = GroupAccount::new(500_000, 1);
+            account.shares[0] = 100;
+            let mut state = GroupState::new(GroupSetup {
+                group:0, accounts:vec![account], chunk:8, lot:100,
+                config:Arc::new(crate::config::GameConfig::proposed_defaults()), ticks_per_day:240,
+                decision:None, plans:Vec::new(), script:Box::new(|_t, _r| TickPlan::default()),
+            });
+            let order = super::DeskIn::Place { owner:(0, 0), side:crate::Side::Buy, price:super::RoutedPrice::Fixed(100), qty:100, purse:10_005,
+                #[cfg(feature = "simulation-diagnostics")]
+                source:crate::runtime::diagnostics::OperationSource::PlayerExternal,
+            };
+            let (failed_tx, failed_rx) = std::sync::mpsc::channel();
+            drop(failed_rx);
+            let mut buffers = vec![vec![order]];
+            assert!(state.flush_or_record(&mut buffers, &[failed_tx], 8, 2, false).is_err());
+            group_tx.send(if bad_continue { GroupIn::Continue { tick:0, round:0 } } else { GroupIn::Shutdown }).unwrap();
+            let handle = std::thread::spawn(move || group_main_borrowed(state, vec![desk_tx], &group_rx, crate::runtime::worker_context::WorkerContext {
+                up_tx, abort:Arc::new(AtomicBool::new(false)), shutdown:Arc::new(AtomicBool::new(false)),
+                capture:Arc::new(std::sync::Mutex::new(crate::verification_evidence::current_phase_timing_binding())),
+            }));
+            let error = handle.join().unwrap().unwrap_err();
+            if bad_continue { assert!(error.to_string().contains("Continue 错序"), "文本诊断不得丢失首错"); }
+            match error {
+                crate::runtime::RuntimeError::GroupFinalUndelivered { who, primary, final_state } => {
+                    assert_eq!(who, crate::runtime::protocol::WorkerId::Group(0));
+                    assert_eq!(final_state.as_ref().accounts[0].cash, 500_000);
+                    assert_eq!(final_state.as_ref().accounts[0].shares[0], 100);
+                    let pending = final_state.as_ref().undelivered_ops.as_ref().expect("必须保留发送失败的委托诊断");
+                    assert_eq!((pending.tick, pending.round, pending.first_failed_stock), (8, 2, 0));
+                    assert_eq!(pending.by_stock, [vec![order]]);
+                    assert_eq!(primary.is_some(), bad_continue);
+                    if let Some(primary) = primary { assert!(primary.to_string().contains("Continue 错序")); }
+                    assert_eq!(final_state, final_state.clone());
+                    let separate = crate::runtime::protocol::RetainedGroupFinal::new(Box::new(final_state.as_ref().clone()));
+                    assert_ne!(final_state, separate, "不同 Final 不能仅按相同内容视为相同载荷");
+                }
+                other => panic!("必须保留未送达 Final 与首错：{other:?}"),
+            }
+        }
+    }
+
     /// 四审 A1 关停竞态的确定性回归：正常关停（Drain→Shutdown→Final
     /// 消息协议）期间 **不置** worker_shutdown 永久标记——空闲 worker
-    /// 的 50ms 分片轮询必须持续等待 Shutdown 消息（协议退出），且
-    /// Shutdown 处理 apply_staging 把在途回流实体落账。此前标记驱退
-    /// 会使空闲 worker 在 >50ms 窗内提前退出上交 Final，漏合入退款。
+    /// 必须持续等待 Shutdown 消息（协议退出），且 Shutdown 处理
+    /// apply_staging 把在途回流实体落账。此前标记驱退会使空闲 worker
+    /// 提前退出上交 Final，漏合入退款。
     /// 构造：真实组线程通道；Batch（CashRefund 500）入 staging 未落账；
-    /// 闲置 120ms（跨 50ms 分片轮询片界——竞态窗）；发 Shutdown；
+    /// 闲置 120ms 后发 Shutdown，覆盖空闲等待期间的关停竞态；
     /// 断言 Final 经协议上交且退款已落账（旧缺陷形态=提前 Final 且
     /// 现金停留在 10_000_000）。
     #[test]
     fn v5_shutdown_over_50ms_idle_window_applies_staged_refunds() {
         let (group_tx, group_rx) = std::sync::mpsc::channel::<GroupIn>();
         let (desk_tx, _desk_rx) = std::sync::mpsc::channel::<crate::runtime::protocol::DeskMsg>();
-        let (up_tx, up_rx) = std::sync::mpsc::channel::<UpMsg>();
+        let (up_tx, up_rx) = crate::libos::mailbox::channel::<UpMsg>();
         let abort = Arc::new(AtomicBool::new(false));
         let shutdown_flag = Arc::new(AtomicBool::new(false));
         let capture = Arc::new(std::sync::Mutex::new(
@@ -7747,10 +8206,6 @@ mod v5_shutdown_idle_window_tests {
                         up_tx,
                         abort,
                         shutdown: shutdown_flag,
-                        watchdog: crate::runtime::watchdog::WatchdogConfig {
-                            normal: std::time::Duration::from_secs(30),
-                            long: std::time::Duration::from_secs(120),
-                        },
                         capture,
                     },
                 )
@@ -7771,15 +8226,14 @@ mod v5_shutdown_idle_window_tests {
                 receipts: Vec::new(),
             }))
             .expect("Batch 入队");
-        // >50ms 空闲窗：worker_recv 分片轮询跨片等待（四审竞态窗——
-        // 旧缺陷形态在此窗内提前退出）。
+        // 空闲等待窗（四审竞态窗——旧缺陷形态在此窗内提前退出）。
         std::thread::sleep(std::time::Duration::from_millis(120));
         // 正常关停消息（协议路径——不置永久标记）。
         group_tx.send(GroupIn::Shutdown).expect("Shutdown 发送");
         let outcome = handle.join().expect("组线程退出");
         outcome.expect("正常关停协议成功（无失败）");
         // Final 必经协议上交；期末账户含在途回流落账。
-        let final_state = match up_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+        let final_state = match up_rx.try_recv() {
             Ok(UpMsg::GroupFinal(f)) => *f,
             other => panic!("期望 GroupFinal，收到 {other:?}"),
         };
@@ -7800,6 +8254,308 @@ mod v5_shutdown_idle_window_tests {
             "正常关停不置 worker_shutdown 永久标记"
         );
         assert!(!abort.load(Ordering::SeqCst), "无 Abort");
+    }
+
+    #[test]
+    fn 真实组入口正常退出后调用方仍能持有剩余接收队列() {
+        let (group_tx, group_rx) = std::sync::mpsc::channel::<GroupIn>();
+        let (desk_tx, _desk_rx) = std::sync::mpsc::channel::<crate::runtime::protocol::DeskMsg>();
+        let (up_tx, up_rx) = crate::libos::mailbox::channel::<UpMsg>();
+        let state = GroupState::new(GroupSetup {
+            group: 0,
+            accounts: vec![GroupAccount::new(10_000_000, 1)],
+            chunk: 8,
+            lot: 100,
+            config: Arc::new(crate::config::GameConfig::proposed_defaults()),
+            ticks_per_day: 240,
+            decision: None,
+            plans: Vec::new(),
+            script: Box::new(|_t, _r| TickPlan::default()),
+        });
+        group_tx.send(GroupIn::Shutdown).unwrap();
+        group_tx.send(GroupIn::EchoTickForTest).unwrap();
+        drop(group_tx);
+        let handle = std::thread::spawn(move || {
+            crate::runtime::worker_mailbox::handoff_after_worker(group_rx, |rx| group_main_borrowed(state, vec![desk_tx], rx, crate::runtime::worker_context::WorkerContext {
+                up_tx,
+                abort: Arc::new(AtomicBool::new(false)),
+                shutdown: Arc::new(AtomicBool::new(false)),
+                capture: Arc::new(std::sync::Mutex::new(crate::verification_evidence::current_phase_timing_binding())),
+            }))
+        });
+        let (result, remaining) = handle.join().unwrap().into_parts();
+        result.unwrap();
+        assert!(matches!(up_rx.try_recv().unwrap(), UpMsg::GroupFinal(_)));
+        assert!(matches!(remaining.try_recv().unwrap(), GroupIn::EchoTickForTest));
+        assert!(matches!(remaining.try_recv(), Err(std::sync::mpsc::TryRecvError::Disconnected)));
+    }
+
+    #[test]
+    fn 真实组入口失败后仍交还后续资源消息() {
+        let (group_tx, group_rx) = std::sync::mpsc::channel::<GroupIn>();
+        let (desk_tx, _desk_rx) = std::sync::mpsc::channel::<crate::runtime::protocol::DeskMsg>();
+        let (up_tx, up_rx) = crate::libos::mailbox::channel::<UpMsg>();
+        let state = GroupState::new(GroupSetup {
+            group: 0, accounts: vec![GroupAccount::new(10_000_000, 1)], chunk: 8, lot: 100,
+            config: Arc::new(crate::config::GameConfig::proposed_defaults()), ticks_per_day: 240,
+            decision: None, plans: Vec::new(), script: Box::new(|_t, _r| TickPlan::default()),
+        });
+        group_tx.send(GroupIn::Batch(DeskBatch { stock:0, tick:99, round:0, ..DeskBatch::default() })).unwrap();
+        group_tx.send(GroupIn::Batch(DeskBatch { stock:0, tick:0, round:0, entities:vec![Entity::CashRefund {local:0, amount:500}], ..DeskBatch::default() })).unwrap();
+        let handle = std::thread::spawn(move || {
+            crate::runtime::worker_mailbox::handoff_after_worker(group_rx, |rx| group_main_borrowed(state, vec![desk_tx], rx, crate::runtime::worker_context::WorkerContext {
+                up_tx, abort: Arc::new(AtomicBool::new(false)), shutdown: Arc::new(AtomicBool::new(false)),
+                capture: Arc::new(std::sync::Mutex::new(crate::verification_evidence::current_phase_timing_binding())),
+            }))
+        });
+        let (result, remaining) = handle.join().unwrap().into_parts();
+        assert!(result.is_err(), "错位 tick 必须显式失败");
+        assert!(matches!(up_rx.try_recv().unwrap(), UpMsg::Failed { .. }));
+        // 保留 receiver 会延长发送能力：调用方不能把 send 成功解释成已交付活跃 worker。
+        group_tx.send(GroupIn::Batch(DeskBatch { stock:0, tick:0, round:0, entities:vec![Entity::CashRefund {local:0, amount:700}], ..DeskBatch::default() })).unwrap();
+        match remaining.try_recv().unwrap() {
+            GroupIn::Batch(batch) => assert_eq!(batch.entities, [Entity::CashRefund {local:0, amount:500}]),
+            _ => panic!("后续实体批次必须原样留在队列"),
+        }
+        match remaining.try_recv().unwrap() {
+            GroupIn::Batch(batch) => assert_eq!(batch.entities, [Entity::CashRefund {local:0, amount:700}]),
+            _ => panic!("worker 返回后被接收器接受的批次必须可观察"),
+        }
+        drop(group_tx);
+        assert!(matches!(remaining.try_recv(), Err(std::sync::mpsc::TryRecvError::Disconnected)));
+    }
+
+    #[test]
+    fn 真实组失败后关闭接收入队并移交已有资源消息() {
+        use crate::runtime::worker_inbox::WorkerSender;
+        let domain = crate::libos::fault_domain::FaultDomain::new(1);
+        let (group_tx, group_rx) = crate::libos::downlink::registered_channel::<GroupIn>(&domain).unwrap();
+        let (desk_tx, _desk_rx) = std::sync::mpsc::channel::<crate::runtime::protocol::DeskMsg>();
+        let (up_tx, up_rx) = crate::libos::mailbox::channel::<UpMsg>();
+        let state = GroupState::new(GroupSetup {
+            group:0, accounts:vec![GroupAccount::new(10_000_000, 1)], chunk:8, lot:100,
+            config:Arc::new(crate::config::GameConfig::proposed_defaults()), ticks_per_day:240,
+            decision:None, plans:Vec::new(), script:Box::new(|_t, _r| TickPlan::default()),
+        });
+        WorkerSender::send(&group_tx, GroupIn::Batch(DeskBatch { stock:0, tick:99, round:0, ..DeskBatch::default() })).unwrap();
+        WorkerSender::send(&group_tx, GroupIn::Batch(DeskBatch { stock:0, tick:0, round:0, entities:vec![Entity::CashRefund {local:0, amount:500}], ..DeskBatch::default() })).unwrap();
+        let handle = std::thread::spawn(move || group_rx.run(|rx| group_main_borrowed(state, vec![desk_tx], rx, crate::runtime::worker_context::WorkerContext {
+            up_tx, abort:Arc::new(AtomicBool::new(false)), shutdown:Arc::new(AtomicBool::new(false)),
+            capture:Arc::new(std::sync::Mutex::new(crate::verification_evidence::current_phase_timing_binding())),
+        })));
+        let exit = handle.join().unwrap();
+        assert!(matches!(exit.outcome, crate::libos::worker_exit::Outcome::Returned(Err(_))));
+        let remaining = exit.receiver;
+        assert!(matches!(up_rx.try_recv().unwrap(), UpMsg::Failed { .. }));
+        let error = WorkerSender::send(&group_tx, GroupIn::Batch(DeskBatch { stock:0, tick:0, round:0, entities:vec![Entity::CashRefund {local:0, amount:700}], ..DeskBatch::default() })).unwrap_err();
+        assert!(matches!(error.0, GroupIn::Batch(batch) if batch.entities == [Entity::CashRefund {local:0, amount:700}]));
+        let closed = remaining.close_and_wait(crate::clock::Instant::now() + std::time::Duration::from_millis(500)).unwrap();
+        let drained = closed.drain(std::num::NonZeroUsize::new(2).unwrap());
+        assert_eq!(drained.state, crate::libos::downlink::DrainState::Drained);
+        assert!(matches!(&drained.messages[..], [GroupIn::Batch(batch)] if batch.entities == [Entity::CashRefund {local:0, amount:500}]));
+    }
+
+    #[test]
+    fn 真实组启动前已故障时保留队列资源并拒绝故障后发送() {
+        let domain = crate::libos::fault_domain::FaultDomain::new(1);
+        let (group_tx, group_rx) = crate::libos::downlink::registered_channel::<GroupIn>(&domain).unwrap();
+        let (desk_tx, _desk_rx) = std::sync::mpsc::channel::<crate::runtime::protocol::DeskMsg>();
+        let (up_tx, _up_rx) = crate::libos::mailbox::channel::<UpMsg>();
+        let state = GroupState::new(GroupSetup {
+            group:0, accounts:vec![GroupAccount::new(10_000_000, 1)], chunk:8, lot:100,
+            config:Arc::new(crate::config::GameConfig::proposed_defaults()), ticks_per_day:240,
+            decision:None, plans:Vec::new(), script:Box::new(|_t, _r| TickPlan::default()),
+        });
+        group_tx.send(GroupIn::Batch(DeskBatch { stock:0, tick:0, round:0,
+            entities:vec![Entity::CashRefund {local:0, amount:500}, Entity::RefundedShares {local:0, qty:100}],
+            ..DeskBatch::default() })).unwrap();
+        domain.abort();
+        assert!(matches!(group_tx.send(GroupIn::Shutdown), Err(std::sync::mpsc::SendError(GroupIn::Shutdown))));
+        let worker = std::thread::spawn(move || group_rx.run(|rx| group_main_borrowed(state, vec![desk_tx], rx, crate::runtime::worker_context::WorkerContext {
+            up_tx, abort:Arc::new(AtomicBool::new(false)), shutdown:Arc::new(AtomicBool::new(false)),
+            capture:Arc::new(std::sync::Mutex::new(crate::verification_evidence::current_phase_timing_binding())),
+        })));
+        let exit = worker.join().unwrap();
+        assert!(matches!(exit.outcome, crate::libos::worker_exit::Outcome::Returned(Err(crate::runtime::RuntimeError::HostAborted { .. }))));
+        let closed = exit.receiver.close_and_wait(crate::clock::Instant::now() + std::time::Duration::from_millis(500)).unwrap();
+        let batch = closed.drain(std::num::NonZeroUsize::new(2).unwrap());
+        assert_eq!(batch.state, crate::libos::downlink::DrainState::Drained);
+        assert!(matches!(&batch.messages[..], [GroupIn::Batch(batch)] if batch.entities == [Entity::CashRefund {local:0, amount:500}, Entity::RefundedShares {local:0, qty:100}]));
+    }
+
+    #[test]
+    fn 真实组循环可由_libos_通知通道唤醒并交还队列() {
+        let domain = crate::libos::fault_domain::FaultDomain::new(2);
+        let (group_tx, group_rx) = domain.channel::<GroupIn>().unwrap();
+        let (desk_tx, _desk_rx) = domain.channel::<crate::runtime::protocol::DeskMsg>().unwrap();
+        let (up_tx, up_rx) = crate::libos::mailbox::channel();
+        let state = GroupState::new(GroupSetup {
+            group: 0, accounts: vec![GroupAccount::new(10_000_000, 1)], chunk: 8, lot: 100,
+            config: Arc::new(crate::config::GameConfig::proposed_defaults()), ticks_per_day: 240,
+            decision: None, plans: Vec::new(), script: Box::new(|_t, _r| TickPlan::default()),
+        });
+        let handle = group_rx.abort_handle();
+        let worker = std::thread::spawn(move || {
+            crate::runtime::worker_mailbox::handoff_after_worker(group_rx, |rx| group_main_borrowed(state, vec![desk_tx], rx, crate::runtime::worker_context::WorkerContext {
+                up_tx, abort: Arc::new(AtomicBool::new(false)), shutdown: Arc::new(AtomicBool::new(false)),
+                capture: Arc::new(std::sync::Mutex::new(crate::verification_evidence::current_phase_timing_binding())),
+            }))
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        while !handle.waiting_registered() { assert!(std::time::Instant::now() < deadline, "组未登记等待"); std::thread::yield_now(); }
+        group_tx.send(GroupIn::Shutdown).unwrap();
+        group_tx.send(GroupIn::EchoTickForTest).unwrap();
+        drop(group_tx);
+        let (result, remaining) = worker.join().unwrap().into_parts();
+        result.unwrap();
+        assert!(matches!(up_rx.try_recv().unwrap(), UpMsg::GroupFinal(_)));
+        assert!(matches!(remaining.try_recv().unwrap(), GroupIn::EchoTickForTest));
+    }
+
+    #[test]
+    fn 真实组_flush_经_libos_发送非空委托并唤醒接收者() {
+        let (tx, rx) = crate::libos::mailbox::channel();
+        let waiting = rx.abort_handle();
+        let receiver = std::thread::spawn(move || crate::libos::mailbox::receive_interruptible(&rx, std::time::Duration::from_secs(1)));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        while !waiting.waiting_registered() { assert!(std::time::Instant::now() < deadline); std::thread::yield_now(); }
+        let mut buffers = vec![vec![super::DeskIn::Place {
+            owner:(0, 0), side:crate::Side::Buy, price:super::RoutedPrice::Fixed(100), qty:100, purse:10005,
+            #[cfg(feature = "simulation-diagnostics")]
+            source:crate::runtime::diagnostics::OperationSource::PlayerExternal,
+        }]];
+        assert_eq!(super::flush_buffers(&mut buffers, &[tx], 1, 0, 0, true).unwrap(), 1);
+        match receiver.join().unwrap().unwrap_or_else(|_| panic!("LibOS 接收失败")) {
+            crate::runtime::protocol::DeskMsg::Ops { tick, round, group, ops, final_flush } => {
+                assert_eq!((tick, round, group, final_flush), (1, 0, 0, true));
+                assert!(matches!(&ops[..], [super::DeskIn::Place {owner:(0, 0), side:crate::Side::Buy, price:super::RoutedPrice::Fixed(100), qty:100, purse:10005, ..}]));
+            }
+            _ => panic!("接收方未取得真实 Ops"),
+        }
+    }
+
+    #[test]
+    fn 组_flush_发送失败时保留失败批次和未发送尾部() {
+        let (first, first_rx) = crate::libos::mailbox::channel();
+        let (failed, failed_rx) = crate::libos::mailbox::channel();
+        let (last, last_rx) = crate::libos::mailbox::channel();
+        drop(failed_rx);
+        let order = super::DeskIn::Place {
+            owner:(0, 0), side:crate::Side::Buy, price:super::RoutedPrice::Fixed(100), qty:100, purse:10005,
+            #[cfg(feature = "simulation-diagnostics")]
+            source:crate::runtime::diagnostics::OperationSource::PlayerExternal,
+        };
+        let mut buffers = vec![vec![order], vec![order], vec![order]];
+        assert!(super::flush_buffers(&mut buffers, &[first, failed, last], 1, 0, 0, true).is_err());
+        assert!(matches!(first_rx.try_recv().unwrap(), crate::runtime::protocol::DeskMsg::Ops { .. }));
+        assert!(buffers[0].is_empty(), "成功发送的委托不能再次保留");
+        assert_eq!(buffers[1], vec![order], "失败批次的资金载荷必须交还");
+        assert_eq!(buffers[2], vec![order], "未发送尾部不得丢失");
+        assert!(matches!(last_rx.try_recv(), Err(std::sync::mpsc::TryRecvError::Disconnected)));
+    }
+
+    #[test]
+    fn 已关闭准入的交易部保留接收器时组仍取得失败载荷() {
+        let domain = crate::libos::fault_domain::FaultDomain::new(3);
+        let (first, first_rx) = crate::runtime::worker_admission::paired_registered_channel(&domain).unwrap();
+        let (closed, closed_rx) = crate::runtime::worker_admission::paired_registered_channel(&domain).unwrap();
+        let (tail, tail_rx) = crate::runtime::worker_admission::paired_registered_channel(&domain).unwrap();
+        closed_rx.close();
+        assert!(closed_rx.is_closed_and_quiescent());
+        let order = super::DeskIn::Place { owner:(0, 0), side:crate::Side::Buy, price:super::RoutedPrice::Fixed(100), qty:100, purse:10005,
+            #[cfg(feature = "simulation-diagnostics")]
+            source:crate::runtime::diagnostics::OperationSource::PlayerExternal,
+        };
+        let mut buffers = vec![vec![order], vec![order], vec![order]];
+        assert!(super::flush_buffers(&mut buffers, &[first, closed, tail], 8, 2, 0, false).is_err());
+        assert!(matches!(first_rx.try_recv().unwrap(), crate::runtime::protocol::DeskMsg::Ops { ops, .. } if ops == vec![order]));
+        assert!(matches!(closed_rx.try_recv(), Err(std::sync::mpsc::TryRecvError::Disconnected)));
+        assert!(matches!(tail_rx.try_recv(), Err(std::sync::mpsc::TryRecvError::Disconnected)));
+        assert_eq!(buffers, [Vec::new(), vec![order], vec![order]]);
+    }
+
+    #[test]
+    fn 失败诊断区分已发送目标与跳过的空目标并保留原始轮次() {
+        for (final_flush, first_has_order) in [(false, false), (true, false), (false, true)] {
+            let mut state = GroupState::new(GroupSetup {
+                group:0, accounts:vec![GroupAccount::new(10_000_000, 3)], chunk:8, lot:100,
+                config:Arc::new(crate::config::GameConfig::proposed_defaults()), ticks_per_day:240,
+                decision:None, plans:Vec::new(), script:Box::new(|_t, _r| TickPlan::default()),
+            });
+            let (first, first_rx) = crate::libos::mailbox::channel();
+            let (failed, failed_rx) = crate::libos::mailbox::channel();
+            let (last, last_rx) = crate::libos::mailbox::channel();
+            drop(failed_rx);
+            let order = super::DeskIn::Place { owner:(0, 0), side:crate::Side::Buy, price:super::RoutedPrice::Fixed(100), qty:100, purse:10005,
+                #[cfg(feature = "simulation-diagnostics")]
+                source:crate::runtime::diagnostics::OperationSource::PlayerExternal,
+            };
+            let mut buffers = vec![if first_has_order { vec![order] } else { Vec::new() }, vec![order], vec![order]];
+            assert!(state.flush_or_record(&mut buffers, &[first, failed, last], 8, 2, final_flush).is_err());
+            if first_has_order {
+                assert!(matches!(first_rx.try_recv().unwrap(), crate::runtime::protocol::DeskMsg::Ops {final_flush:false, ops, ..} if ops == vec![order]));
+                assert!(matches!(first_rx.try_recv(), Err(std::sync::mpsc::TryRecvError::Disconnected)));
+            } else if final_flush {
+                assert!(matches!(first_rx.try_recv().unwrap(), crate::runtime::protocol::DeskMsg::Ops {final_flush:true, ops, ..} if ops.is_empty()));
+            } else {
+                assert!(matches!(first_rx.try_recv(), Err(std::sync::mpsc::TryRecvError::Disconnected)));
+            }
+            assert!(matches!(last_rx.try_recv(), Err(std::sync::mpsc::TryRecvError::Disconnected)));
+            let snapshot = state.final_state();
+            assert!(state.undelivered_ops.is_none(), "Final 必须接管未发送委托而非复制载荷");
+            let retained = snapshot.undelivered_ops.unwrap();
+            assert_eq!((retained.tick, retained.round, retained.first_failed_stock, retained.final_flush), (8, 2, 1, final_flush));
+            assert_eq!(retained.by_stock, [Vec::new(), vec![order], vec![order]]);
+            assert!(state.final_state().undelivered_ops.is_none(), "重复生成 Final 不得再次移交相同诊断");
+            assert!(buffers.is_empty(), "诊断必须接管局部缓冲");
+        }
+    }
+
+    #[test]
+    fn 真实组_seal_出队后故障保留实体且不发送确认() {
+        use crate::runtime::worker_inbox::WorkerInbox;
+        struct InjectedInbox {
+            inner: crate::libos::mailbox::Receiver<GroupIn>,
+            checks: std::cell::Cell<u32>,
+        }
+        impl WorkerInbox<GroupIn> for InjectedInbox {
+            fn receive(&self, shutdown: &AtomicBool, who: crate::runtime::protocol::WorkerId) -> Result<Option<GroupIn>, crate::runtime::RuntimeError> {
+                self.inner.receive(shutdown, who)
+            }
+            fn try_receive(&self, who: crate::runtime::protocol::WorkerId) -> Result<Result<GroupIn, std::sync::mpsc::TryRecvError>, crate::runtime::RuntimeError> {
+                crate::runtime::worker_inbox::checked_try_receive(&self.inner, who, || {
+                    self.checks.set(self.checks.get() + 1);
+                    self.checks.get() >= 2
+                })
+            }
+        }
+        let domain = crate::libos::fault_domain::FaultDomain::new(1);
+        let (tx, rx) = domain.channel().unwrap();
+        let (desk_tx, _desk_rx) = std::sync::mpsc::channel();
+        let (up_tx, up_rx) = crate::libos::mailbox::channel();
+        let state = GroupState::new(GroupSetup {
+            group:0, accounts:vec![GroupAccount::new(10_000_000, 1)], chunk:8, lot:100,
+            config:Arc::new(crate::config::GameConfig::proposed_defaults()), ticks_per_day:240,
+            decision:None, plans:Vec::new(), script:Box::new(|_t, _r| TickPlan::default()),
+        });
+        tx.send(GroupIn::Seal { tick:0, round_final:0 }).unwrap();
+        tx.send(GroupIn::Batch(DeskBatch {stock:0, tick:0, round:0, entities:vec![Entity::CashRefund {local:0, amount:500}], ..DeskBatch::default()})).unwrap();
+        drop(tx);
+        let worker = std::thread::spawn(move || {
+            let inbox = InjectedInbox { inner:rx, checks:std::cell::Cell::new(0) };
+            crate::runtime::worker_mailbox::handoff_after_worker(inbox, |rx| group_main_borrowed(state, vec![desk_tx], rx, crate::runtime::worker_context::WorkerContext {
+                up_tx, abort:Arc::new(AtomicBool::new(false)), shutdown:Arc::new(AtomicBool::new(false)),
+                capture:Arc::new(std::sync::Mutex::new(crate::verification_evidence::current_phase_timing_binding())),
+            }))
+        });
+        let (result, inbox) = worker.join().unwrap().into_parts();
+        assert!(matches!(result, Err(crate::runtime::RuntimeError::HostAborted { phase:crate::runtime::wait_contract::Phase::Seal, who:Some(crate::runtime::protocol::WorkerId::Group(0)) })));
+        let replies: Vec<_> = up_rx.try_iter().collect();
+        assert!(matches!(&replies[..], [UpMsg::Failed { .. }, UpMsg::GroupFinal(_)]));
+        match inbox.inner.try_recv().unwrap() {
+            GroupIn::Batch(batch) => assert_eq!(batch.entities, [Entity::CashRefund {local:0, amount:500}]),
+            _ => panic!("Seal 出队的实体批次未保留"),
+        }
     }
 
     /// World 级正常关停协议回归（与上行循环级测试互补）：真实世界跑一拍
@@ -9490,7 +10246,7 @@ mod seal_failed_injection_tests {
         use std::sync::{Arc, Mutex};
         let (group_tx, group_rx) = std::sync::mpsc::channel::<GroupIn>();
         let (_desk_tx, _desk_rx) = std::sync::mpsc::channel::<crate::runtime::protocol::DeskMsg>();
-        let (up_tx, up_rx) = std::sync::mpsc::channel::<UpMsg>();
+        let (up_tx, up_rx) = crate::libos::mailbox::channel::<UpMsg>();
         let abort = Arc::new(AtomicBool::new(false));
         let shutdown_flag = Arc::new(AtomicBool::new(false));
         let capture = Arc::new(Mutex::new(
@@ -9524,10 +10280,6 @@ mod seal_failed_injection_tests {
                         up_tx,
                         abort,
                         shutdown: shutdown_flag,
-                        watchdog: crate::runtime::watchdog::WatchdogConfig {
-                            normal: std::time::Duration::from_secs(30),
-                            long: std::time::Duration::from_secs(120),
-                        },
                         capture,
                     },
                 )
@@ -9570,7 +10322,7 @@ mod seal_failed_injection_tests {
         use std::sync::{Arc, Mutex};
         let (group_tx, group_rx) = std::sync::mpsc::channel::<GroupIn>();
         let (_desk_tx, _desk_rx) = std::sync::mpsc::channel::<crate::runtime::protocol::DeskMsg>();
-        let (up_tx, up_rx) = std::sync::mpsc::channel::<UpMsg>();
+        let (up_tx, up_rx) = crate::libos::mailbox::channel::<UpMsg>();
         let abort = Arc::new(AtomicBool::new(false));
         let shutdown_flag = Arc::new(AtomicBool::new(false));
         let capture = Arc::new(Mutex::new(
@@ -9615,10 +10367,6 @@ mod seal_failed_injection_tests {
                         up_tx,
                         abort,
                         shutdown: shutdown_flag,
-                        watchdog: crate::runtime::watchdog::WatchdogConfig {
-                            normal: std::time::Duration::from_secs(30),
-                            long: std::time::Duration::from_secs(120),
-                        },
                         capture,
                     },
                 )

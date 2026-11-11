@@ -410,7 +410,7 @@ fn repurchase_x_transport_04_source_only_flush_and_real_abort_retry_keep_one_req
     );
     let (tx0, rx0) = std::sync::mpsc::channel();
     let (tx1, rx1) = std::sync::mpsc::channel();
-    state.flush_batches(&[tx0, tx1], 1, 0).unwrap();
+    state.flush_batches(&[tx0, tx1], 1, 0, DeskFlushPhase::TickRound).unwrap();
     assert!(rx0.try_recv().is_err());
     let super::super::protocol::GroupIn::Batch(batch) =
         rx1.try_recv().expect("仅来源的非空批次也必须发送")
@@ -451,7 +451,7 @@ fn repurchase_x_transport_05_committed_request_survives_next_tick_fill_and_abort
     let request_order = state.repurchase_out[1][0].order_ref;
     let (tx0, _rx0) = std::sync::mpsc::channel();
     let (tx1, rx1) = std::sync::mpsc::channel();
-    state.flush_batches(&[tx0, tx1], 1, 0).unwrap();
+    state.flush_batches(&[tx0, tx1], 1, 0, DeskFlushPhase::TickRound).unwrap();
     rx1.recv().unwrap();
     let committed = state.state_hash();
     for _ in 0..2 {
@@ -516,10 +516,10 @@ fn repurchase_x_transport_06_terminal_pending_sources_keep_request_identity_in_h
         );
         let (tx0, _rx0) = std::sync::mpsc::channel();
         let (tx1, _rx1) = std::sync::mpsc::channel();
-        left.flush_batches(&[tx0, tx1], 1, 0).unwrap();
+        left.flush_batches(&[tx0, tx1], 1, 0, DeskFlushPhase::TickRound).unwrap();
         let (tx0, _rx0) = std::sync::mpsc::channel();
         let (tx1, _rx1) = std::sync::mpsc::channel();
-        right.flush_batches(&[tx0, tx1], 1, 0).unwrap();
+        right.flush_batches(&[tx0, tx1], 1, 0, DeskFlushPhase::TickRound).unwrap();
         assert_eq!(
             left.state_hash(),
             right.state_hash(),
@@ -545,7 +545,7 @@ fn repurchase_x_transport_07_cancel_all_ttl_and_drain_return_the_original_purse_
         if ending == 1 {
             let (tx0, _rx0) = std::sync::mpsc::channel();
             let (tx1, rx1) = std::sync::mpsc::channel();
-            state.flush_batches(&[tx0, tx1], 1, 0).unwrap();
+            state.flush_batches(&[tx0, tx1], 1, 0, DeskFlushPhase::TickRound).unwrap();
             rx1.recv().unwrap();
             prior_tick = Some(state.state_hash());
         }

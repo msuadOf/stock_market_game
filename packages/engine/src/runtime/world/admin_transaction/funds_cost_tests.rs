@@ -8,7 +8,7 @@ use crate::runtime::skeleton_tests::basic_spec;
 fn spec() -> WorldSpec {
     let mut spec = basic_spec(2, 1, 2, Box::new(|_| Box::new(|_, _| TickPlan::default())));
     spec.ticks_per_day = 100;
-    spec.watchdog = WatchdogConfig {
+    spec.deadline = DeadlineConfig {
         normal: Duration::from_millis(300),
         long: Duration::from_millis(300),
     };
@@ -25,7 +25,7 @@ fn accounts(world: &mut World) -> Vec<Vec<GroupAccount>> {
     }
     let mut result = vec![Vec::new(); world.n_groups];
     for _ in 0..world.n_groups {
-        match recv_deadline(&world.up_rx, Phase::Seal, &world.watchdog).unwrap() {
+        match recv_deadline(&world.up_rx, Phase::Seal, &world.deadline).unwrap() {
             UpMsg::GroupEcho { group, accounts } => result[group as usize] = accounts,
             other => panic!("P1真实账户回声错位：{other:?}"),
         }
@@ -362,7 +362,7 @@ fn information_world() -> World {
             Some(personal)
         })
         .collect();
-    spec.watchdog = WatchdogConfig {
+    spec.deadline = DeadlineConfig {
         normal: Duration::from_millis(300),
         long: Duration::from_millis(300),
     };

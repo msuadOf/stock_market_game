@@ -12,7 +12,7 @@ import {
 } from "./wasm-package-capability.mjs";
 
 const hash = (value) => createHash("sha256").update(value).digest("hex");
-const required = ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "set_step_runtime_override", "init_wasm_wait", "wasm_wait_abort_layout", "shutdown_session"];
+const required = ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "set_step_runtime_override", "wasm_tombstone_init_primary", "wasm_tombstone_bind_ingress", "libos_host_fault_layout", "shutdown_session"];
 const wasm = Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]);
 const glue = Buffer.from("export function restore_json() {}\n");
 function bytesFor(provenance = {}) {
@@ -33,6 +33,15 @@ test("metadata parser enforces the exact six-field cross-file identity contract"
   driftValue.exports = ["restore_json"];
   const drift = Buffer.from(`${JSON.stringify(driftValue, null, 2)}\n`);
   assert.throws(() => parseWasmPackageMetadata(provenance, drift), /missing required public functions/);
+});
+
+test("恢复必需导出逐项缺失时 metadata 不得通过", {timeout:10000}, () => {
+  const [provenance, capability] = bytesFor();
+  for (const missing of required) {
+    const value = JSON.parse(capability);
+    value.exports = value.exports.filter((name) => name !== missing);
+    assert.throws(() => parseWasmPackageMetadata(provenance, Buffer.from(JSON.stringify(value))), /missing required public functions/);
+  }
 });
 
 test("source identity is deterministic over the declared Rust compiler input closure", { timeout: 10000 }, async () => {

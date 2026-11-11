@@ -5,7 +5,8 @@ import { CAPACITY, GEN_BITS, HEADER_WORDS, JOIN_STRIDE, SLOT_STRIDE } from "./fa
 
 class Port extends EventTarget {
   sent: unknown[] = []; start() {} close() {}
-  postMessage(value: unknown) { this.sent.push(value); }
+  peer?: Port;
+  postMessage(value: unknown) { this.sent.push(value); this.peer?.emit(value); }
   emit(value: unknown) { this.dispatchEvent(new MessageEvent("message", { data: value })); }
 }
 class OwnedWorker extends EventTarget {
@@ -20,7 +21,7 @@ function fixture() {
   const timers = new Map<number, () => void>(); let timerId = 0;
   const supervisor = createEngineSupervisor({ engine: engine as unknown as Worker,
     createChildWorker: () => new OwnedWorker() as unknown as Worker,
-    createChannel: () => { const channel = { port1: new Port(), port2: new Port() }; channels.push(channel); return channel as unknown as MessageChannel; },
+    createChannel: () => { const port1 = new Port(), port2 = new Port(); port1.peer = port2; port2.peer = port1; const channel = { port1, port2 }; channels.push(channel); return channel as unknown as MessageChannel; },
     onFatalFailure: (failure) => { failures.push(failure); }, onSpawnFailure() {},
     onFinalRelease: (receipt: unknown) => { releases.push(receipt); },
     timers: { now: () => 0, setTimeout: (callback) => { timers.set(++timerId, callback); return timerId; }, clearTimeout: (id) => { timers.delete(id); } },
@@ -31,6 +32,20 @@ function substrate(memory: WebAssembly.Memory) {
   const layout = { baseAddr: 0, headerWords: HEADER_WORDS, slotStride: SLOT_STRIDE, joinStride: JOIN_STRIDE, capacity: 4, genBits: 29 };
   const words = new Int32Array(memory.buffer); Atomics.store(words, CAPACITY, 4); Atomics.store(words, GEN_BITS, 29);
   return { module: new WebAssembly.Module(new Uint8Array([0,97,115,109,1,0,0,0])), memory, layout, diagnostics: false };
+}
+function configureLibos(supervisor: ReturnType<typeof createEngineSupervisor>, engine: OwnedWorker, memory: WebAssembly.Memory) {
+  const data = substrate(memory);
+  const fault = { globalStateAddress: 8192, domainAbortAddress: 8200, hostReadyAddress: 8204,
+    slots: Array.from({ length: data.layout.capacity }, (_, index) => ({ abortAddress: 8208 + index * 8, waitAddress: 8212 + index * 8 })) };
+  Atomics.store(new Int32Array(memory.buffer, fault.globalStateAddress, 1), 0, 1);
+  supervisor.bootstrapEngine({ type: "init", setup: {}, runtimeOverride: true });
+  const control = (engine.sent.at(-1) as { controlPort: Port }).controlPort;
+  control.postMessage({ type: "facadeEngineMemory", allocationId: 1, memory });
+  control.postMessage({ type: "facadeEngineDeath", allocationId: 1, primary: {
+    engine: { workerId: 0, address: 5000 }, ingress: { workerId: 0xffffffff, address: 6000 }, death: { address: 7000, bytes: 4 },
+  } });
+  control.postMessage({ type: "facadeEngineConfiguration", allocationId: 1, module: data.module, layout: data.layout, diagnostics: false, libosFault: fault });
+  return fault;
 }
 
 test("create 途中已登记 Memory 即使未 configured，也在 terminate 后产生一次真实终值", { timeout: 10000 }, () => {
@@ -60,16 +75,15 @@ test("真实 MessageChannel 的 Memory wrapper 不同；configure 只按已登�
   } finally { channel.port1.close(); channel.port2.close(); }
 });
 
-test("fatal 写 1B abort 在终止前，正常 dispose 不写 abort", { timeout: 10000 }, () => {
+test("fatal 发布 LibOS 域故障在终止前，正常 dispose 不发布故障", { timeout: 10000 }, () => {
   for (const fatal of [false, true]) {
     const f = fixture(), memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
-    const data = substrate(memory), bytes = new Uint8Array(memory.buffer); bytes.set([57,0,91], 1000);
-    f.supervisor.installSubstrate({ ...data, waitAbort: { address: 1001, bytes: 1 } });
-    let abortAtTerminate = -1; f.engine.terminate = () => { f.engine.terminations++; abortAtTerminate = bytes[1001]; };
+    const fault = configureLibos(f.supervisor, f.engine, memory), bytes = new Uint8Array(memory.buffer); bytes.set([57,0,91], fault.domainAbortAddress - 1);
+    let abortAtTerminate = -1; f.engine.terminate = () => { f.engine.terminations++; abortAtTerminate = bytes[fault.domainAbortAddress]; };
     if (fatal) f.engine.dispatchEvent(Object.assign(new Event("error"), { message: "trap", error: new Error("trap") }));
     else f.supervisor.dispose();
     assert.equal(abortAtTerminate, fatal ? 1 : 0, "FATAL_ABORT_BEFORE_TERMINATE_NORMAL_STAYS_ZERO");
-    assert.deepEqual([...bytes.slice(1000,1003)], [57,fatal ? 1 : 0,91]);
+    assert.deepEqual([...bytes.slice(fault.domainAbortAddress - 1, fault.domainAbortAddress + 2)], [57,fatal ? 1 : 0,91]);
   }
 });
 

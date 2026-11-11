@@ -1,8 +1,6 @@
 import type { FacadeControlMessage } from "./facade-thread-binding.ts";
 import type { FacadeSubstrate } from "./engine-supervisor.ts";
 import { parseFacadeEngineConfigured } from "./facade-engine-protocol.ts";
-import type { WasmWaitAbortLayout } from "./wasm-wait-abort.ts";
-import type { WasmWaitDeathLayout } from "./wasm-wait-death.ts";
 
 interface HandshakeTimers {
   setTimeout(callback: () => void, milliseconds: number): number;
@@ -85,8 +83,9 @@ export function createFacadeEngineHandshake(options: { readonly port: MessagePor
         catch (error) { fail(error); }
       });
     },
-    configure(substrate: FacadeSubstrate, waitAbort?: WasmWaitAbortLayout, waitDeath?: WasmWaitDeathLayout): Promise<void> {
+    configure(substrate: FacadeSubstrate): Promise<void> {
       if (started || closed) throw new Error("engine substrate 只允许发送一次");
+      if (substrate.libosFault !== undefined && (!memoryRegistered || !deathRegistered)) throw new Error("LibOS 故障布局需要 Memory 和 primary 登记确认");
       if (memoryStarted && !memoryRegistered) throw new Error("engine Memory 尚未由主侧确认");
       if (deathStarted && !deathRegistered) throw new Error("engine DEAD 尚未由主侧确认");
       started = true;
@@ -96,7 +95,7 @@ export function createFacadeEngineHandshake(options: { readonly port: MessagePor
         try {
           // 已登记 Memory 时不再跨消息 clone wrapper；控制端阶段就是一次分配权威。
           port.postMessage(memoryRegistered
-            ? { type: "facadeEngineConfiguration", allocationId: 1, module: substrate.module, layout: substrate.layout, diagnostics: substrate.diagnostics, ...(waitAbort === undefined ? {} : { waitAbort }), ...(waitDeath === undefined ? {} : { waitDeath }) }
+            ? { type: "facadeEngineConfiguration", allocationId: 1, module: substrate.module, layout: substrate.layout, diagnostics: substrate.diagnostics, ...(substrate.libosFault === undefined ? {} : { libosFault: substrate.libosFault }) }
             : { type: "facadeEngineSubstrate", ...substrate });
         }
         catch (error) { fail(error); }

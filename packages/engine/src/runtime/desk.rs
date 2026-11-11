@@ -22,7 +22,8 @@ use super::protocol::{
     DeskBatch, DeskIn, DeskMsg, DeskReport, RoutedPrice, RuntimeError, UpMsg, WorkerId,
 };
 use super::type_aliases::CandleProjection;
-use super::watchdog::worker_recv;
+use super::upstream::UpSender;
+use super::worker_inbox::{WorkerInbox, WorkerSender};
 use super::{DeskReceipt, Entity, FillFact, OrderRef, Owner, ReceiptKind, StockIdx};
 use crate::config::GameConfig;
 use crate::money::Money;
@@ -35,6 +36,10 @@ use std::sync::atomic::Ordering;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 mod repurchase;
+
+#[cfg(all(test, not(target_family = "wasm")))]
+#[path = "desk/borrowed_receiver_tests.rs"]
+mod borrowed_receiver_tests;
 
 #[cfg(test)]
 pub(crate) mod repurchase_group_fixture;
@@ -314,6 +319,7 @@ pub struct DeskMarket {
 struct MarketSnapshot {
     public_cutoff_serial: u64,
     last_phase: Option<DeskPhase>,
+    opening_cleared: bool,
     last_price: i64,
     last_close: i64,
     day_high: i64,
@@ -343,6 +349,18 @@ struct DrainMarketSnapshot {
 /// 撤销日志条目（逆序回放恢复；覆盖面=全部可变状态）。
 #[derive(Clone, Debug)]
 enum DeskUndo {
+    /// FatalTick 的 O(1) 审计基线（不复制订单簿或行情历史）。
+    Counters {
+        resting_count: u64,
+        skipped_orders: u64,
+        expired_orders: u64,
+        cancelled_orders: u64,
+        fee_sink: i64,
+        sealed_drain_tick: Option<u64>,
+        clearing_minute: Option<(u16, super::protocol::MinuteBarPhase)>,
+    },
+    /// 序号游标的 O(1) 起始值。
+    SerialBaseline(u64),
     /// 仅撤回真实订单的来源关联；订单数量、资金和费用仍由原 undo 负责。
     RepurchaseRequest {
         order: OrderRef,
@@ -352,8 +370,8 @@ enum DeskUndo {
     Calendar(Option<Arc<super::MarketTickContext>>),
     /// 新挂入订单（回滚=移除）。
     Inserted(DeskOrder),
-    /// 移除订单（回滚=放回档尾原序由 FIFO 保证——移除只发生在档首，放回档首）。
-    Removed(DeskOrder),
+    /// 移除订单（回滚按撤销时记录的原档位位置插回，恢复 FIFO 次序）。
+    Removed { order: DeskOrder, position: usize },
     /// 订单字段被改（回滚=按 order_ref 原位恢复字段值）。
     Mutated(DeskOrder),
     /// 本地序号前进。
@@ -377,8 +395,45 @@ enum DeskUndo {
     RecentPriceTail {
         previous: i64,
     },
+    /// 同一分钟尾桶原位聚合前值；新桶追加仍由 MarketSnapshot 截断。
+    MinuteBarTail(super::protocol::MinuteBarFact),
     /// 日结副作用前的行情与跨日暂存；下一 Start 随 undo 一并退役。
     DrainMarket(Box<DrainMarketSnapshot>),
+}
+
+/// 失败清理时才捕获被修改价档和价格历史，用于独立重放 undo 证明。
+#[derive(Clone, Debug)]
+struct DeskAbortWitness {
+    levels: Vec<(bool, i64, Option<VecDeque<DeskOrder>>)>,
+    recent_prices: std::collections::VecDeque<i64>,
+    minute_bars: Vec<super::protocol::MinuteBarFact>,
+    self_bids: std::collections::HashMap<Owner, BTreeMap<i64, u32>>,
+    self_asks: std::collections::HashMap<Owner, BTreeMap<i64, u32>>,
+}
+
+
+/// 交易部批次发送的协议阶段。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeskFlushPhase {
+    /// 正常 tick 轮次收束。
+    TickRound,
+    /// 日结或关停 Drain。
+    Drain,
+}
+
+/// 发送失败时已生成、尚未发送的批次诊断，不是可执行的交易或独立资产。
+#[derive(Clone, Debug)]
+pub struct UndeliveredDeskBatches {
+    /// 本次发送使用的 tick。
+    pub tick: u64,
+    /// 本次发送使用的 round。
+    pub round: u32,
+    /// 正常轮次或 Drain 阶段。
+    pub phase: DeskFlushPhase,
+    /// 首个发送失败的组下标。
+    pub first_failed_group: usize,
+    /// 按组下标排列；此前已成功发送或空的目标为 None。
+    pub by_group: Vec<Option<DeskBatch>>,
 }
 
 /// 交易部期末上交状态。
@@ -394,6 +449,8 @@ pub struct DeskFinalState {
     pub next_serial_for_test: u64,
     /// 股索引。
     pub stock: StockIdx,
+    /// 仅诊断未发送载荷，不得重放或与回滚资产重复计算；依赖 Final 送达。
+    pub undelivered_batches: Option<UndeliveredDeskBatches>,
     /// 期末挂单（Drain 后为空）。
     pub resting: Vec<DeskOrder>,
     /// 累计受理拒绝数。
@@ -413,10 +470,50 @@ pub struct DeskFinalState {
     /// Abort 回滚完成时刻的态哈希（回滚等价判据：应等于 `committed_hash`；
     /// 之后的 Drain 关停属于合法的后续状态变化，不污染本判据。None=无 Abort）。
     pub rollback_hash: Option<u64>,
+    abort_proof: Option<DeskAbortProof>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct DeskAbortProof {
+    committed_tick: u64,
+    failed_tick: u64,
+    round: u32,
+    proven: bool,
+}
+
+impl DeskFinalState {
+    /// 只有逐项核验同一 FatalTick 的完整交易部权威基线后才能证明 Abort 可恢复。
+    /// 现有撤销日志没有一个涵盖簿索引、请求映射、完整行情/日历/阶段和所有出口
+    /// 暂存域的不可变起始快照；哈希相等不能替代逐值证明，故当前明确拒绝证明。
+    pub(crate) fn verify_rollback(
+        &self,
+        context: &super::world::ExitReconcileContext,
+    ) -> Result<(), String> {
+        if context.phase != super::world::ExitReconcilePhase::FatalTick {
+            return Err("Desk 不支持该退出阶段的完整 Abort 证明".into());
+        }
+        if !context.candidate_unpublished || context.active_tick.is_none() || context.round.is_none() {
+            return Err("Desk Abort 证明缺少未发布事务的 tick/round 身份".into());
+        }
+        let proof = self.abort_proof.ok_or_else(|| "Desk 没有此 FatalTick 的 undo 见证".to_owned())?;
+        if Some(proof.failed_tick) != context.active_tick
+            || Some(proof.round) != context.round
+            || Some(proof.committed_tick) != context.last_committed_tick
+        {
+            return Err("Desk Abort 见证与退出事务身份不匹配".into());
+        }
+        if proof.proven {
+            Ok(())
+        } else {
+            Err("Desk undo 见证缺少基线或未能逐项核实权威状态恢复".into())
+        }
+    }
 }
 
 /// 交易部私有状态。
 pub struct DeskState {
+    /// 失败诊断不参与账簿状态和 hash，Abort 后仍保留。
+    undelivered_batches: Option<UndeliveredDeskBatches>,
     calendar_owner: Option<Arc<crate::session::market_calendar_context::MarketCalendarSource>>,
     initial_calendar_day: Option<Arc<super::MarketDayContext>>,
     calendar_tick: Option<Arc<super::MarketTickContext>>,
@@ -492,6 +589,7 @@ pub struct DeskState {
     /// 最近一次 Abort 回滚完成时刻的态哈希（回滚等价判据：应等于 committed_hash；
     /// 之后的 Drain 关停属于合法的后续状态变化，不污染本判据）。
     rollback_hash: Option<u64>,
+    abort_proof: Option<DeskAbortProof>,
     /// 刀 2a（协调者刀单②）：投影内容版本——簿/行情分键。推进策略
     /// **宁多勿漏**（多推=多一次重建的性能小损；漏推=陈旧投影——
     /// 双跑等价合同红）。写点=簿变更方法（挂/撤/成交/回滚/清簿）与
@@ -533,6 +631,201 @@ pub(crate) fn set_desk_projection_invalidation_skip_for_test(on: bool) {
 }
 
 impl DeskState {
+    fn capture_abort_witness(&self, journal: &[DeskUndo]) -> DeskAbortWitness {
+        let mut levels = Vec::new();
+        for entry in journal {
+            let order = match entry {
+                DeskUndo::Inserted(order)
+                | DeskUndo::Removed { order, .. }
+                | DeskUndo::Mutated(order) => Some(order),
+                _ => None,
+            };
+            if let Some(order) = order {
+                let buy = order.side == Side::Buy;
+                if !levels.iter().any(|(known_buy, price, _)| *known_buy == buy && *price == order.price) {
+                    let book = if buy { &self.bids } else { &self.asks };
+                    levels.push((buy, order.price, book.get(&order.price).cloned()));
+                }
+            }
+        }
+        DeskAbortWitness {
+            levels,
+            recent_prices: self.market.recent_prices.clone(),
+            minute_bars: self.market.minute_bars.clone(),
+            self_bids: self.self_bids.clone(),
+            self_asks: self.self_asks.clone(),
+        }
+    }
+
+    fn abort_undo_witness_matches(&self, journal: &[DeskUndo], witness: &DeskAbortWitness) -> bool {
+        let mut counter_baseline = None;
+        let mut serial_baseline = None;
+        let mut market_baseline = None;
+        let mut calendar_baseline = None;
+        let mut expected_repurchase: BTreeMap<OrderRef, Option<super::RepurchaseRequestKey>> =
+            BTreeMap::new();
+        for entry in journal {
+            match entry {
+                DeskUndo::Counters {
+                    resting_count,
+                    skipped_orders,
+                    expired_orders,
+                    cancelled_orders,
+                    fee_sink,
+                    sealed_drain_tick,
+                    clearing_minute,
+                } => counter_baseline = Some((*resting_count, *skipped_orders, *expired_orders, *cancelled_orders, *fee_sink, *sealed_drain_tick, *clearing_minute)),
+                DeskUndo::SerialBaseline(serial) => serial_baseline = Some(*serial),
+                DeskUndo::Market(snapshot) => market_baseline = Some(snapshot),
+                DeskUndo::Calendar(previous) if calendar_baseline.is_none() => calendar_baseline = Some(previous),
+                DeskUndo::Calendar(_) => {}
+                DeskUndo::Inserted(_) | DeskUndo::Removed { .. } | DeskUndo::Mutated(_) => {}
+                DeskUndo::RepurchaseRequest { order, before } => {
+                    expected_repurchase.entry(*order).or_insert(*before);
+                }
+                DeskUndo::DrainMarket(_) => return false,
+                DeskUndo::Serial
+                | DeskUndo::RestingCount(_)
+                | DeskUndo::Skipped(_)
+                | DeskUndo::Expired(_)
+                | DeskUndo::Cancelled(_)
+                | DeskUndo::FeeSink(_) => {}
+                DeskUndo::RecentPriceAppend { .. } | DeskUndo::RecentPriceTail { .. } => {}
+                DeskUndo::MinuteBarTail(_) => {}
+            }
+        }
+        // 从 Abort 前触及价档副本按 undo 逆序重放，覆盖完整订单字段、物理价档和 FIFO。
+        let mut expected_levels = witness.levels.clone();
+        let mut expected_recent = witness.recent_prices.clone();
+        let mut expected_bars = witness.minute_bars.clone();
+        for entry in journal.iter().rev() {
+            match entry {
+                DeskUndo::Inserted(order) => {
+                    let Some((_, _, Some(level))) = expected_levels.iter_mut().find(|(buy, price, _)| {
+                        *buy == (order.side == Side::Buy) && *price == order.price
+                    }) else { return false };
+                    let Some(index) = level.iter().position(|candidate| candidate.order_ref == order.order_ref) else { return false };
+                    level.remove(index);
+                }
+                DeskUndo::Removed { order, position } => {
+                    let Some((_, _, level)) = expected_levels.iter_mut().find(|(buy, price, _)| {
+                        *buy == (order.side == Side::Buy) && *price == order.price
+                    }) else { return false };
+                    let level = level.get_or_insert_with(VecDeque::new);
+                    if *position > level.len() { return false; }
+                    level.insert(*position, order.clone());
+                }
+                DeskUndo::Mutated(order) => {
+                    let Some((_, _, Some(level))) = expected_levels.iter_mut().find(|(buy, price, _)| {
+                        *buy == (order.side == Side::Buy) && *price == order.price
+                    }) else { return false };
+                    let Some(index) = level.iter().position(|candidate| candidate.order_ref == order.order_ref) else { return false };
+                    level[index] = order.clone();
+                }
+                DeskUndo::RecentPriceAppend { evicted_front } => {
+                    if expected_recent.pop_back().is_none() { return false; }
+                    if let Some(price) = evicted_front { expected_recent.push_front(*price); }
+                }
+                DeskUndo::RecentPriceTail { previous } => {
+                    let Some(tail) = expected_recent.back_mut() else { return false };
+                    *tail = *previous;
+                }
+                DeskUndo::MinuteBarTail(previous) => {
+                    let Some(tail) = expected_bars.last_mut() else { return false };
+                    *tail = *previous;
+                }
+                _ => {}
+            }
+        }
+        // 价档被最后一笔撤空时，生产 rollback 会删除 BTreeMap 键；把逆放后的空
+        // Vec 规范为“键不存在”，并在真实状态侧单独拒绝残留空档。
+        for (_, _, level) in &mut expected_levels {
+            if level.as_ref().is_some_and(|level| level.is_empty()) {
+                *level = None;
+            }
+        }
+        let Some((resting, skipped, expired, cancelled, fee_sink, sealed_drain_tick, clearing_minute)) = counter_baseline else {
+            return false;
+        };
+        let Some(serial) = serial_baseline else { return false };
+        let Some(market) = market_baseline else { return false };
+        expected_bars.truncate(market.bars_len);
+        let Some(calendar) = calendar_baseline else { return false };
+        let expected_calendar = calendar.as_ref().map(Arc::as_ptr);
+        let actual_calendar = self.calendar_tick.as_ref().map(Arc::as_ptr);
+        let market_restored = self.public_cutoff_serial == market.public_cutoff_serial
+            && self.last_phase == market.last_phase
+            && self.opening_cleared == market.opening_cleared
+            && self.market.last_price == market.last_price
+            && self.market.last_close == market.last_close
+            && self.market.day_high == market.day_high
+            && self.market.day_low == market.day_low
+            && self.market.volume_today == market.volume_today
+            && self.market.turnover_today == market.turnover_today
+            && self.market.trade_count == market.trade_count
+            && self.market.candle == market.candle
+            && self.market.minute_closes.len() == market.minute_len
+            && self.market.minute_bars.len() == market.bars_len
+            && self.market.recent_prices.len() == market.recent_len
+            && self.market.candles.len() == market.candles_len;
+        let orders_restored = expected_levels.iter().all(|(buy, price, expected)| {
+            let book = if *buy { &self.bids } else { &self.asks };
+            let actual = book.get(price);
+            let expected = expected.as_ref();
+            actual == expected
+        });
+        let no_empty_price_levels = self
+            .bids
+            .values()
+            .chain(self.asks.values())
+            .all(|level| !level.is_empty());
+        let recent_prices_restored = self.market.recent_prices == expected_recent;
+        let minute_bars_restored = self.market.minute_bars == expected_bars;
+        let requests_restored = expected_repurchase.iter().all(|(order, expected)| {
+            self.repurchase_requests.get(order).copied() == *expected
+        });
+        let mut expected_self_bids: std::collections::HashMap<Owner, BTreeMap<i64, u32>> =
+            std::collections::HashMap::new();
+        let mut expected_self_asks: std::collections::HashMap<Owner, BTreeMap<i64, u32>> =
+            std::collections::HashMap::new();
+        for order in self.bids.values().chain(self.asks.values()).flat_map(|level| level.iter()) {
+            let index = if order.side == Side::Buy { &mut expected_self_bids } else { &mut expected_self_asks };
+            *index.entry(order.owner).or_default().entry(order.price).or_default() += 1;
+        }
+        orders_restored
+            && no_empty_price_levels
+            && requests_restored
+            && market_restored
+            && recent_prices_restored
+            && minute_bars_restored
+            && expected_calendar == actual_calendar
+            && self.next_serial == serial
+            && self.resting_count == resting
+            && self.skipped_orders == skipped
+            && self.expired_orders == expired
+            && self.cancelled_orders == cancelled
+            && self.fee_sink == fee_sink
+            && self.sealed_drain_tick == sealed_drain_tick
+            && self.clearing_minute == clearing_minute
+            && self.self_bids == expected_self_bids
+            && self.self_asks == expected_self_asks
+            && self.self_bids == witness.self_bids
+            && self.self_asks == witness.self_asks
+            && self.cur_tick == self.committed_tick
+            && self.cur_round == 0
+            && self.undo.is_empty()
+            && self.flushed.iter().all(|flushed| !flushed)
+            && self.out.iter().all(Vec::is_empty)
+            && self.fills_out.iter().all(Vec::is_empty)
+            && self.receipts_out.iter().all(Vec::is_empty)
+            && self.repurchase_out.iter().all(Vec::is_empty)
+            && self.trade_facts.is_empty()
+            && self.retail_facts.is_empty()
+            && self.lifecycle_facts.is_empty()
+            && self.auction_facts.is_empty()
+            && self.pending_ex_rights.is_none()
+    }
+
     /// 刀 2a 判别旋钮（cfg(test)）①：禁缓存（投影直构建对照臂——双跑
     /// 等价合同的独立权威源）。生产恒 false 零开销。
     #[cfg(test)]
@@ -647,6 +940,7 @@ impl DeskState {
                     .count() as u64,
         };
         DeskState {
+            undelivered_batches: None,
             calendar_owner: None,
             initial_calendar_day: None,
             calendar_tick: None,
@@ -696,6 +990,7 @@ impl DeskState {
             self_asks: std::collections::HashMap::new(),
             self_bids: std::collections::HashMap::new(),
             rollback_hash: None,
+            abort_proof: None,
             book_ver: 0,
             market_ver: 0,
             view_cache: None,
@@ -783,6 +1078,7 @@ impl DeskState {
         self.undo.push(DeskUndo::Market(MarketSnapshot {
             public_cutoff_serial: self.public_cutoff_serial,
             last_phase: self.last_phase,
+            opening_cleared: self.opening_cleared,
             last_price: m.last_price,
             last_close: m.last_close,
             day_high: m.day_high,
@@ -851,6 +1147,13 @@ impl DeskState {
                         .back_mut()
                         .expect("尾价 undo 必须对应本 tick 样本") = previous;
                 }
+                DeskUndo::MinuteBarTail(previous) => {
+                    *self
+                        .market
+                        .minute_bars
+                        .last_mut()
+                        .expect("分钟桶尾 undo 必须对应活动 minute bar") = previous;
+                }
                 DeskUndo::RepurchaseRequest { order, before } => {
                     if let Some(request) = before {
                         self.repurchase_requests.insert(order, request);
@@ -858,11 +1161,29 @@ impl DeskState {
                         self.repurchase_requests.remove(&order);
                     }
                 }
+                DeskUndo::Counters {
+                    resting_count,
+                    skipped_orders,
+                    expired_orders,
+                    cancelled_orders,
+                    fee_sink,
+                    sealed_drain_tick,
+                    clearing_minute,
+                } => {
+                    self.resting_count = resting_count;
+                    self.skipped_orders = skipped_orders;
+                    self.expired_orders = expired_orders;
+                    self.cancelled_orders = cancelled_orders;
+                    self.fee_sink = fee_sink;
+                    self.sealed_drain_tick = sealed_drain_tick;
+                    self.clearing_minute = clearing_minute;
+                }
+                DeskUndo::SerialBaseline(serial) => self.next_serial = serial,
                 DeskUndo::Calendar(previous) => self.calendar_tick = previous,
                 DeskUndo::Inserted(o) => {
                     self.remove_by_ref(&o.order_ref);
                 }
-                DeskUndo::Removed(o) => {
+                DeskUndo::Removed { order: o, position } => {
                     let idx = if o.side == Side::Buy {
                         &mut self.self_bids
                     } else {
@@ -876,7 +1197,8 @@ impl DeskState {
                     }
                     .entry(o.price)
                     .or_default();
-                    level.push_front(o);
+                    assert!(position <= level.len(), "Removed undo 档内位置越界");
+                    level.insert(position, o);
                 }
                 DeskUndo::Mutated(o) => {
                     self.restore_fields(&o);
@@ -906,6 +1228,7 @@ impl DeskState {
                 DeskUndo::Market(s) => {
                     self.public_cutoff_serial = s.public_cutoff_serial;
                     self.last_phase = s.last_phase;
+                    self.opening_cleared = s.opening_cleared;
                     let m = &mut self.market;
                     m.last_price = s.last_price;
                     m.last_close = s.last_close;
@@ -2022,6 +2345,13 @@ impl DeskState {
         // B2 分钟K桶并入同一循环（不加第二遍遍历）——键=竞价清算窗
         // 固定分钟或连续 tick 推导墙钟分钟。
         let minute_key = self.trade_minute_key()?;
+        if let Some(previous) = self.market.minute_bars.last().copied().filter(|bar| {
+            (bar.minute_of_day, bar.phase) == minute_key
+        }) {
+            // 同一分钟再次成交会原位更新尾桶；逐笔记录 preimage，Abort 逆放后
+            // 精确还原该桶。新分钟 append 仍由 MarketSnapshot 的长度基线回退。
+            self.undo.push(DeskUndo::MinuteBarTail(previous));
+        }
         let m = &mut self.market;
         m.last_price = price;
         m.day_high = m.day_high.max(price);
@@ -2138,7 +2468,7 @@ impl DeskState {
                     }
                 }
             }
-            self.undo.push(DeskUndo::Removed(removed));
+            self.undo.push(DeskUndo::Removed { order: removed, position: 0 });
             self.resting_count -= 1;
             self.undo.push(DeskUndo::RestingCount(-1));
             let book = if maker.side == Side::Buy {
@@ -2298,7 +2628,7 @@ impl DeskState {
         if let Some(level) = book.get_mut(&order.price) {
             if let Some(pos) = level.iter().position(|o| o.order_ref == order.order_ref) {
                 let removed = level.remove(pos).expect("position 已核验");
-                self.undo.push(DeskUndo::Removed(removed));
+                self.undo.push(DeskUndo::Removed { order: removed, position: pos });
                 self.resting_count -= 1;
                 self.undo.push(DeskUndo::RestingCount(-1));
                 if level.is_empty() {
@@ -2771,8 +3101,8 @@ impl DeskState {
         // opening_cleared 只约束本交易日申报窗末的指示价停发与清算触发，
         // 跨日不残留（此前第二日开盘窗被首日标记抑制，
         // batch4_second_day_auction_window 显红）。
-        self.opening_cleared = false;
         // 收盘清算已完成，归档完整当日 K；有成交日仅在此计数一次。
+        self.opening_cleared = false;
         {
             let m = &mut self.market;
             if let Some(candle) = m.candle.take() {
@@ -2913,8 +3243,20 @@ impl DeskState {
         calendar: Arc<super::MarketTickContext>,
     ) -> Result<(), RuntimeError> {
         // 下一 tick 首批 Ops(N) = tick N−1 隐式转正。
+        let sealed_drain_tick = self.sealed_drain_tick;
         self.undo.clear();
         self.sealed_drain_tick = None;
+        self.abort_proof = None;
+        self.undo.push(DeskUndo::Counters {
+            resting_count: self.resting_count,
+            skipped_orders: self.skipped_orders,
+            expired_orders: self.expired_orders,
+            cancelled_orders: self.cancelled_orders,
+            fee_sink: self.fee_sink,
+            sealed_drain_tick,
+            clearing_minute: self.clearing_minute,
+        });
+        self.undo.push(DeskUndo::SerialBaseline(self.next_serial));
         let previous = self.calendar_tick.replace(calendar);
         self.undo.push(DeskUndo::Calendar(previous));
         self.committed_tick = self.cur_tick;
@@ -3261,16 +3603,17 @@ impl DeskState {
     /// 本轮收束 flush：实体/成交事实/回执聚合批发组线程。
     fn flush_batches(
         &mut self,
-        group_txs: &[Sender<super::protocol::GroupIn>],
+        group_txs: &[impl WorkerSender<super::protocol::GroupIn>],
         tick: u64,
         round: u32,
+        phase: DeskFlushPhase,
     ) -> Result<(u64, u64, u64), RuntimeError> {
         let mut entities_total = 0u64;
         let mut fills_total = 0u64;
         let mut receipts_total = 0u64;
         let stock = self.setup.stock;
-        let out = std::mem::take(&mut self.out);
-        for (g, entities) in out.into_iter().enumerate() {
+        for g in 0..self.out.len() {
+            let entities = std::mem::take(&mut self.out[g]);
             let fills = std::mem::take(&mut self.fills_out[g]);
             let receipts = std::mem::take(&mut self.receipts_out[g]);
             let repurchase = std::mem::take(&mut self.repurchase_out[g]);
@@ -3293,14 +3636,33 @@ impl DeskState {
                 fills,
                 receipts,
             };
-            group_txs[g]
-                .send(super::protocol::GroupIn::Batch(batch))
-                .map_err(|_| RuntimeError::SendFailed {
+            if let Err(std::sync::mpsc::SendError(message)) = group_txs[g]
+                .send(super::protocol::GroupIn::Batch(batch)) {
+                match message {
+                    super::protocol::GroupIn::Batch(batch) => {
+                        self.out[g] = batch.entities;
+                        self.fills_out[g] = batch.fills;
+                        self.receipts_out[g] = batch.receipts;
+                        self.repurchase_out[g] = batch.repurchase;
+                    }
+                    _ => unreachable!("发送错误必须交还原始 Batch"),
+                }
+                assert!(self.undelivered_batches.is_none(), "发送失败诊断不得被覆盖");
+                let by_group = (0..self.out.len()).map(|index| {
+                    if index < g || (self.out[index].is_empty() && self.fills_out[index].is_empty()
+                        && self.receipts_out[index].is_empty() && self.repurchase_out[index].is_empty()) {
+                        None
+                    } else {
+                        Some(DeskBatch { stock, tick, round, entities:self.out[index].clone(), fills:self.fills_out[index].clone(),
+                            receipts:self.receipts_out[index].clone(), repurchase:self.repurchase_out[index].clone() })
+                    }
+                }).collect();
+                self.undelivered_batches = Some(UndeliveredDeskBatches { tick, round, phase, first_failed_group:g, by_group });
+                return Err(RuntimeError::SendFailed {
                     detail: format!("交易部 {stock} → 组 {g} 实体批次发送失败"),
-                })?;
+                });
+            }
         }
-        // take 走的 out 需重建空缓冲（后续轮次/Drain 继续累积）。
-        self.out = vec![Vec::new(); group_txs.len()];
         Ok((entities_total, fills_total, receipts_total))
     }
 
@@ -3448,8 +3810,8 @@ impl DeskState {
         (hist, active)
     }
 
-    /// 期末上交。
-    fn final_state(&self) -> DeskFinalState {
+    /// 期末上交；未发送批次诊断只移交一次。
+    fn final_state(&mut self) -> DeskFinalState {
         DeskFinalState {
             #[cfg(test)]
             cur_tick_for_test: self.cur_tick,
@@ -3458,6 +3820,7 @@ impl DeskState {
             #[cfg(test)]
             next_serial_for_test: self.next_serial,
             stock: self.setup.stock,
+            undelivered_batches: self.undelivered_batches.take(),
             resting: self
                 .bids
                 .values()
@@ -3473,6 +3836,7 @@ impl DeskState {
             state_hash: self.state_hash(),
             committed_hash: self.committed_hash,
             rollback_hash: self.rollback_hash,
+            abort_proof: self.abort_proof,
         }
     }
 }
@@ -3564,18 +3928,29 @@ fn build_resting_facts(state: &DeskState) -> Vec<super::protocol::RestingFact> {
 }
 
 pub(crate) fn desk_main(
+    setup: DeskSetup,
+    n_groups: usize,
+    config: Arc<GameConfig>,
+    rx: super::downstream::Receiver<DeskMsg>,
+    group_txs: Vec<super::downstream::Sender<super::protocol::GroupIn>>,
+    context: super::worker_context::WorkerContext,
+) -> Result<(), RuntimeError> {
+    desk_main_borrowed(setup, n_groups, config, &rx, group_txs, context)
+}
+
+/// 接收器由调用方持有，供后续有界退出协议移交；现有入口仍消费它。
+pub(super) fn desk_main_borrowed(
     mut setup: DeskSetup,
     n_groups: usize,
     config: Arc<GameConfig>,
-    rx: Receiver<DeskMsg>,
-    group_txs: Vec<Sender<super::protocol::GroupIn>>,
+    rx: &impl WorkerInbox<DeskMsg>,
+    group_txs: Vec<impl WorkerSender<super::protocol::GroupIn>>,
     context: super::worker_context::WorkerContext,
 ) -> Result<(), RuntimeError> {
     let super::worker_context::WorkerContext {
         up_tx,
         abort,
         shutdown,
-        watchdog,
         capture,
     } = context;
     /// D4：消息处理期安装捕获绑定（无捕获零开销；上报在绑定释放后）。
@@ -3664,7 +4039,7 @@ pub(crate) fn desk_main(
     loop {
         // Sol 终审三审：退出判定用 shutdown（永久关停）；abort 只管
         // 本 tick 回滚语义（本 worker 失败时置位通知对端）。
-        let msg = match worker_recv(&rx, &watchdog, &shutdown, who) {
+        let msg = match rx.receive(&shutdown, who) {
             Ok(Some(m)) => m,
             Ok(None) => break,
             Err(e) => {
@@ -3718,26 +4093,30 @@ pub(crate) fn desk_main(
                 state.rollback();
                 state.rollback_hash = Some(state.state_hash());
                 abort.store(true, Ordering::SeqCst);
-                let _ = up_tx.send(UpMsg::TaskDied { who, payload });
+                if let Err(error) = super::upstream::send_task_died(&up_tx, who, payload) { result = Err(error); }
                 break;
             }
         }
     }
     let final_state = state.final_state();
-    let send = up_tx.send(UpMsg::DeskFinal(Box::new(final_state)));
-    if result.is_ok() && send.is_err() {
-        result = Err(RuntimeError::SendFailed {
-            detail: format!("交易部 {} DeskFinal 发送失败", who),
-        });
+    match up_tx.send(UpMsg::DeskFinal(Box::new(final_state))) {
+        Ok(()) => result,
+        Err(std::sync::mpsc::SendError(UpMsg::DeskFinal(final_state))) => {
+            Err(RuntimeError::DeskFinalUndelivered {
+                who,
+                primary: result.err().map(Box::new),
+                final_state: super::protocol::RetainedDeskFinal::new(final_state),
+            })
+        }
+        Err(_) => unreachable!("发送错误必须交还原始 DeskFinal"),
     }
-    result
 }
 
 /// 单消息处理（panic 运输保护范围）。
 fn process_msg(
     state: &mut DeskState,
-    group_txs: &[Sender<super::protocol::GroupIn>],
-    up_tx: &Sender<UpMsg>,
+    group_txs: &[impl WorkerSender<super::protocol::GroupIn>],
+    up_tx: &UpSender<UpMsg>,
     msg: DeskMsg,
 ) -> Result<(), RuntimeError> {
     // typed 市场日终在任何 undo 隔离、清簿、roll 或 flush 之前验证完整日界。
@@ -3997,7 +4376,7 @@ fn process_msg(
                         .flat_map(|b| b.iter().copied())
                         .collect();
                     let (entities_out, fills_out, receipts_out) =
-                        state.flush_batches(group_txs, tick, round)?;
+                        state.flush_batches(group_txs, tick, round, DeskFlushPhase::TickRound)?;
                     let report = DeskReport {
                         stock: state.setup.stock,
                         tick,
@@ -4043,7 +4422,20 @@ fn process_msg(
                     ),
                 });
             }
+            let committed_tick = state.committed_tick;
+            let failed_tick = state.cur_tick;
+            let round = state.cur_round;
+            // 仅失败清理时复制变更量 undo journal；正常 tick 不复制订单簿或基线。
+            let journal = state.undo.clone();
+            let witness = state.capture_abort_witness(&journal);
             state.rollback();
+            let proven = failed_tick == tick && state.abort_undo_witness_matches(&journal, &witness);
+            state.abort_proof = Some(DeskAbortProof {
+                committed_tick,
+                failed_tick,
+                round,
+                proven,
+            });
             state.rollback_hash = Some(state.state_hash());
             #[cfg(test)]
             if let Some(probe) = state
@@ -4179,7 +4571,7 @@ fn process_msg(
                     }
                     state.roll_day();
                 }
-                state.flush_batches(group_txs, state.cur_tick, state.cur_round)?;
+                state.flush_batches(group_txs, state.cur_tick, state.cur_round, DeskFlushPhase::Drain)?;
             }
             up_tx
                 .send(UpMsg::DeskDrained {

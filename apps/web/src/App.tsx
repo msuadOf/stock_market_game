@@ -1,3 +1,7 @@
+import { createBrowserChunkedArchiveRestore } from "./app/chunked-archive-restore.ts";
+import { prepareDocumentWasmRestoreCapability } from "./host/wasm-restore-capability-source.ts";
+import { parseWasmRuntimeOptions } from "./host/wasm-runtime-options.ts";
+import { createWorkerHost } from "./host/worker-host.ts";
 import { applyBaselineEffects } from "./app/baseline-effects.ts";
 /**
  * 应用根组件（WS-4 完整版）。
@@ -350,7 +354,12 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     });
   }
 
-  const memoryHandoverPanel = useSessionHostLifecycle({ hostRef, initialSaveSourceRef, dayEndPersistenceRef, autoOrderMgrRef, sessionReplacementGateRef,
+  const [chunkedRestore] = useState(() => createBrowserChunkedArchiveRestore({
+    documentKey: document, runtimeOptions: () => parseWasmRuntimeOptions(window.location.search),
+    prepare: prepareDocumentWasmRestoreCapability, create: createWorkerHost, e2e: TRADING_E2E_MODE,
+  }));
+
+  const memoryHandoverPanel = useSessionHostLifecycle({ chunkedRestore, hostRef, initialSaveSourceRef, dayEndPersistenceRef, autoOrderMgrRef, sessionReplacementGateRef,
     saveSelectionGenerationRef, playerOrderRefreshGateRef, hostUpdateRef, fatalHostErrorRef, stopStartupRef, returningToStartupRef,
     startupTarget, sessionSetup, speed, pauseAfterClose, pauseBeforeOpen, TRADING_E2E_MODE, pausePreferencesReady,
     malformedProtocolFixture: () => import.meta.env.DEV && new URLSearchParams(window.location.search).get("protocolFixture") === "malformed",
@@ -400,7 +409,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     refreshDailyChart();
   }, [chartCode, refreshDailyChart]);
 
-  const saveCommands = useSaveCommands({ hostRef, initialSaveSourceRef, dayEndPersistenceRef, autoOrderMgrRef, startupTarget,
+  const saveCommands = useSaveCommands({ chunkedRestore, hostRef, initialSaveSourceRef, dayEndPersistenceRef, autoOrderMgrRef, startupTarget,
     sessionReplacementGateRef, saveSelectionGenerationRef, dayEndFileTargetRef, playerOrderRefreshGateRef,
     speedMetricsLoadInProgressRef, speedMetricsRequestGateRef, fatalHostErrorRef,
     activeSetup, startDateDraft, priceCageEnabledDraft, floatAllocationDraft, loadFromFile, selectDayEndFileTarget, getBrowserSaveRepository,

@@ -87,16 +87,11 @@ POSIX 帮助脚本进行 `.nvmrc` 诊断。CI 或隔离环境可将 `NODE_BIN` �
 `apps/web/src/types/generated/` 是否与仓库一致。
 浏览器主链路使用 `bash scripts/corepack-pnpm.sh test:e2e`；命令会构建前端并启动隔离头完整的 Vite preview。
 
-### 运行时限与并行约束
+### 测试执行与现有 runner
 
-- 普通自动化测试的单命令、单 case 硬上限都是 10 秒；超过时必须缩小代表性 fixture、拆分测试或去掉重复准备工作。
-- Node 普通测试同时使用 `--test-timeout=10000` 的 case 门禁和
-  `scripts/run-with-deadline.mjs 10000 -- <command>` 的整命令进程树门禁；不允许通过参数把这一上限调大。
-- Web 测试聚合属于长验收，由 `scripts/run-web-tests.mjs` 直接启动满足 `>=24.18.0` 的 Node，并由进程外 300000ms supervisor 约束。runner 递归发现 `apps/web/src/**/*.test.ts(x)`，拒绝零测试或重复路径。每个文件独立进程执行，使用 10000ms case 和进程树门禁；等待队列只消耗长验收共享期限。文件进程并发不超过 CPU 预算和 4，失败即取消在途进程并停止队列。`apps/web` 的 package `test` script 与完整回归共用该入口。
-  完整回归保留 TypeScript 编译器先独立执行，以及启动页 SSR、两个 complete-save-schema 和浏览器对比度测试独立批次；其余文件按稳定顺序分为八批。每个文件恰好执行一次，所有批次共享完整回归执行期限。
-- 确有必要的长测试，其每个 child 进程和整个批次 wall-clock 均设 300000ms 硬上限；批次截止时间覆盖结果校验、manifest 发布、进程树终止与临时文件清理，不能只给 child 设置 timeout。`simulation-acceptance` 固定把前 299000ms 用于执行/校验/发布，最后 1000ms 只用于 kill、等待 close 和删除 staged 文件。runner 内部第二截止负责异步清理收敛；正式命令同时由进程外 deadline supervisor 约束总 wall，不能只依赖被测 Node 进程自己的事件循环计时器。
-- 可并行测试必须使用真实多进程或多线程，资源预算需显式记录并避免超卖；长测试不得单核串跑。
-- 构建耗时与测试执行耗时分开记录。冷编译超过 10 秒不应伪装成测试耗时；必要构建同样使用多核并受 5 分钟硬上限约束。
+根据验证需要选择测试范围和并发度，记录实际命令、结果及限制。现有 runner 仍可能内置超时和失败取消；下文描述现有实现，不要求对所有任务使用这些限制。
+
+- Web 测试聚合由 `scripts/run-web-tests.mjs` 执行，要求 Node.js >=24.18.0，递归发现 `apps/web/src/**/*.test.ts(x)` 并检查空清单、重复路径和 symbolic link。`apps/web` 的 `test` script 与完整回归共用该入口；完整回归按稳定顺序分批，TypeScript 编译、启动页 SSR、两个 complete-save-schema 和浏览器对比度测试单独安排，其他文件分八批，每个文件执行一次。
 - 根目录完整回归是明确的两阶段长验收。`scripts/run-full-regression.mjs build --inventory <workspace-.tmp-path>`
   在独立 300000ms 硬期限内完成多核冷构建，从 Cargo JSON 取得 test executables，并把源码指纹、产物相对路径、大小与 SHA-256 原子发布到 workspace `.tmp` 下的密封 inventory；构建前后源码指纹不同则拒绝发布。
   构建实时输出 Cargo stderr，并记录阶段、累计耗时、配置的 CPU jobs 及每 30 秒的编译进度；
@@ -125,7 +120,7 @@ POSIX 帮助脚本进行 `.nvmrc` 诊断。CI 或隔离环境可将 `NODE_BIN` �
   300000ms supervisor 约束，每文件和 case 的 10000ms 上限不变。
   手动开发 CI 通过现有 sealed `execute` 阶段纳入同一入口，无需另起一批测试；
   普通 commit、产品编译和标签发布仍不运行测试。
-- 无参数的 `scripts/run-full-regression.mjs` 只负责依次启动上述两个进程外阶段；构建耗时不挤占执行阶段，但任何一个长阶段都不得超过 5 分钟。doctest 保留 rustdoc 固有的 snippet compilation，不冒充预构建 binary 执行。
+- 无参数的 `scripts/run-full-regression.mjs` 只负责依次启动上述两个进程外阶段；构建耗时不挤占执行阶段；现有 runner 对各阶段设有期限。doctest 保留 rustdoc 固有的 snippet compilation，不冒充预构建 binary 执行。
 - 完整回归默认强制使用 common workspace 的 `.tmp/build-cache/full-regression`，不接受环境变量
   `CARGO_TARGET_DIR` 改写。需要复用外置 Cargo 缓存时，可显式运行
   `node scripts/run-long-validation.mjs 300000 -- node scripts/run-full-regression.mjs all --target-dir <absolute-existing-real-dir>`；
@@ -140,7 +135,6 @@ POSIX 帮助脚本进行 `.nvmrc` 诊断。CI 或隔离环境可将 `NODE_BIN` �
   `determinism.checkpoint.json` 的 `simulation-determinism-receipt`（工具 `schema_version=2`）同时绑定首份 `seed-<seed>.json` 和 `rerun.json` 的 SHA-256，并如实记录 `identical`；复用与独立 root verifier 均验证两份原始数据的来源、配置及业务覆盖。
   Escrow 每次 capture 仍独立验证每 tick 的收据重放、守恒及失败负控，立即保存/恢复的状态等价不变；这里不把自由 rerun 当作固定受理事实重放。
   事件身份按 ADR-0017 的真实域校验：`Account/Sealed` 允许稀疏操作索引和独立 `QuoteExpiry` 预留段，检查 JS-safe 范围、变体映射及键唯一；Stock、PriceTick、DayEnd 和共享 Session 域仍要求各自连续，不重编号真实 producer 身份。
-- 正式长验收的单阶段进程外门禁统一使用 `scripts/run-long-validation.mjs 300000 -- <command>` 或等价的 runner 内进程外门禁；普通测试不得借此放宽 10 秒门禁。
 
 ### 完整回归的 Cargo 独立构建预算
 

@@ -1,6 +1,6 @@
 use super::{GameSession, StepFatal};
 use serde::Serialize;
-#[cfg(test)]
+#[cfg(any(test, feature = "verification-harness"))]
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
@@ -8,15 +8,15 @@ use std::collections::BTreeMap;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct StateHash(u64);
 
-#[cfg(test)]
+#[cfg(any(test, feature = "verification-harness"))]
 thread_local! {
     static BUSINESS_HASH_TRACE: RefCell<Option<Vec<Vec<u8>>>> = const { RefCell::new(None) };
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "verification-harness"))]
 struct BusinessHashTraceGuard;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "verification-harness"))]
 impl BusinessHashTraceGuard {
     fn begin() -> Self {
         BUSINESS_HASH_TRACE.with(|trace| {
@@ -38,14 +38,14 @@ impl BusinessHashTraceGuard {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "verification-harness"))]
 impl Drop for BusinessHashTraceGuard {
     fn drop(&mut self) {
         BUSINESS_HASH_TRACE.with(|trace| *trace.borrow_mut() = None);
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "verification-harness"))]
 pub(in crate::session) fn capture_business_hash_for_test(
     session: &GameSession,
 ) -> Result<(StateHash, Vec<Vec<u8>>), StepFatal> {
@@ -61,7 +61,7 @@ impl StateHash {
             description: error.to_string(),
             location: "state_hash.serialization".to_owned(),
         })?;
-        #[cfg(test)]
+        #[cfg(any(test, feature = "verification-harness"))]
         BUSINESS_HASH_TRACE.with(|trace| {
             if let Some(fields) = trace.borrow_mut().as_mut() {
                 fields.push(bytes.clone());
@@ -79,6 +79,12 @@ impl StateHash {
 }
 
 impl GameSession {
+    /// 验证专用：按业务摘要计算顺序返回每个字段的原始 JSON 字节。
+    #[cfg(feature = "verification-harness")]
+    pub fn verification_business_hash_trace(&self) -> Result<(StateHash, Vec<Vec<u8>>), StepFatal> {
+        capture_business_hash_for_test(self)
+    }
+
     /// Includes every business field below, including unfiltered pending plan facts.
     /// Excludes poison, injection controls, retail diagnostic caches and feature collectors.
     /// Non-authoritative decision fixtures are rejected, never projected as production state.

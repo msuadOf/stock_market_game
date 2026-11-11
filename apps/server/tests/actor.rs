@@ -298,11 +298,13 @@ async fn server_actor_restore_preserves_retail_experience_exactly() {
     prepare_completed_day(&handles, 4).await;
     let mut before = handles.save(2, None).await.expect("应能存档");
     assert_eq!(before.retail_experience.len(), 2);
-    before
-        .retail_experience
-        .get_mut(&AccountId(1))
-        .expect("首个散户必须有经历状态")
-        .observe_stock(&engine::StockId(0), 0);
+    std::sync::Arc::make_mut(
+        before
+            .retail_experience
+            .get_mut(&AccountId(1))
+            .expect("首个散户必须有经历状态"),
+    )
+    .observe_stock(&engine::StockId(0), 0);
     assert_eq!(
         before.retail_experience[&AccountId(1)].stocks[&engine::StockId(0)]
             .last_observed_market_minute,

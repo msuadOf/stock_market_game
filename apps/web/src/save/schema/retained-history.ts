@@ -69,12 +69,38 @@ export function parseActiveMinuteBars(value: unknown, path = "market_minute_bars
 
 export type SavedRetainedDay = { readonly date: string; readonly securities: Readonly<Record<string, { readonly trading: boolean; readonly bars: readonly SavedMinuteBar[] }>> }
 
-type HistoryContext = Configuration & { readonly stocks: StockTickById; readonly start_date: string; readonly settled_through: string | null }
+export type HistoryContext = Configuration & { readonly stocks: StockTickById; readonly start_date: string; readonly settled_through: string | null }
 
-function nextDate(date: string): string {
+export function nextRetainedDate(date: string): string {
   const instant = new Date(`${date}T00:00:00Z`)
   instant.setUTCDate(instant.getUTCDate() + 1)
   return instant.toISOString().slice(0, 10)
+}
+
+/** 单日 codec 由完整链和分片入口共享，location 保留原数组下标。 */
+export function parseRetainedDay(value: unknown, location: string, expected: string, context: HistoryContext): SavedRetainedDay {
+  const parsed = record(value, location)
+  exact(parsed, ["date", "securities"], location)
+  const date = civilDate(parsed.date, `${location}.date`)
+  if (date !== expected || context.settled_through === null || date > context.settled_through) throw new SaveSchemaError(`${location}.date`, "日期必须连续覆盖已结束自然日")
+  const securities = record(parsed.securities, `${location}.securities`)
+  exact(securities, context.stocks.map((stock) => stock.id), `${location}.securities`)
+  const sessions: Record<string, { trading: boolean; bars: readonly SavedMinuteBar[] }> = {}
+  for (const stock of context.stocks) {
+    const sessionPath = `${location}.securities.${stock.id}`
+    const session = record(securities[stock.id], sessionPath)
+    exact(session, ["trading", "bars"], sessionPath)
+    const trading = session.trading
+    if (typeof trading !== "boolean") throw new SaveSchemaError(sessionPath, "trading 必须为布尔值（旧 status 二值词表）")
+    const bars = parseMinuteBars(session.bars, `${sessionPath}.bars`, stock, context)
+    if (!trading && bars.length > 0) throw new SaveSchemaError(sessionPath, "休市证券不能存在成交分钟")
+    sessions[stock.id] = { trading, bars }
+  }
+  return { date, securities: sessions }
+}
+
+export function validateRetainedCoverage(length: number, expected: string, context: HistoryContext): void {
+  if ((context.settled_through === null && length !== 0) || (context.settled_through !== null && expected !== nextRetainedDate(context.settled_through))) throw new SaveSchemaError("retained_market_days", "历史未完整覆盖所有已结束自然日")
 }
 
 /** 保留链（根级 `retained_market_days`）：日期连续覆盖已结束自然日、
@@ -84,28 +110,11 @@ export function parseRetainedHistory(value: unknown, context: HistoryContext): S
   const values = array(value, path)
   let expected = context.start_date
   const result = values.map((item, index) => {
-    const location = `${path}[${index}]`
-    const parsed = record(item, location)
-    exact(parsed, ["date", "securities"], location)
-    const date = civilDate(parsed.date, `${location}.date`)
-    if (date !== expected || context.settled_through === null || date > context.settled_through) throw new SaveSchemaError(`${location}.date`, "日期必须连续覆盖已结束自然日")
-    expected = nextDate(date)
-    const securities = record(parsed.securities, `${location}.securities`)
-    exact(securities, context.stocks.map((stock) => stock.id), `${location}.securities`)
-    const sessions: Record<string, { trading: boolean; bars: readonly SavedMinuteBar[] }> = {}
-    for (const stock of context.stocks) {
-      const sessionPath = `${location}.securities.${stock.id}`
-      const session = record(securities[stock.id], sessionPath)
-      exact(session, ["trading", "bars"], sessionPath)
-      const trading = session.trading
-      if (typeof trading !== "boolean") throw new SaveSchemaError(sessionPath, "trading 必须为布尔值（旧 status 二值词表）")
-      const bars = parseMinuteBars(session.bars, `${sessionPath}.bars`, stock, context)
-      if (!trading && bars.length > 0) throw new SaveSchemaError(sessionPath, "休市证券不能存在成交分钟")
-      sessions[stock.id] = { trading, bars }
-    }
-    return { date, securities: sessions }
+    const result = parseRetainedDay(item, `${path}[${index}]`, expected, context)
+    expected = nextRetainedDate(result.date)
+    return result
   })
-  if ((context.settled_through === null && result.length !== 0) || (context.settled_through !== null && expected !== nextDate(context.settled_through))) throw new SaveSchemaError(path, "历史未完整覆盖所有已结束自然日")
+  validateRetainedCoverage(result.length, expected, context)
   return result
 }
 
@@ -129,6 +138,28 @@ export function validateRetainedHistoryCandles(days: readonly SavedRetainedDay[]
 
 export type SavedTradeReceipt = { readonly receipt_id: string; readonly civil_date: string; readonly stock: number; readonly side: "Buy" | "Sell"; readonly price_cents: string; readonly quantity_shares: number; readonly gross_cents: string; readonly actual_fees: { readonly commission: string; readonly stamp_tax: string; readonly transfer_fee: string } }
 
+export function parseTradeReceipt(value: unknown, location: string): SavedTradeReceipt {
+  const item = record(value, location)
+  exact(item, ["receipt_id", "civil_date", "stock", "side", "price_cents", "quantity_shares", "gross_cents", "actual_fees"], location)
+  const fees = record(item.actual_fees, `${location}.actual_fees`)
+  exact(fees, ["commission", "stamp_tax", "transfer_fee"], `${location}.actual_fees`)
+  const quantity = integer(item.quantity_shares, `${location}.quantity_shares`, 1)
+  const price = money(item.price_cents, `${location}.price_cents`)
+  const gross = money(item.gross_cents, `${location}.gross_cents`)
+  const stock = u32(item.stock, `${location}.stock`)
+  if (price === "0" || BigInt(price) * BigInt(quantity) !== BigInt(gross)) throw new SaveSchemaError(location, "成交价、成交量与成交额不一致")
+  return {
+    receipt_id: counter(item.receipt_id, `${location}.receipt_id`),
+    civil_date: civilDate(item.civil_date, `${location}.civil_date`),
+    stock,
+    side: oneOf(item.side, `${location}.side`, ["Buy", "Sell"] as const),
+    price_cents: price,
+    quantity_shares: quantity,
+    gross_cents: gross,
+    actual_fees: { commission: money(fees.commission, `${location}.actual_fees.commission`), stamp_tax: money(fees.stamp_tax, `${location}.actual_fees.stamp_tax`), transfer_fee: money(fees.transfer_fee, `${location}.actual_fees.transfer_fee`) },
+  }
+}
+
 /** receipt 日志（根级 `personal_trade_confirmations`，AccountId 数值键——
  *  B2 wire 行：stock 数值 StockId + price_cents/gross_cents 分串）。 */
 export function parsePersonalTradeConfirmations(value: unknown, path = "personal_trade_confirmations"): Record<string, SavedTradeReceipt[]> {
@@ -138,26 +169,7 @@ export function parsePersonalTradeConfirmations(value: unknown, path = "personal
     const accountPath = `${path}.${account}`
     if (!/^\d+$/.test(account)) throw new SaveSchemaError(accountPath, "键必须为数值 AccountId 的字符串形态")
     result[account] = array(rows, accountPath).map((row, index) => {
-      const location = `${accountPath}[${index}]`
-      const item = record(row, location)
-      exact(item, ["receipt_id", "civil_date", "stock", "side", "price_cents", "quantity_shares", "gross_cents", "actual_fees"], location)
-      const fees = record(item.actual_fees, `${location}.actual_fees`)
-      exact(fees, ["commission", "stamp_tax", "transfer_fee"], `${location}.actual_fees`)
-      const quantity = integer(item.quantity_shares, `${location}.quantity_shares`, 1)
-      const price = money(item.price_cents, `${location}.price_cents`)
-      const gross = money(item.gross_cents, `${location}.gross_cents`)
-      const stock = u32(item.stock, `${location}.stock`)
-      if (price === "0" || BigInt(price) * BigInt(quantity) !== BigInt(gross)) throw new SaveSchemaError(location, "成交价、成交量与成交额不一致")
-      return {
-        receipt_id: counter(item.receipt_id, `${location}.receipt_id`),
-        civil_date: civilDate(item.civil_date, `${location}.civil_date`),
-        stock,
-        side: oneOf(item.side, `${location}.side`, ["Buy", "Sell"] as const),
-        price_cents: price,
-        quantity_shares: quantity,
-        gross_cents: gross,
-        actual_fees: { commission: money(fees.commission, `${location}.actual_fees.commission`), stamp_tax: money(fees.stamp_tax, `${location}.actual_fees.stamp_tax`), transfer_fee: money(fees.transfer_fee, `${location}.actual_fees.transfer_fee`) },
-      }
+      return parseTradeReceipt(row, `${accountPath}[${index}]`)
     })
     // 单调递增（AppendOnlyHistory 尾追加；同 id 重复=双投影结构性 bug）。
     for (let index = 1; index < result[account]!.length; index += 1) {
@@ -170,10 +182,19 @@ export function parsePersonalTradeConfirmations(value: unknown, path = "personal
 /** 回执水位（根级 `receipt_watermark`）——有已发 receipt 时必须超过最大 id
  *  （水位=下一待发号）；空日志时水位 0 为规范初值（next_receipt_base）。 */
 export function parseReceiptWatermark(value: unknown, receipts: Readonly<Record<string, readonly SavedTradeReceipt[]>>): number {
+  // 原 codec 先校验水位，再读取已验证 receipt；不构造全日志 flat 临时数组。
   const watermark = integer(value, "receipt_watermark", 0)
-  const rows = Object.values(receipts).flat()
-  if (rows.length === 0) return watermark
-  const maximum = rows.reduce((max, row) => BigInt(row.receipt_id) > max ? BigInt(row.receipt_id) : max, 0n)
-  if (BigInt(watermark) <= maximum) throw new SaveSchemaError("receipt_watermark", "水位必须超过最大已发 receipt_id")
+  let maximum: bigint | undefined
+  for (const rows of Object.values(receipts)) for (const row of rows) {
+    const id = BigInt(row.receipt_id)
+    if (maximum === undefined || id > maximum) maximum = id
+  }
+  return validateReceiptWatermarkMaximum(watermark, maximum)
+}
+
+/** 分片入口复用与完整图相同的水位约束；undefined 明确表示没有 receipt。 */
+export function validateReceiptWatermarkMaximum(value: unknown, maximum: bigint | undefined): number {
+  const watermark = integer(value, "receipt_watermark", 0)
+  if (maximum !== undefined && BigInt(watermark) <= maximum) throw new SaveSchemaError("receipt_watermark", "水位必须超过最大已发 receipt_id")
   return watermark
 }

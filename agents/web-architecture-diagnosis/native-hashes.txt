@@ -1,0 +1,7 @@
+0081217daf73b08f2b1e5ec5288ada2379cc12c1ae4b61d7cfefa85c1b71eb14  agents/web-architecture-diagnosis/default-setup.json
+bdadebce8fd8fbfc0ce9b19b902d193e882ee506adb751b909902a6a97e751d3  agents/web-architecture-diagnosis/bare-world/src/main.rs
+b387e51804d7b60cab833e6300931959c1bde1fe3e703a582a911dd072c0b375  agents/web-architecture-diagnosis/bare-world/Cargo.lock
+Darwin asuadmacbook-air.tail144318.ts.net 25.6.0 Darwin Kernel Version 25.6.0: Fri Jul 31 19:11:03 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T8132 arm64
+rustc 1.96.1 (31fca3adb 2026-06-26)
+0ef44b9d24778507b246a6328735a7f76bbc4e3127c1c7ad8db1a491bb1be8ea  target/release/bare-world-diagnostic
+9c3bd0e9c384df862144432a2dbb067a203715158bcd6d6aa7204fa79660f130  agents/web-architecture-diagnosis/native-engine-source-files.sha256

@@ -120,7 +120,7 @@ test("WASM Worker 保留标准 Error 的 code 和非枚举 message", () => {
 
   assert.deepEqual(posted, [{
     type: "failure", generation: 0, code: "MODULE_LOAD_FAILED",
-    where: "wasm-worker.init", message: "模块加载失败，原始原因必须可见",
+    where: "wasm-worker.init", message: "模块加载失败，原始原因必须可见", stack: error.stack,
   }]);
 });
 
@@ -140,7 +140,7 @@ test("WASM Worker 保留非枚举 code 和有效的 HostFailure 可选字段", (
 
   assert.deepEqual(posted, [{
     type: "failure", generation: 0, code: "MODULE_INIT_FAILED",
-    where: "bindings.initialize", message: "模块初始化失败",
+    where: "bindings.initialize", message: "模块初始化失败", stack: error.stack,
     cause: { code: "BINDINGS_INVALID", message: "导出不完整" },
     context: { module: "bindings" },
     recoverable: false, recoveryActions: ["反馈错误详情"],
@@ -160,7 +160,7 @@ test("WASM Worker 仍显式拒绝非法的 HostFailure 可选字段", () => {
     assert.equal(failure.code, "WASM_WORKER_PROTOCOL");
     assert.equal(failure.where, "wasm-worker.init");
     assert.match(String(failure.message), reason);
-    assert.deepEqual(failure.cause, { code: "INIT_FAILED", message: "原始错误", ...details });
+    assert.deepEqual(failure.cause, { code: "INIT_FAILED", message: "原始错误", ...details, stack: error.stack });
   }
 });
 
@@ -452,10 +452,11 @@ test("operationError 发送失败改送 failure，保留请求原错误与传输
 
 test("空白原生 Error message 明确报协议错误，交付非空说明及原 message", () => {
   posted.length = 0;
-  postFailure("wasm-worker.init", new Error(""));
+  const error = new Error("");
+  postFailure("wasm-worker.init", error);
   assert.deepEqual(posted, [{
     type: "failure", generation: 0, code: "WASM_WORKER_PROTOCOL", where: "wasm-worker.init",
-    message: "非结构化错误没有可读的非空 message", cause: { message: "" },
+    message: "非结构化错误没有可读的非空 message", stack: error.stack, cause: { message: "" },
   }]);
 });
 
@@ -510,8 +511,11 @@ test("clone-safe 循环、Map、Set、BigInt 与原生 Error 详情仍通过主�
   postFailure("wasm-worker.step", { code: "STEP_FATAL", message: "原始故障", cause, context });
   const failure = parseWorkerFailure(posted[0]);
   assert.equal(failure.code, "STEP_FATAL");
-  assert.ok(failure.cause instanceof Error);
-  assert.equal(failure.cause.message, "原始 cause");
+  const originalCause = failure.cause as Record<string, unknown>;
+  assert.equal(originalCause.name, "Error");
+  assert.equal(originalCause.message, "原始 cause");
+  assert.equal(originalCause.stack, cause.stack);
+  assert.equal((originalCause.cause as Record<string, unknown>).message, "内层 cause");
   const received = failure.context as typeof context;
   assert.equal(received.cycle.self, received.cycle);
   assert.equal(received.cycle.tick, 7n);
@@ -634,4 +638,73 @@ test("非结构化原生标量说明保留已读 primitive message", () => {
   posted.length = 0;
   postFailure("wasm-worker.step", Object.assign(new Date("2030-01-02T00:00:00Z"), { message: "原故障必须可见" }));
   assert.match(String((posted[0] as Record<string, unknown>).message), /原故障必须可见/);
+});
+
+test("Worker 普通 Error 经传输和反馈保留原始 stack 与 cause", async () => {
+  const { buildErrorFeedback } = await import("../app/error-details.ts");
+  const error = new Error("初始化失败 /Users/test/game", { cause: new TypeError("原始根因") });
+  posted.length = 0;
+  postFailure("wasm-worker.init", error);
+  const failure = parseWorkerFailure(posted[0]);
+  assert.equal(failure.stack, error.stack);
+  const feedback = buildErrorFeedback(failure);
+  assert.match(feedback, /原始根因/);
+  assert.ok(feedback.includes(error.stack!.replaceAll("\n", "\\n")));
+});
+
+test("Worker 结构化 Error 的原始 stack 不改变 context 和恢复权限", () => {
+  const error = Object.assign(new Error("结构化原始错误"), { code: "HOST_FATAL", context: { operation: "step", tick: 7 }, recoverable: false });
+  posted.length = 0;
+  postFailure("wasm-worker.step", error);
+  const failure = parseWorkerFailure(posted[0]);
+  assert.equal(failure.stack, error.stack);
+  assert.deepEqual(failure.context, error.context);
+  assert.equal(failure.recoverable, false);
+});
+
+test("Worker 普通 AggregateError 保留 errors 和自定义 context", async () => {
+  const { buildErrorFeedback } = await import("../app/error-details.ts");
+  const error = Object.assign(new AggregateError([new Error("子失败一"), new Error("子失败二")], "批次失败"), { context: { reason: "CANDIDATE_STALE" } });
+  posted.length = 0;
+  postFailure("wasm-worker.init", error);
+  const feedback = buildErrorFeedback(parseWorkerFailure(posted[0]));
+  assert.match(feedback, /子失败一/);
+  assert.match(feedback, /子失败二/);
+  assert.match(feedback, /CANDIDATE_STALE/);
+});
+
+test("Worker 嵌套 AggregateError 的 errors 经结构化 cause 和普通 Error.cause 保留", async () => {
+  const { buildErrorFeedback } = await import("../app/error-details.ts");
+  const aggregate = new AggregateError([new Error("嵌套子失败")], "嵌套批次失败");
+  for (const error of [{ code: "HOST_FATAL", message: "结构化失败", cause: aggregate }, new Error("普通失败", { cause: aggregate }), new Error("", { cause: aggregate })]) {
+    posted.length = 0;
+    postFailure("wasm-worker.step", error);
+    assert.match(buildErrorFeedback(parseWorkerFailure(posted[0])), /嵌套子失败/);
+  }
+});
+
+test("Worker 显式拒绝非法 stack 类型，不静默丢失 producer 的字段", () => {
+  posted.length = 0;
+  postFailure("wasm-worker.step", { code: "HOST_FATAL", message: "原始失败", stack: 17 });
+  const failure = parseWorkerFailure(posted[0]);
+  assert.equal(failure.code, "WASM_WORKER_PROTOCOL");
+  assert.match(failure.message, /stack/);
+});
+
+test("诊断 clone 保持未知原生对象拒绝语义与稀疏数组长度", async () => {
+  const { cloneWasmFailureDetails } = await import("./wasm-failure.ts");
+  for (const value of [Promise.resolve(1), new WeakMap(), new WeakSet()]) assert.throws(() => cloneWasmFailureDetails(value));
+  const sparse = cloneWasmFailureDetails(new Array(3)) as unknown[];
+  assert.equal(sparse.length, 3);
+  assert.equal(Object.hasOwn(sparse, "0"), false);
+});
+
+test("普通 Error 的不可克隆 cause 显式报告诊断转换失败且不丢首个错误", () => {
+  for (const cause of [{ callback() {} }, Symbol("不可克隆"), Object.defineProperty({}, "details", { enumerable: true, get() { throw new Error("cause getter 失败"); } })]) {
+    posted.length = 0;
+    assert.doesNotThrow(() => postFailure("wasm-worker.init", new Error("首个模块错误", { cause })));
+    const failure = parseWorkerFailure(posted[0]);
+    assert.match(failure.message, /首个模块错误/);
+    assert.match(failure.message, /诊断.*失败/);
+  }
 });

@@ -1,3 +1,4 @@
+import { wasmFailureStack } from "../host/wasm-failure.ts";
 import type { HostFailure } from "../host/host-update.ts";
 import { buildErrorFeedback, copyErrorFeedback, type FeedbackClipboard } from "./error-details.ts";
 import { FeedbackCopyButton } from "./HostStatusViews.tsx";
@@ -28,6 +29,12 @@ export function WasmMemoryTerminalError({ error, clipboard }: WasmMemoryTerminal
     recoverable: false,
     recoveryActions: ["关闭当前标签页，再在全新标签页手动打开原网址；不要使用浏览器恢复或复制标签页", "复制错误反馈"],
   };
+  // 复制描述符，保留非枚举诊断而不执行未知 getter；恢复建议只由终局权限覆盖。
+  const descriptors: Record<string, PropertyDescriptor> = Object.getOwnPropertyDescriptors(error);
+  const stack = wasmFailureStack(error);
+  if (stack !== undefined) descriptors.stack = { value: stack, enumerable: true };
+  for (const key of ["recoverable", "recoveryActions"]) delete descriptors[key];
+  Object.defineProperties(feedback, descriptors);
   const exhausted = error.code === "MEMORY_RESIDUAL_EXHAUSTED";
   return <div className="app-error" role="alert" aria-live="assertive">
     <h2>{exhausted ? "内存保守残留预算已耗尽" : "内存残留账无法安全恢复"}</h2>

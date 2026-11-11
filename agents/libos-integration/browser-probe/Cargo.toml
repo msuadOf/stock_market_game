@@ -1,0 +1,15 @@
+[package]
+name = "libos-browser-probe"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+verification-harness = ["engine/verification-harness"]
+
+[workspace]
+
+[dependencies]
+engine = { path = "../../../packages/engine", optional = true }

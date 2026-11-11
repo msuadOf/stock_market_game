@@ -268,10 +268,14 @@ pub fn validate_runtime_state(
     }
     for (code, cutoff) in &state.book_public_cutoff_sequences {
         let market = &session.state.markets[code];
-        // D5 attention：runtime 形态（desk 簿权威——restore 时 session 簿
-        // 空、next_sequence=0）——截点不与本簿序对拍（desk 恢复域接管）；
-        // 相位面（连续/盘前=0 截点）仍按 session 相位判。
-        if (market.book_next_sequence() > 0 && *cutoff > market.book_next_sequence())
+        // runtime 形态由 desk 镜像持有权威游标；旧簿可能保留读档时的过期游标。
+        let mirror = session.state.desk_book_mirror.get(code);
+        if !session.state.desk_book_mirror.is_empty() && mirror.is_none() {
+            return Err(SessionError::InvalidSave(ValidationFault::bare(2290)));
+        }
+        let next_sequence =
+            mirror.map_or_else(|| market.book_next_sequence(), |value| value.next_serial);
+        if ((mirror.is_some() || next_sequence > 0) && *cutoff > next_sequence)
             || (matches!(
                 session.phase(),
                 TradingPhase::Continuous | TradingPhase::PreOpen
@@ -279,7 +283,7 @@ pub fn validate_runtime_state(
         {
             return Err(SessionError::InvalidSave(ValidationFault::new(
                 2291,
-                vec![u64::from(code.0), *cutoff, market.book_next_sequence()],
+                vec![u64::from(code.0), *cutoff, next_sequence],
             )));
         }
     }

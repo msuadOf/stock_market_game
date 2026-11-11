@@ -1,7 +1,33 @@
 //! 真实短 World 的生产停止行为候选；不把 Drop 或 stub Err 当作 join 证明。
 use super::*;
 use crate::runtime::protocol::GroupIn;
+use crate::runtime::wait_contract::Phase;
 use std::sync::Arc;
+use std::time::Duration;
+
+#[test]
+fn 宿主故障聚合错误保留来源_worker_与清理诊断() {
+    let who = WorkerId::Group(1);
+    let issue = runtime_issue("行政收尾", RuntimeError::HostAbortedCleanup {
+        primary: Box::new(RuntimeError::HostAborted { phase: Phase::Drain, who: Some(who) }),
+        detail: "真实 Final 缺失".to_owned(),
+    });
+    assert_eq!(issue.worker, Some(who.to_string()));
+    assert!(issue.detail.contains("真实 Final 缺失"));
+    assert!(issue.detail.contains("Drain"));
+}
+
+#[test]
+fn 日结撤销聚合错误保留宿主故障的_worker_身份() {
+    let who = WorkerId::Desk(1);
+    let issue = runtime_issue("日结撤销", RuntimeError::DayEndRollbackHostAborted {
+        original: Box::new(RuntimeError::DayEndValidation { day: 0, detail: "日结校验拒绝".to_owned() }),
+        host_abort: Box::new(RuntimeError::HostAborted { phase: Phase::Drain, who: Some(who) }),
+    });
+    assert_eq!(issue.worker, Some(who.to_string()));
+    assert!(issue.detail.contains("日结校验拒绝"));
+    assert!(issue.detail.contains("Drain"));
+}
 
 #[test]
 fn shutdown_failure_stays_within_the_error_layout_budget() {
@@ -24,6 +50,167 @@ fn world() -> World {
         crate::calendar::TradingCalendar::current_default_calendar().expect("显式 Calendar 合法"),
     )
     .expect("真实 2 组 2 部短 World 构造成功")
+}
+
+#[test]
+fn 真实_world_正常关停必须逐个证明接收器移交和消息收束() {
+    use crate::libos::downlink::DrainState;
+    use crate::libos::worker_exit::Outcome;
+    use std::num::NonZeroUsize;
+
+    let mut world = world();
+    let mut stage = "真实关停";
+    let report = world.shutdown_message_protocol(&mut stage).expect("正常消息协议应完成");
+    assert_eq!((report.group_finals.len(), report.desk_finals.len()), (2, 2));
+    world.stop_permanently();
+    let mut recovered = Vec::new();
+    let mut missing = Vec::new();
+    let mut join_failures = Vec::new();
+    for (who, handle) in std::mem::take(&mut world.handles) {
+        let joined = match super::super::join_world_worker(
+            who,
+            handle,
+            crate::clock::Instant::now() + Duration::from_secs(5),
+            super::super::ExitReconcileContext {
+                phase: super::super::ExitReconcilePhase::Shutdown,
+                last_committed_tick: Some(world.global.committed_tick),
+                active_tick: None,
+                round: None,
+                candidate_unpublished: true,
+            },
+        ) {
+            Ok((_actual, joined)) => joined,
+            Err(error) => {
+                join_failures.push((who, error.to_string()));
+                continue;
+            }
+        };
+        let returned: Box<dyn std::any::Any> = Box::new(joined);
+        match returned.downcast::<super::super::OwnedWorkerExit>() {
+            Ok(exit) => recovered.push((who, *exit)),
+            Err(_) => missing.push(who),
+        }
+    }
+    assert!(join_failures.is_empty(), "真实 worker join 失败：{join_failures:?}");
+    assert!(missing.is_empty(), "真实 join 必须移交有类型的 receiver：{missing:?}");
+    assert_eq!(recovered.len(), 4);
+    for (who, exit) in recovered {
+        let deadline = crate::clock::Instant::now() + std::time::Duration::from_secs(1);
+        match exit {
+            super::super::OwnedWorkerExit::Group { who: actual, exit } => {
+                assert_eq!(actual, who);
+                assert!(matches!(exit.outcome, Outcome::Returned(Ok(()))));
+                let closed = exit.receiver.close_and_wait(deadline).expect("组发送准入必须收束");
+                let drain = closed.drain(NonZeroUsize::new(8).unwrap());
+                assert_eq!(drain.state, DrainState::Drained);
+                assert!(drain.messages.is_empty(), "正常关停后组不得遗留消息");
+            }
+            super::super::OwnedWorkerExit::Desk { who: actual, exit } => {
+                assert_eq!(actual, who);
+                assert!(matches!(exit.outcome, Outcome::Returned(Ok(()))));
+                let closed = exit.receiver.close_and_wait(deadline).expect("交易部发送准入必须收束");
+                let drain = closed.drain(NonZeroUsize::new(8).unwrap());
+                assert_eq!(drain.state, DrainState::Drained);
+                assert!(drain.messages.is_empty(), "正常关停后交易部不得遗留消息");
+            }
+        }
+    }
+}
+
+#[test]
+fn 未送达组_final_转停止诊断保留_worker_与首错() {
+    let mut report = world().shutdown().unwrap();
+    let final_state = report.group_finals.remove(0);
+    let who = WorkerId::Group(final_state.group);
+    let error = RuntimeError::GroupFinalUndelivered {
+        who,
+        primary: Some(Box::new(RuntimeError::ProtocolInvariant { detail: "原始组故障".to_owned() })),
+        final_state: crate::runtime::protocol::RetainedGroupFinal::new(Box::new(final_state)),
+    };
+    let issue = runtime_issue("join", error);
+    assert_eq!(issue.worker, Some(who.to_string()));
+    assert!(issue.detail.contains("原始组故障"));
+}
+
+#[test]
+fn 未送达交易部_final_转停止诊断保留_worker_与首错() {
+    let mut report = world().shutdown().unwrap();
+    let final_state = report.desk_finals.remove(0);
+    let who = WorkerId::Desk(final_state.stock);
+    let error = RuntimeError::DeskFinalUndelivered {
+        who,
+        primary: Some(Box::new(RuntimeError::ProtocolInvariant { detail: "原始交易部故障".to_owned() })),
+        final_state: crate::runtime::protocol::RetainedDeskFinal::new(Box::new(final_state)),
+    };
+    let issue = runtime_issue("join", error);
+    assert_eq!(issue.worker, Some(who.to_string()));
+    assert!(issue.detail.contains("原始交易部故障"));
+}
+
+#[test]
+fn 真实_world_上行断连后_join_携带每个组的原始_final() {
+    let mut world = world();
+    let (_replacement_tx, replacement_rx) = std::sync::mpsc::channel();
+    drop(std::mem::replace(&mut world.up_rx, replacement_rx));
+    world.sever();
+    let results = world.join_worker_results();
+    assert_eq!(results.len(), 4);
+    let mut groups = Vec::new();
+    let mut desks = Vec::new();
+    for (who, result) in results {
+        if let WorkerId::Group(group) = who {
+            match result {
+                Err(RuntimeError::GroupFinalUndelivered { who: actual, final_state, .. }) => {
+                    assert_eq!(actual, who);
+                    assert_eq!(final_state.as_ref().group, group);
+                    assert!(!final_state.as_ref().accounts.is_empty(), "必须保留实际组账户快照");
+                    groups.push(group);
+                }
+                other => panic!("上行断连必须随 join 交还组 Final：{other:?}"),
+            }
+        } else if let WorkerId::Desk(stock) = who {
+            match result {
+                Err(RuntimeError::DeskFinalUndelivered { who: actual, final_state, .. }) => {
+                    assert_eq!(actual, who);
+                    assert_eq!(final_state.as_ref().stock, stock);
+                    desks.push(stock);
+                }
+                other => panic!("上行断连必须随 join 交还交易部 Final：{other:?}"),
+            }
+        }
+    }
+    groups.sort_unstable();
+    assert_eq!(groups, [0, 1]);
+    desks.sort_unstable();
+    assert_eq!(desks, [0, 1]);
+}
+
+#[test]
+fn 真实_world_上行断连后停止报告保留结构化组_final() {
+    let mut world = world();
+    let (replacement_tx, replacement_rx) = std::sync::mpsc::channel();
+    drop(replacement_tx);
+    drop(std::mem::replace(&mut world.up_rx, replacement_rx));
+    let failure = world.shutdown_with_completion().expect_err("上行断连不得报告成功");
+    let completion = failure.completion.expect("必须保留停止结果");
+    assert_eq!((completion.owned_workers, completion.joined_workers), (4, 4));
+    let mut groups = Vec::new();
+    for worker in &completion.worker_results {
+        if let Some(RuntimeError::GroupFinalUndelivered { who, final_state, .. }) = &worker.structured_error {
+            assert_eq!(worker.worker, who.to_string());
+            assert!(!final_state.as_ref().accounts.is_empty());
+            assert!(std::ptr::eq(worker.retained_group_final().unwrap(), final_state.as_ref()));
+            groups.push(final_state.as_ref().group);
+        }
+    }
+    groups.sort_unstable();
+    assert_eq!(groups, [0, 1], "两个组的 Final 必须随停止报告保留");
+    let mut desks: Vec<_> = completion.worker_results.iter().filter_map(|worker| worker.retained_desk_final().map(|final_state| final_state.stock)).collect();
+    desks.sort_unstable();
+    assert_eq!(desks, [0, 1], "两个交易部的 Final 必须随停止报告保留");
+    let wire = serde_json::to_value(&completion).unwrap();
+    assert!(wire["worker_results"].as_array().unwrap().iter().all(|worker| worker.get("structured_error").is_none()));
+    assert!(wire.to_string().contains("文本不含载荷"));
 }
 
 #[test]
@@ -130,7 +317,7 @@ fn active_shutdown_rejects_worker_errors_and_keeps_every_real_join_failure() {
         match super::super::recv_deadline(
             &world.up_rx,
             super::super::Phase::TickConverge,
-            &world.watchdog,
+            &world.deadline,
         )
         .expect("真实 worker 失败握手必须先于停止入口")
         {
@@ -284,6 +471,91 @@ fn active_shutdown_keeps_original_task_died_payload_and_worker_identity() {
     assert_eq!(completion.owned_workers, 4);
     assert_eq!(completion.joined_workers, 4);
     assert_eq!(completion.worker_results.len(), 4);
+}
+
+#[test]
+#[cfg(not(target_family = "wasm"))]
+fn 上行断连后真实组_panic_和_final_均保留在停止结果() {
+    let script_for = |group: crate::runtime::GroupIdx| -> crate::runtime::group::GroupScript {
+        Box::new(move |tick, _| {
+            let mut plan = crate::runtime::group::TickPlan::default();
+            if group == 0 && tick == 1 { plan.panic_payload = Some("原始组 panic 载荷".to_owned()); }
+            plan
+        })
+    };
+    let spec = crate::runtime::skeleton_tests::basic_spec(2, 2, 1, Box::new(script_for));
+    let mut world = World::spawn(spec, crate::calendar::TradingCalendar::current_default_calendar().unwrap()).unwrap();
+    let calendar = world.prepare_raw_calendar_tick().unwrap();
+    let (replacement_tx, replacement_rx) = std::sync::mpsc::channel();
+    drop(std::mem::replace(&mut world.up_rx, replacement_rx));
+    crate::runtime::coordinator::broadcast_start(&world.group_txs[..1], 1, calendar, &world.public_views, Default::default()).unwrap();
+    wait_group0_exit(&world);
+    drop(replacement_tx);
+    let failure = world.shutdown_with_completion().expect_err("上行断连必须失败");
+    let completion = failure.completion.expect("必须保留 join 结果");
+    let group = completion.worker_results.iter().find(|result| result.worker == "group-0").unwrap();
+    assert!(group.retained_group_final().is_some());
+    assert_eq!(*group.take_undelivered_panic().expect("必须保留原始 panic").downcast::<String>().unwrap(), "原始组 panic 载荷");
+    assert!(group.take_undelivered_panic().is_none());
+}
+
+#[test]
+#[cfg(not(target_family = "wasm"))]
+fn 失败清理恢复未送达的真实组_panic() {
+    let script_for = |group: crate::runtime::GroupIdx| -> crate::runtime::group::GroupScript {
+        Box::new(move |tick, _| {
+            let mut plan = crate::runtime::group::TickPlan::default();
+            if group == 0 && tick == 1 { plan.panic_payload = Some("失败清理原始 panic".to_owned()); }
+            plan
+        })
+    };
+    let spec = crate::runtime::skeleton_tests::basic_spec(2, 2, 1, Box::new(script_for));
+    let mut world = World::spawn(spec, crate::calendar::TradingCalendar::current_default_calendar().unwrap()).unwrap();
+    let calendar = world.prepare_raw_calendar_tick().unwrap();
+    let (replacement_tx, replacement_rx) = std::sync::mpsc::channel();
+    drop(std::mem::replace(&mut world.up_rx, replacement_rx));
+    crate::runtime::coordinator::broadcast_start(&world.group_txs[..1], 1, calendar, &world.public_views, Default::default()).unwrap();
+    wait_group0_exit(&world);
+    drop(replacement_tx);
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        world.stop_after_fatal_failure(1, 0, "Start", RuntimeError::SendFailed { detail: "上行已断连".to_owned() }, super::super::FatalCleanupMode::StopImmediately, None)
+    })).expect_err("必须恢复真实组原始 panic");
+    assert_eq!(*panic.downcast::<String>().unwrap(), "失败清理原始 panic");
+    let failure = world.shutdown_with_completion().expect_err("World 必须保持终态");
+    let completion = failure.completion.unwrap();
+    let group = completion.worker_results.iter().find(|result| result.worker == "group-0").unwrap();
+    assert!(group.retained_group_final().is_some());
+    assert!(group.take_undelivered_panic().is_none(), "panic 已移交，不能重复取出");
+}
+
+#[test]
+#[cfg(not(target_family = "wasm"))]
+fn 已知首个_panic_优先并保留另一组未送达载荷() {
+    let script_for = |group: crate::runtime::GroupIdx| -> crate::runtime::group::GroupScript {
+        Box::new(move |tick, _| {
+            let mut plan = crate::runtime::group::TickPlan::default();
+            if group == 0 && tick == 1 { plan.panic_payload = Some("另一组 panic".to_owned()); }
+            plan
+        })
+    };
+    let spec = crate::runtime::skeleton_tests::basic_spec(2, 2, 1, Box::new(script_for));
+    let mut world = World::spawn(spec, crate::calendar::TradingCalendar::current_default_calendar().unwrap()).unwrap();
+    let calendar = world.prepare_raw_calendar_tick().unwrap();
+    let (replacement_tx, replacement_rx) = std::sync::mpsc::channel();
+    drop(std::mem::replace(&mut world.up_rx, replacement_rx));
+    crate::runtime::coordinator::broadcast_start(&world.group_txs[..1], 1, calendar, &world.public_views, Default::default()).unwrap();
+    wait_group0_exit(&world);
+    drop(replacement_tx);
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        world.stop_after_fatal_failure(1, 0, "Start", RuntimeError::SendFailed { detail: "上行已断连".to_owned() }, super::super::FatalCleanupMode::StopImmediately,
+            Some((WorkerId::Group(1), Box::new(String::from("已知首个 panic")))))
+    })).expect_err("必须优先恢复已知首个 panic");
+    assert_eq!(*panic.downcast::<String>().unwrap(), "已知首个 panic");
+    let failure = world.shutdown_with_completion().expect_err("World 必须保持终态");
+    let completion = failure.completion.unwrap();
+    let group = completion.worker_results.iter().find(|result| result.worker == "group-0").unwrap();
+    assert!(group.retained_group_final().is_some());
+    assert_eq!(*group.take_undelivered_panic().unwrap().downcast::<String>().unwrap(), "另一组 panic");
 }
 
 #[test]

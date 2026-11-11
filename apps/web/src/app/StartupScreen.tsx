@@ -1,5 +1,6 @@
 import type { FormEvent } from "react";
 import type { StartupMode } from "../host/startup-policy.ts";
+import { PinnedSourceManager } from "./PinnedSourceManager.tsx";
 
 interface StartupScreenProps {
   readonly mode: StartupMode;
@@ -38,5 +39,6 @@ export function StartupScreen({ mode, remoteAddress, error, developmentHint, onM
       <p>启动后不支持无缝切换宿主；失败或取消加载可返回重新选择，不会再次读取快速槽。不会自动切换或忽略坏档。</p>
       <button type="submit">启动游戏</button>
     </form>
+    <PinnedSourceManager />
   </main>;
 }

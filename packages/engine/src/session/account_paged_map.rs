@@ -91,6 +91,12 @@ impl<Value> AccountPagedMap<Value> {
         self.iter().map(|(_, value)| value)
     }
 
+    pub(super) fn to_shared_map(&self) -> BTreeMap<AccountId, Arc<Value>> {
+        self.keys()
+            .map(|id| (*id, Arc::clone(self.get_arc(id).expect("既有账户必须有值"))))
+            .collect()
+    }
+
     fn page_arc(&self, page: u64) -> Option<&Arc<Page<Value>>> {
         self.groups
             .get(&(page >> GROUP_SHIFT))?

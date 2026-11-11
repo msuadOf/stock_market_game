@@ -15,7 +15,7 @@ test("受控浏览器验收保留受控单步；WASM 线程池参数已随 rayon
 test("外层 App 先选择，再挂载游戏；一次读档源在外层生命周期共享", () => {
   const app = root.slice(root.indexOf("export function AppRoot"));
   const shell = source.slice(source.indexOf("function AppShell("), source.indexOf("function App()"));
-  assert.ok(app.includes("new InitialSaveSource<StrictSaveEnvelope>()"));
+  assert.ok(app.includes("new InitialSaveSource<InitialSaveValue>()"));
   assert.equal(shell.includes("new InitialSaveSource"), false);
   assert.ok(app.indexOf("<StartupScreen") < app.indexOf("renderShell("));
   const appWrapper = source.slice(source.indexOf("<AppRoot renderShell="), source.indexOf("export default App;"));
@@ -64,8 +64,8 @@ test("重选先关闭当前实例并等待外层日终屏障，显式新局配�
 
 test("已清理宿主的晚到更新和失败不能修改下一次启动的状态", () => {
   const initialization = lifecycle.slice(lifecycle.indexOf("let ownedHost"), lifecycle.indexOf("function createSessionHost("));
-  assert.ok(initialization.includes("!cancelled && host === hostRef.current ? hostUpdateRef.current(update) : false"));
-  assert.ok(initialization.includes("if (!cancelled && host === hostRef.current) fatalHostErrorRef.current(failure)"));
+  assert.ok(initialization.includes("!isStartupCancelled() && host === hostRef.current ? hostUpdateRef.current(update) : false"));
+  assert.ok(initialization.includes("if (!isStartupCancelled() && host === hostRef.current) fatalHostErrorRef.current(failure)"));
   assert.equal((controls.match(/if \(host === this\.ports\.hostRef\.current\) this\.ports\.onFatal\(failure\)/g) ?? []).length, 2);
   assert.match(source, /onFatal: \(failure\) => fatalHostErrorRef\.current\(failure\)/);
 });

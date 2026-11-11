@@ -15,6 +15,7 @@ function intentSummary(intent: Exclude<WasmMemoryPendingIntent, null>) {
   if (intent.kind === "new") {
     return <><span>新局</span><span>start date {intent.setup.start_date}</span><span>seed {intent.seed}</span></>;
   }
+  if (intent.kind === "load-chunked-source") return <><span>日终存档</span><span>seed {intent.seed}</span><span>UTF-8 {intent.utf8Bytes} bytes</span></>;
   return <>
     <span>日终存档</span>
     <span>settled date {intent.archive.civil_clock.settled_through}</span>
@@ -26,13 +27,7 @@ function intentSummary(intent: Exclude<WasmMemoryPendingIntent, null>) {
 function frozenSummary(handover: WasmMemoryHandover) {
   if (handover.kind === "lost") return <span>目标不可用（{handover.reason}）</span>;
   if (handover.pendingIntent === null) return <span>没有冻结的存档或新局目标</span>;
-  if (handover.pendingIntent.kind === "new") return intentSummary(handover.pendingIntent);
-  return <>
-    <span>日终存档</span>
-    <span>settled date {handover.pendingIntent.archive.civil_clock.settled_through}</span>
-    <span>seed {handover.pendingIntent.archive.seed}</span>
-    <span>tick {handover.pendingIntent.archive.snapshot.tick}</span>
-  </>;
+  return intentSummary(handover.pendingIntent);
 }
 
 export function MemoryHandoverPanel({ handover, selectedIntent, busy, error, onContinue, onSelectFile, onSelectNew, onCancel }: MemoryHandoverPanelProps) {

@@ -86,14 +86,14 @@ fn 等待点账_锚注释在位() {
     let anchors: &[(&str, &str)] = &[
         // (模块文件, 锚关键片段)——片段取自账注释的稳定关键词。
         ("world.rs", "等待点账"),
-        ("watchdog.rs", "等待点账"),
+        ("wait_contract.rs", "等待点账"),
         ("../session/deferred_drop.rs", "等待点账"),
         ("../compute.rs", "等待点账"),
     ];
     for (file, marker) in anchors {
         let source = match *file {
             "world.rs" => include_str!("world.rs"),
-            "watchdog.rs" => include_str!("watchdog.rs"),
+            "wait_contract.rs" => include_str!("wait_contract.rs"),
             "../session/deferred_drop.rs" => include_str!("../session/deferred_drop.rs"),
             "../compute.rs" => include_str!("../compute.rs"),
             _ => unreachable!(),

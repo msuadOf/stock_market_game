@@ -1,0 +1,1 @@
+TMPDIR=/tmp/stock-libos-local-events.FgKPanDx node scripts/run-long-validation.mjs 290000 -- node agents/libos-integration/world-benchmark/restore-batch.mjs agents/web-architecture-diagnosis/bare-world/target/release/restore_probe /tmp/stock-libos-current-setup.json /tmp/stock-libos-local-output.v0iB74OS

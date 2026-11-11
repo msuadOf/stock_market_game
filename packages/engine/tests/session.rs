@@ -252,9 +252,7 @@ impl TestOrderSaveFixture {
                         recovered_cents: 0,
                     },
                 );
-            save.retail_experience
-                .get_mut(&owner)
-                .unwrap()
+            std::sync::Arc::make_mut(save.retail_experience.get_mut(&owner).unwrap())
                 .initialize_holding_dated(
                     &code,
                     Some(Money::from_cents(1_000)),
@@ -5118,7 +5116,8 @@ fn restore_rejects_missing_or_corrupt_retail_experience_state() {
     ));
 
     let mut invalid_equity = save.clone();
-    let experience = invalid_equity.retail_experience.get_mut(&retail).unwrap();
+    let experience =
+        std::sync::Arc::make_mut(invalid_equity.retail_experience.get_mut(&retail).unwrap());
     experience.reference_equity = Some(Money::from_cents(10));
     experience.peak_equity = Some(Money::from_cents(9));
     // 数值断言替代原文本断言 "equity experience references"
@@ -5135,10 +5134,7 @@ fn restore_rejects_missing_or_corrupt_retail_experience_state() {
         .cloned();
     if let Some(code) = held_code {
         let mut missing_holding = save;
-        missing_holding
-            .retail_experience
-            .get_mut(&retail)
-            .unwrap()
+        std::sync::Arc::make_mut(missing_holding.retail_experience.get_mut(&retail).unwrap())
             .stocks
             .remove(&code);
         // 数值断言替代原文本断言 "missing experience for a held stock"
@@ -5149,7 +5145,8 @@ fn restore_rejects_missing_or_corrupt_retail_experience_state() {
         ));
 
         let mut invalid_order = session.save().expect("healthy save");
-        let experience = invalid_order.retail_experience.get_mut(&retail).unwrap();
+        let experience =
+            std::sync::Arc::make_mut(invalid_order.retail_experience.get_mut(&retail).unwrap());
         experience.stocks.insert(
             code,
             engine::RetailStockExperience {
@@ -5177,14 +5174,16 @@ fn restore_rejects_inconsistent_retail_experience_lifecycles() {
         .unwrap();
 
     let mut adverse_without_buy = held_session.save().expect("healthy save");
-    adverse_without_buy
-        .retail_experience
-        .get_mut(&retail)
-        .unwrap()
-        .stocks
-        .get_mut(&code)
-        .unwrap()
-        .adverse_move_recorded = true;
+    std::sync::Arc::make_mut(
+        adverse_without_buy
+            .retail_experience
+            .get_mut(&retail)
+            .unwrap(),
+    )
+    .stocks
+    .get_mut(&code)
+    .unwrap()
+    .adverse_move_recorded = true;
     // 数值断言替代原文本断言 "adversity without a buy identity"
     // （fault2046：记录逆境但缺买入身份）。
     assert!(matches!(
@@ -5193,13 +5192,15 @@ fn restore_rejects_inconsistent_retail_experience_lifecycles() {
     ));
 
     let mut peak_below_latest_buy = held_session.save().expect("healthy save");
-    let stock = peak_below_latest_buy
-        .retail_experience
-        .get_mut(&retail)
-        .unwrap()
-        .stocks
-        .get_mut(&code)
-        .unwrap();
+    let stock = std::sync::Arc::make_mut(
+        peak_below_latest_buy
+            .retail_experience
+            .get_mut(&retail)
+            .unwrap(),
+    )
+    .stocks
+    .get_mut(&code)
+    .unwrap();
     stock.last_buy_price = Some(Money::from_cents(1_100));
     stock.last_buy_order_id = Some(1);
     // 数值断言替代原文本断言 "peak below its latest buy"
@@ -5210,14 +5211,16 @@ fn restore_rejects_inconsistent_retail_experience_lifecycles() {
     ));
 
     let mut held_without_entry = held_session.save().expect("healthy save");
-    held_without_entry
-        .retail_experience
-        .get_mut(&retail)
-        .unwrap()
-        .stocks
-        .get_mut(&code)
-        .unwrap()
-        .entry_reference_price = None;
+    std::sync::Arc::make_mut(
+        held_without_entry
+            .retail_experience
+            .get_mut(&retail)
+            .unwrap(),
+    )
+    .stocks
+    .get_mut(&code)
+    .unwrap()
+    .entry_reference_price = None;
     // 数值断言替代原文本断言 "invalid active experience"
     // （fault2047：持仓活跃经历字段非法）。
     assert!(matches!(
@@ -5227,18 +5230,20 @@ fn restore_rejects_inconsistent_retail_experience_lifecycles() {
 
     let empty_session = GameSession::new(sample_setup(), 42).unwrap();
     let mut cooldown_without_sell = empty_session.save().expect("healthy save");
-    cooldown_without_sell
-        .retail_experience
-        .get_mut(&retail)
-        .unwrap()
-        .stocks
-        .insert(
-            code,
-            engine::RetailStockExperience {
-                cooldown_until_market_minute: Some(engine::POST_EXIT_COOLDOWN_MINUTES),
-                ..engine::RetailStockExperience::default()
-            },
-        );
+    std::sync::Arc::make_mut(
+        cooldown_without_sell
+            .retail_experience
+            .get_mut(&retail)
+            .unwrap(),
+    )
+    .stocks
+    .insert(
+        code,
+        engine::RetailStockExperience {
+            cooldown_until_market_minute: Some(engine::POST_EXIT_COOLDOWN_MINUTES),
+            ..engine::RetailStockExperience::default()
+        },
+    );
     // 数值断言替代原文本断言 "inconsistent post-exit state"
     // （fault2054：退出后状态字段不一致）。
     assert!(matches!(
@@ -5248,18 +5253,20 @@ fn restore_rejects_inconsistent_retail_experience_lifecycles() {
 
     let mut observation_with_trade_fields = empty_session.save().expect("healthy save");
     observation_with_trade_fields.next_order_id = 2;
-    observation_with_trade_fields
-        .retail_experience
-        .get_mut(&retail)
-        .unwrap()
-        .stocks
-        .insert(
-            sid(),
-            engine::RetailStockExperience {
-                last_buy_price: Some(Money::from_cents(1_000)),
-                ..engine::RetailStockExperience::default()
-            },
-        );
+    std::sync::Arc::make_mut(
+        observation_with_trade_fields
+            .retail_experience
+            .get_mut(&retail)
+            .unwrap(),
+    )
+    .stocks
+    .insert(
+        sid(),
+        engine::RetailStockExperience {
+            last_buy_price: Some(Money::from_cents(1_000)),
+            ..engine::RetailStockExperience::default()
+        },
+    );
     let error = match GameSession::restore(&observation_with_trade_fields) {
         Ok(_) => panic!("observation-only state with a buy identity must be rejected"),
         Err(error) => error,
@@ -5469,21 +5476,23 @@ fn restore_accepts_non_lot_remainders_after_a_real_partial_fill() {
                 recovered_cents: 0,
             },
         );
-    initial_save
-        .retail_experience
-        .get_mut(&AccountId(1))
-        .unwrap()
-        .initialize_holding_dated(
-            &code,
-            Some(Money::from_cents(1_000)),
-            Money::from_cents(1_000),
-            engine::experience::ExperienceMoment {
-                civil_date: initial_save.setup.start_date,
-                market_minute: 0,
-                trading_day: 0,
-            },
-        )
-        .unwrap();
+    std::sync::Arc::make_mut(
+        initial_save
+            .retail_experience
+            .get_mut(&AccountId(1))
+            .unwrap(),
+    )
+    .initialize_holding_dated(
+        &code,
+        Some(Money::from_cents(1_000)),
+        Money::from_cents(1_000),
+        engine::experience::ExperienceMoment {
+            civil_date: initial_save.setup.start_date,
+            market_minute: 0,
+            trading_day: 0,
+        },
+    )
+    .unwrap();
     initial_save.resting_orders.insert(
         code,
         vec![engine::Order {
@@ -5692,9 +5701,7 @@ fn symbolic_highest_resolves_after_the_earlier_order_and_survives_save_as_a_fixe
     {
         let save = fixture.save_mut();
         // fault2038（持仓必有经历）：卖方持仓的经历条目。
-        save.retail_experience
-            .get_mut(&AccountId(1))
-            .unwrap()
+        std::sync::Arc::make_mut(save.retail_experience.get_mut(&AccountId(1)).unwrap())
             .initialize_holding_dated(
                 &code,
                 Some(Money::from_cents(1_000)),

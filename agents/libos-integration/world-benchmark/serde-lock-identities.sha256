@@ -1,0 +1,5 @@
+749d97f51223128b949570722db40c926d361e0beca902add5758819b5dba5a0  agents/libos-integration/world-benchmark/native-diagnostic-serde-1.0.154.lock
+23fdc190188e4c00e0b3fdc7d4b2c6517c50cf03ead0ace7b6dea7774f2393f7  agents/libos-integration/world-benchmark/wasm-diagnostic-serde-1.0.154.lock
+baef54da35b92068ef698f0f67d2b05a3d67c44d2c2474883a5c6eceb974b68d  agents/web-architecture-diagnosis/bare-world/Cargo.lock
+a884a7048cb9aff7b1930458b5130562e019320ce4d12b61dbae7b59c47147c1  agents/web-architecture-diagnosis/wasm-stage/Cargo.lock
+d30f2d75348c33b8b876f79587bab2957f2339c78f24ddefa58a02b4fcd4fb22  Cargo.lock

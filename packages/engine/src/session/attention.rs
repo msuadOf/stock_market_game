@@ -688,6 +688,35 @@ mod attention_tests {
         };
         assert!(sample_attention_wait(0.000_001, &mut long_wait) > 10_000);
     }
+
+    #[test]
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    fn 两个实测概率在合法随机格点可产生不同注意力等待() {
+        let native = f64::from_bits(0x3f52_ddc6_e625_1ce9);
+        let wasm = f64::from_bits(0x3f52_ddc6_e625_1ceb);
+        let a = maximum_observation_probability(AccountKind::Retail, native);
+        let b = maximum_observation_probability(AccountKind::Retail, wasm);
+        let scale = (1_u64 << 53) as f64;
+        let mut witness = None;
+        'search: for tick in 1..=5000 {
+            let center = (-(f64::from(tick) * (-a).ln_1p()).exp_m1() * scale) as u64;
+            for offset in 0..=10 {
+                let Some(grid) = center.checked_add(offset).and_then(|n| n.checked_sub(5)) else { continue };
+                if grid >= 1_u64 << 53 { continue; }
+                let draw = grid as f64 / scale;
+                let mut first = SequenceRng { values: vec![draw], index: 0 };
+                let mut second = SequenceRng { values: vec![draw], index: 0 };
+                let first_wait = sample_attention_wait(a, &mut first);
+                let second_wait = sample_attention_wait(b, &mut second);
+                if first_wait != second_wait {
+                    witness = Some((grid, first_wait, second_wait));
+                    break 'search;
+                }
+            }
+        }
+        let (grid, first_wait, second_wait) = witness.expect("未在指定范围找到不同等待时间的合法随机格点");
+        println!("随机格点={grid}/2^53，Native 概率等待={first_wait}，WASM 概率等待={second_wait}");
+    }
 }
 
 #[cfg(test)]

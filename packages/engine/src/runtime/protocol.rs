@@ -244,7 +244,8 @@ pub const CLOSING_AUCTION_BAR_MINUTE: u16 = 900;
 
 /// B2 分钟归一（单一事实源——desk `trade_minute_key` 与串行安装共用）：
 /// 连续竞价 tick → 墙钟分钟。tick 覆盖分钟区间的首分钟：
-/// idx = floor(cont_tick·240/continuous)，映射 570..=690 / 780..=900
+/// 收盘集合竞价启用时连续段为 237 分钟，否则为 240 分钟，分别映射到
+/// 09:30–11:30 与 13:00–14:57 或 13:00–15:00。
 /// （对齐旧管线 `CivilInstant.second_of_day()/60` 的归一语义）。
 ///
 /// 调用方保证 tick 落在连续竞价窗（其他相位的成交属结构性错误，由
@@ -275,8 +276,12 @@ pub fn continuous_minute_of_day(
         });
     }
     // u128 乘防溢出（与 desk 原实现同式）。
-    let idx = u128::from(cont_tick) * u128::from(crate::observation::GAME_INTRADAY_MINUTES_PER_DAY)
-        / u128::from(continuous);
+    let minutes = if closing_auction_ticks == 0 {
+        240_u128
+    } else {
+        237_u128
+    };
+    let idx = u128::from(cont_tick) * minutes / u128::from(continuous);
     let wall = if idx < 120 {
         570 + idx
     } else if idx < 240 {
@@ -291,6 +296,32 @@ pub fn continuous_minute_of_day(
         .map_err(|_| RuntimeError::ProtocolInvariant {
             detail: format!("墙钟分钟越界：{wall}"),
         })
+}
+
+#[cfg(test)]
+#[test]
+fn 连续成交分钟与收盘竞价窗口一致() {
+    let minute = |closing, tick| {
+        continuous_minute_of_day(15_300, 900, closing, tick)
+            .unwrap()
+            .0
+    };
+    assert_eq!(minute(180, 900), 570);
+    assert_eq!(minute(180, 8_099), 689);
+    assert_eq!(minute(180, 8_100), 780);
+    assert_eq!(minute(180, 15_119), 896);
+    assert_eq!(minute(0, 15_299), 899);
+    for closing in [0, 5] {
+        for tick in 7..100 - closing {
+            let second = crate::session::exchange_calendar_model::intraday_observation_second(
+                tick, 100, 7, closing,
+            );
+            assert_eq!(
+                continuous_minute_of_day(100, 7, closing, tick).unwrap().0,
+                (second / 60) as u16
+            );
+        }
+    }
 }
 
 /// B2 分钟桶聚合（单一事实源——desk `apply_trade` 与串行安装共用）：
@@ -1024,14 +1055,14 @@ pub(crate) enum GroupIn {
         /// 广播快照。
         snapshot: std::sync::Arc<TickSnapshot>,
     },
-    /// 同 tick 续行轮：组先落账本轮实体（记逆操作，Abort 可冲回）再续行决策。
+    /// 同 tick 续行轮：组先重放序敏感的延迟操作，再续行决策。
     Continue {
         /// tick 编号。
         tick: u64,
         /// 轮次。
         round: u32,
     },
-    /// 交易部实体批次（进 staging，Start/Continue 时落账）。
+    /// 交易部实体批次：即时资源 delta 到达时落账并记录 undo；序敏感操作延迟重放。
     Batch(DeskBatch),
     #[cfg(test)]
     EchoTickForTest,
@@ -2022,33 +2053,217 @@ pub struct DeskReport {
     pub causal: Vec<super::diagnostics::DeskCausalFact>,
 }
 
-/// 运行时显式失败（不静默吞错）。panic 走 `TaskDied` 运输，不进本枚举。
+/// 发送失败时共享同一份 Final 诊断；相等性按对象身份，不能推断资产可重复计数。
+#[derive(Clone)]
+pub struct RetainedGroupFinal(std::sync::Arc<super::group::GroupFinalState>);
+
+impl RetainedGroupFinal {
+    pub(super) fn new(final_state: Box<super::group::GroupFinalState>) -> Self {
+        Self(std::sync::Arc::from(final_state))
+    }
+}
+
+impl AsRef<super::group::GroupFinalState> for RetainedGroupFinal {
+    fn as_ref(&self) -> &super::group::GroupFinalState { &self.0 }
+}
+
+impl std::fmt::Debug for RetainedGroupFinal {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("RetainedGroupFinal").field("group", &self.0.group).finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for RetainedGroupFinal {
+    fn eq(&self, other: &Self) -> bool { std::sync::Arc::ptr_eq(&self.0, &other.0) }
+}
+
+/// 交易部 Final 按对象身份共享，仅用于故障诊断。
+#[derive(Clone)]
+pub struct RetainedDeskFinal(std::sync::Arc<super::desk::DeskFinalState>);
+
+impl RetainedDeskFinal {
+    pub(super) fn new(final_state: Box<super::desk::DeskFinalState>) -> Self {
+        Self(std::sync::Arc::from(final_state))
+    }
+}
+
+impl AsRef<super::desk::DeskFinalState> for RetainedDeskFinal {
+    fn as_ref(&self) -> &super::desk::DeskFinalState { &self.0 }
+}
+
+impl std::fmt::Debug for RetainedDeskFinal {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("RetainedDeskFinal").field("stock", &self.0.stock).finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for RetainedDeskFinal {
+    fn eq(&self, other: &Self) -> bool { std::sync::Arc::ptr_eq(&self.0, &other.0) }
+}
+
+/// 未送达的 panic 载荷按身份共享，取出后不得重复恢复。
+#[derive(Clone)]
+pub struct RetainedPanicPayload(std::sync::Arc<std::sync::Mutex<Option<Box<dyn std::any::Any + Send>>>>);
+
+impl RetainedPanicPayload {
+    pub(super) fn new(payload: Box<dyn std::any::Any + Send>) -> Self {
+        Self(std::sync::Arc::new(std::sync::Mutex::new(Some(payload))))
+    }
+
+    pub fn take(&self) -> Option<Box<dyn std::any::Any + Send>> {
+        self.0.lock().expect("panic 载荷锁已中毒").take()
+    }
+}
+
+impl std::fmt::Debug for RetainedPanicPayload {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("RetainedPanicPayload").finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for RetainedPanicPayload {
+    fn eq(&self, other: &Self) -> bool { std::sync::Arc::ptr_eq(&self.0, &other.0) }
+}
+
+/// 清理失败时保留真实 worker exit 或下行消息；诊断文本不替代载荷所有权。
+#[derive(Clone)]
+pub struct RetainedWorkerPayload {
+    who: WorkerId,
+    payload: std::sync::Arc<std::sync::Mutex<Option<Box<dyn std::any::Any + Send>>>>,
+}
+
+impl RetainedWorkerPayload {
+    pub(crate) fn new<T: std::any::Any + Send>(who: WorkerId, payload: T) -> Self {
+        Self { who, payload: std::sync::Arc::new(std::sync::Mutex::new(Some(Box::new(payload)))) }
+    }
+
+    /// 仅请求精确载荷类型；类型不符时继续保留原载荷。
+    pub fn take<T: std::any::Any + Send>(&self) -> Option<T> {
+        let mut payload = self.payload.lock().expect("worker清理载荷锁已中毒");
+        match payload.take()?.downcast::<T>() {
+            Ok(value) => Some(*value),
+            Err(original) => {
+                *payload = Some(original);
+                None
+            }
+        }
+    }
+
+    /// 只读精确类型载荷；回调返回后仍保留原始载荷。
+    pub fn inspect<T: std::any::Any + Send, R>(&self, inspect: impl FnOnce(&T) -> R) -> Option<R> {
+        let payload = self.payload.lock().expect("worker清理载荷锁已中毒");
+        inspect(payload.as_ref()?.downcast_ref::<T>()?)
+    }
+
+    /// 返回保留载荷对应的 worker。
+    pub fn worker(&self) -> WorkerId { self.who }
+}
+
+impl std::fmt::Debug for RetainedWorkerPayload {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("RetainedWorkerPayload").field("who", &self.who).finish_non_exhaustive()
+    }
+}
+
+impl PartialEq for RetainedWorkerPayload {
+    fn eq(&self, other: &Self) -> bool {
+        self.who == other.who && std::sync::Arc::ptr_eq(&self.payload, &other.payload)
+    }
+}
+
+/// 运行时显式失败；无法上交的 panic 载荷也必须随错误保留。
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
 pub enum RuntimeError {
+    /// Worker 外层 unwind 被 typed exit 收回；原始 panic payload 保留一次性读取。
+    #[error("worker {who} 在退出时 panic；原始 panic 载荷保存在结构化错误中")]
+    WorkerExitPanicked { who: WorkerId, payload: RetainedPanicPayload },
+    /// 下行准入、接收器或消息未能安全收束；保留原始接收器/消息供调用方诊断。
+    #[error("worker {who} 下行清理未完成：{detail}；首错={primary:?}；载荷保留在结构化错误中")]
+    DownlinkCleanupFailed {
+        who: WorkerId,
+        #[source]
+        primary: Option<Box<RuntimeError>>,
+        detail: String,
+        /// 仅由全体 worker 的真实 Abort 证明通过后置为 true。
+        assets_reconciled: bool,
+        payload: RetainedWorkerPayload,
+    },
+    /// join 失败的各个事实分别记录；尤其不能从缺少 receiver 推断 child 已释放。
+    #[error("worker {who} join 失败：{detail}")]
+    WorkerJoinFailed {
+        who: WorkerId,
+        detail: String,
+        receiver_recovered: bool,
+        child_released: bool,
+        panic_payload: Option<RetainedPanicPayload>,
+    },
+    /// deadline 到期或 join 通知异常时仍保留未消费 handle，调用方可继续重试。
+    #[error("worker {who} join 尚未收束：{detail}；原 handle 保留在结构化错误中")]
+    WorkerJoinPending { who: WorkerId, detail: String, payload: RetainedWorkerPayload },
+    /// TaskDied 未送达时原始 panic 随 join 错误保留。
+    #[error("worker {who} 的 TaskDied 发送失败；原始 panic 保存在结构化错误中")]
+    TaskDiedUndelivered { who: WorkerId, payload: RetainedPanicPayload },
+    /// 原始 Final 随 join 移交；不表示资产已对账或可以重放。
+    #[error("worker {who} 的 GroupFinal 发送失败；首错={primary:?}；Final 仅附于结构化错误，文本不含载荷")]
+    GroupFinalUndelivered {
+        who: WorkerId,
+        #[source]
+        primary: Option<Box<RuntimeError>>,
+        final_state: RetainedGroupFinal,
+    },
+    /// 原始交易部 Final 随 join 移交；不表示资产已对账或可以重放。
+    #[error("worker {who} 的 DeskFinal 发送失败；首错={primary:?}；Final 仅附于结构化错误，文本不含载荷")]
+    DeskFinalUndelivered {
+        who: WorkerId,
+        #[source]
+        primary: Option<Box<RuntimeError>>,
+        final_state: RetainedDeskFinal,
+    },
     /// World 尚未形成时的主错误与全部已启动 worker 的回收结果。
-    #[error("{primary}；native construction 已 join {joined_workers} 个 worker；回收错误={cleanup_errors:?}")]
+    #[error("{primary}；World construction 已消费 {joined_workers} 个 worker 句柄；回收错误={cleanup_errors:?}")]
     ConstructionFailure {
         primary: String,
         joined_workers: usize,
         cleanup_errors: Vec<String>,
     },
-    /// wasm 宿主永久 abort，与 tick Abort、相位超时及通道断连分开报告。
-    #[cfg(target_family = "wasm")]
-    #[error("wasm 宿主已永久终止：phase={phase:?}, who={who:?}")]
+    /// 构造清理未能收束时，保留尚未处理的 typed exit/下行消息。
+    #[error("{primary}；World construction 已消费 {joined_workers} 个 worker 句柄；回收错误={cleanup_errors:?}；保留清理载荷数={retained_payloads:?}")]
+    ConstructionCleanupFailure {
+        primary: String,
+        joined_workers: usize,
+        cleanup_errors: Vec<String>,
+        retained_payloads: Vec<RetainedWorkerPayload>,
+    },
+    /// LibOS 故障域永久 abort，与 tick Abort、相位超时及通道断连分开报告。
+    #[error("LibOS 故障域或宿主已永久终止：phase={phase:?}, who={who:?}")]
     HostAborted {
-        phase: super::watchdog::Phase,
+        phase: super::wait_contract::Phase,
         who: Option<WorkerId>,
+    },
+    /// 宿主故障仍是主因；收尾异常必须作为独立诊断随错误返回。
+    #[error("{primary}；收尾诊断：{detail}")]
+    HostAbortedCleanup {
+        #[source]
+        primary: Box<RuntimeError>,
+        detail: String,
+    },
+    /// 日结先失败，撤销等待期间又发生宿主永久故障；两者均保留原类型。
+    #[error("日结失败：{original}；撤销期间宿主故障：{host_abort}")]
+    DayEndRollbackHostAborted {
+        #[source]
+        original: Box<RuntimeError>,
+        host_abort: Box<RuntimeError>,
     },
     #[error("组 {group} 信息 prepare 失败：{error}")]
     InformationPrepare {
         group: GroupIdx,
         error: InformationPrepareError,
     },
-    /// 看门狗超时（携带相位上下文——相位感知，不静默放大全局阈值）。
-    #[error("看门狗超时：phase={phase:?}, waited={waited:?}：{detail}")]
-    Watchdog {
+    /// 等待超过业务阶段期限；等待机制由 LibOS 提供。
+    #[error("等待期限超时：phase={phase:?}, waited={waited:?}：{detail}")]
+    DeadlineExceeded {
         /// 超时相位。
-        phase: super::watchdog::Phase,
+        phase: super::wait_contract::Phase,
         /// 等待时长。
         waited: Duration,
         /// 上下文详情。
@@ -2108,6 +2323,39 @@ pub enum RuntimeError {
         /// 破坏详情。
         detail: String,
     },
+}
+
+impl RuntimeError {
+    pub(crate) fn take_worker_payload(&self) -> Option<RetainedWorkerPayload> {
+        match self {
+            Self::DownlinkCleanupFailed { payload, .. } => Some(payload.clone()),
+            Self::WorkerJoinPending { payload, .. } => Some(payload.clone()),
+            Self::WorkerExitPanicked { who, payload } => payload
+                .take()
+                .map(|payload| RetainedWorkerPayload::new(*who, payload)),
+            Self::WorkerJoinFailed { who, panic_payload: Some(payload), .. } => payload
+                .take()
+                .map(|payload| RetainedWorkerPayload::new(*who, payload)),
+            Self::TaskDiedUndelivered { who, payload } => payload
+                .take()
+                .map(|payload| RetainedWorkerPayload::new(*who, payload)),
+            _ => None,
+        }
+    }
+
+    /// 访问未能经 TaskDied 送达的原始 panic；载荷取出后不能再次取出。
+    pub fn retained_panic_payload(&self) -> Option<&RetainedPanicPayload> {
+        match self {
+            Self::WorkerExitPanicked { payload, .. } => Some(payload),
+            Self::WorkerJoinFailed { panic_payload: Some(payload), .. } => Some(payload),
+            Self::DownlinkCleanupFailed { primary: Some(primary), .. } => primary.retained_panic_payload(),
+            Self::TaskDiedUndelivered { payload, .. } => Some(payload),
+            Self::GroupFinalUndelivered { primary: Some(primary), .. }
+            | Self::DeskFinalUndelivered { primary: Some(primary), .. }
+            | Self::WorkerFailed { error: primary, .. } => primary.retained_panic_payload(),
+            _ => None,
+        }
+    }
 }
 
 impl DeskBatch {

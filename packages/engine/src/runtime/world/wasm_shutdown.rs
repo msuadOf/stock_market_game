@@ -1,46 +1,43 @@
 //! wasm 永久停止的独立发送端所有权；native 仅在测试中编译本模块。
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::Sender;
+use crate::libos::downlink::Sender;
+#[cfg(test)]
 use std::sync::Arc;
+use crate::libos::wake::WorkerWake;
 
 pub(super) struct WakeSenders<G, D> {
     groups: Vec<Sender<G>>,
     desks: Vec<Sender<D>>,
-    group_shutdown: fn() -> G,
-    desk_shutdown: fn() -> D,
 }
 
 impl<G, D> WakeSenders<G, D> {
     pub(super) fn new(
         groups: Vec<Sender<G>>,
         desks: Vec<Sender<D>>,
-        group_shutdown: fn() -> G,
-        desk_shutdown: fn() -> D,
     ) -> Self {
-        Self {
-            groups,
-            desks,
-            group_shutdown,
-            desk_shutdown,
-        }
+        Self { groups, desks }
+    }
+}
+
+pub(super) fn world_permanent_stop<G, D>(shutdown: &AtomicBool, wake: &mut Option<WakeSenders<G, D>>) {
+    shutdown.store(true, Ordering::SeqCst);
+    if let Some(wake) = wake.take() {
+        for sender in wake.groups { sender.wake_for_stop(); }
+        for sender in wake.desks { sender.wake_for_stop(); }
     }
 }
 
 pub(super) fn permanent_stop<G, D>(shutdown: &AtomicBool, wake: &mut Option<WakeSenders<G, D>>) {
     shutdown.store(true, Ordering::SeqCst);
     if let Some(wake) = wake.take() {
-        // 永久停止时接收者可能已退出；某一send失败不能短路其余worker的唤醒。
-        for sender in wake.groups {
-            let _ = sender.send((wake.group_shutdown)());
-        }
-        for sender in wake.desks {
-            let _ = sender.send((wake.desk_shutdown)());
-        }
+        for sender in wake.groups { sender.wake_for_stop(); }
+        for sender in wake.desks { sender.wake_for_stop(); }
     }
 }
 
 pub(super) type ConstructionGuardTransfer<G, D, I, H> = (Option<WakeSenders<G, D>>, Vec<(I, H)>);
 
+#[cfg(test)]
 pub(super) struct ConstructionGuard<G, D, I: std::fmt::Display, H> {
     shutdown: Arc<AtomicBool>,
     wake: Option<WakeSenders<G, D>>,
@@ -48,6 +45,7 @@ pub(super) struct ConstructionGuard<G, D, I: std::fmt::Display, H> {
     join: fn(H) -> Result<(), String>,
 }
 
+#[cfg(test)]
 impl<G, D, I: std::fmt::Display, H> ConstructionGuard<G, D, I, H> {
     pub(super) fn new(
         shutdown: Arc<AtomicBool>,
@@ -98,6 +96,7 @@ impl<G, D, I: std::fmt::Display, H> ConstructionGuard<G, D, I, H> {
     }
 }
 
+#[cfg(test)]
 impl<G, D, I: std::fmt::Display, H> Drop for ConstructionGuard<G, D, I, H> {
     fn drop(&mut self) {
         if self.wake.is_some() {

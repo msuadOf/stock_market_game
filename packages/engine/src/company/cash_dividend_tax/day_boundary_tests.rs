@@ -320,7 +320,7 @@ fn any_current_or_historical_nonmarket_movement_is_explicitly_unsupported() {
 }
 
 use crate::runtime::group::{GroupScript, PlaceSpec, TickPlan};
-use crate::runtime::watchdog::WatchdogConfig;
+use crate::runtime::wait_contract::DeadlineConfig;
 use crate::runtime::world::{DeskStockSpec, World, WorldSpec};
 use crate::runtime::GroupIdx;
 use std::time::Duration;
@@ -353,7 +353,7 @@ fn basic_spec(
             .expect("测试计数起日合法"),
         script_for,
         chunk: 8,
-        watchdog: WatchdogConfig {
+        deadline: DeadlineConfig {
             normal: Duration::from_secs(5),
             long: Duration::from_secs(10),
         },

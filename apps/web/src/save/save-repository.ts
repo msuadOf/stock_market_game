@@ -1,6 +1,8 @@
+import type { ValidatedArchiveLease } from "./validated-archive-lease.ts";
 import { parseSaveSlot } from "./save-schema.ts";
 import type { StrictSaveEnvelope } from "./schema/root.ts";
-import { parseSaveJson } from "./save-schema.ts";
+import { parseFrozenSaveJson, parseFrozenSaveJsonChunks, parseSaveJson } from "./save-schema.ts";
+import { readDecodedText } from "./archive-decoded-reader.ts";
 
 interface KeyValueStorage {
   getItem(key: string): string | null;
@@ -15,50 +17,60 @@ export interface AsyncSaveStorage {
 export interface SaveCompressionCodec {
   encode(text: string): Promise<string>
   decode(text: string): Promise<string>
-}
-
-async function readBytes(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
-  const reader = stream.getReader()
-  const chunks: Uint8Array[] = []
-  let size = 0
-  while (true) {
-    const result = await reader.read()
-    if (result.done) break
-    chunks.push(result.value)
-    size += result.value.length
-  }
-  const joined = new Uint8Array(size)
-  let offset = 0
-  for (const chunk of chunks) {
-    joined.set(chunk, offset)
-    offset += chunk.length
-  }
-  return joined
+  decodeChunks?(text: string, signal?: AbortSignal): AsyncIterable<string>
 }
 
 function toBase64(bytes: Uint8Array): string {
-  let binary = ""
-  for (const byte of bytes) binary += String.fromCharCode(byte)
-  return btoa(binary)
+  // 有界字符块避免为每个 gzip 字节保留一段字符串链，也不展开超长参数列表。
+  const chunks: string[] = []
+  for (let offset = 0; offset < bytes.length; offset += 16384) {
+    chunks.push(String.fromCharCode(...bytes.subarray(offset, offset + 16384)))
+  }
+  return btoa(chunks.join(""))
 }
 
-function fromBase64(value: string): Uint8Array {
+function fromBase64(value: string): Uint8Array<ArrayBuffer> {
   const binary = atob(value)
-  return Uint8Array.from(binary, (character) => character.charCodeAt(0))
+  // 字符串 iterable 的 Uint8Array.from 会先汇集全部字符；直接填充唯一缓冲区。
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index)
+  return bytes
 }
 
-export const gzipSaveCodec: SaveCompressionCodec = {
-  async encode(text) {
+export const gzipSaveCodec: SaveCompressionCodec = Object.freeze({
+  async encode(text: string) {
     const input = new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"))
-    return toBase64(await readBytes(input))
+    return toBase64(new Uint8Array(await new Response(input).arrayBuffer()))
   },
-  async decode(text) {
+  async decode(text: string) {
     const bytes = fromBase64(text)
-    const copy = new Uint8Array(bytes.byteLength)
-    copy.set(bytes)
-    const input = new Blob([copy]).stream().pipeThrough(new DecompressionStream("gzip"))
-    return new TextDecoder().decode(await readBytes(input))
+    const input = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"))
+    // 由流直接解码文本，不在 JS 中同时保留所有解压块及其完整合并副本。
+    return new Response(input).text()
   },
+  async *decodeChunks(text: string, signal?: AbortSignal) {
+    signal?.throwIfAborted()
+    const bytes = fromBase64(text)
+    const input = new Blob([bytes]).stream()
+      .pipeThrough(new DecompressionStream("gzip"))
+      .pipeThrough(new TextDecoderStream())
+    yield* readDecodedText(input.getReader(), signal)
+  },
+})
+
+/** 存储读和模块装载不可撤销，但取消后仍观察其晚到结果，不启动后续验证。 */
+async function awaitLeaseRead<Value>(pending: Promise<Value>, signal?: AbortSignal): Promise<Value> {
+  if (signal === undefined) return pending
+  let remove: (() => void) | undefined
+  try {
+    return await new Promise<Value>((resolve, reject) => {
+      const abort = () => { reject(signal.reason) }
+      remove = () => { signal.removeEventListener("abort", abort) }
+      signal.addEventListener("abort", abort, { once: true })
+      pending.then(resolve, reject)
+      if (signal.aborted) abort()
+    })
+  } finally { remove?.() }
 }
 
 export class CompressedSaveRepository {
@@ -83,6 +95,35 @@ export class CompressedSaveRepository {
   }
 
   async load(): Promise<StrictSaveEnvelope | null> {
+    return this.loadWith(parseSaveJson)
+  }
+
+  /** 本地 WASM 准入需要唯一可信的不可变快照。 */
+  async loadFrozen(): Promise<StrictSaveEnvelope | null> {
+    return this.loadWith(parseFrozenSaveJson)
+  }
+
+  /** 显式单次捕获入口；不被 load/loadFrozen 自动选择，也不是生产 Memory 准入。 */
+  async loadValidatedLease(signal?: AbortSignal): Promise<ValidatedArchiveLease | null> {
+    signal?.throwIfAborted()
+    if (this.codec !== gzipSaveCodec) throw new Error("已验证存档租约只支持固定 gzipSaveCodec，不接受自定义 codec 或测试 mock")
+    const readFailure = (error: unknown) => new Error(`读取浏览器存档失败：${error instanceof Error ? error.message : String(error)}`, { cause: error })
+    let pendingRead: Promise<string | null>
+    try { pendingRead = Promise.resolve(this.storage.getItem(this.key)).catch(error => { throw readFailure(error) }) }
+    catch (error) { throw readFailure(error) }
+    const raw = await awaitLeaseRead(pendingRead, signal)
+    signal?.throwIfAborted()
+    if (raw === null) return null
+    // archive-source 的固定生产 codec 来自本模块；延迟装载避免静态依赖环和旧入口额外工作。
+    const [{ captureGzipArchiveSource }, { createValidatedArchiveLease }] = await awaitLeaseRead(Promise.all([
+      import("./archive-source.ts"), import("./validated-archive-lease.ts"),
+    ]), signal)
+    signal?.throwIfAborted()
+    const captured = captureGzipArchiveSource(raw)
+    return createValidatedArchiveLease(captured, signal)
+  }
+
+  private async loadWith(parse: (text: string) => StrictSaveEnvelope): Promise<StrictSaveEnvelope | null> {
     let raw: string | null
     try {
       raw = await this.storage.getItem(this.key)
@@ -91,13 +132,23 @@ export class CompressedSaveRepository {
     }
     if (raw === null) return null
     if (!raw.startsWith("gzip:")) throw new Error("浏览器存档格式无效：缺少 gzip: 前缀")
+    const decodeChunks = this.codec.decodeChunks
+    if (parse === parseFrozenSaveJson && decodeChunks !== undefined) {
+      const codec = this.codec
+      const payload = raw.slice("gzip:".length)
+      const decoded = async function* (): AsyncIterable<string> {
+        try { yield* decodeChunks.call(codec, payload) }
+        catch (error) { throw new Error(`解压浏览器存档失败：${error instanceof Error ? error.message : String(error)}`) }
+      }
+      return parseFrozenSaveJsonChunks(decoded())
+    }
     let json: string
     try {
       json = await this.codec.decode(raw.slice("gzip:".length))
     } catch (error) {
       throw new Error(`解压浏览器存档失败：${error instanceof Error ? error.message : String(error)}`)
     }
-    return parseSaveJson(json)
+    return parse(json)
   }
 }
 

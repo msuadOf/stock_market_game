@@ -1,17 +1,21 @@
 //! 世界拓扑（批 2 骨架，非 wasm）：G 个组线程 + N 个交易部线程 + 协调者
 //! （协调者逻辑在调用线程上运行，不单独建线程）。
 //!
-//! 通道拓扑（F §4.2，全程 std::sync::mpsc）：
+//! 通道拓扑（F §4.2，下行由 LibOS 成对通道承载，上行由 mailbox 承载）：
 //! - 组↔交易部全互联直发（G×N 下行 Ops + N×G 上行实体批次）——数据面不经协调者；
 //! - 每组一条协调者下行（Start/Continue/Abort/Shutdown）；
 //! - 每交易部一条协调者下行（Abort/Drain/Shutdown）；
-//! - 单一上行收束 channel（全部 worker 共用）。
+//! - 单一上行 mailbox（全部 worker 共用）。
 //!
 //! 代码本体零线程数管理概念：线程数 = G+N(+调用线程)，由世界构造参数决定。
 
-#[cfg(not(target_family = "wasm"))]
 mod native_construction;
+#[cfg(all(test, not(target_family = "wasm")))]
+mod native_handoff_capture;
 mod prepared_stop;
+mod reconcile;
+#[cfg(test)]
+mod owned_worker_exit_tests;
 #[cfg(all(test, not(target_family = "wasm")))]
 pub(crate) use native_construction::{
     fail_next_spawn_after_for_test, fail_next_spawn_with_cleanup_error_for_test,
@@ -20,46 +24,27 @@ mod information_handover;
 pub(crate) use information_handover::{CapturedInformationHandover, InheritedCalendarCommit};
 mod shutdown_completion;
 pub use shutdown_completion::{
-    ShutdownCompletion, ShutdownFailure, ShutdownIssue, ShutdownWorkerResult,
+    ShutdownCompletion, ShutdownDiagnostic, ShutdownFailure, ShutdownIssue, ShutdownWorkerResult,
 };
 #[cfg(all(target_family = "wasm", feature = "verification-harness"))]
 mod shutdown_verification;
-#[cfg(any(target_family = "wasm", test))]
 mod wasm_shutdown;
 #[cfg(all(target_family = "wasm", feature = "verification-harness"))]
 pub use shutdown_verification::{verify_world_stop, WorldStopProbe};
-
-#[cfg(target_family = "wasm")]
-type WasmConstructionGuard = wasm_shutdown::ConstructionGuard<
-    GroupIn,
-    DeskMsg,
-    WorkerId,
-    crate::thread_facade::JoinHandle<Result<(), RuntimeError>>,
->;
-
-#[cfg(target_family = "wasm")]
-fn join_constructed_worker(
-    handle: crate::thread_facade::JoinHandle<Result<(), RuntimeError>>,
-) -> Result<(), String> {
-    match handle.join() {
-        Ok(Ok(())) => Ok(()),
-        Ok(Err(error)) => Err(format!("worker执行失败：{error}")),
-        Err(error) => Err(format!("join失败：{error}")),
-    }
-}
 
 use super::coordinator::{
     broadcast_continue, broadcast_start, converge_round, no_op_validator, GlobalState,
     RoundOutcome, TickEvidence, Validator,
 };
 use super::decision::DecisionSetup;
-use super::desk::{desk_main, DeskFinalState, DeskSetup};
-use super::group::{group_main, GroupAccount, GroupFinalState, GroupScript};
+use super::desk::{DeskFinalState, DeskSetup};
+use super::group::{GroupAccount, GroupFinalState, GroupScript};
 use super::protocol::DayEndDirective;
 use super::protocol::StockPublic;
 use super::protocol::{DeskMsg, GroupIn, RuntimeError, UpMsg, WorkerId};
 use super::type_aliases::{PlanFactory, RightsComputer};
-use super::watchdog::{recv_deadline, Phase, WatchdogConfig};
+use super::upstream::{recv_up_deadline as recv_deadline, UpReceiver};
+use super::wait_contract::{DeadlineConfig, Phase};
 use super::DeskReceipt;
 use super::{GroupIdx, StockIdx};
 use crate::config::GameConfig;
@@ -68,10 +53,337 @@ use crate::StockExchange;
 #[cfg(feature = "simulation-diagnostics")]
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{channel, Receiver, Sender};
+#[cfg(test)]
+use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 #[cfg(any(test, all(target_family = "wasm", feature = "verification-harness")))]
 use std::time::Duration;
+
+static ORPHANED_WORKER_PAYLOADS: std::sync::OnceLock<
+    std::sync::Mutex<Vec<super::protocol::RetainedWorkerPayload>>,
+> = std::sync::OnceLock::new();
+
+/// Drop 无返回值；未能安全收束的真实载荷留在进程级槽中，供宿主显式取回。
+pub fn take_orphaned_worker_payloads() -> Vec<super::protocol::RetainedWorkerPayload> {
+    std::mem::take(
+        &mut *ORPHANED_WORKER_PAYLOADS
+            .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+            .lock()
+            .expect("未回收worker载荷槽锁已中毒"),
+    )
+}
+
+fn retain_unreported_error(error: RuntimeError) {
+    if let Some(payload) = error.take_worker_payload() { retain_unreported_payload(payload); }
+}
+
+pub(super) fn retain_unreported_payload(payload: super::protocol::RetainedWorkerPayload) {
+    ORPHANED_WORKER_PAYLOADS
+        .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+        .lock()
+        .expect("未回收worker载荷槽锁已中毒")
+        .push(payload);
+}
+
+/// 线程退出时同时保留身份、原始结果与成对接收器。
+pub(super) enum OwnedWorkerExit {
+    Group {
+        who: WorkerId,
+        exit: crate::libos::worker_exit::Exit<crate::libos::downlink::Receiver<GroupIn>, RuntimeError>,
+    },
+    Desk {
+        who: WorkerId,
+        exit: crate::libos::worker_exit::Exit<crate::libos::downlink::Receiver<DeskMsg>, RuntimeError>,
+    },
+}
+
+pub(super) type WorldWorkerHandle = crate::libos::thread::TrackedJoinHandle<OwnedWorkerExit>;
+
+/// deadline 未到或完成通知异常时保留原句柄和失败阶段，允许后续重试 join。
+pub(super) struct RetainedWorldJoin {
+    pub(super) handle: WorldWorkerHandle,
+    pub(super) context: ExitReconcileContext,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ExitReconcilePhase {
+    Construction,
+    FatalTick,
+    DayEnd,
+    Administrative,
+    Shutdown,
+    PreparedStop,
+    Drop,
+    Unknown,
+}
+
+/// 收尾载荷与同一业务失败阶段绑定；tick 仅作定位，不代表完整资产基线。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct ExitReconcileContext {
+    pub(super) phase: ExitReconcilePhase,
+    pub(super) last_committed_tick: Option<u64>,
+    pub(super) active_tick: Option<u64>,
+    pub(super) round: Option<u32>,
+    pub(super) candidate_unpublished: bool,
+}
+
+#[derive(Debug)]
+pub(super) enum RetainedExitDrainState {
+    AdmissionUnsettled,
+    DrainedWithMessages,
+    DrainIncomplete(crate::libos::downlink::DrainState),
+}
+
+impl OwnedWorkerExit {
+    fn group(
+        group: GroupIdx,
+        receiver: crate::libos::downlink::Receiver<GroupIn>,
+        worker: impl FnOnce(&crate::libos::downlink::Receiver<GroupIn>) -> Result<(), RuntimeError>,
+    ) -> Self {
+        Self::Group { who: WorkerId::Group(group), exit: receiver.run(worker) }
+    }
+
+    fn desk(
+        stock: StockIdx,
+        receiver: crate::libos::downlink::Receiver<DeskMsg>,
+        worker: impl FnOnce(&crate::libos::downlink::Receiver<DeskMsg>) -> Result<(), RuntimeError>,
+    ) -> Self {
+        Self::Desk { who: WorkerId::Desk(stock), exit: receiver.run(worker) }
+    }
+
+    fn who(&self) -> WorkerId {
+        match self {
+            Self::Group { who, .. } | Self::Desk { who, .. } => *who,
+        }
+    }
+}
+
+/// 清理未完成时一并保留已 join 的 exit 和已经取出的原始消息。
+pub(super) struct RetainedExitMessages {
+    pub(super) exit: OwnedWorkerExit,
+    pub(super) group_messages: Vec<GroupIn>,
+    pub(super) desk_messages: Vec<DeskMsg>,
+    pub(super) context: ExitReconcileContext,
+    pub(super) drain_state: RetainedExitDrainState,
+}
+
+/// 仅作恢复诊断的逐类计数；绝不表示这些资源已重新落账或完成对账。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RetainedMessageAssessment {
+    pub group_batch_messages: usize,
+    pub group_entities: usize,
+    pub group_fact_records: usize,
+    pub desk_ops_messages: usize,
+    pub desk_operations: usize,
+    pub desk_place_operations: usize,
+    pub desk_cancel_operations: usize,
+    pub desk_buy_purse_cents: i128,
+    pub desk_sell_shares: u128,
+    pub assets_reconciled: bool,
+}
+
+impl RetainedExitMessages {
+    /// 按 A 股资源实体与交易部操作边界分类；所有计数都只是未处理载荷证据。
+    pub(super) fn assessment(&self) -> RetainedMessageAssessment {
+        let mut assessment = RetainedMessageAssessment::default();
+        for message in &self.group_messages {
+            if let GroupIn::Batch(batch) = message {
+                assessment.group_batch_messages += 1;
+                assessment.group_entities += batch.entities.len();
+                assessment.group_fact_records += batch.fills.len() + batch.receipts.len() + batch.repurchase.len();
+            }
+        }
+        for message in &self.desk_messages {
+            if let DeskMsg::Ops { ops, .. } = message {
+                assessment.desk_ops_messages += 1;
+                assessment.desk_operations += ops.len();
+                for operation in ops {
+                    match operation {
+                        super::protocol::DeskIn::Place { side, purse, qty, .. } => {
+                            assessment.desk_place_operations += 1;
+                            assessment.desk_buy_purse_cents += i128::from(*purse);
+                            if *side == crate::orderbook::Side::Sell {
+                                assessment.desk_sell_shares += u128::from(*qty);
+                            }
+                        }
+                        super::protocol::DeskIn::PlaceIssuerRepurchase { purse, .. } => {
+                            assessment.desk_place_operations += 1;
+                            assessment.desk_buy_purse_cents += i128::from(*purse);
+                        }
+                        super::protocol::DeskIn::Cancel { .. } | super::protocol::DeskIn::CancelAll { .. } => {
+                            assessment.desk_cancel_operations += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assessment
+    }
+}
+
+fn exit_outcome(
+    who: WorkerId,
+    outcome: &mut crate::libos::worker_exit::Outcome<RuntimeError>,
+) -> Result<(), RuntimeError> {
+    match outcome {
+        crate::libos::worker_exit::Outcome::Returned(result) => result.clone(),
+        crate::libos::worker_exit::Outcome::Panicked(_) => {
+            let original = std::mem::replace(
+                outcome,
+                crate::libos::worker_exit::Outcome::Returned(Ok(())),
+            );
+            let crate::libos::worker_exit::Outcome::Panicked(payload) = original else {
+                unreachable!("已检查 panic outcome")
+            };
+            let payload = super::protocol::RetainedPanicPayload::new(payload);
+            let error = RuntimeError::WorkerExitPanicked { who, payload };
+            *outcome = crate::libos::worker_exit::Outcome::Returned(Err(error.clone()));
+            Err(error)
+        }
+    }
+}
+
+/// join 后关闭发送准入并取回全部消息；任何未完成载荷随结构化错误保留。
+fn settle_worker_exit(
+    exit: OwnedWorkerExit,
+    deadline: crate::clock::Instant,
+    context: ExitReconcileContext,
+) -> (WorkerId, Result<(), RuntimeError>) {
+    use crate::libos::downlink::DrainState;
+    use std::num::NonZeroUsize;
+    let who = exit.who();
+    match exit {
+        OwnedWorkerExit::Group { who, mut exit } => {
+            let primary = exit_outcome(who, &mut exit.outcome).err();
+            let closed = match exit.receiver.close_and_wait(deadline) {
+                Ok(closed) => closed,
+                Err(error) => return (who, Err(RuntimeError::DownlinkCleanupFailed {
+                    who,
+                    primary: primary.map(Box::new),
+                    detail: format!("组发送准入未收束：{error:?}"),
+                    assets_reconciled: false,
+                    payload: super::protocol::RetainedWorkerPayload::new(who, RetainedExitMessages {
+                        exit: OwnedWorkerExit::Group { who, exit },
+                        group_messages: Vec::new(), desk_messages: Vec::new(),
+                        context: context.clone(), drain_state: RetainedExitDrainState::AdmissionUnsettled,
+                    }),
+                })),
+            };
+            let mut messages = Vec::new();
+            let state = loop {
+                let drain = closed.drain(NonZeroUsize::new(256).expect("正数批次"));
+                messages.extend(drain.messages);
+                match drain.state {
+                    DrainState::BudgetExhausted => continue,
+                    state => break state,
+                }
+            };
+            if state != DrainState::Drained || !messages.is_empty() {
+                let drain_state = if state == DrainState::Drained { RetainedExitDrainState::DrainedWithMessages } else { RetainedExitDrainState::DrainIncomplete(state) };
+                let retained = RetainedExitMessages { exit: OwnedWorkerExit::Group { who, exit }, group_messages: messages, desk_messages: Vec::new(), context: context.clone(), drain_state };
+                let assessment = retained.assessment();
+                let detail = format!("组下行清理状态={state:?}；未处理 GroupIn::Batch 的 Entity 与事实分开保留；业务资产未对账；评估={assessment:?}");
+                return (who, Err(RuntimeError::DownlinkCleanupFailed {
+                    who,
+                    primary: primary.map(Box::new),
+                    detail,
+                    assets_reconciled: false,
+                    payload: super::protocol::RetainedWorkerPayload::new(who, retained),
+                }));
+            }
+            (who, primary.map_or(Ok(()), Err))
+        }
+        OwnedWorkerExit::Desk { who, mut exit } => {
+            let primary = exit_outcome(who, &mut exit.outcome).err();
+            let closed = match exit.receiver.close_and_wait(deadline) {
+                Ok(closed) => closed,
+                Err(error) => return (who, Err(RuntimeError::DownlinkCleanupFailed {
+                    who,
+                    primary: primary.map(Box::new),
+                    detail: format!("交易部发送准入未收束：{error:?}"),
+                    assets_reconciled: false,
+                    payload: super::protocol::RetainedWorkerPayload::new(who, RetainedExitMessages {
+                        exit: OwnedWorkerExit::Desk { who, exit },
+                        group_messages: Vec::new(), desk_messages: Vec::new(),
+                        context: context.clone(), drain_state: RetainedExitDrainState::AdmissionUnsettled,
+                    }),
+                })),
+            };
+            let mut messages = Vec::new();
+            let state = loop {
+                let drain = closed.drain(NonZeroUsize::new(256).expect("正数批次"));
+                messages.extend(drain.messages);
+                match drain.state {
+                    DrainState::BudgetExhausted => continue,
+                    state => break state,
+                }
+            };
+            if state != DrainState::Drained || !messages.is_empty() {
+                let drain_state = if state == DrainState::Drained { RetainedExitDrainState::DrainedWithMessages } else { RetainedExitDrainState::DrainIncomplete(state) };
+                let retained = RetainedExitMessages { exit: OwnedWorkerExit::Desk { who, exit }, group_messages: Vec::new(), desk_messages: messages, context: context.clone(), drain_state };
+                let assessment = retained.assessment();
+                let detail = format!("交易部下行清理状态={state:?}；DeskMsg::Ops 的现金 purse/股份申报与 Cancel 单独分类保留，未恢复组端冻结资产；评估={assessment:?}");
+                return (who, Err(RuntimeError::DownlinkCleanupFailed {
+                    who,
+                    primary: primary.map(Box::new),
+                    detail,
+                    assets_reconciled: false,
+                    payload: super::protocol::RetainedWorkerPayload::new(who, retained),
+                }));
+            }
+            (who, primary.map_or(Ok(()), Err))
+        }
+    }
+}
+
+fn join_world_worker(
+    who: WorkerId,
+    handle: WorldWorkerHandle,
+    deadline: crate::clock::Instant,
+    context: ExitReconcileContext,
+) -> Result<(WorkerId, OwnedWorkerExit), RuntimeError> {
+    use crate::libos::thread::JoinUntilError;
+    match handle.join_until(deadline) {
+        Ok(exit) => Ok((who, exit)),
+        Err(JoinUntilError::TimedOut(handle)) => Err(RuntimeError::WorkerJoinPending {
+            who,
+            detail: "共享收尾 deadline 到期；原 worker handle 与阶段上下文仍保留".to_owned(),
+            payload: super::protocol::RetainedWorkerPayload::new(
+                who,
+                RetainedWorldJoin { handle, context },
+            ),
+        }),
+        Err(JoinUntilError::CollectorStartFailed(handle, error)) => Err(RuntimeError::WorkerJoinPending {
+            who,
+            detail: format!("join collector 启动失败：{error}；原 worker handle 仍保留"),
+            payload: super::protocol::RetainedWorkerPayload::new(
+                who,
+                RetainedWorldJoin { handle, context },
+            ),
+        }),
+        Err(JoinUntilError::CollectorFailed(error)) => Err(RuntimeError::WorkerJoinFailed {
+            who,
+            detail: format!("join collector 意外失败：{error}；原始 join 结果及 child 状态未知"),
+            receiver_recovered: false,
+            child_released: false,
+            panic_payload: None,
+        }),
+        Err(JoinUntilError::Panicked(payload)) => Err(RuntimeError::WorkerJoinFailed {
+            who,
+            detail: "worker 在返回 typed exit 前 panic，receiver 未移交".to_owned(),
+            receiver_recovered: false,
+            child_released: true,
+            panic_payload: Some(super::protocol::RetainedPanicPayload::new(payload)),
+        }),
+        Err(JoinUntilError::Failed(error)) => Err(RuntimeError::WorkerJoinFailed {
+            who,
+            detail: format!("WASM join 终态失败（可能为 hard trap），receiver 未移交：{error}"),
+            receiver_recovered: false,
+            child_released: false,
+            panic_payload: None,
+        }),
+    }
+}
 
 /// 每股交易部规格（类别差异显式建模：主板/创业板）。
 #[derive(Clone, Debug)]
@@ -256,8 +568,8 @@ pub struct WorldSpec {
     pub script_for: Box<dyn Fn(GroupIdx) -> GroupScript>,
     /// 组端分段 flush 粒度（op 数）。
     pub chunk: usize,
-    /// 看门狗阈值。
-    pub watchdog: WatchdogConfig,
+    /// 所有业务等待共用的期限配置。
+    pub deadline: DeadlineConfig,
     /// 同 tick 续行轮数上限（异常形状显式登记）。
     pub rounds_cap: u32,
     /// 每股交易部规格（下标=StockIdx）。
@@ -491,19 +803,18 @@ pub struct World {
     pub global: GlobalState,
     /// 已收敛 tick 记录。
     pub report_log: Vec<TickRecord>,
-    group_txs: Vec<Sender<GroupIn>>,
-    desk_txs: Vec<Sender<DeskMsg>>,
-    up_rx: Receiver<UpMsg>,
-    handles: Vec<(
-        WorkerId,
-        crate::thread_facade::JoinHandle<Result<(), RuntimeError>>,
-    )>,
+    group_txs: Vec<super::downstream::Sender<GroupIn>>,
+    desk_txs: Vec<super::downstream::Sender<DeskMsg>>,
+    up_rx: UpReceiver<UpMsg>,
+    handles: Vec<(WorkerId, WorldWorkerHandle)>,
+    fault_domain: Arc<crate::libos::fault_domain::FaultDomain>,
+    #[cfg(all(test, not(target_family = "wasm")))]
+    native_handoff_capture: Option<native_handoff_capture::Capture>,
     abort: Arc<AtomicBool>,
     /// Sol 终审三审：永久关停标记（sever/Drop/显式 shutdown 置位）——
-    /// worker_recv 的退出判定源（与 abort 正交：abort=tick 级回滚语义，
+    /// LibOS receive 的退出判定源（与 abort 正交：abort=tick 级回滚语义，
     /// 可重试 Abort 窗口内 worker 存活）。
     worker_shutdown: Arc<AtomicBool>,
-    #[cfg(target_family = "wasm")]
     shutdown_wake: Option<wasm_shutdown::WakeSenders<GroupIn, DeskMsg>>,
     /// Sol 五审再复核 P1-2（四审 A1 指定回归的确定性 seam）：正常关停
     /// 序列在组 Shutdown 广播**前**的可控停顿（cfg(test)——复现四审
@@ -519,6 +830,20 @@ pub struct World {
     #[cfg(test)]
     seal_ack_fail_after_acks: Option<usize>,
     #[cfg(test)]
+    seal_host_abort_for_test: Option<usize>,
+    #[cfg(test)]
+    drain_host_abort_for_test: bool,
+    #[cfg(test)]
+    handover_host_abort_after: Option<usize>,
+    #[cfg(test)]
+    delivery_host_abort_after: Option<usize>,
+    #[cfg(test)]
+    delivery_first_reply_updates: Option<usize>,
+    #[cfg(test)]
+    day_end_group_host_abort_after: Option<usize>,
+    #[cfg(test)]
+    day_end_rollback_host_abort_for_test: bool,
+    #[cfg(test)]
     day_end_fail_after_drain_reports: Option<usize>,
     #[cfg(test)]
     day_end_fail_before_group: Option<usize>,
@@ -526,7 +851,7 @@ pub struct World {
     start_cleanup_message_for_test: Option<UpMsg>,
     #[cfg(test)]
     fatal_cleanup_probe_for_test: Option<Box<dyn Fn(FatalCleanupPhaseForTest) + Send>>,
-    watchdog: WatchdogConfig,
+    deadline: DeadlineConfig,
     validator: Validator,
     rounds_cap: u32,
     n_groups: usize,
@@ -727,13 +1052,12 @@ impl World {
                 detail: format!("Full 读取拒绝已终止 World：{reason}"),
             });
         }
-        let expected =
-            self.personal_presence
-                .as_ref()
-                .ok_or_else(|| RuntimeError::ProtocolInvariant {
-                    detail: "完整个人态缺构造期实际能力名册；不能从缺 seed 推断合法 None"
-                        .to_owned(),
-                })?;
+        self.personal_presence
+            .as_ref()
+            .ok_or_else(|| RuntimeError::ProtocolInvariant {
+                detail: "完整个人态缺构造期实际能力名册；不能从缺 seed 推断合法 None"
+                    .to_owned(),
+            })?;
         if self.group_txs.len() != self.n_groups {
             return Err(RuntimeError::ProtocolInvariant {
                 detail: "Full 读取通道与组数不一致".to_owned(),
@@ -749,7 +1073,7 @@ impl World {
         }
         let mut groups = Vec::with_capacity(self.n_groups);
         for _ in 0..self.n_groups {
-            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+            match self.recv_world_up(Phase::Drain)? {
                 UpMsg::GroupPersonalFull {
                     group,
                     source: actual,
@@ -769,6 +1093,7 @@ impl World {
                 other => return Err(prepared_stop::read_failure("Full 个人读取", other)),
             }
         }
+        let expected = self.personal_presence.as_ref().expect("收件前已确认能力名册");
         super::personal_full_validation::validate_personal_full(expected, &groups).map_err(
             |error| RuntimeError::ProtocolInvariant {
                 detail: format!("Full 个人态完整性错误：{error:?}"),
@@ -888,9 +1213,6 @@ impl World {
             });
         }
         admin_treasury_binding::validate(&spec)?;
-        #[cfg(target_family = "wasm")]
-        super::watchdog::require_wasm_wait_initialized()
-            .map_err(|detail| RuntimeError::ProtocolInvariant { detail })?;
         let information_roster = (0..spec.n_groups)
             .map(|group| {
                 spec.root_projection
@@ -923,7 +1245,7 @@ impl World {
             initial_pending_sell,
             script_for,
             chunk,
-            watchdog,
+            deadline,
             rounds_cap,
             stocks,
             config,
@@ -1026,45 +1348,44 @@ impl World {
         > = std::sync::Arc::new(std::sync::Mutex::new(
             crate::verification_evidence::PhaseTimingBinding::empty(),
         ));
-        // 等待点账（R4a 阶段 1，设计 §10.1）：本构造体建立 1+G+N 条
-        // unbounded channel + deferred_drop 一条 bounded(64)。业务层
-        // 等待点全部经 watchdog 三函数（相位分档）；unbounded send 业务
-        // 层零等待——原语层可达等待点 (l)(m)(n)（分配锁/SyncWaker/链表
+        // World 通过 LibOS 建立共享上行及每 worker 的成对下行；业务等待
+        // 按 `wait_contract` 的相位与期限执行。发送许可的收束由下行 admission
+        // 明确等待，不能把线程完成通知等同于消息或业务资源已回收。
+        // 原语层可达等待点（分配锁/SyncWaker/链表
         // 发布）逃逸外包宿主，锁序图见 §10.1.3（capture_slot 只进 (l)
         // 锁叶，临界区 lock→clone→释放——由 wait_ledger_tests 静态钉住
         // 「持锁不 send」）。
-        let (up_tx, up_rx) = channel::<UpMsg>();
+        let fault_domain = crate::libos::transport::runtime_fault_domain(
+            n_groups + n_stocks + 1,
+            super::upstream::external_fault,
+        )
+        .map_err(|error| super::upstream::channel_error(error, "World"))?;
+        let (up_tx, up_rx) = super::upstream::channel_in::<UpMsg>(&fault_domain)?;
         let mut belief_seeds_clone = belief_seeds;
         let mut group_rxs = Vec::with_capacity(n_groups);
         let mut group_txs = Vec::with_capacity(n_groups);
+        #[cfg(all(test, not(target_family = "wasm")))]
+        let handoff_capture = native_handoff_capture::take_next_world();
         for _ in 0..n_groups {
-            let (tx, rx) = channel::<GroupIn>();
+            let (tx, rx) = super::downstream::paired_channel_in::<GroupIn>(&fault_domain)?;
             group_txs.push(tx);
             group_rxs.push(rx);
         }
         let mut desk_rxs = Vec::with_capacity(n_stocks);
         let mut desk_txs = Vec::with_capacity(n_stocks);
         for _ in 0..n_stocks {
-            let (tx, rx) = channel::<DeskMsg>();
+            let (tx, rx) = super::downstream::paired_channel_in::<DeskMsg>(&fault_domain)?;
             desk_txs.push(tx);
             desk_rxs.push(rx);
         }
-        #[cfg(not(target_family = "wasm"))]
-        let mut native_construction = native_construction::NativeConstructionGuard::new(
+        let mut construction = native_construction::ConstructionGuard::new(
             Arc::clone(&worker_shutdown),
+            group_txs.clone(),
+            desk_txs.clone(),
             n_groups + n_stocks,
-        );
-        #[cfg(target_family = "wasm")]
-        let mut construction = WasmConstructionGuard::new(
-            Arc::clone(&worker_shutdown),
-            wasm_shutdown::WakeSenders::new(
-                group_txs.clone(),
-                desk_txs.clone(),
-                || GroupIn::Shutdown,
-                || DeskMsg::Shutdown,
-            ),
-            n_groups + n_stocks,
-            join_constructed_worker,
+            deadline,
+            #[cfg(all(test, not(target_family = "wasm")))]
+            handoff_capture.clone(),
         );
         for g in 0..n_groups as GroupIdx {
             let mut accounts = Vec::with_capacity(accounts_per_group);
@@ -1198,74 +1519,54 @@ impl World {
             state.install_repurchase_seeds(&initial_repurchase_projections);
             let rx = group_rxs.remove(0);
             #[cfg(all(test, not(target_family = "wasm")))]
-            if let Some(worker_error) = native_construction.inject_failure() {
+            if let Some(worker_error) = construction.inject_failure() {
                 if worker_error {
-                    native_construction::fail_worker_for_test(&group_txs, &up_rx, &watchdog);
+                    native_construction::fail_worker_for_test(&group_txs, &up_rx, &deadline);
                 }
-                return Err(native_construction.spawn_failure(
+                return Err(construction.spawn_failure(
                     format!("注入 spawn rt-group-{g} 失败"),
                     &mut group_txs,
                     &mut desk_txs,
                 ));
             }
-            let handle = crate::thread_facade::Builder::new()
-                .name(format!("rt-group-{g}"))
-                .spawn({
+            let handle = crate::libos::thread::spawn_tracked(Some(format!("rt-group-{g}")), {
                     let desk_txs = desk_txs.clone();
                     let up_tx = up_tx.clone();
                     let abort = Arc::clone(&abort);
                     let shutdown = Arc::clone(&worker_shutdown);
                     let capture = std::sync::Arc::clone(&capture_slot);
                     move || {
-                        group_main(
-                            state,
-                            desk_txs,
-                            rx,
-                            super::worker_context::WorkerContext {
-                                up_tx,
-                                abort,
-                                shutdown,
-                                watchdog,
-                                capture,
-                            },
-                        )
+                        OwnedWorkerExit::group(g, rx, |rx| {
+                            super::group::group_main_borrowed(
+                                state,
+                                desk_txs,
+                                rx,
+                                super::worker_context::WorkerContext { up_tx, abort, shutdown, capture },
+                            )
+                        })
                     }
                 });
-            #[cfg(not(target_family = "wasm"))]
             let handle = match handle {
                 Ok(handle) => handle,
                 Err(error) => {
-                    return Err(native_construction.spawn_failure(
+                    return Err(construction.spawn_failure(
                         format!("spawn rt-group-{g} 失败：{error}"),
                         &mut group_txs,
                         &mut desk_txs,
                     ))
                 }
             };
-            #[cfg(target_family = "wasm")]
-            let handle = match handle {
-                Ok(handle) => handle,
-                Err(error) => {
-                    return Err(RuntimeError::SendFailed {
-                        detail: construction
-                            .spawn_failure(format!("spawn rt-group-{g} 失败：{error}")),
-                    });
-                }
-            };
-            #[cfg(not(target_family = "wasm"))]
-            native_construction.push(WorkerId::Group(g), handle);
-            #[cfg(target_family = "wasm")]
             construction.push(WorkerId::Group(g), handle);
         }
         for (s, stock_spec) in stocks.into_iter().enumerate() {
             let s = s as StockIdx;
             let rx = desk_rxs.remove(0);
             #[cfg(all(test, not(target_family = "wasm")))]
-            if let Some(worker_error) = native_construction.inject_failure() {
+            if let Some(worker_error) = construction.inject_failure() {
                 if worker_error {
-                    native_construction::fail_worker_for_test(&group_txs, &up_rx, &watchdog);
+                    native_construction::fail_worker_for_test(&group_txs, &up_rx, &deadline);
                 }
-                return Err(native_construction.spawn_failure(
+                return Err(construction.spawn_failure(
                     format!("注入 spawn rt-desk-{s} 失败"),
                     &mut group_txs,
                     &mut desk_txs,
@@ -1299,9 +1600,7 @@ impl World {
                     .copied()
                     .unwrap_or(0),
             };
-            let handle = crate::thread_facade::Builder::new()
-                .name(format!("rt-desk-{s}"))
-                .spawn({
+            let handle = crate::libos::thread::spawn_tracked(Some(format!("rt-desk-{s}")), {
                     let group_txs = group_txs.clone();
                     let up_tx = up_tx.clone();
                     let abort = Arc::clone(&abort);
@@ -1309,47 +1608,40 @@ impl World {
                     let config = Arc::clone(&config);
                     let capture = std::sync::Arc::clone(&capture_slot);
                     move || {
-                        desk_main(
-                            setup,
-                            n_groups,
-                            config,
-                            rx,
-                            group_txs,
-                            super::worker_context::WorkerContext {
-                                up_tx,
-                                abort,
-                                shutdown,
-                                watchdog,
-                                capture,
-                            },
-                        )
+                        OwnedWorkerExit::desk(s, rx, |rx| {
+                            super::desk::desk_main_borrowed(
+                                setup,
+                                n_groups,
+                                config,
+                                rx,
+                                group_txs,
+                                super::worker_context::WorkerContext { up_tx, abort, shutdown, capture },
+                            )
+                        })
                     }
                 });
-            #[cfg(not(target_family = "wasm"))]
             let handle = match handle {
                 Ok(handle) => handle,
                 Err(error) => {
-                    return Err(native_construction.spawn_failure(
+                    return Err(construction.spawn_failure(
                         format!("spawn rt-desk-{s} 失败：{error}"),
                         &mut group_txs,
                         &mut desk_txs,
                     ))
                 }
             };
-            #[cfg(target_family = "wasm")]
-            let handle = match handle {
-                Ok(handle) => handle,
-                Err(error) => {
-                    return Err(RuntimeError::SendFailed {
-                        detail: construction
-                            .spawn_failure(format!("spawn rt-desk-{s} 失败：{error}")),
-                    });
-                }
-            };
-            #[cfg(not(target_family = "wasm"))]
-            native_construction.push(WorkerId::Desk(s), handle);
-            #[cfg(target_family = "wasm")]
             construction.push(WorkerId::Desk(s), handle);
+        }
+        #[cfg(all(test, not(target_family = "wasm")))]
+        if let Some(worker_error) = construction.inject_failure() {
+            if worker_error {
+                native_construction::fail_worker_for_test(&group_txs, &up_rx, &deadline);
+            }
+            return Err(construction.spawn_failure(
+                "注入 spawn 全部完成后失败".to_owned(),
+                &mut group_txs,
+                &mut desk_txs,
+            ));
         }
         // 世界不持上行发送端：全部 worker 退出后 recv 才会断连（显式失败面）。
         drop(up_tx);
@@ -1363,7 +1655,7 @@ impl World {
                     &group_txs,
                     &mut desk_txs,
                     &up_rx,
-                    &watchdog,
+                    &deadline,
                 );
             }
         }
@@ -1380,12 +1672,7 @@ impl World {
                 }
                 let detail = "交易部 Calendar owner 绑定失败".to_owned();
                 // 普通 Err 必须显式回收，保留主错与全部次生错误，避免 Drop panic 覆盖主错。
-                #[cfg(target_family = "wasm")]
-                return Err(RuntimeError::SendFailed {
-                    detail: construction.spawn_failure(detail),
-                });
-                #[cfg(not(target_family = "wasm"))]
-                return Err(native_construction.spawn_failure(
+                return Err(construction.spawn_failure(
                     detail,
                     &mut group_txs,
                     &mut desk_txs,
@@ -1421,10 +1708,7 @@ impl World {
                 hashes: super::publication::TickHashes::default(),
             }),
         ));
-        #[cfg(target_family = "wasm")]
         let (shutdown_wake, handles) = construction.transfer();
-        #[cfg(not(target_family = "wasm"))]
-        let handles = native_construction.transfer();
         Ok(World {
             calendar_source,
             calendar_bindings,
@@ -1452,14 +1736,30 @@ impl World {
             desk_txs,
             up_rx,
             handles,
+            fault_domain,
+            #[cfg(all(test, not(target_family = "wasm")))]
+            native_handoff_capture: handoff_capture,
             abort,
             worker_shutdown,
-            #[cfg(target_family = "wasm")]
             shutdown_wake,
             #[cfg(test)]
             shutdown_stall_for_test: None,
             #[cfg(test)]
             seal_ack_fail_after_acks: None,
+            #[cfg(test)]
+            seal_host_abort_for_test: None,
+            #[cfg(test)]
+            drain_host_abort_for_test: false,
+            #[cfg(test)]
+            handover_host_abort_after: None,
+            #[cfg(test)]
+            delivery_host_abort_after: None,
+            #[cfg(test)]
+            delivery_first_reply_updates: None,
+            #[cfg(test)]
+            day_end_group_host_abort_after: None,
+            #[cfg(test)]
+            day_end_rollback_host_abort_for_test: false,
             #[cfg(test)]
             day_end_fail_after_drain_reports: None,
             #[cfg(test)]
@@ -1468,7 +1768,7 @@ impl World {
             start_cleanup_message_for_test: None,
             #[cfg(test)]
             fatal_cleanup_probe_for_test: None,
-            watchdog,
+            deadline,
             validator: no_op_validator(),
             rounds_cap,
             n_groups,
@@ -1596,11 +1896,22 @@ impl World {
     }
 
     #[cfg(test)]
+    pub(crate) fn set_delivery_host_abort_after_for_test(&mut self, count: usize) {
+        self.delivery_host_abort_after = Some(count);
+        self.delivery_first_reply_updates = None;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn delivery_first_reply_updates_for_test(&self) -> Option<usize> {
+        self.delivery_first_reply_updates
+    }
+
+    #[cfg(test)]
     pub fn swap_desk_sender_for_test(
         &mut self,
         stock: usize,
-        sender: Sender<DeskMsg>,
-    ) -> Sender<DeskMsg> {
+        sender: super::downstream::Sender<DeskMsg>,
+    ) -> super::downstream::Sender<DeskMsg> {
         std::mem::replace(
             self.desk_txs.get_mut(stock).expect("测试股票索引合法"),
             sender,
@@ -1611,8 +1922,8 @@ impl World {
     pub(crate) fn swap_group_sender_for_test(
         &mut self,
         group: usize,
-        sender: Sender<GroupIn>,
-    ) -> Sender<GroupIn> {
+        sender: super::downstream::Sender<GroupIn>,
+    ) -> super::downstream::Sender<GroupIn> {
         std::mem::replace(
             self.group_txs.get_mut(group).expect("测试组索引合法"),
             sender,
@@ -1622,6 +1933,14 @@ impl World {
     #[cfg(test)]
     pub fn live_workers_for_test(&self) -> usize {
         self.handles.len()
+    }
+
+    #[cfg(all(test, not(target_family = "wasm")))]
+    pub(crate) fn disconnect_upstream_for_test(&mut self) {
+        let (sender, receiver) = super::upstream::channel()
+            .expect("测试替换上行 mailbox 建立成功");
+        drop(sender);
+        drop(std::mem::replace(&mut self.up_rx, receiver));
     }
 
     /// 仅控制组内已有 sender clone；World 的 Start 广播与健康交易部不受替换。
@@ -1637,13 +1956,13 @@ impl World {
             self.n_groups == 2 && group != after_group,
             "测试断连同步只覆盖两个不同组"
         );
-        let (sent, after_final_flush) = channel();
+        let (sent, after_final_flush) = std::sync::mpsc::channel();
         self.group_txs
             .get(usize::from(after_group))
             .expect("测试前件组索引合法")
             .send(GroupIn::SignalFinalFlushOnceForTest { sent })
             .expect("测试前件组必须存活");
-        let (witness, receiver) = channel();
+        let (witness, receiver) = std::sync::mpsc::channel();
         self.group_txs
             .get(usize::from(group))
             .expect("测试断连组索引合法")
@@ -1671,13 +1990,13 @@ impl World {
             self.n_groups == 2 && group != after_group,
             "测试同步只覆盖两个不同组"
         );
-        let (sent, after_final_flush) = channel();
+        let (sent, after_final_flush) = std::sync::mpsc::channel();
         self.group_txs
             .get(usize::from(after_group))
             .expect("测试前件组索引合法")
             .send(GroupIn::SignalFinalFlushOnceForTest { sent })
             .expect("测试前件组必须存活");
-        let (witness, receiver) = channel();
+        let (witness, receiver) = std::sync::mpsc::channel();
         self.group_txs
             .get(usize::from(group))
             .expect("测试组索引合法")
@@ -1713,7 +2032,7 @@ impl World {
         }
         let mut ticks = Vec::new();
         while ticks.len() < self.n_groups {
-            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)
+            match recv_deadline(&self.up_rx, Phase::Drain, &self.deadline)
                 .expect("测试游标回声可达")
             {
                 UpMsg::GroupTickForTest {
@@ -1860,7 +2179,7 @@ impl World {
         &mut self,
     ) -> Result<Vec<super::type_aliases::StockCandleProjection>, RuntimeError> {
         // Sol 三审阻断 2：通道面一致性守卫——sever/死亡后 txs 清空而
-        // 期望响应数不变，收集会空等 watchdog（30s）才失败。断连形态
+        // 期望响应数不变，收集会空等 deadline（30s）才失败。断连形态
         // 立即显式报错（防御式：不静默等待）。
         if self.desk_txs.len() != self.n_stocks {
             return Err(RuntimeError::Disconnected {
@@ -1881,7 +2200,7 @@ impl World {
         let mut out = Vec::with_capacity(self.n_stocks);
         let mut left = self.n_stocks;
         while left > 0 {
-            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+            match self.recv_world_up(Phase::Drain)? {
                 UpMsg::DeskCandles {
                     stock,
                     history,
@@ -2138,7 +2457,7 @@ impl World {
         let mut result = std::collections::BTreeMap::new();
         let mut seen = std::collections::BTreeSet::new();
         while seen.len() < self.n_groups {
-            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+            match recv_deadline(&self.up_rx, Phase::Drain, &self.deadline)? {
                 UpMsg::GroupRepurchase { group, rows }
                     if usize::from(group) < self.n_groups && seen.insert(group) =>
                 {
@@ -2194,7 +2513,7 @@ impl World {
         let mut left = self.n_groups;
         let mut seen_groups = std::collections::BTreeSet::new();
         while left > 0 {
-            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+            match self.recv_world_up(Phase::Drain)? {
                 UpMsg::GroupPlans { group, plans } => {
                     if group as usize >= self.n_groups || !seen_groups.insert(group) {
                         return Err(RuntimeError::ProtocolInvariant {
@@ -2240,7 +2559,7 @@ impl World {
         let mut out = Vec::with_capacity(self.n_groups);
         let mut left = self.n_groups;
         while left > 0 {
-            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+            match self.recv_world_up(Phase::Drain)? {
                 UpMsg::GroupOpenDerivations {
                     group,
                     market,
@@ -2287,7 +2606,7 @@ impl World {
         let mut out = Vec::with_capacity(self.n_groups);
         let mut left = self.n_groups;
         while left > 0 {
-            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+            match self.recv_world_up(Phase::Drain)? {
                 UpMsg::GroupObservations {
                     group,
                     observations,
@@ -2371,7 +2690,12 @@ impl World {
             .map(|rows| rows.iter().map(|(local, _, _)| *local).collect())
             .collect();
         while left > 0 {
-            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+            #[cfg(test)]
+            if self.delivery_host_abort_after == Some(seen_groups.len()) {
+                self.delivery_host_abort_after = None;
+                self.drain_host_abort_for_test = true;
+            }
+            match self.recv_world_up(Phase::Drain)? {
                 UpMsg::GroupDeliveryDone {
                     group,
                     updates,
@@ -2396,6 +2720,10 @@ impl World {
                                 ),
                             });
                         }
+                    }
+                    #[cfg(test)]
+                    if seen_groups.len() == 1 {
+                        self.delivery_first_reply_updates = Some(updates.len());
                     }
                     out.push((group, updates));
                     information_check_floor = match (information_check_floor, group_floor) {
@@ -2444,7 +2772,7 @@ impl World {
         let mut out = Vec::with_capacity(self.n_groups);
         let mut left = self.n_groups;
         while left > 0 {
-            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+            match self.recv_world_up(Phase::Drain)? {
                 UpMsg::RetailTraces { group, traces } => {
                     out.push((group, traces));
                     left -= 1;
@@ -2479,7 +2807,7 @@ impl World {
         let mut out = Vec::with_capacity(self.n_groups);
         let mut left = self.n_groups;
         while left > 0 {
-            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+            match self.recv_world_up(Phase::Drain)? {
                 UpMsg::GroupBelief { group, states } => {
                     // P2-2a：稀疏条目（dirty 且在册）——全量语义由驱动器
                     // 增量缓存承载（下标合法性由组端构造保证，驱动器侧
@@ -2538,7 +2866,7 @@ impl World {
         let mut out = Vec::with_capacity(self.n_groups);
         let mut left = self.n_groups;
         while left > 0 {
-            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+            match self.recv_world_up(Phase::Drain)? {
                 UpMsg::GroupAttention { group, attention } => {
                     out.push((group, attention));
                     left -= 1;
@@ -2581,7 +2909,7 @@ impl World {
         let mut out = Vec::with_capacity(self.n_groups);
         let mut left = self.n_groups;
         while left > 0 {
-            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+            match self.recv_world_up(Phase::Drain)? {
                 UpMsg::GroupAttention { group, attention } => {
                     out.push((group, attention));
                     left -= 1;
@@ -2603,6 +2931,15 @@ impl World {
     pub fn collect_desk_resting(
         &mut self,
     ) -> Result<(Vec<Vec<super::protocol::RestingFact>>, Vec<u64>), RuntimeError> {
+        if self.desk_txs.len() != self.n_stocks {
+            return Err(RuntimeError::Disconnected {
+                who: None,
+                stage: format!(
+                    "collect_desk_resting 通道面与部数不一致（txs={} n_stocks={}——世界已断连）",
+                    self.desk_txs.len(), self.n_stocks
+                ),
+            });
+        }
         for tx in &self.desk_txs {
             tx.send(DeskMsg::EchoResting)
                 .map_err(|_| RuntimeError::SendFailed {
@@ -2615,7 +2952,7 @@ impl World {
         let mut cursors = vec![0u64; self.desk_txs.len()];
         let mut left = self.desk_txs.len();
         while left > 0 {
-            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+            match self.recv_world_up(Phase::Drain)? {
                 UpMsg::DeskResting {
                     stock,
                     orders,
@@ -2669,7 +3006,7 @@ impl World {
         let mut out: Vec<(GroupIdx, Vec<GroupAccount>)> = Vec::with_capacity(self.n_groups);
         let mut left = self.n_groups;
         while left > 0 {
-            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+            match self.recv_world_up(Phase::Drain)? {
                 UpMsg::GroupEcho { group, accounts } => {
                     out.push((group, accounts));
                     left -= 1;
@@ -2720,7 +3057,7 @@ impl World {
             vec![None; self.group_txs.len()];
         let mut left = self.group_txs.len();
         while left > 0 {
-            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+            match self.recv_world_up(Phase::Drain)? {
                 UpMsg::GroupEchoSparse { group, accounts } => {
                     let wanted = &wanted_per_group[group as usize];
                     validate_sparse_echo_reply(group, wanted, &accounts)?;
@@ -3052,7 +3389,11 @@ impl World {
             let mut acc_auction = Vec::new();
             let mut acc_entities_out = 0u64;
             loop {
-                let mut evidence = self.converge_or_die(tick, rounds, &calendar)?;
+                let mut evidence = {
+                    #[cfg(feature = "verification-harness")]
+                    let _profile = super::step_profile::scope(super::step_profile::StepSegment::WorldConverge);
+                    self.converge_or_die(tick, rounds, &calendar)?
+                };
                 if let Err(detail) = (self.validator)(&evidence) {
                     self.abort_tick(tick);
                     return Err(RuntimeError::TickValidation {
@@ -3139,8 +3480,16 @@ impl World {
                     evidence.entities_out = acc_entities_out;
                     // Q2 Seal 收尾确认：组 drain+落账（S4/S2）→SealAck
                     // 收齐 → install_tick（发布=提交=Abort 窗口关闭）。
-                    let seal_shards = self.seal_round(tick, rounds)?;
-                    self.install_tick(tick, rounds, evidence, seal_shards);
+                    let seal_shards = {
+                        #[cfg(feature = "verification-harness")]
+                        let _profile = super::step_profile::scope(super::step_profile::StepSegment::WorldSeal);
+                        self.seal_round(tick, rounds)?
+                    };
+                    {
+                        #[cfg(feature = "verification-harness")]
+                        let _profile = super::step_profile::scope(super::step_profile::StepSegment::WorldInstall);
+                        self.install_tick(tick, rounds, evidence, seal_shards);
+                    }
                     self.last_committed_calendar = Some(CommittedCalendarTick {
                         calendar: Arc::clone(&calendar),
                         source: self.mirror_source(),
@@ -3202,7 +3551,16 @@ impl World {
                     ),
                 });
             }
-            match recv_deadline(&self.up_rx, Phase::Seal, &self.watchdog) {
+            #[cfg(test)]
+            let received = if self.seal_host_abort_for_test.is_some_and(|count| acks_seen >= count) {
+                self.seal_host_abort_for_test = None;
+                Err(RuntimeError::HostAborted { phase: Phase::Seal, who: None })
+            } else {
+                recv_deadline(&self.up_rx, Phase::Seal, &self.deadline)
+            };
+            #[cfg(not(test))]
+            let received = recv_deadline(&self.up_rx, Phase::Seal, &self.deadline);
+            match received {
                 Ok(UpMsg::SealAck {
                     group,
                     tick: t,
@@ -3276,6 +3634,10 @@ impl World {
                         ),
                     });
                 }
+                Err(error @ RuntimeError::HostAborted { .. }) => {
+                    self.mark_host_aborted(&error);
+                    return Err(error);
+                }
                 Err(e) => {
                     self.abort_tick(tick);
                     return Err(e);
@@ -3314,10 +3676,7 @@ impl World {
             "{stage}(tick={tick}) 失败，world 已终止且不可重试：{error}"
         ));
         if mode == FatalCleanupMode::StopImmediately {
-            #[cfg(not(target_family = "wasm"))]
-            self.worker_shutdown.store(true, Ordering::SeqCst);
-            #[cfg(target_family = "wasm")]
-            self.stop_permanently();
+            self.sever();
         }
         if mode == FatalCleanupMode::PendingStartBeforeFinal {
             // 只有来源门已证明失败组未发final时，desk才不会向正在退出的group回流Batch。
@@ -3341,23 +3700,53 @@ impl World {
         let mut panics: Vec<(WorkerId, Box<dyn std::any::Any + Send>)> =
             original_panic.into_iter().collect();
         let mut worker_results = Vec::new();
+        let exit_context = ExitReconcileContext {
+            phase: ExitReconcilePhase::FatalTick,
+            last_committed_tick: Some(self.global.committed_tick),
+            active_tick: Some(tick),
+            round: Some(round),
+            candidate_unpublished: true,
+        };
         // 上行通道无界，worker 不等待协调者读 Final；先 join 可保证异常收集也不漏线程。
         {
-            let mut join_one =
-                |who, handle: crate::thread_facade::JoinHandle<Result<(), RuntimeError>>| {
-                    let result = match handle.join() {
-                        Ok(result) => result,
-                        Err(payload) => {
-                            // wasm join 的 io::Error 保留诊断载荷，在此统一进入失败收集。
-                            #[cfg(target_family = "wasm")]
-                            let payload = Box::new(payload) as Box<dyn std::any::Any + Send>;
-                            panics.push((who, payload));
-                            Err(RuntimeError::ProtocolInvariant {
-                                detail: format!("worker {who} 未经 TaskDied 运输的线程 panic"),
-                            })
+            #[cfg(all(test, not(target_family = "wasm")))]
+            let native_handoff_capture = self.native_handoff_capture.clone();
+            let settle_deadline = crate::clock::Instant::now() + self.deadline.limit_for(Phase::Drain);
+            let producer_join_failed = std::cell::Cell::new(false);
+            let mut join_one = |who, handle: WorldWorkerHandle| {
+                    let result = match join_world_worker(who, handle, settle_deadline, exit_context.clone()) {
+                        Ok((actual, exit)) => {
+                            let (actual, result) = Self::joined_exit_result(
+                                exit,
+                                #[cfg(all(test, not(target_family = "wasm")))]
+                                native_handoff_capture.clone(),
+                                settle_deadline,
+                                exit_context.clone(),
+                            );
+                            debug_assert_eq!(actual, who);
+                            result
                         }
+                        Err(error) => Err(error),
                     };
+                    if matches!(who, WorkerId::Group(_))
+                        && matches!(
+                            &result,
+                            Err(RuntimeError::WorkerJoinPending { .. })
+                                | Err(RuntimeError::WorkerJoinFailed {
+                                    child_released: false,
+                                    ..
+                                })
+                        )
+                    {
+                        producer_join_failed.set(true);
+                    }
                     if let Err(failure) = &result {
+                        // 优先保留已知的首个 panic；其他未送达载荷继续留在 worker 结果中。
+                        if panics.is_empty() {
+                            if let Some(payload) = failure.retained_panic_payload().and_then(|payload| payload.take()) {
+                                panics.push((who, payload));
+                            }
+                        }
                         if expected_failure != Some((who, failure)) {
                             errors.push(format!("join {who}：{failure}"));
                         }
@@ -3382,19 +3771,24 @@ impl World {
                         workers: joined_producers,
                     });
                 }
-                // 所有真实producer均已join；跨sender的本轮Ops必已排在以下Abort之前。
-                for tx in &self.desk_txs {
-                    let _ = tx.send(DeskMsg::Abort { tick });
-                }
-                #[cfg(test)]
-                if let Some(probe) = &self.fatal_cleanup_probe_for_test {
-                    probe(FatalCleanupPhaseForTest::BeforeDeskShutdown);
-                }
-                for tx in &self.desk_txs {
-                    let _ = tx.send(DeskMsg::Shutdown);
-                }
-                for (who, handle) in desks {
-                    join_one(who, handle);
+                if producer_join_failed.get() {
+                    errors.push("组 worker 尚未确认退出，未向交易部发送 Abort/Shutdown；真实 desk handles 保留待后续收尾".to_owned());
+                    self.handles.extend(desks);
+                } else {
+                    // 所有真实 producer 均已退出；跨 sender 的本轮 Ops 已先完成或进入其有序队列。
+                    for tx in &self.desk_txs {
+                        let _ = tx.send(DeskMsg::Abort { tick });
+                    }
+                    #[cfg(test)]
+                    if let Some(probe) = &self.fatal_cleanup_probe_for_test {
+                        probe(FatalCleanupPhaseForTest::BeforeDeskShutdown);
+                    }
+                    for tx in &self.desk_txs {
+                        let _ = tx.send(DeskMsg::Shutdown);
+                    }
+                    for (who, handle) in desks {
+                        join_one(who, handle);
+                    }
                 }
             } else {
                 for (who, handle) in handles {
@@ -3473,7 +3867,14 @@ impl World {
                 other => errors.push(format!("{stage} 清理收到非期望消息：{other:?}")),
             }
         }
-        let joined_count = worker_results.len();
+        let joined_count = worker_results
+            .iter()
+            .filter(|(_, result)| match result {
+                Err(RuntimeError::WorkerJoinPending { .. }) => false,
+                Err(RuntimeError::WorkerJoinFailed { child_released, .. }) => *child_released,
+                _ => true,
+            })
+            .count();
         let missing_groups: Vec<_> = group_finals
             .iter()
             .enumerate()
@@ -3490,6 +3891,36 @@ impl World {
             ));
             self.dead_worker_results.extend(worker_results);
         } else {
+            let all_children_released = worker_results.iter().all(|(_, result)| match result {
+                Err(RuntimeError::WorkerJoinPending { .. }) => false,
+                Err(RuntimeError::WorkerJoinFailed { child_released, .. }) => *child_released,
+                _ => true,
+            });
+            if matches!(mode, FatalCleanupMode::Queued | FatalCleanupMode::PendingStartBeforeFinal)
+                && all_children_released
+            {
+                match reconcile::verify_failed_tick_rollback(
+                    &exit_context,
+                    self.n_groups,
+                    self.n_stocks,
+                    &group_finals,
+                    &desk_finals,
+                ) {
+                    Ok(proof) => match reconcile::reconcile_worker_results(&mut worker_results, &proof) {
+                        Ok(_) => {}
+                        Err(failure) => errors.push(format!(
+                            "retained worker messages 未对账，全部原载荷均继续保留：{}",
+                            failure.detail()
+                        )),
+                    },
+                    Err(failure) => errors.push(format!(
+                        "全体 worker Abort 证明不足，所有 retained 消息继续保留且不标记资产对账：{}",
+                        failure.detail()
+                    )),
+                }
+            } else if matches!(mode, FatalCleanupMode::Queued | FatalCleanupMode::PendingStartBeforeFinal) {
+                errors.push("全体 worker 仍有 child 未确认退出；不运行资产对账并保留所有下行载荷".to_owned());
+            }
             self.dead_finals = Some(ShutdownReport {
                 group_finals: group_finals
                     .into_iter()
@@ -3527,9 +3958,36 @@ impl World {
                 other => other,
             }
         } else {
+            if matches!(&error, RuntimeError::HostAborted { .. }) {
+                return RuntimeError::HostAbortedCleanup {
+                    primary: Box::new(error),
+                    detail,
+                };
+            }
             RuntimeError::ProtocolInvariant { detail }
         }
     }
+    fn recv_world_up(&mut self, phase: Phase) -> Result<UpMsg, RuntimeError> {
+        #[cfg(test)]
+        let result = if phase == Phase::Drain && std::mem::take(&mut self.drain_host_abort_for_test) {
+            Err(RuntimeError::HostAborted { phase, who: None })
+        } else {
+            recv_deadline(&self.up_rx, phase, &self.deadline)
+        };
+        #[cfg(not(test))]
+        let result = recv_deadline(&self.up_rx, phase, &self.deadline);
+        if let Err(error @ RuntimeError::HostAborted { .. }) = &result {
+            self.mark_host_aborted(error);
+        }
+        result
+    }
+
+    fn mark_host_aborted(&mut self, error: &RuntimeError) {
+        self.dead_reason = Some(format!("LibOS 永久故障，World 不可重试：{error}"));
+        self.fault_domain.abort();
+        self.sever();
+    }
+
     /// 收束一轮；TaskDied ⇒ 撤退 + 收齐 Final + join + `resume_unwind` 原 payload
     /// （不吞、不改写）。收集失败不丢原 payload：stderr 登记后仍 resume。
     fn converge_or_die(
@@ -3544,7 +4002,7 @@ impl World {
             self.n_stocks,
             tick,
             round,
-            &self.watchdog,
+            &self.deadline,
         );
         match outcome {
             RoundOutcome::Converged(ev) => Ok(*ev),
@@ -3607,6 +4065,10 @@ impl World {
                     FatalCleanupMode::Queued,
                     None,
                 ))
+            }
+            RoundOutcome::Failed(error @ RuntimeError::HostAborted { .. }) => {
+                self.mark_host_aborted(&error);
+                Err(error)
             }
             RoundOutcome::Failed(e) => {
                 self.abort_tick(tick);
@@ -4020,17 +4482,30 @@ impl World {
             projection,
         );
         if let Err(error) = &result {
-            if let Err(rollback_error) =
-                self.rollback_day_end_participants(day_final_tick, &mut progress)
-            {
-                let detail = format!("日结失败且撤销未完整确认：{error}；{rollback_error}");
-                self.dead_reason = Some(detail.clone());
-                result = Err(RuntimeError::ProtocolInvariant { detail });
-            } else if matches!(
-                error,
-                RuntimeError::SendFailed { .. } | RuntimeError::WorkerFailed { .. }
-            ) {
-                self.dead_reason = Some(format!("日结参与者断连，不可继续运行：{error}"));
+            let host_aborted = matches!(error, RuntimeError::HostAborted { .. });
+            if host_aborted && !self.is_terminal() {
+                self.mark_host_aborted(error);
+            }
+            if !host_aborted {
+                if let Err(rollback_error) =
+                    self.rollback_day_end_participants(day_final_tick, &mut progress)
+                {
+                    let detail = format!("日结失败且撤销未完整确认：{error}；{rollback_error}");
+                    self.dead_reason = Some(detail.clone());
+                    let combined = match rollback_error {
+                        host_abort @ RuntimeError::HostAborted { .. } => RuntimeError::DayEndRollbackHostAborted {
+                            original: Box::new(error.clone()),
+                            host_abort: Box::new(host_abort),
+                        },
+                        _ => RuntimeError::ProtocolInvariant { detail },
+                    };
+                    result = Err(combined);
+                } else if matches!(
+                    error,
+                    RuntimeError::SendFailed { .. } | RuntimeError::WorkerFailed { .. }
+                ) {
+                    self.dead_reason = Some(format!("日结参与者断连，不可继续运行：{error}"));
+                }
             }
             self.drained_lifecycle.clear();
             self.drained_auction.clear();
@@ -4098,7 +4573,11 @@ impl World {
         let mut received = vec![false; expected.len()];
         let mut left = expected.len();
         while left > 0 {
-            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+            #[cfg(test)]
+            if std::mem::take(&mut self.day_end_rollback_host_abort_for_test) {
+                self.drain_host_abort_for_test = true;
+            }
+            match self.recv_world_up(Phase::Drain)? {
                 UpMsg::DayEndAborted { who, tick: actual } => {
                     let index = expected
                         .iter()
@@ -4201,7 +4680,7 @@ impl World {
                     detail: format!("【测试注入】收到 {drained} 个真实 DeskDrained 后收集失败"),
                 });
             }
-            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+            match self.recv_world_up(Phase::Drain)? {
                 UpMsg::DeskDrained {
                     stock,
                     fee_sink,
@@ -4361,7 +4840,12 @@ impl World {
         let mut group_hashes: Vec<(GroupIdx, u64)> = Vec::with_capacity(self.n_groups);
         let mut done = 0usize;
         while done < self.n_groups {
-            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+            #[cfg(test)]
+            if self.day_end_group_host_abort_after == Some(done) {
+                self.day_end_group_host_abort_after = None;
+                self.drain_host_abort_for_test = true;
+            }
+            match self.recv_world_up(Phase::Drain)? {
                 UpMsg::GroupDayDone {
                     group,
                     day: actual_day,
@@ -4482,7 +4966,7 @@ impl World {
                 }
                 let mut drained = 0usize;
                 while drained < self.n_stocks {
-                    match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+                    match recv_deadline(&self.up_rx, Phase::Drain, &self.deadline)? {
                         UpMsg::DeskDrained {
                             stock,
                             drained_minute_bars,
@@ -4552,7 +5036,7 @@ impl World {
     }
 
     /// 收齐 G+N Final（worker 退出路径必发）。缺口（worker 未发即消亡）由
-    /// 看门狗/断连显式暴露，不静默。
+    /// deadline 或断连均显式暴露，不静默。
     fn collect_finals(&mut self) -> Result<ShutdownReport, RuntimeError> {
         let mut group_finals: Vec<Option<GroupFinalState>> =
             (0..self.n_groups).map(|_| None).collect();
@@ -4560,7 +5044,7 @@ impl World {
             (0..self.n_stocks).map(|_| None).collect();
         let mut left = self.n_groups + self.n_stocks;
         while left > 0 {
-            let msg = recv_deadline(&self.up_rx, Phase::FinalCollection, &self.watchdog)?;
+            let msg = recv_deadline(&self.up_rx, Phase::FinalCollection, &self.deadline)?;
             match msg {
                 UpMsg::GroupFinal(f) => {
                     let idx = f.group as usize;
@@ -4646,46 +5130,76 @@ impl World {
         Ok(report)
     }
 
+    fn joined_exit_result(
+        exit: OwnedWorkerExit,
+        #[cfg(all(test, not(target_family = "wasm")))] capture: Option<native_handoff_capture::Capture>,
+        deadline: crate::clock::Instant,
+        context: ExitReconcileContext,
+    ) -> (WorkerId, Result<(), RuntimeError>) {
+        #[cfg(all(test, not(target_family = "wasm")))]
+        if let Some(capture) = capture {
+            return native_handoff_capture::capture_exit(&capture, exit);
+        }
+        settle_worker_exit(exit, deadline, context)
+    }
+
     fn join_worker_results(&mut self) -> Vec<(WorkerId, Result<(), RuntimeError>)> {
+        self.join_worker_results_with_context(ExitReconcileContext {
+            phase: ExitReconcilePhase::Shutdown,
+            last_committed_tick: Some(self.global.committed_tick),
+            active_tick: None,
+            round: None,
+            candidate_unpublished: true,
+        })
+    }
+
+    pub(super) fn join_worker_results_with_context(
+        &mut self,
+        context: ExitReconcileContext,
+    ) -> Vec<(WorkerId, Result<(), RuntimeError>)> {
+        let settle_deadline = crate::clock::Instant::now() + self.deadline.limit_for(Phase::Drain);
         std::mem::take(&mut self.handles)
             .into_iter()
             .map(|(who, handle)| {
-                let result = match handle.join() {
-                    Ok(result) => result,
-                    Err(error) => {
-                        #[cfg(not(target_family = "wasm"))]
-                        let detail = prepared_stop::panic_detail(error.as_ref());
-                        #[cfg(target_family = "wasm")]
-                        let detail = error.to_string();
-                        Err(RuntimeError::ProtocolInvariant {
-                            detail: format!("worker {who} join 失败：{detail}"),
-                        })
+                let result = match join_world_worker(who, handle, settle_deadline, context.clone()) {
+                    Ok((_actual, exit)) => {
+                        let (actual, result) = Self::joined_exit_result(
+                            exit,
+                            #[cfg(all(test, not(target_family = "wasm")))]
+                            self.native_handoff_capture.clone(),
+                            settle_deadline,
+                            context.clone(),
+                        );
+                        debug_assert_eq!(actual, who);
+                        result
                     }
+                    Err(error) => Err(error),
                 };
                 (who, result)
             })
             .collect()
     }
 
-    #[cfg(target_family = "wasm")]
     fn stop_permanently(&mut self) {
-        wasm_shutdown::permanent_stop(&self.worker_shutdown, &mut self.shutdown_wake);
+        wasm_shutdown::world_permanent_stop(&self.worker_shutdown, &mut self.shutdown_wake);
         self.group_txs.clear();
         self.desk_txs.clear();
     }
 
-    /// 切断协调者下行通道；wasm 先向互持Sender的组和交易部发送永久停止消息。
+    /// 通知通道停止并切断协调者下行。
     pub fn sever(&mut self) {
-        #[cfg(target_family = "wasm")]
         self.stop_permanently();
-        #[cfg(not(target_family = "wasm"))]
-        {
-            // Sol 终审三审：置永久关停（worker_recv 分片窗口内观察退出）——
-            // sever 后下行断连互等（组↔部互持 clone），消息不可达只能走标记。
-            self.worker_shutdown.store(true, Ordering::SeqCst);
-            self.group_txs.clear();
-            self.desk_txs.clear();
-        }
+    }
+}
+
+#[cfg(any(test, target_family = "wasm"))]
+fn wasm_fatal_join_failure(who: WorkerId, error: std::io::Error) -> RuntimeError {
+    RuntimeError::WorkerJoinFailed {
+        who,
+        detail: format!("WASM join kind={:?}；{error}；可能为 hard trap，receiver 未恢复", error.kind()),
+        receiver_recovered: false,
+        child_released: false,
+        panic_payload: None,
     }
 }
 
@@ -4697,25 +5211,52 @@ impl Drop for World {
     /// Sol 终审二审阻断 2：**先置全局中止标记再 join**——sever 后下行
     /// sender 已全部 drop（Shutdown 不可达），worker 的 recv 断连分支
     /// 本可立即退出，但处于超时等待中的 worker（正常档 5s/测试注入
-    /// 档更长）须凭 abort 标记在超时点干净退出（worker_recv 的
-    /// Timeout+abort 分支），否则 Drop 的 join 被拖到看门狗满档——
+    /// 档更长）须凭 abort 标记在超时点干净退出（LibOS stop/fault 通知分支），否则 Drop 的 join 被拖到deadline 到期——
     /// sol3_install_candles 的 10 秒硬上限实测击穿。断连检测语义
     /// 不变（P1 时代的通道面一致性守卫——send 侧显式报错不受影响）。
     fn drop(&mut self) {
-        #[cfg(target_family = "wasm")]
-        self.stop_permanently();
-        #[cfg(not(target_family = "wasm"))]
-        {
-            self.worker_shutdown.store(true, Ordering::SeqCst);
-            for tx in &self.group_txs {
-                let _ = tx.send(GroupIn::Shutdown);
-            }
-            for tx in &self.desk_txs {
-                let _ = tx.send(DeskMsg::Shutdown);
+        if let Some(report) = self.dead_finals.take() {
+            for (_, result) in report.worker_results {
+                if let Err(error) = result {
+                    retain_unreported_error(error);
+                }
             }
         }
-        for (_, handle) in std::mem::take(&mut self.handles) {
-            let _ = handle.join();
+        for (_, result) in std::mem::take(&mut self.dead_worker_results) {
+            if let Err(error) = result {
+                retain_unreported_error(error);
+            }
+        }
+        wasm_shutdown::permanent_stop(&self.worker_shutdown, &mut self.shutdown_wake);
+        self.group_txs.clear();
+        self.desk_txs.clear();
+        let settle_deadline = crate::clock::Instant::now() + self.deadline.limit_for(Phase::Drain);
+        for (who, handle) in std::mem::take(&mut self.handles) {
+            match join_world_worker(who, handle, settle_deadline, ExitReconcileContext {
+                phase: ExitReconcilePhase::Drop,
+                last_committed_tick: Some(self.global.committed_tick),
+                active_tick: None,
+                round: None,
+                candidate_unpublished: true,
+            }) {
+                Ok((_actual, exit)) => {
+                    let (_, result) = Self::joined_exit_result(
+                        exit,
+                        #[cfg(all(test, not(target_family = "wasm")))]
+                        self.native_handoff_capture.clone(),
+                        settle_deadline,
+                        ExitReconcileContext { phase: ExitReconcilePhase::Drop, last_committed_tick: Some(self.global.committed_tick), active_tick: None, round: None, candidate_unpublished: true },
+                    );
+                    if let Err(error) = result {
+                        eprintln!("World Drop 回收 worker {who} 失败：{error}");
+                        retain_unreported_error(error);
+                    }
+                }
+                Err(error) => {
+                    eprintln!("World Drop 未恢复 worker exit：{error}");
+                    retain_unreported_error(error);
+                }
+            }
         }
     }
 }
@@ -4820,14 +5361,22 @@ mod failed_cleanup_tests {
         );
         // 只置换真实上行的交错：先交付交易部 Failed，再交付同轮真实 GroupReport。
         // 不合成错误或报告，避免依赖 OS 调度偶然命中历史撤退窗口。
-        let (relay_tx, relay_rx) = channel();
+        let (relay_tx, relay_rx) = super::upstream::channel()
+            .expect("测试上行交错 mailbox 创建成功");
         let original_rx = std::mem::replace(&mut world.up_rx, relay_rx);
         let relay = std::thread::spawn(move || {
+            let relay_deadline = DeadlineConfig {
+                normal: Duration::from_secs(2),
+                long: Duration::from_secs(2),
+            };
             let mut pending = Vec::new();
             let failure = loop {
-                let message = original_rx
-                    .recv_timeout(Duration::from_secs(2))
-                    .expect("真实交易部失败应有限到达");
+                let message = super::upstream::recv_up_deadline(
+                    &original_rx,
+                    Phase::Drain,
+                    &relay_deadline,
+                )
+                .expect("真实交易部失败应有限到达");
                 if matches!(
                     &message,
                     UpMsg::Failed {
@@ -4841,9 +5390,12 @@ mod failed_cleanup_tests {
             };
             while !pending.iter().any(|m| matches!(m, UpMsg::GroupReport(_))) {
                 pending.push(
-                    original_rx
-                        .recv_timeout(Duration::from_secs(2))
-                        .expect("真实组报告应有限到达"),
+                    super::upstream::recv_up_deadline(
+                        &original_rx,
+                        Phase::Drain,
+                        &relay_deadline,
+                    )
+                    .expect("真实组报告应有限到达"),
                 );
             }
             relay_tx.send(failure).expect("失败接收端存活");
@@ -4852,9 +5404,19 @@ mod failed_cleanup_tests {
                     return;
                 }
             }
-            while let Ok(message) = original_rx.recv() {
-                if relay_tx.send(message).is_err() {
-                    return;
+            loop {
+                match super::upstream::recv_up_deadline(
+                    &original_rx,
+                    Phase::Drain,
+                    &relay_deadline,
+                ) {
+                    Ok(message) => {
+                        if relay_tx.send(message).is_err() {
+                            return;
+                        }
+                    }
+                    Err(RuntimeError::Disconnected { .. }) => return,
+                    Err(error) => panic!("上行交错 relay 收取真实消息失败：{error}"),
                 }
             }
         });

@@ -4,20 +4,11 @@ use std::sync::mpsc::{channel, RecvTimeoutError};
 use std::sync::Arc;
 use std::time::Duration;
 
-#[derive(Debug, PartialEq)]
-enum GroupMessage {
-    Shutdown,
-}
-#[derive(Debug, PartialEq)]
-enum DeskMessage {
-    Shutdown,
-}
-
 #[test]
 fn permanent_stop_wakes_mutually_held_senders() {
     let shutdown = Arc::new(AtomicBool::new(false));
-    let (group_tx, group_rx) = channel();
-    let (desk_tx, desk_rx) = channel();
+    let (group_tx, group_rx) = crate::libos::downlink::channel::<u8>();
+    let (desk_tx, desk_rx) = crate::libos::downlink::channel::<u8>();
     let (ready_tx, ready_rx) = channel();
     let (done_tx, done_rx) = channel();
     let group = std::thread::spawn({
@@ -27,8 +18,7 @@ fn permanent_stop_wakes_mutually_held_senders() {
         let flag = shutdown.clone();
         move || {
             ready.send(()).unwrap();
-            assert_eq!(group_rx.recv().unwrap(), GroupMessage::Shutdown);
-            assert!(flag.load(Ordering::SeqCst));
+            assert!(group_rx.receive(&flag).unwrap().is_none());
             drop(retained_desk);
             done.send(()).unwrap();
         }
@@ -38,8 +28,7 @@ fn permanent_stop_wakes_mutually_held_senders() {
         let flag = shutdown.clone();
         move || {
             ready_tx.send(()).unwrap();
-            assert_eq!(desk_rx.recv().unwrap(), DeskMessage::Shutdown);
-            assert!(flag.load(Ordering::SeqCst));
+            assert!(desk_rx.receive(&flag).unwrap().is_none());
             drop(retained_group);
             done_tx.send(()).unwrap();
         }
@@ -49,51 +38,46 @@ fn permanent_stop_wakes_mutually_held_senders() {
     shutdown.store(true, Ordering::SeqCst);
     assert_eq!(
         done_rx.try_recv(),
-        Err(std::sync::mpsc::TryRecvError::Empty)
+        Err(std::sync::mpsc::TryRecvError::Disconnected)
     );
-    let mut wake = Some(WakeSenders::new(
-        vec![group_tx],
-        vec![desk_tx],
-        || GroupMessage::Shutdown,
-        || DeskMessage::Shutdown,
-    ));
+    let mut wake = Some(WakeSenders::new(vec![group_tx.clone()], vec![desk_tx.clone()]));
     permanent_stop(&shutdown, &mut wake);
     assert_ne!(
         done_rx.recv_timeout(Duration::from_millis(100)),
         Err(RecvTimeoutError::Timeout),
-        "永久标记不能唤醒互持Sender的裸recv；必须向全部worker发送Shutdown"
+        "永久停止通知必须唤醒互相持有 sender 的 worker"
     );
     done_rx.recv_timeout(Duration::from_secs(1)).unwrap();
     group.join().unwrap();
     desk.join().unwrap();
     assert!(wake.is_none());
+    assert_eq!(group_tx.send(1).unwrap_err().0, 1);
+    assert_eq!(desk_tx.send(2).unwrap_err().0, 2);
 }
 
 #[test]
 fn permanent_stop_takes_wake_once_and_dead_receiver_does_not_short_circuit() {
     let flag = AtomicBool::new(false);
-    let (dead_tx, dead_rx) = channel::<GroupMessage>();
+    let (dead_tx, dead_rx) = crate::libos::downlink::channel::<u8>();
     drop(dead_rx);
-    let (group_tx, group_rx) = channel();
-    let (desk_tx, desk_rx) = channel();
+    let (group_tx, group_rx) = crate::libos::downlink::channel::<u8>();
+    let (desk_tx, desk_rx) = crate::libos::downlink::channel::<u8>();
     let mut wake = Some(WakeSenders::new(
         vec![dead_tx, group_tx],
         vec![desk_tx],
-        || GroupMessage::Shutdown,
-        || DeskMessage::Shutdown,
     ));
     permanent_stop(&flag, &mut wake);
     assert!(flag.load(Ordering::SeqCst));
-    assert_eq!(group_rx.try_recv(), Ok(GroupMessage::Shutdown));
-    assert_eq!(desk_rx.try_recv(), Ok(DeskMessage::Shutdown));
+    assert!(matches!(group_rx.try_receive().unwrap(), Err(std::sync::mpsc::TryRecvError::Disconnected)));
+    assert!(matches!(desk_rx.try_receive().unwrap(), Err(std::sync::mpsc::TryRecvError::Disconnected)));
     assert!(wake.is_none());
     permanent_stop(&flag, &mut wake);
     assert_eq!(
-        group_rx.try_recv(),
+        group_rx.try_receive().unwrap(),
         Err(std::sync::mpsc::TryRecvError::Disconnected)
     );
     assert_eq!(
-        desk_rx.try_recv(),
+        desk_rx.try_receive().unwrap(),
         Err(std::sync::mpsc::TryRecvError::Disconnected)
     );
 }
@@ -102,7 +86,7 @@ struct Handle {
     thread: std::thread::JoinHandle<Result<(), String>>,
     joins: Arc<AtomicUsize>,
 }
-type Guard = ConstructionGuard<GroupMessage, DeskMessage, String, Handle>;
+type Guard = ConstructionGuard<u8, u8, String, Handle>;
 
 fn join(handle: Handle) -> Result<(), String> {
     let result = handle.thread.join();
@@ -124,15 +108,13 @@ fn fixture(
     let joins = Arc::new(AtomicUsize::new(0));
     let (ready_tx, ready_rx) = channel();
     let (done_tx, done_rx) = channel();
-    let (group_txs, group_rxs): (Vec<_>, Vec<_>) = (0..groups).map(|_| channel()).unzip();
-    let (desk_txs, desk_rxs): (Vec<_>, Vec<_>) = (0..desks).map(|_| channel()).unzip();
+    let (group_txs, group_rxs): (Vec<_>, Vec<_>) = (0..groups).map(|_| crate::libos::downlink::channel()).unzip();
+    let (desk_txs, desk_rxs): (Vec<_>, Vec<_>) = (0..desks).map(|_| crate::libos::downlink::channel()).unzip();
     let mut guard = Guard::new(
         flag.clone(),
         WakeSenders::new(
             group_txs.clone(),
             desk_txs.clone(),
-            || GroupMessage::Shutdown,
-            || DeskMessage::Shutdown,
         ),
         groups + desks,
         join,
@@ -144,8 +126,7 @@ fn fixture(
         let shutdown = flag.clone();
         let handle = std::thread::spawn(move || {
             ready.send(()).unwrap();
-            assert_eq!(receiver.recv().unwrap(), GroupMessage::Shutdown);
-            assert!(shutdown.load(Ordering::SeqCst));
+            assert!(receiver.receive(&shutdown).unwrap().is_none());
             drop(retained);
             done.send(()).unwrap();
             Ok(())
@@ -165,8 +146,7 @@ fn fixture(
         let shutdown = flag.clone();
         let handle = std::thread::spawn(move || {
             ready.send(()).unwrap();
-            assert_eq!(receiver.recv().unwrap(), DeskMessage::Shutdown);
-            assert!(shutdown.load(Ordering::SeqCst));
+            assert!(receiver.receive(&shutdown).unwrap().is_none());
             drop(retained);
             done.send(()).unwrap();
             Ok(())

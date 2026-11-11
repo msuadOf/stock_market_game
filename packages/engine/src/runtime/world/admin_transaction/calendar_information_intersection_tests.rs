@@ -893,7 +893,7 @@ fn mixed_pending_start_fatal_cleanup_fences_real_producers_before_desk_abort() {
 fn pending_start_rejection_intrinsic_metadata_must_match_the_real_calendar_round() {
     use crate::runtime::coordinator::{converge_round, RoundOutcome};
     use crate::runtime::protocol::{PendingStartRejection, UpMsg, WorkerId};
-    use crate::runtime::watchdog::WatchdogConfig;
+    use crate::runtime::wait_contract::DeadlineConfig;
     use std::sync::{mpsc, Arc};
     use std::time::Duration;
 
@@ -911,7 +911,7 @@ fn pending_start_rejection_intrinsic_metadata_must_match_the_real_calendar_round
         ("错prior_tick", 0, 102, 100, 0),
         ("错round", 0, 102, 101, 1),
     ];
-    let watchdog = WatchdogConfig {
+    let deadline = DeadlineConfig {
         normal: Duration::from_secs(1),
         long: Duration::from_secs(2),
     };
@@ -925,7 +925,7 @@ fn pending_start_rejection_intrinsic_metadata_must_match_the_real_calendar_round
             error: source_error.clone(),
         }))
         .unwrap();
-        let outcome = converge_round(&rx, 3, 2, 102, round, &watchdog);
+        let outcome = converge_round(&rx, 3, 2, 102, round, &deadline);
         match outcome {
             RoundOutcome::Failed(RuntimeError::WorkerFailed { who, error }) => {
                 assert_eq!(who, WorkerId::Group(group), "{case}: 必须保留来源组身份");
@@ -949,7 +949,7 @@ fn pending_start_rejection_intrinsic_metadata_must_match_the_real_calendar_round
         error: source_error.clone(),
     }))
     .unwrap();
-    match converge_round(&rx, 3, 2, 102, 0, &watchdog) {
+    match converge_round(&rx, 3, 2, 102, 0, &deadline) {
         RoundOutcome::PendingStartRejected(rejection) => {
             assert_eq!(rejection.group, 1);
             assert_eq!(rejection.tick, 102);

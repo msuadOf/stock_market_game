@@ -52,6 +52,10 @@ Web WASM 宿主的保守内存总账上限为 3 GiB，每个产品 `WebAssembly.
 
 Web WASM 的 panic 早期死亡通知与有界 tombstone 采用受控 std 构建，诊断记录可能缺席或尚未完成；hard trap 由宿主报告。固定工具链、消息限制、构建平台与尚待验证的边界见 [ADR-0044](decisions/0044-wasm-panic-tombstone.md)。该 ADR 仍为 draft，不能将局部探针视为完整产品验收。
 
+正式 WASM facade 初始化会建立 LibOS 故障域并导出共享内存布局；启用 runtime 时，宿主必须登记该布局并在故障时向登记槽广播。缺少正式布局导出的旧 WASM 产物无法启用 runtime 或通过相应恢复能力预检，须重新构建；存档格式本身没有因此改变。默认 Worker 通道仍使用旧等待路径，因此正式导出与握手不代表 LibOS 等待已成为默认路径，也不代表故障后的在途资源已安全回收。
+
+协调者上行接收已通过 LibOS 共同入口：Native 使用 std 的阻塞接收，默认 WASM 使用登记到故障域的通知通道。Worker 下行等待及故障后的在途资源移交仍在迁移，当前不能称整个 runtime 已统一至 LibOS。
+
 混合日历 raw runtime 接口仍在独立审查与组合验证中：`World::spawn(spec, calendar)` 显式接收 `TradingCalendar`；`calendar_start_date` 与当前 `civil_start_date` 是不同事实。`run_ticks(n)` 在执行前拒绝跨当前自然日的区间，raw caller 显式完成日终并设置下一自然日；生产 `GameSession` 仍拥有自然日经营与提交权威。
 
 每个 tick 的失败须显式报告，不能发布部分结果；自然日更新是独立事务。并发受理顺序和重放边界见 [ADR-0017](decisions/0017-escrow-parallel-tick.md) 与 [testing.md](testing.md)。不以固定 seed 承诺不同并发到达轨迹产生相同成交结果。

@@ -88,7 +88,7 @@ function parseFailurePayload(value: unknown): EngineFailurePayload {
     throw new Error("Tauri engine-failure 字段不符合契约");
   }
   if (!Array.isArray(source.events) || source.events.length !== 0) throw new Error("Tauri engine-failure 不得携带旧版 flat events");
-  const details = Object.fromEntries(Object.entries(source).filter(([key]) => ["code", "where", "message", "cause", "context", "recoverable", "recoveryActions"].includes(key)));
+  const details = Object.fromEntries(Object.entries(source).filter(([key]) => ["code", "where", "message", "stack", "cause", "context", "recoverable", "recoveryActions"].includes(key)));
   const failure = parseHostFailure(details, "tauri-host.engine-failure");
   return {
     session_id: text(source.session_id, "Tauri engine-failure.session_id"),

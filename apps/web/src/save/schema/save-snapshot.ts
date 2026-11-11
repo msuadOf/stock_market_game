@@ -39,9 +39,22 @@ function money(value: unknown, path: string): string {
   return parseCanonicalMoney(value, path)
 }
 
+export const SAVE_SNAPSHOT_KEYS = ["seq", "tick", "markets", "accounts", "daily_candles", "active_daily_candles"] as const
+
+export function parseSaveAccount(value: unknown, path: string): SaveAccount {
+  const account = record(value, path)
+  exact(account, ["cash", "positions"], path)
+  const cash = money(account.cash, `${path}.cash`)
+  if (BigInt(cash) < 0n) throw new Error(`存档 ${path}.cash 不能为负数`)
+  return {
+    cash,
+    positions: map(account.positions, `${path}.positions`, stockKey, parsePosition),
+  }
+}
+
 export function parseSaveSnapshot(value: unknown, path: string): SaveSnapshot {
   const parsed = record(value, path)
-  exact(parsed, ["seq", "tick", "markets", "accounts", "daily_candles", "active_daily_candles"], path)
+  exact(parsed, SAVE_SNAPSHOT_KEYS, path)
   const markets = map(parsed.markets, `${path}.markets`, stockKey, (item, itemPath) => {
     const market = record(item, itemPath)
     exact(market, ["last_price", "last_close"], itemPath)
@@ -50,16 +63,7 @@ export function parseSaveSnapshot(value: unknown, path: string): SaveSnapshot {
       last_close: money(market.last_close, `${itemPath}.last_close`),
     }
   })
-  const accounts = map(parsed.accounts, `${path}.accounts`, safeIntegerKey, (item, itemPath) => {
-    const account = record(item, itemPath)
-    exact(account, ["cash", "positions"], itemPath)
-    const cash = money(account.cash, `${itemPath}.cash`)
-    if (BigInt(cash) < 0n) throw new Error(`存档 ${itemPath}.cash 不能为负数`)
-    return {
-      cash,
-      positions: map(account.positions, `${itemPath}.positions`, stockKey, parsePosition),
-    }
-  })
+  const accounts = map(parsed.accounts, `${path}.accounts`, safeIntegerKey, parseSaveAccount)
   return {
     seq: integer(parsed.seq, `${path}.seq`, 0),
     tick: integer(parsed.tick, `${path}.tick`, 0),

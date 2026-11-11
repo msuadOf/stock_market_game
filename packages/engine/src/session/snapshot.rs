@@ -136,6 +136,13 @@ impl GameSession {
         self.snapshot_inner(false, false)
     }
 
+    /// 诊断专用：包含全量 NPC 与玩家账户的已提交快照，以及账户预留资源。
+    /// 不用于产品运行时视图，避免把会员过滤后的公开快照误作全账户账本。
+    #[cfg(feature = "verification-harness")]
+    pub fn verification_snapshot_including_npc_accounts(&self) -> Snapshot {
+        self.snapshot_inner(false, true)
+    }
+
     pub(super) fn snapshot_inner(
         &self,
         include_daily_candles: bool,

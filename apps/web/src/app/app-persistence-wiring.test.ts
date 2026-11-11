@@ -16,7 +16,7 @@ test("App save controls schedule day-end persistence rather than writing intrada
   const commands = readFileSync(new URL("./useSaveCommands.ts", import.meta.url), "utf8");
   const save = commands.slice(commands.indexOf("async function handleSave()"), commands.indexOf("async function handleLoad()"));
   const file = commands.slice(commands.indexOf("async function handleSaveFile()"), commands.indexOf("async function handleLoadFile()"));
-  assert.ok(source.includes("useSaveCommands({ hostRef, initialSaveSourceRef, dayEndPersistenceRef"));
+  assert.ok(source.includes("useSaveCommands({ chunkedRestore, hostRef, initialSaveSourceRef, dayEndPersistenceRef"));
   assert.equal(save.includes(".save("), false);
   assert.equal(file.includes(".save("), false);
   assert.ok(file.includes("selectDayEndFileTarget()"));
@@ -27,7 +27,7 @@ test("App restores its initial archive before starting the memory session", () =
   const source = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
   const lifecycle = readFileSync(new URL("./useSessionHostLifecycle.ts", import.meta.url), "utf8");
   const initialization = lifecycle.slice(lifecycle.indexOf("let ownedHost"), lifecycle.indexOf("function createSessionHost("));
-  assert.ok(source.includes("useSessionHostLifecycle({ hostRef, initialSaveSourceRef, dayEndPersistenceRef"));
+  assert.ok(source.includes("useSessionHostLifecycle({ chunkedRestore, hostRef, initialSaveSourceRef, dayEndPersistenceRef"));
   assert.ok(initialization.includes("initialSaveSourceRef.current.read("));
   assert.ok(initialization.includes("await host.load(initialSlot)"));
   assert.ok(initialization.indexOf("await host.load(initialSlot)") < initialization.indexOf("host.start("));

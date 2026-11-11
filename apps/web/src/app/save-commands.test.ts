@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { CompressedLocalStorageSaveRepository } from "../save/save-repository.ts";
+import { isFrozenJsonArchive } from "../save/save-schema.ts";
 import test from "node:test";
 import { createSaveCommands, type SaveCommandPorts } from "./useSaveCommands.ts";
 import { InitialSaveSource, SessionReplacementGate } from "../save/session-replacement.ts";
@@ -26,7 +28,7 @@ function fixture(archive = commandDayEndArchiveFixture()) {
     fatalHostErrorRef: { current: (value) => { calls.push(`fatal:${String(value)}`); } },
     activeSetup: DEFAULT_SETUP, startDateDraft: "2031-02-03", priceCageEnabledDraft: false, floatAllocationDraft: DEFAULT_SETUP.float_allocation,
     loadFromFile: async beforeRead => { await beforeRead?.(); return archive; }, selectDayEndFileTarget: async () => ({ write: async () => { calls.push("file-write"); } }),
-    getBrowserSaveRepository: () => ({ load: async () => archive }), resetMarketHistory: () => { calls.push("history"); },
+    getBrowserSaveRepository: () => ({ load: async () => archive, loadFrozen: async () => archive }), resetMarketHistory: () => { calls.push("history"); },
     configureMarketTiming: () => { calls.push("timing"); },
     refreshPlayerOrders: async () => { calls.push("orders-refresh"); }, clearPlayerOrders: () => { calls.push("orders-clear"); },
     setNotice: (value) => { notices.push(value); }, setError: (value) => { calls.push(`error:${String(value)}`); }, setReady: (value) => { calls.push(`ready:${value}`); },
@@ -38,12 +40,26 @@ function fixture(archive = commandDayEndArchiveFixture()) {
   return { calls, notices, archive, host, ports, commands: createSaveCommands(ports), setup: () => setup };
 }
 
+test("文件选择期间进入重载冻结后不失效日终队列，明确提示重试", { timeout: 10000 }, async () => {
+  const f = fixture(), entered = deferred<void>(), chosen = deferred<StrictSaveEnvelope | null>();
+  f.ports.startupTarget = { kind: "wasm" };
+  f.ports.dayEndPersistenceRef.current.install("current");
+  f.ports.loadFromFile = async () => { entered.resolve(); return chosen.promise; };
+  const loading = createSaveCommands(f.ports).loadFile(); await entered.promise;
+  const source = f.ports.initialSaveSourceRef.current, release = source.freezeSelection(source.selectionSignal());
+  chosen.resolve(f.archive); await loading;
+  let written = false;
+  assert.equal(await f.ports.dayEndPersistenceRef.current.completed("current", Promise.resolve(f.archive), async () => { written = true; }), true);
+  assert.equal(written, true); assert.match(f.notices.at(-1)!, /重载交接/);
+  assert.equal(f.calls.includes("session-setup"), false); release();
+});
+
 test("快速槽读档等待点击前的日终写入，首次档案不会误报无存档", { timeout: 10000 }, async () => {
   for (const previous of [null, commandDayEndArchiveFixture()]) {
     const f = fixture(), commit = deferred<void>(), entered = deferred<void>();
     let saved = previous;
     let reads = 0;
-    f.ports.getBrowserSaveRepository = () => ({ load: async () => { reads++; return saved; } });
+    f.ports.getBrowserSaveRepository = () => ({ load: async () => { reads++; return saved; }, loadFrozen: async () => { reads++; return saved; } });
     const queue = f.ports.dayEndPersistenceRef.current;
     queue.install("current");
     const writing = queue.completed("current", Promise.resolve(f.archive), async (_slot, current) => {
@@ -134,7 +150,7 @@ test("旧文件选择异步失败不能覆盖新授权目标的成功提示", { 
 test("读档等待的写入失败不会载入旧快速槽，错误明确展示且允许重试", { timeout: 10000 }, async () => {
   const f = fixture(), commit = deferred<void>(), entered = deferred<void>();
   let reads = 0;
-  f.ports.getBrowserSaveRepository = () => ({ load: async () => { reads++; return f.archive; } });
+  f.ports.getBrowserSaveRepository = () => ({ load: async () => { reads++; return f.archive; }, loadFrozen: async () => { reads++; return f.archive; } });
   const queue = f.ports.dayEndPersistenceRef.current;
   queue.install("current");
   const writing = queue.completed("current", Promise.resolve(f.archive), async () => {
@@ -160,7 +176,7 @@ test("读档等待的写入失败不会载入旧快速槽，错误明确展示�
 test("等待写档时拒绝重复读档，替换宿主后旧操作不读取或取消新局队列", { timeout: 10000 }, async () => {
   const f = fixture(), commit = deferred<void>(), entered = deferred<void>();
   let reads = 0;
-  f.ports.getBrowserSaveRepository = () => ({ load: async () => { reads++; return f.archive; } });
+  f.ports.getBrowserSaveRepository = () => ({ load: async () => { reads++; return f.archive; }, loadFrozen: async () => { reads++; return f.archive; } });
   const queue = f.ports.dayEndPersistenceRef.current;
   queue.install("old");
   const writing = queue.completed("old", Promise.resolve(f.archive), async () => { entered.resolve(); await commit.promise; });
@@ -226,7 +242,7 @@ test("load 失败先同步权威基线；同步失败升级 fatal；旧宿主响
   f.host.refreshBaseline = async () => { throw new Error("同步失败"); }; await f.commands.loadFile();
   assert.ok(f.calls.some((value) => /fatal:文件读档后权威基线同步失败.*同步失败/.test(value)));
   const g = fixture(), pending = deferred<StrictSaveEnvelope | null>(), entered = deferred<void>();
-  g.ports.getBrowserSaveRepository = () => ({ load: () => { entered.resolve(); return pending.promise; } });
+  g.ports.getBrowserSaveRepository = () => ({ load: () => { entered.resolve(); return pending.promise; }, loadFrozen: () => { entered.resolve(); return pending.promise; } });
   const loading = createSaveCommands(g.ports).load();
   await entered.promise;
   g.ports.hostRef.current = null; pending.resolve(g.archive); await loading;
@@ -383,12 +399,34 @@ test("WASM快速槽与文件读档冻结实际X后请求整实例替换，不调
 test("WASM读取失败或取消不消费选择、不换局、不调用旧Memory load", { timeout: 10000 }, async () => {
   for (const operation of ["load", "loadFile"] as const) {
     const f = fixture(); f.ports.startupTarget = { kind: "wasm" };
-    f.ports.getBrowserSaveRepository = () => ({ load: async () => { throw new Error("读取实际X失败"); } });
+    f.ports.getBrowserSaveRepository = () => ({ load: async () => { throw new Error("读取实际X失败"); }, loadFrozen: async () => { throw new Error("读取实际X失败"); } });
     f.ports.loadFromFile = async () => null;
     await createSaveCommands(f.ports)[operation]();
     assert.equal(f.setup(), null); assert.equal(f.ports.initialSaveSourceRef.current.hasExplicitSelection(), false);
     assert.equal(f.calls.includes("load"), false); assert.equal(f.calls.includes("baseline"), false);
     assert.equal(f.calls.includes("ready:false"), false);
     assert.match(f.notices.at(-1)!, operation === "load" ? /读取实际X失败/ : /取消/);
+  }
+});
+
+test("快速槽读取按宿主选择可变或可信冻结档", async () => {
+  for (const target of [{ kind: "wasm" } as const, { kind: "remote", baseUrl: "http://localhost" } as const]) {
+    const f = fixture();
+    let stored: string | null = null;
+    const repo = new CompressedLocalStorageSaveRepository({ getItem: () => stored, setItem: (_key, value) => { stored = value; } }, "save", { encode: async text => text, decode: async text => text });
+    await repo.save(f.archive);
+    f.ports.startupTarget = target;
+    f.ports.getBrowserSaveRepository = () => repo;
+    let remoteArchive: unknown;
+    f.host.load = async slot => { remoteArchive = slot; };
+    await createSaveCommands(f.ports).load();
+    if (target.kind === "wasm") {
+      const selected = await f.ports.initialSaveSourceRef.current.read(async () => null);
+      assert.ok(isFrozenJsonArchive(selected));
+      assert.equal(remoteArchive, undefined);
+    } else {
+      assert.ok(remoteArchive);
+      assert.equal(Object.isFrozen(remoteArchive), false);
+    }
   }
 });

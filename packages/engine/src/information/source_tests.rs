@@ -53,6 +53,60 @@ fn fixture() -> (ClosingEngine, PublicationRequest) {
 }
 
 #[test]
+fn acquisition_after_clone_keeps_original_snapshot_unchanged() {
+    let (closing, request) = fixture();
+    let now = request.published_at;
+    let company = request.company;
+    let mut library = PublicLibrary::new();
+    let id = library.publish_simple_closed(&closing, request).unwrap();
+    let account = crate::AccountId(1);
+    let other_id = PublicationId::new(id.value() + 1);
+    let original = NpcInformationState::from_parts(NpcInformationStateSave {
+        owner: account,
+        companies: [(
+            company,
+            vec![AcquisitionRecord {
+                id: other_id,
+                observed_at: now,
+                kind: AcquiredKind::Report,
+            }],
+        )]
+        .into_iter()
+        .collect(),
+    })
+    .unwrap();
+    let mut edited = original.clone();
+    edited
+        .record_acquisition(account, &library, id, now)
+        .unwrap();
+    assert_eq!(original.acquired_count(), 1);
+    assert_eq!(original.records_for_company(&company)[0].id, other_id);
+    assert_eq!(
+        edited
+            .records_for_company(&company)
+            .iter()
+            .map(|record| record.id)
+            .collect::<Vec<_>>(),
+        vec![id, other_id]
+    );
+    let saved = edited.clone();
+    edited
+        .record_acquisition(
+            account,
+            &library,
+            id,
+            CivilInstant::from_hms(now.date(), 19, 0, 0).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(edited.observed_at_of(id), Some(now));
+    assert_eq!(edited, saved);
+    assert!(std::ptr::eq(
+        &edited.records_for_company(&company)[0],
+        &saved.records_for_company(&company)[0]
+    ));
+}
+
+#[test]
 fn simple_source_preserves_complete_common_reports_and_required_wire() {
     let (closing, request) = fixture();
     let now = request.published_at;

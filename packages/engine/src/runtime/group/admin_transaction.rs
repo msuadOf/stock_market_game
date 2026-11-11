@@ -679,7 +679,7 @@ impl GroupState {
         id: AdminTransactionId,
         phase: AdminPhase,
         input: AdminPrepareInput,
-        up: &Sender<UpMsg>,
+        up: &UpSender<UpMsg>,
         who: super::super::protocol::WorkerId,
     ) -> bool {
         let AdminPrepareInput {

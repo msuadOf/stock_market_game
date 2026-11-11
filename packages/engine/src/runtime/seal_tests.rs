@@ -210,7 +210,7 @@ fn seal_partial_ack_timeout_recovers_with_late_ack_tolerance() {
 fn converge_round_skips_stale_seal_ack() {
     use super::coordinator::converge_round;
     use super::protocol::UpMsg;
-    use super::watchdog::WatchdogConfig;
+    use super::wait_contract::DeadlineConfig;
     use std::sync::mpsc;
     use std::time::Duration;
     let (tx, rx) = mpsc::channel::<UpMsg>();
@@ -255,7 +255,7 @@ fn converge_round_skips_stale_seal_ack() {
         0,
         7,
         0,
-        &WatchdogConfig {
+        &DeadlineConfig {
             normal: Duration::from_secs(1),
             long: Duration::from_secs(2),
         },

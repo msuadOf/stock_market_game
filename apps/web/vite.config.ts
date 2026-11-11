@@ -2,7 +2,7 @@ import { defineConfig, type PluginOption } from 'vite'
 import react from '@vitejs/plugin-react'
 import { createRequire } from 'node:module'
 import { ENGINE_ENV_BROWSER_URL, diagnosticsGluePlugin } from './config/diagnostics-glue.ts'
-import { wasmPackageCapabilityPlugin } from './config/wasm-package-capability.ts'
+import { wasmPackageCapabilityPlugin, wasmPackageGlueCapturePlugin } from './config/wasm-package-capability.ts'
 
 // Rolldown 无法解析 Popper 的 ESM 星号转导出；使用其官方 main 入口，避免修改依赖文件。
 const blueprintRequire = createRequire(createRequire(import.meta.url).resolve('@blueprintjs/core'))
@@ -36,8 +36,11 @@ function crossOriginIsolation(): PluginOption {
   }
 }
 
+const consumedWasmGlueHashes = new Set<string>()
+
 export default defineConfig({
-  plugins: [react(), crossOriginIsolation(), diagnosticsGluePlugin({ packageDirectory: process.env.STOCK_GAME_DIAGNOSTICS_PKG }), wasmPackageCapabilityPlugin()],
+  plugins: [react(), crossOriginIsolation(), diagnosticsGluePlugin({ packageDirectory: process.env.STOCK_GAME_DIAGNOSTICS_PKG }), wasmPackageCapabilityPlugin(consumedWasmGlueHashes)],
+  worker: { plugins: () => [wasmPackageGlueCapturePlugin(consumedWasmGlueHashes)] },
   assetsInclude: ['**/*.wasm'],
   resolve: {
     alias: [

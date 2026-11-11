@@ -1,0 +1,5 @@
+24031ccf174dba1ab8e42f928a0e7368f1beaf0c73f0acc005276b98161d938d  agents/libos-integration/world-benchmark/fact_projection.rs
+37feb963577ee6cdffca125f1b7387e3ce5d4d6ad53587bbdcb8a07607d504a6  agents/libos-integration/world-benchmark/restore-run.mjs
+547a6efdec42237e516c1db09b101f6af4d263ecafac0b09e79fddecfac97711  agents/libos-integration/world-benchmark/restore-verify.test.mjs
+8760a816949068c62a5571838723b26cf153ac0189ebd4f82ece0089659ec5e9  agents/web-architecture-diagnosis/bare-world/src/bin/restore_probe.rs
+baef54da35b92068ef698f0f67d2b05a3d67c44d2c2474883a5c6eceb974b68d  agents/web-architecture-diagnosis/bare-world/Cargo.lock

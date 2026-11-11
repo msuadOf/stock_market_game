@@ -10,6 +10,71 @@ fn game() -> GameSession {
     GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap()
 }
 
+#[cfg(feature = "verification-harness")]
+#[test]
+fn 验证追踪返回原始逐字段字节且不改变业务摘要() {
+    let game = game();
+    let (expected_hash, expected_fields) = super::hash::capture_business_hash_for_test(&game).unwrap();
+    let (actual_hash, actual_fields) = game.verification_business_hash_trace().unwrap();
+    assert_eq!(actual_hash, expected_hash);
+    assert_eq!(actual_fields, expected_fields);
+    assert!(!actual_fields.is_empty());
+    assert_eq!(game.business_state_hash().unwrap(), expected_hash);
+}
+
+#[cfg(feature = "verification-harness")]
+#[test]
+fn 旧档以候选概率重建后保留已存状态() {
+    let original = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+    let bytes = serde_json::to_vec(&original.save().unwrap()).unwrap();
+    let saved = crate::decode_save_slot(&bytes, &crate::SaveDecodeLimits::default()).unwrap();
+    let baseline = GameSession::restore(&saved).unwrap();
+    let (candidate, trace) = crate::strategy::verification_trace_observations(|| {
+        crate::strategy::verification_with_observation_math(
+            |argument| f64::from_bits((-argument.exp_m1()).to_bits() + 1),
+            || GameSession::restore(&saved),
+        )
+    });
+    let candidate = candidate.unwrap();
+    assert!(!trace.is_empty(), "夹具必须实际重建 NPC 概率");
+    assert!(trace.iter().all(|item| item.account_id.is_some() && item.canonical_bits.is_some()));
+    assert_eq!(serde_json::to_value(candidate.save().unwrap()).unwrap(), serde_json::to_value(baseline.save().unwrap()).unwrap());
+}
+
+#[cfg(feature = "verification-harness")]
+#[test]
+fn 验证接口返回真实已提交的交易部记录() {
+    let mut setup = super::npc_working_quote_tests::quote_setup(0);
+    setup.npcs.inst_count = 0;
+    let mut game = GameSession::new(setup, 42).unwrap();
+    assert!(game.verification_latest_runtime_record().is_err(), "尚未运行时不得伪造记录");
+    game.enqueue_player_intent(
+        AccountId(0),
+        Intent::PlaceLimit {code:StockId(0), side:crate::Side::Buy, price:crate::LimitPrice::Fixed(Money::from_cents(995)), qty:100},
+    ).unwrap();
+    game.step().unwrap();
+    let captured = game.verification_latest_runtime_record().unwrap();
+    assert_eq!(captured.tick, game.tick());
+    assert!(!captured.desk_lifecycle.is_empty(), "必须捕获真实挂单生命周期事实");
+    let driver = game.runtime_driver_for_test().unwrap().lock().unwrap();
+    let actual = driver.world_report_log().last().unwrap();
+    assert_eq!(captured.desk_lifecycle, actual.desk_lifecycle);
+    assert_eq!(captured.desk_trades, actual.desk_trades);
+    assert_eq!(captured.desk_receipts, actual.desk_receipts);
+    assert_eq!(captured.group_rejections, actual.group_rejections);
+    assert_eq!(captured.desk_auction, actual.desk_auction);
+    drop(driver);
+    game.step().unwrap();
+    assert_eq!(game.verification_latest_runtime_record().unwrap().tick, game.tick());
+    let fatal = StepFatal::InvariantViolation {
+        description: "验证记录读取失败状态".to_owned(),
+        location: "hash_contract_tests".to_owned(),
+    };
+    game.inject_step_failure(fatal.clone());
+    assert_eq!(game.step().unwrap_err(), fatal);
+    assert!(game.verification_latest_runtime_record().unwrap_err().contains("会话已失败"));
+}
+
 #[test]
 fn ordinary_tick_shadow_shares_report_histories_and_isolates_mutation() {
     let game = game();

@@ -717,12 +717,11 @@ impl GameSession {
                     }
                     let index = usize::from(group.group) * baseline.per_group + *local as usize;
                     let mut snapshot = value.clone();
-                    if let Some(group) = &snapshot.retail_experience {
-                        snapshot.retail_experience =
-                            Some(match self.runtime_retail_experience_for(id) {
-                                Some(existing) => existing.merged_with_group_authority(group),
-                                None => group.clone(),
-                            });
+                    if let (Some(group), Some(existing)) = (
+                        &mut snapshot.retail_experience,
+                        self.runtime_retail_experience_ref(id),
+                    ) {
+                        group.merge_missing_stocks_from(existing);
                     }
                     if personals.insert(*id, (index, *id, snapshot)).is_some() {
                         return Err(invalid("行政INFO候选重复个人态"));

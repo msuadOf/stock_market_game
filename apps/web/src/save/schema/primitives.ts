@@ -2,6 +2,26 @@ import { parseMoney } from "../../utils/money.ts"
 
 export type JsonRecord = Record<string, unknown>
 
+let ownedSaveGraph = false
+
+/** 仅供同步存档入口管理私有 JSON 图；公开对象入口必须显式退出消费作用域。 */
+export function withSaveGraphOwnership<Value>(owned: boolean, operation: () => Value): Value {
+  const previous = ownedSaveGraph
+  ownedSaveGraph = owned
+  try { return operation() }
+  finally { ownedSaveGraph = previous }
+}
+
+/** 字段完整校验成功后，才允许释放私有 raw 子树。 */
+export function parseSaveField<Value>(source: JsonRecord, key: string, parse: (value: unknown) => Value): Value {
+  const parsed = parse(source[key])
+  if (ownedSaveGraph) {
+    const descriptor = Object.assign(Object.create(null) as PropertyDescriptor, { value: parsed, writable: true, enumerable: true, configurable: true })
+    Object.defineProperty(source, key, descriptor)
+  }
+  return parsed
+}
+
 /** 原始数值在对应 integer/finite codec 消费前不得先经 JSON.parse 舍入。 */
 export class RawSaveNumber {
   readonly token: string
@@ -82,7 +102,7 @@ export function record(value: unknown, path: string): JsonRecord {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new SaveSchemaError(path, "必须是对象")
   }
-  return { ...value }
+  return ownedSaveGraph ? value as JsonRecord : { ...value }
 }
 
 export function exact(value: JsonRecord, keys: readonly string[], path: string): void {
@@ -192,10 +212,14 @@ export function oneOf<T extends string>(value: unknown, path: string, variants: 
 
 export function map<T>(value: unknown, path: string, parseKey: (key: string, keyPath: string) => void, parseValue: (nested: unknown, nestedPath: string) => T): Record<string, T> {
   const parsed = record(value, path)
-  const result: [string, T][] = []
-  for (const [key, nested] of Object.entries(parsed)) {
+  const result: Record<string, T> = ownedSaveGraph ? parsed as Record<string, T> : {}
+  const descriptor = Object.assign(Object.create(null) as PropertyDescriptor, { value: undefined, writable: true, enumerable: true, configurable: true })
+  for (const key of Object.keys(parsed)) {
     parseKey(key, `${path}.${key}`)
-    result.push([key, parseValue(nested, `${path}.${key}`)])
+    const nested = parseValue(parsed[key], `${path}.${key}`)
+    // 保留 __proto__ 等键的普通自有属性语义，不触发原型 setter。
+    descriptor.value = nested
+    Object.defineProperty(result, key, descriptor)
   }
-  return Object.fromEntries(result)
+  return result
 }

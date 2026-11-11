@@ -18,6 +18,12 @@
 #[global_allocator]
 static NATIVE_ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
+mod libos;
+
+/// 验证构建的 LibOS 浏览器入口；正式构建不包含此 API。
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+pub use libos::verification;
+
 pub mod shared_history;
 pub(crate) mod u64_decimal;
 

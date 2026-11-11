@@ -13,8 +13,9 @@ export const WASM_RESTORE_REQUIRED_EXPORTS = Object.freeze([
   "restore_prepared",
   "clear_prepared_restore",
   "set_step_runtime_override",
-  "init_wasm_wait",
-  "wasm_wait_abort_layout",
+  "wasm_tombstone_init_primary",
+  "wasm_tombstone_bind_ingress",
+  "libos_host_fault_layout",
   "shutdown_session",
 ]);
 const TOOLCHAIN = "nightly-2026-09-05";
@@ -198,5 +199,9 @@ export function parseWasmPackageMetadata(provenanceBytes, capabilityBytes) {
 
 export async function readWasmPackageMetadata(packageDirectory) {
   const [provenanceBytes, capabilityBytes] = await Promise.all(WASM_PACKAGE_METADATA_FILENAMES.map((name) => readFile(path.join(packageDirectory, name))));
-  return parseWasmPackageMetadata(provenanceBytes, capabilityBytes);
+  const metadata = parseWasmPackageMetadata(provenanceBytes, capabilityBytes);
+  const [wasm, glue] = await Promise.all(["web_wasm_bg.wasm", "web_wasm.js"].map((name) => readFile(path.join(packageDirectory, name))));
+  if (sha256(wasm) !== metadata.provenance.wasmSha256) fail("actual package WASM SHA-256 does not match provenance");
+  if (sha256(glue) !== metadata.provenance.glueSha256) fail("actual package glue SHA-256 does not match provenance");
+  return metadata;
 }

@@ -699,7 +699,8 @@ pub struct SaveSlot {
     /// 每个 NPC 的权威注意力调度状态。独立随机流保证观察节奏可存档、可重放。
     pub npc_attention: BTreeMap<AccountId, NpcAttentionState>,
     /// 每个自然人散户由真实成交与观察形成的权威经历；机构、游资和玩家不得出现在此表。
-    pub retail_experience: BTreeMap<AccountId, RetailExperienceState>,
+    #[ts(as = "BTreeMap<AccountId, RetailExperienceState>")]
+    pub retail_experience: BTreeMap<AccountId, std::sync::Arc<RetailExperienceState>>,
     /// D5 attention 公开可见性门禁：desk 簿权威的瞬态镜像（runtime
     /// install 段每拍刷新；不入档不入 hash——snapshot 公开投影/玩家
     /// 在途/预留读面的源。旧管线读面（session markets 簿）在 runtime
@@ -3486,17 +3487,31 @@ impl GameSession {
                 id,
             )?;
             let mut acc = Account::new(id, kind, initial_cash);
-            if let Some(s) = StrategyFactory::build_for_market_day_with_ordinal(
+            let ordinal = u32::try_from(ordinal).map_err(|_| {
+                // fault1031: NPC 序号超出 u32。
+                SessionError::InvalidSetup(ValidationFault::bare(1031))
+            })?;
+            #[cfg(feature = "verification-harness")]
+            let strategy = crate::strategy::verification_observation_account(id.0, || StrategyFactory::build_for_market_day_with_ordinal(
                 kind,
                 &self.state.setup.strategy_params,
                 self.state.setup.ticks_per_day,
-                u32::try_from(ordinal).map_err(|_| {
-                    // fault1031: NPC 序号超出 u32。
-                    SessionError::InvalidSetup(ValidationFault::bare(1031))
-                })?,
+                ordinal,
                 &mut self.state.rng,
-            )? {
-                let base_probability = json_canonical_f64(s.base_observation_probability())?;
+            ))?;
+            #[cfg(not(feature = "verification-harness"))]
+            let strategy = StrategyFactory::build_for_market_day_with_ordinal(
+                kind,
+                &self.state.setup.strategy_params,
+                self.state.setup.ticks_per_day,
+                ordinal,
+                &mut self.state.rng,
+            )?;
+            if let Some(s) = strategy {
+                let raw_probability = s.base_observation_probability();
+                let base_probability = json_canonical_f64(raw_probability)?;
+                #[cfg(feature = "verification-harness")]
+                crate::strategy::verification_record_observation_canonical(id.0, raw_probability, base_probability);
                 if !(base_probability.is_finite()
                     && 0.0 < base_probability
                     && base_probability <= 1.0)
@@ -3648,6 +3663,23 @@ impl GameSession {
         &self,
     ) -> Option<&std::sync::Mutex<crate::runtime::drive::RuntimeDriver>> {
         self.runtime_driver.as_ref()
+    }
+
+    /// 诊断时读取已提交 tick 对应的实际 runtime 事实，不修改运行状态。
+    #[cfg(feature = "verification-harness")]
+    pub fn verification_latest_runtime_record(
+        &self,
+    ) -> Result<crate::runtime::world::TickRecord, String> {
+        if let Some(failure) = self.poison_reason() {
+            return Err(format!("会话已失败，不能读取已提交记录：{failure:?}"));
+        }
+        let driver = self.runtime_driver.as_ref().ok_or("runtime 驱动尚未创建")?;
+        let driver = driver.lock().map_err(|error| format!("runtime 驱动锁损坏：{error}"))?;
+        let record = driver.world_report_log().last().ok_or("尚无 runtime tick 记录")?;
+        if record.tick != self.tick() {
+            return Err(format!("runtime tick {} 与会话 tick {} 不一致", record.tick, self.tick()));
+        }
+        Ok(record.clone())
     }
 
     pub fn account_count(&self) -> usize {
@@ -4802,7 +4834,7 @@ impl GameSession {
             receipt_watermark: self.state.receipt_watermark,
             rng_state: self.state.rng.state,
             npc_attention: self.state.npc_attention.to_map(),
-            retail_experience: self.state.retail_experience.to_map(),
+            retail_experience: self.state.retail_experience.to_shared_map(),
             npc_order_lifecycles: self.state.npc_order_lifecycles.clone(),
             pending_player: self.state.pending_player.clone(),
             ingress_receipt_cursors: self.state.ingress_receipt_cursors.clone(),
@@ -5140,14 +5172,31 @@ impl GameSession {
                     ],
                 )));
             }
-            // 基础概率来自账户的确定性行为档案，不是随时间演进的状态。JSON 数字
-            // 边界可能造成 f64 的末位变化；继续使用重建值可使存档前后保持完全重放。
+            // StrategyState 保存精确位模式，attention 数字只允许 JSON 往返的末位差异。
+            // 缺失策略仍交给 runtime 校验产生既有账户集合错误。
+            let probability = if let Some(strategy) = save.runtime_state.strategy_states.get(id) {
+                let exact = strategy.base_observation_probability();
+                let scale = exact.abs().max(saved_state.base_probability.abs());
+                if (exact - saved_state.base_probability).abs() > scale * f64::EPSILON * 4.0 {
+                    return Err(SessionError::InvalidSave(ValidationFault::new(
+                        2210,
+                        vec![
+                            id.0,
+                            exact.to_bits(),
+                            saved_state.base_probability.to_bits(),
+                        ],
+                    )));
+                }
+                exact
+            } else {
+                reconstructed.base_probability
+            };
             restored_attention.insert(
                 *id,
                 NpcAttentionState {
                     information_cadence: saved_state.information_cadence,
                     next_information_check: saved_state.next_information_check,
-                    base_probability: reconstructed.base_probability,
+                    base_probability: probability,
                     next_attention_candidate_tick: saved_state.next_attention_candidate_tick,
                     rng_state: saved_state.rng_state,
                 },
@@ -5160,7 +5209,12 @@ impl GameSession {
             .iter()
             .map(|(id, state)| (state.next_attention_candidate_tick, *id))
             .collect();
-        sess.state.retail_experience = save.retail_experience.clone().into();
+        sess.state.retail_experience = AccountPagedMap::default();
+        for (id, experience) in &save.retail_experience {
+            sess.state
+                .retail_experience
+                .insert_arc(*id, std::sync::Arc::clone(experience));
+        }
         sess.state.npc_order_lifecycles = save.npc_order_lifecycles.clone();
         sess.state.pending_player = save.pending_player.clone();
         sess.state.ingress_receipt_cursors = save.ingress_receipt_cursors.clone();

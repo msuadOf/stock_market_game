@@ -31,6 +31,23 @@ fn shutdown_without_driver_closes_existing_ingress_without_creating_workers() {
 }
 
 #[test]
+fn session上行断连后仍返回组_final_结构化诊断() {
+    let mut game = game();
+    game.construct_runtime_driver_lazy_for_test().unwrap();
+    game.runtime_driver.as_ref().unwrap().lock().unwrap().disconnect_upstream_for_test();
+    let failure = game.shutdown().expect_err("上行断连不能报告成功");
+    let completion = failure.completion.expect("必须保留真实停止结果");
+    assert_eq!((completion.owned_workers, completion.joined_workers), (2, 2));
+    let recovered: Vec<_> = completion.worker_results.iter().filter_map(|worker| worker.retained_group_final()).collect();
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].group, 0);
+    assert!(!recovered[0].accounts.is_empty());
+    let desks: Vec<_> = completion.worker_results.iter().filter_map(|worker| worker.retained_desk_final()).collect();
+    assert_eq!(desks.len(), 1);
+    assert_eq!(desks[0].stock, 0);
+}
+
+#[test]
 fn shutdown_consumes_existing_real_driver_and_returns_its_joins_and_finals() {
     let mut game = game();
     game.construct_runtime_driver_lazy_for_test()

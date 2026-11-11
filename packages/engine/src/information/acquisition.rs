@@ -22,6 +22,7 @@
 //! 时自然发生（[`crate::information::npc_view`] 透传公开库错误）。
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use crate::calendar::CivilInstant;
 use crate::company::CompanyId;
@@ -112,7 +113,7 @@ fn resolve_publication(
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub struct NpcInformationState {
     owner: AccountId,
-    companies: BTreeMap<CompanyId, Vec<AcquisitionRecord>>,
+    companies: Arc<BTreeMap<CompanyId, Vec<AcquisitionRecord>>>,
 }
 
 /// 存档 DTO（恢复走 [`NpcInformationState::from_parts`] 校验）。
@@ -126,7 +127,7 @@ impl NpcInformationState {
     pub fn new(owner: AccountId) -> Self {
         Self {
             owner,
-            companies: BTreeMap::new(),
+            companies: Arc::new(BTreeMap::new()),
         }
     }
 
@@ -152,27 +153,35 @@ impl NpcInformationState {
             });
         }
         let resolved = resolve_publication(library, publication_id, observed_at)?;
-        let records = self.companies.entry(resolved.company).or_default();
-        match records.binary_search_by_key(&publication_id, |record| record.id) {
-            Ok(index) => Ok(AcquisitionOutcome::AlreadyAcquired {
-                company: resolved.company,
-                first_observed_at: records[index].observed_at,
-            }),
-            Err(position) => {
-                records.insert(
-                    position,
-                    AcquisitionRecord {
-                        id: publication_id,
-                        observed_at,
-                        kind: resolved.kind,
-                    },
-                );
-                Ok(AcquisitionOutcome::Recorded {
-                    company: resolved.company,
-                    observed_at,
-                })
+        let position = match self.companies.get(&resolved.company) {
+            Some(records) => {
+                match records.binary_search_by_key(&publication_id, |record| record.id) {
+                    Ok(index) => {
+                        return Ok(AcquisitionOutcome::AlreadyAcquired {
+                            company: resolved.company,
+                            first_observed_at: records[index].observed_at,
+                        })
+                    }
+                    Err(position) => position,
+                }
             }
-        }
+            None => 0,
+        };
+        let records = Arc::make_mut(&mut self.companies)
+            .entry(resolved.company)
+            .or_default();
+        records.insert(
+            position,
+            AcquisitionRecord {
+                id: publication_id,
+                observed_at,
+                kind: resolved.kind,
+            },
+        );
+        Ok(AcquisitionOutcome::Recorded {
+            company: resolved.company,
+            observed_at,
+        })
     }
 
     /// 本人已获知的公布总数（跨公司）。
@@ -233,7 +242,7 @@ impl NpcInformationState {
         }
         Ok(Self {
             owner: save.owner,
-            companies: save.companies,
+            companies: Arc::new(save.companies),
         })
     }
 
@@ -241,7 +250,7 @@ impl NpcInformationState {
     pub fn save(&self) -> NpcInformationStateSave {
         NpcInformationStateSave {
             owner: self.owner,
-            companies: self.companies.clone(),
+            companies: self.companies.as_ref().clone(),
         }
     }
 }
@@ -281,4 +290,43 @@ pub fn discovery_candidates(
     );
     ids.sort_unstable();
     ids
+}
+
+#[cfg(test)]
+mod clone_tests {
+    use super::*;
+
+    #[test]
+    fn clone_shares_unchanged_records_and_save_roundtrips() {
+        let company = CompanyId(7);
+        let instant = CivilInstant::from_hms(
+            crate::calendar::CivilDate::from_iso("2030-01-07").unwrap(),
+            10,
+            0,
+            0,
+        )
+        .unwrap();
+        let state = NpcInformationState::from_parts(NpcInformationStateSave {
+            owner: AccountId(1),
+            companies: [(
+                company,
+                vec![AcquisitionRecord {
+                    id: PublicationId::new(1),
+                    observed_at: instant,
+                    kind: AcquiredKind::Report,
+                }],
+            )]
+            .into_iter()
+            .collect(),
+        })
+        .unwrap();
+        let clone = state.clone();
+        assert!(std::ptr::eq(
+            &state.records_for_company(&company)[0],
+            &clone.records_for_company(&company)[0]
+        ));
+        let restored: NpcInformationState =
+            serde_json::from_str(&serde_json::to_string(&clone).unwrap()).unwrap();
+        assert_eq!(restored, state);
+    }
 }

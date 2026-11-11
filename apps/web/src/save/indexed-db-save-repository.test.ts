@@ -18,6 +18,8 @@ function fakeFactory(options: {
   beforePut?: () => void;
   putError?: Error;
   commitError?: Error;
+  holdAbort?: (finish: () => void) => void;
+  rejectValueCursor?: boolean;
 } = {}) {
   const entries = new Map<string, unknown>();
   let commits = 0;
@@ -29,11 +31,13 @@ function fakeFactory(options: {
   const database = {
     onclose: null as (() => void) | null,
     close() { closed = true; },
-    transaction() {
+    transaction(_store?: unknown, mode?: string) {
       if (closed) throw new Error("数据库连接已关闭");
       const transaction = request(undefined);
       let aborted = false;
-      let write: { key: string; value: string } | null = null;
+      const writes: Array<{ key: string; value: string }> = [];
+      let pendingDeletes = 0;
+      let scans = 0;
       return Object.assign(transaction, {
         abort() {
           aborted = true;
@@ -41,13 +45,24 @@ function fakeFactory(options: {
         },
         commit() {
           if (options.commitError) throw options.commitError;
-          if (write === null) throw new Error("测试事务缺少 put");
-          entries.set(write.key, write.value);
+          if (writes.length === 0) throw new Error("测试事务缺少 put");
+          for (const write of writes) entries.set(write.key, write.value);
           commits += 1;
           queueMicrotask(() => transaction.oncomplete?.());
         },
         objectStore() {
           return {
+            openCursor() {
+              if (options.rejectValueCursor) throw new Error("不得扫描存档载荷");
+              const scan = request(null), rows = [...entries.entries()]; let index = 0;
+              const next = () => { const row = rows[index++]; scan.result = row === undefined ? null : { key: row[0], value: row[1], continue: () => queueMicrotask(next) }; scan.onsuccess?.(); if (row === undefined && mode === "readonly" && !aborted) transaction.oncomplete?.(); };
+              queueMicrotask(next); return scan;
+            },
+            openKeyCursor() {
+              const scan = request(null), rows = [...entries.keys()]; let index = 0; scans++;
+              const next = () => { const key = rows[index++]; scan.result = key === undefined ? null : { key, continue: () => queueMicrotask(next) }; scan.onsuccess?.(); if (key === undefined) { scans--; if (mode === "readonly" && !aborted) transaction.oncomplete?.(); } };
+              queueMicrotask(next); return scan;
+            },
             get(key: string) {
               const read = request(entries.get(key));
               queueMicrotask(() => {
@@ -57,17 +72,30 @@ function fakeFactory(options: {
               return read;
             },
             put(value: string, key: string) {
-              write = { key, value };
+              writes.push({ key, value });
               const put = request(key);
               queueMicrotask(() => {
                 options.beforePut?.();
                 if (options.putError) {
                   transaction.error = options.putError;
                   transaction.onerror?.();
-                  transaction.onabort?.();
+                  if (options.holdAbort) options.holdAbort(() => transaction.onabort?.());
+                  else transaction.onabort?.();
                 } else put.onsuccess?.();
               });
               return put;
+            },
+            add(value: string, key: string) {
+              if (!entries.has(key)) return this.put(value, key);
+              const failed = request(undefined);
+              queueMicrotask(() => { transaction.error = new Error("ConstraintError"); transaction.onerror?.(); transaction.onabort?.(); });
+              return failed;
+            },
+            delete(key: string) {
+              const removed = request(undefined);
+              pendingDeletes++;
+              queueMicrotask(() => { entries.delete(key); pendingDeletes--; if (pendingDeletes === 0 && scans === 0) transaction.oncomplete?.(); });
+              return removed;
             },
           };
         },
@@ -153,6 +181,83 @@ test("IndexedDB quota 和 commit 失败均显式报错，保留原有效快速�
     assert.equal(fake.entries.get(QUICK_SAVE_KEY), "previous");
     assert.equal(fake.commits(), 0);
   }
+});
+
+test("写入错误后等待事务真正中止才结束", { timeout: 10000 }, async () => {
+  let finish: (() => void) | undefined, settled = false;
+  const fake = fakeFactory({ putError: new Error("quota"), holdAbort: done => { finish = done; } });
+  const outcome = new IndexedDbSaveStorage(fake.factory).setItem("pinned", "value", () => true).then(() => { settled = true; }, () => { settled = true; });
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.ok(finish);
+  assert.equal(settled, false);
+  finish(); await outcome;
+  assert.equal(settled, true);
+});
+
+test("固定源 key 冲突不能覆盖已有目标", { timeout: 10000 }, async () => {
+  const fake = fakeFactory(); fake.entries.set("pinned", "old");
+  const storage = new IndexedDbSaveStorage(fake.factory);
+  await assert.rejects(storage.addItem("pinned", "new", () => true), /ConstraintError/);
+  assert.equal(fake.entries.get("pinned"), "old");
+});
+
+test("固定源总量超限时拒绝新写入并保留快速槽和旧目标", { timeout: 10000 }, async () => {
+  const fake = fakeFactory(), id = "a".repeat(32); fake.entries.set(`wasm-handover-source:${id}`, "abcd"); fake.entries.set(`wasm-handover-meta:${id}:8`, ""); fake.entries.set(QUICK_SAVE_KEY, "quick");
+  const storage = new IndexedDbSaveStorage(fake.factory, "test", 10);
+  await assert.rejects(storage.addItem("wasm-handover-source:b", "xx", () => true), /固定源.*上限/);
+  assert.equal(fake.entries.get(`wasm-handover-source:${id}`), "abcd"); assert.equal(fake.entries.get(QUICK_SAVE_KEY), "quick");
+  assert.equal(fake.entries.has("wasm-handover-source:b"), false);
+});
+
+test("固定源数量达到上限时拒绝新写入", { timeout: 10000 }, async () => {
+  const fake = fakeFactory();
+  for (let i = 0; i < 1024; i++) { const id = i.toString(16).padStart(32, "0"); fake.entries.set(`wasm-handover-source:${id}`, ""); fake.entries.set(`wasm-handover-meta:${id}:0`, ""); }
+  const storage = new IndexedDbSaveStorage(fake.factory);
+  await assert.rejects(storage.addItem("wasm-handover-source:new", "x", () => true), /固定源.*上限/);
+  assert.equal(fake.entries.size, 2048);
+});
+
+test("清理未发布源只删除指定 key", { timeout: 10000 }, async () => {
+  const fake = fakeFactory(); fake.entries.set("pinned", "old"); fake.entries.set(QUICK_SAVE_KEY, "quick");
+  await new IndexedDbSaveStorage(fake.factory).removeItem("pinned");
+  assert.equal(fake.entries.has("pinned"), false); assert.equal(fake.entries.get(QUICK_SAVE_KEY), "quick");
+});
+
+test("管理固定源只列出源并仅删除用户选择的目标", { timeout: 10000 }, async () => {
+  const fake = fakeFactory(), a = "a".repeat(32), b = "b".repeat(32);
+  fake.entries.set(`wasm-handover-source:${a}`, "abc"); fake.entries.set(`wasm-handover-meta:${a}:6`, ""); fake.entries.set(`wasm-handover-source:${b}`, "defg"); fake.entries.set(`wasm-handover-meta:${b}:8`, ""); fake.entries.set(QUICK_SAVE_KEY, "quick");
+  const storage = new IndexedDbSaveStorage(fake.factory);
+  assert.deepEqual(await storage.listPinnedSources(), [{ sourceId: a, logicalBytes: 6, seed: null }, { sourceId: b, logicalBytes: 8, seed: null }]);
+  await storage.deletePinnedSource(a);
+  assert.equal(fake.entries.has(`wasm-handover-source:${a}`), false);
+  assert.equal(fake.entries.get(`wasm-handover-source:${b}`), "defg"); assert.equal(fake.entries.get(QUICK_SAVE_KEY), "quick");
+  await assert.rejects(storage.deletePinnedSource(QUICK_SAVE_KEY), /sourceId/);
+});
+
+test("固定源预算及管理只读取键与小型元数据", { timeout: 10000 }, async () => {
+  const fake = fakeFactory({ rejectValueCursor: true });
+  const storage = new IndexedDbSaveStorage(fake.factory);
+  const id = "c".repeat(32);
+  assert.equal(await storage.addItem(`wasm-handover-source:${id}`, "payload", () => true), true);
+  assert.deepEqual(await storage.listPinnedSources(), [{ sourceId: id, logicalBytes: 14, seed: null }]);
+});
+
+test("缺失元数据的源可明确识别和删除，但不能绕过容量预算", { timeout: 10000 }, async () => {
+  const fake = fakeFactory(), id = "e".repeat(32);
+  fake.entries.set(`wasm-handover-source:${id}`, "old");
+  const storage = new IndexedDbSaveStorage(fake.factory);
+  assert.deepEqual(await storage.listPinnedSources(), [{ sourceId: id, logicalBytes: null, seed: null }]);
+  await assert.rejects(storage.addItem(`wasm-handover-source:${"f".repeat(32)}`, "new", () => true), /元数据不一致/);
+  await storage.deletePinnedSource(id);
+  assert.deepEqual(await storage.listPinnedSources(), []);
+});
+
+test("源 ID 可识别但元数据损坏时仍可选择清理", { timeout: 10000 }, async () => {
+  const fake = fakeFactory(), id = "d".repeat(32);
+  fake.entries.set(`wasm-handover-source:${id}`, "old"); fake.entries.set(`wasm-handover-meta:${id}:bad`, "");
+  const storage = new IndexedDbSaveStorage(fake.factory);
+  assert.deepEqual(await storage.listPinnedSources(), [{ sourceId: id, logicalBytes: null, seed: null }]);
+  await storage.deletePinnedSource(id); assert.equal(fake.entries.size, 0);
 });
 
 test("数据库连接意外关闭后下一次显式操作重新开库", async () => {

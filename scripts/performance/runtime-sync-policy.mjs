@@ -366,7 +366,7 @@ export async function runRuntimeSyncPolicy(inputConfig, {
     await mkdir(outputDirectory, { recursive: false });
     await mkdir(path.join(outputDirectory, "samples"), { recursive: false });
   }
-  const runtimeEnvironment = { ENGINE_STEP_RUNTIME: childEnvironmentSnapshot.ENGINE_STEP_RUNTIME ?? "1", ENGINE_SPIN_US: childEnvironmentSnapshot.ENGINE_SPIN_US ?? null, ENGINE_SPIN_DISABLE: childEnvironmentSnapshot.ENGINE_SPIN_DISABLE ?? null, STEP_PROFILE: childEnvironmentSnapshot.STEP_PROFILE ?? null };
+  const runtimeEnvironment = { ENGINE_STEP_RUNTIME: childEnvironmentSnapshot.ENGINE_STEP_RUNTIME ?? "1", STEP_PROFILE: childEnvironmentSnapshot.STEP_PROFILE ?? null };
   if (runtimeEnvironment.ENGINE_STEP_RUNTIME !== "1") fail("ENGINE_STEP_RUNTIME 必须为 1 或未设置，以确保 native runtime 实际启用");
   const writeBeforeDeadline = async (...args) => {
     if (clock() >= executionDeadlineAt) fail("runtime sync policy batch exhausted deadline before metadata write");
@@ -623,8 +623,8 @@ export function aggregateRuntimeSyncPolicy(reports) {
       if (!isDeepStrictEqual(sample.calendar_signature, signature)) fail("aggregate calendar signature differs from raw sample JSON");
     }
     if (new Set(expectedCalendar).size !== 1 || !isDeepStrictEqual(report.calendar_signature, JSON.parse(expectedCalendar[0]))) fail("aggregate batch raw sample calendar signatures differ");
-    exactKeys(report.runtime_environment, ["ENGINE_STEP_RUNTIME", "ENGINE_SPIN_US", "ENGINE_SPIN_DISABLE", "STEP_PROFILE"], "aggregate runtime_environment");
-    if (report.runtime_environment.ENGINE_STEP_RUNTIME !== "1" || ["ENGINE_SPIN_US", "ENGINE_SPIN_DISABLE", "STEP_PROFILE"].some((key) => report.runtime_environment[key] !== null && typeof report.runtime_environment[key] !== "string")) fail("aggregate runtime_environment is invalid");
+    exactKeys(report.runtime_environment, ["ENGINE_STEP_RUNTIME", "STEP_PROFILE"], "aggregate runtime_environment");
+    if (report.runtime_environment.ENGINE_STEP_RUNTIME !== "1" || (report.runtime_environment.STEP_PROFILE !== null && typeof report.runtime_environment.STEP_PROFILE !== "string")) fail("aggregate runtime_environment is invalid");
     const configForHash = { ...config, runtime_environment: report.runtime_environment };
     delete configForHash.setup_json;
     delete configForHash.output_directory;
@@ -874,7 +874,7 @@ export async function runRuntimeSyncMemoryGrowth(inputConfig, dependencies = {})
   const civilEndDate = addCivilDays(setup.start_date, 2 * config.civil_days_n);
   if (!isDate(civilEndDate) || config.expected_closed_dates.some((date) => date < setup.start_date || date >= civilEndDate)) fail("memory-growth expected_closed_dates falls outside the setup civil-day window");
   if (clock() >= executionDeadlineAt) fail("memory-growth deadline exhausted during input fingerprinting");
-  const runtimeEnvironment = { ENGINE_STEP_RUNTIME: "1", ENGINE_SPIN_US: envSnapshot.ENGINE_SPIN_US ?? null, ENGINE_SPIN_DISABLE: envSnapshot.ENGINE_SPIN_DISABLE ?? null, STEP_PROFILE: envSnapshot.STEP_PROFILE ?? null };
+  const runtimeEnvironment = { ENGINE_STEP_RUNTIME: "1", STEP_PROFILE: envSnapshot.STEP_PROFILE ?? null };
   const configForHash = { ...config, runtime_environment: runtimeEnvironment };
   delete configForHash.output_directory;
   const configSha256 = digest(stableJson(configForHash));

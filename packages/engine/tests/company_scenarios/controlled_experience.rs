@@ -47,7 +47,8 @@ fn same_session_pnl_with_different_owned_experience_changes_retail_decision() {
         close: Money::from_cents(999),
     });
     let mut scarred_save = fresh_save.clone();
-    let experience = scarred_save.retail_experience.get_mut(&account).unwrap();
+    let experience =
+        std::sync::Arc::make_mut(scarred_save.retail_experience.get_mut(&account).unwrap());
     let moment = engine::experience::ExperienceMoment {
         civil_date: engine::CivilDate::from_iso("2029-12-01").unwrap(),
         market_minute: 0,

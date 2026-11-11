@@ -1,0 +1,4 @@
+3dbbdb2e26c3ab6def26cd5f321eb0096faf8e004d2737124c811a3eee745e6f  target/release/bare-world-diagnostic
+59488bb1862e253882734ab6db496b3d5e405fd7b25c7aa8fcf7756a7a36e4c8  agents/web-architecture-diagnosis/bare-world/src/main.rs
+0ef44b9d24778507b246a6328735a7f76bbc4e3127c1c7ad8db1a491bb1be8ea  agents/web-architecture-diagnosis/native-engine-short-bin
+bdadebce8fd8fbfc0ce9b19b902d193e882ee506adb751b909902a6a97e751d3  agents/web-architecture-diagnosis/native-engine-short-main.rs

@@ -1,4 +1,6 @@
 import { parseVerifiedRestoreCapability } from "./wasm-restore-package-capability.ts";
+import type { WasmRestoreMode } from "./wasm-restore-package-capability.ts";
+import { verifyRestorePackageExports } from "./wasm-restore-package-exports.ts";
 import { WasmRestartGate } from "./wasm-restart-gate.ts";
 import { prepareBaselineUpdate } from "./host-update.ts";
 import { parseSaveSlot } from "../save/save-schema.ts";
@@ -6,7 +8,7 @@ import { normalizePublicReportById, normalizePublicReportPage, normalizeSerdeMap
 import { WasmSessionSlot } from "./wasm-session-slot.ts";
 import { WasmTickLoop } from "./wasm-tick-loop.ts";
 import { WorkerTaskScheduler } from "./worker-task-scheduler.ts";
-import { classifyWasmFailure, describeWasmFailure, describeReadFailureFields, type WasmFailureClassification } from "./wasm-failure.ts";
+import { classifyWasmFailure, cloneWasmFailureDetails, wasmFailureStack, describeWasmFailure, describeReadFailureFields, type WasmFailureClassification } from "./wasm-failure.ts";
 import { parseHostFailure } from "./protocol-failure.ts";
 import { CompanyWriteRejectedError, parseCompanyWriteFailure, type CompanyWriteFailure } from "./company-write.ts";
 import { CompanyReadRejectedError, parseCompanyReadFailure, type CompanyReadFailure } from "./company-read-failure.ts";
@@ -135,7 +137,14 @@ function structuredHostFailure(error: unknown, where: string, classified: Exclud
         const value = source[key];
         // 先克隆后校验，避免 parser 与传输分别触发嵌套 getter 而读取不同值。
         phase = `克隆结构化错误字段 ${key} 失败`;
-        details[key] = structuredClone(value);
+        details[key] = cloneWasmFailureDetails(value);
+      }
+      phase = "读取原始错误调用栈失败";
+      const stack = Object.getOwnPropertyDescriptor(error, "stack");
+      if (stack !== undefined && Object.hasOwn(stack, "value")) details.stack = stack.value;
+      else {
+        const rawStack = wasmFailureStack(error);
+        if (rawStack !== undefined) details.stack = rawStack;
       }
       phase = "校验结构化错误详情失败";
       return parseHostFailure(details, where);
@@ -156,13 +165,25 @@ function structuredHostFailure(error: unknown, where: string, classified: Exclud
 }
 
 function unstructuredFailureDetails(message: string, where: string, cause?: Readonly<Record<string, unknown>>): WorkerFailureDetails {
-  if (message.trim().length === 0) {
-    return { code: "WASM_WORKER_PROTOCOL", where, message: "非结构化错误没有可读的非空 message", cause: { ...cause, message } };
+  const stack = typeof cause?.stack === "string" ? cause.stack : undefined;
+  const details = cause === undefined ? undefined : Object.fromEntries(Object.entries(cause).filter(([key]) => key !== "stack"));
+  const emptyMessage = message.trim().length === 0;
+  const failureMessage = emptyMessage ? "非结构化错误没有可读的非空 message" : message;
+  try {
+    return {
+      code: "WASM_WORKER_PROTOCOL", where, message: failureMessage,
+      ...(stack === undefined ? {} : { stack }),
+      ...((emptyMessage || details !== undefined && Object.keys(details).some((key) => key !== "message"))
+        ? { cause: cloneWasmFailureDetails(emptyMessage ? { ...details, message } : details) } : {}),
+    };
+  } catch (diagnosticError) {
+    return {
+      code: "WASM_WORKER_PROTOCOL", where,
+      message: `原始错误：${message}；诊断详情转换失败：${describeWasmFailure(diagnosticError)}`,
+      ...(stack === undefined ? {} : { stack }),
+      cause: { message, diagnosticReadError: describeWasmFailure(diagnosticError) },
+    };
   }
-  return {
-    code: "WASM_WORKER_PROTOCOL", where, message,
-    ...(cause !== undefined && (Object.hasOwn(cause, "code") || Object.hasOwn(cause, "where")) ? { cause } : {}),
-  };
 }
 
 function workerFailureDetails(error: unknown, where: string): WorkerFailureDetails {
@@ -294,10 +315,11 @@ function invokeCompanyWrite(message: WorkerMessage, requestedGeneration: number,
 type LoadedEngineModule = { readonly module: WebAssembly.Module; readonly diagnostics: boolean; readonly glue: FacadeEngineGlue };
 let verifiedRestoreModule: LoadedEngineModule | undefined;
 let initRequested = false;
+let chunkedInitializationRequested = false;
 let memoryInitializationStarted = false;
 let engineQuiescentReported = false;
 
-async function loadEngineModule(expected?: VerifiedWasmRestoreCapability): Promise<LoadedEngineModule> {
+async function loadEngineModule(expected?: VerifiedWasmRestoreCapability, mode: WasmRestoreMode = "string"): Promise<LoadedEngineModule> {
   if (expected === undefined && verifiedRestoreModule !== undefined) {
     const loaded = verifiedRestoreModule; verifiedRestoreModule = undefined; return loaded;
   }
@@ -330,9 +352,7 @@ async function loadEngineModule(expected?: VerifiedWasmRestoreCapability): Promi
   if (expected !== undefined) {
     const wasmExports = new Set(WebAssembly.Module.exports(module).filter((entry) => entry.kind === "function").map((entry) => entry.name));
     const glue = wasmModule as unknown as Record<string, unknown>;
-    for (const name of expected.exports) {
-      if (!wasmExports.has(name) || typeof glue[name] !== "function") throw Object.assign(new Error(`实际 package 缺少 verified 导出 ${name}，尚未分配 Memory`), { code: "WASM_RESTORE_TOPOLOGY_NOT_READY", where: "wasm-worker.restore-package", context: { operation: "restore", missing: name } });
-    }
+    verifyRestorePackageExports(expected, wasmExports, glue, mode);
   }
   return { module, diagnostics: diagnosticsWasm, glue: wasmModule as unknown as FacadeEngineGlue };
 }
@@ -349,10 +369,13 @@ function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
           if (initRequested) throw new Error("Worker init 只允许首次请求，禁止预加载期间重复初始化");
           initRequested = true;
           const { restoreCapability, ...initializerMessage } = message;
-          if (Object.hasOwn(message, "initialArchive")) {
-            const candidate = parseVerifiedRestoreCapability(restoreCapability, message.runtimeOverride);
+          const chunked = Object.hasOwn(message, "initialChunked");
+          chunkedInitializationRequested = chunked;
+          if (Object.hasOwn(message, "initialArchive") || chunked) {
+            const mode = chunked ? "chunked" : "string";
+            const candidate = parseVerifiedRestoreCapability(restoreCapability, message.runtimeOverride, mode);
             // glue/source/manifest 身份由实际发布包 producer 核实；此处核对实际装载的 WASM 字节与两层导出。
-            verifiedRestoreModule = await loadEngineModule(structuredClone(candidate));
+            verifiedRestoreModule = await loadEngineModule(structuredClone(candidate), mode);
             if (closingSession) throw new Error("package 验证完成时实例已经关闭");
           } else if (restoreCapability !== undefined) throw new Error("新局不得携带初始 restore capability");
           memoryInitializationStarted = true;
@@ -362,11 +385,20 @@ function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
           ctx.postMessage({ type: "ready" });
           return;
         }
+        case "cancelInitialChunked": {
+          if (Object.keys(message).join(",") !== "type" || !chunkedInitializationRequested || slot.readGeneration() !== 0) throw new Error("仅可取消尚未创建会话的分块初始化");
+          closingSession = true;
+          await engineInitializer.disposeAsync();
+          return;
+        }
         case "restoreInitial": {
           if (Object.keys(message).join(",") !== "type") throw new Error("restoreInitial 只能消费 initializer 保存的完整 X，禁止第二份 payload");
           const configured = engineInitializer.requireConfigured();
-          if (configured.initialArchive === null) throw new Error("restoreInitial 需要唯一完整初始档");
-          slot.restoreInitial();
+          if (configured.chunkToken !== null && configured.chunkToken !== undefined) slot.restoreInitialChunked(configured.chunkToken);
+          else {
+            if (configured.initialArchive === null) throw new Error("restoreInitial 需要唯一完整初始档");
+            slot.restoreInitial();
+          }
           const [, wasm] = slot.requireHandle();
           const capabilities = readWasmCapabilities(wasm);
           postIngressBridge();
@@ -378,7 +410,7 @@ function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
         }
         case "create": {
           const configured = engineInitializer.requireConfigured();
-          if (configured.initialArchive !== null) throw new Error("初始完整 X 只能 restoreInitial，禁止先建空局");
+          if (configured.initialArchive !== null || (configured.chunkToken !== null && configured.chunkToken !== undefined)) throw new Error("初始完整 X 只能 restoreInitial，禁止先建空局");
           // setup 已由首次 init 的唯一配置持有；create 只携带一次性种子，未知字段显式拒绝。
           exact({ ...message }, ["type", "seed"], "Worker create");
           slot.create(configured.setup, message.seed);
@@ -750,7 +782,14 @@ function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
         closingSession = true;
         restoreRestart.invalidate(); loop.stop();
         try {
-          slot.drop(); engineInitializer.dispose(); verifiedRestoreModule = undefined;
+          slot.drop();
+          if (chunkedInitializationRequested) await engineInitializer.disposeAsync();
+          else engineInitializer.dispose();
+          if (Object.hasOwn(message, "initialChunked")) {
+            const input = message.initialChunked;
+            if (input !== null && typeof input === "object" && (input as { port?: unknown }).port instanceof MessagePort) (input as { port: MessagePort }).port.close();
+          }
+          verifiedRestoreModule = undefined;
           initializationClosed = true;
         } catch (cleanupError) {
           failureError = new AggregateError([error, cleanupError], "初始会话失败且清理失败，quiescence 未证明", { cause: { primary: error, cleanup: cleanupError } });
@@ -791,8 +830,8 @@ function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
 
 function reportEngineQuiescence(state: "quiescent" | "unallocated" = "quiescent"): void {
   if (engineQuiescentReported || ownerInstanceId === undefined) return;
-  engineQuiescentReported = true;
   self.postMessage({ type: "engineLifecycle", instanceId: ownerInstanceId, state });
+  engineQuiescentReported = true;
 }
 
 self.addEventListener("message", (event: MessageEvent<unknown>) => {

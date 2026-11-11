@@ -40,7 +40,7 @@ function fixture(overrides: Partial<SessionHostLifecyclePorts> = {}) {
     setIndicatorCalculator: () => { calls.push("register"); return () => { calls.push("unregister"); }; },
     connectProtocol: () => { calls.push("connect"); }, disconnectProtocol: () => { calls.push("disconnect"); },
     createHost: async () => { calls.push("create"); return host; }, checkWasmEnvironment: () => { calls.push("environment"); },
-    isDocumentHidden: () => true, getBrowserSaveRepository: () => ({ load: async () => { calls.push("read"); return null; } }),
+    isDocumentHidden: () => true, getBrowserSaveRepository: () => ({ load: async () => { calls.push("read"); return null; }, loadFrozen: async () => { calls.push("read"); return null; } }),
     setActiveSetup: () => { calls.push("setup"); }, configureMarketTiming: () => { calls.push("timing"); }, setStartDateDraft: () => {}, setPriceCageEnabledDraft: () => {},
     setFloatAllocationDraft: () => {}, setInitialAllocation: () => {},
     setDeliveryModes: () => {}, setDeliveryModeState: () => {}, setNotice: (value) => calls.push(value), setReady: () => { calls.push("ready"); },
@@ -151,6 +151,25 @@ test("读档启动取消后忽略 start 晚确认，且新局不发布读档成�
   await fresh.runtime.start();
   assert.equal(fresh.calls.some((call) => /已读档/.test(call)), false);
   await fresh.runtime.dispose();
+});
+
+test("启动期间更换存档后旧宿主的更新和致命错误不得进入新选择", { timeout: 10000 }, async () => {
+  const f = fixture();
+  const entered = deferred<void>(), finish = deferred<void>();
+  let update!: (value: HostUpdate) => boolean | void;
+  let fatal!: (value: HostFailure) => void;
+  f.host.start = async (onUpdate, onFatal) => {
+    update = onUpdate; fatal = onFatal!; entered.resolve(); await finish.promise;
+  };
+  const starting = f.runtime.start();
+  await entered.promise;
+  f.calls.length = 0;
+  f.source.select(commandDayEndArchiveFixture());
+  assert.equal(update({ type: "protocol" } as HostUpdate), true);
+  fatal({ code: "OLD_HOST", where: "fixture", message: "旧宿主错误" });
+  assert.equal(f.calls.includes("update"), false);
+  assert.equal(f.calls.includes("failure"), false);
+  finish.resolve(); await starting; await f.runtime.dispose();
 });
 
 test("取消后的初始分配晚响应不写 UI、不启动旧宿主", { timeout: 10000 }, async () => {
@@ -641,8 +660,7 @@ import { WasmDocumentMemoryOwner } from "../host/wasm-document-memory-owner.ts";
 import type { WasmFinalRelease } from "../host/wasm-document-memory-owner.ts";
 import { WasmMemoryStorage } from "../host/wasm-memory-storage.ts";
 import { fixture as memoryFixture, MiB, SNAPSHOT_KEY } from "../host/wasm-memory-storage.test-support.ts";
-function memoryOwnerFixture() {
-  const memory = memoryFixture();
+function memoryOwnerFixture(memory = memoryFixture()) {
   const owner = new WasmDocumentMemoryOwner({ maximumBytes: memory.options.maximumBytes, reclaimBytes: memory.options.reclaimBytes,
     readCapacity: () => ({ kind: "enforced-capacity", initialPages: 1024, maximumPages: 4096, liveUpperBoundBytes: 256 * MiB }),
     restoreCapabilities: { forArchive: () => ({ kind: "verified-package", wasmSha256: "a".repeat(64), glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore"] }) },
@@ -764,7 +782,7 @@ test("面板实际解析文件Y后才确认恢复，carrier仍绑定X且旧快�
   });
   const f = fixture({ wasmMemoryOwner: next, hostTransitionRef: next.hostTransitionRef,
     confirmMemoryHandover: selection.request,
-    getBrowserSaveRepository: () => ({ load: async () => { quickslotReads++; return archive; } }),
+    getBrowserSaveRepository: () => ({ load: async () => { quickslotReads++; return archive; }, loadFrozen: async () => { quickslotReads++; return archive; } }),
     prepareWasmRestoreCapability: async selected => { assert.deepEqual(selected, y); },
   });
   f.host.tick = () => 6; f.host.day = () => 2;
@@ -796,16 +814,18 @@ test("用户取消冻结目标确认正常返回启动选择，原carrier与明�
     a.ticket.registerRelease(Promise.resolve({ kind: "released", finalBytes: 256 * MiB, growthStopped: true, referencesDropped: true })); await m.owner.finish(a.ticket);
   }
   m.owner.admit({ kind: "load", archive });
+  const nextOwner = memoryOwnerFixture(m.memory).owner;
+  assert.ok(nextOwner.pendingHandover());
   const before = m.memory.session.data.get(SNAPSHOT_KEY); let returned = 0, created = 0;
   const errors: unknown[] = [], y = { ...archive, seed: "99" };
-  const f = fixture({ wasmMemoryOwner: m.owner, hostTransitionRef: m.owner.hostTransitionRef,
+  const f = fixture({ wasmMemoryOwner: nextOwner, hostTransitionRef: nextOwner.hostTransitionRef,
     confirmMemoryHandover: async () => null, onMemoryHandoverCancelled: async () => { returned++; },
     createHost: async () => { created++; throw new Error("取消不得分配"); },
     getBrowserSaveRepository: () => { throw new Error("取消不得读快速槽"); }, setError: error => errors.push(error) });
   f.source.select(y); await f.runtime.start();
   assert.equal(returned, 1); assert.equal(created, 0); assert.deepEqual(errors, []);
   assert.equal(m.memory.session.data.get(SNAPSHOT_KEY), before); assert.equal(await f.source.read(async () => null), y);
-  assert.deepEqual(await m.owner.hostTransitionRef.current, { kind: "released" }); await f.runtime.dispose();
+  assert.deepEqual(await nextOwner.hostTransitionRef.current, { kind: "released" }); await f.runtime.dispose();
 });
 
 test("原冻结交接重试由用户取消也正常返回启动选择，不reload不分配不报宿主错误", { timeout: 10000 }, async () => {
@@ -976,7 +996,7 @@ test("正式 WASM 初始 X 在 metadata 准备完成之前不得 admit 或创建
   let ready!: () => void;
   const waiting = new Promise<void>((resolve) => { ready = resolve; });
   const calls: string[] = [];
-  const owner = { pendingReloadRetry: () => undefined, pendingHandover: () => undefined, admit() { calls.push("admit"); throw new Error("fixture 已确认准入排序"); } } as unknown as NonNullable<SessionHostLifecyclePorts["wasmMemoryOwner"]>;
+  const owner = { pendingReloadReady: () => undefined, pendingReloadRetry: () => undefined, pendingHandover: () => undefined, chunkedHandoverNeeded: () => false, admit() { calls.push("admit"); throw new Error("fixture 已确认准入排序"); } } as unknown as NonNullable<SessionHostLifecyclePorts["wasmMemoryOwner"]>;
   const f = fixture({ wasmMemoryOwner: owner, prepareWasmRestoreCapability: async (archive) => { assert.deepEqual(archive, expected); calls.push("prepare"); await waiting; }, createHost: async () => { calls.push("create"); throw new Error("不可创建"); } });
   const expected = commandDayEndArchiveFixture(); f.source.select(expected);
   const starting = f.runtime.start();

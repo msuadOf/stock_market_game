@@ -32,7 +32,7 @@ export function isReportCorrectionPrepareRejection(failure: HostFailure, host: "
 export function parseHostFailure(value: unknown, transportWhere?: string): HostFailure {
   const path = "HostFailure";
   const source = record(value, path);
-  const allowed = ["code", "where", "message", "cause", "context", "recoverable", "recoveryActions"];
+  const allowed = ["code", "where", "message", "stack", "cause", "context", "recoverable", "recoveryActions"];
   if (Object.keys(source).some((key) => !allowed.includes(key))) {
     throw new ProtocolError("PROTOCOL_MALFORMED", path, "HostFailure 包含未知字段");
   }
@@ -48,11 +48,16 @@ export function parseHostFailure(value: unknown, transportWhere?: string): HostF
     message: nonempty(source.message, "message"),
   };
   const details: {
+    stack?: string;
     cause?: unknown;
     context?: unknown;
     recoverable?: boolean | null;
     recoveryActions?: readonly string[] | null;
   } = {};
+  if (Object.hasOwn(source, "stack")) {
+    if (typeof source.stack !== "string") throw new ProtocolError("PROTOCOL_MALFORMED", `${path}.stack`, "HostFailure.stack 必须是字符串");
+    details.stack = source.stack;
+  }
   for (const key of ["cause", "context"] as const) {
     if (Object.hasOwn(source, key)) details[key] = source[key];
   }

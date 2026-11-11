@@ -182,7 +182,7 @@ fn backend() -> &'static Backend {
         let (tx, rx) = mpsc::sync_channel::<Job>(QUEUE_CAPACITY);
         // sync_channel 有界：满时 try_send 立即返回 Err（不阻塞调用方）。
         // 创建失败不 panic：转入 SpawnFailed 持久退化（诊断可见，同步释放，不重试）。
-        let spawned = crate::thread_facade::Builder::new()
+        let spawned = crate::libos::thread::Builder::new()
             .name("engine-deferred-drop".to_owned())
             .spawn(move || {
                 // 只消费并析构；任何 Drop panic 都会让线程退出，后续 defer 的
@@ -198,7 +198,7 @@ fn backend() -> &'static Backend {
 /// 由真实 spawn 结果构造后端状态（生产与负控共用；失败不 panic、不重试）。
 #[cfg(not(target_family = "wasm"))]
 fn backend_from_spawn(
-    result: std::io::Result<crate::thread_facade::JoinHandle<()>>,
+    result: std::io::Result<crate::libos::thread::JoinHandle<()>>,
     sender: SyncSender<Job>,
 ) -> Backend {
     match result {

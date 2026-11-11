@@ -159,7 +159,7 @@ function momentum(value: unknown, path: string): MomentumState {
   }
 }
 
-function strategyState(value: unknown, path: string): RuntimeStrategyState {
+export function parseRuntimeStrategyState(value: unknown, path: string): RuntimeStrategyState {
   const parsed = record(value, path)
   const variants = Object.keys(parsed)
   if (variants.length !== 1) throw new Error(`存档 ${path} 必须是单一 StrategyState 变体`)
@@ -231,9 +231,11 @@ function receiptIdentity(value: unknown, path: string): SavedRetailReceiptIdenti
   }
 }
 
+export const SAVE_RUNTIME_KEYS = ["poisoned", "next_receipt_base", "live_envelopes", "book_public_cutoff_sequences", "retail_projection_seen", "strategy_states"] as const
+
 export function parseSaveRuntime(value: unknown, path = "runtime_state"): SavedRuntimeState {
   const parsed = record(value, path)
-  exact(parsed, ["poisoned", "next_receipt_base", "live_envelopes", "book_public_cutoff_sequences", "retail_projection_seen", "strategy_states"], path)
+  exact(parsed, SAVE_RUNTIME_KEYS, path)
   return {
     poisoned: boolean(parsed.poisoned, `${path}.poisoned`),
     next_receipt_base: decimal(parsed.next_receipt_base, `${path}.next_receipt_base`),
@@ -241,6 +243,6 @@ export function parseSaveRuntime(value: unknown, path = "runtime_state"): SavedR
     book_public_cutoff_sequences: map(parsed.book_public_cutoff_sequences, `${path}.book_public_cutoff_sequences`,
       (key, keyPath) => { safeIntegerKey(key, keyPath); u32(Number(key), keyPath) }, decimal),
     retail_projection_seen: array(parsed.retail_projection_seen, `${path}.retail_projection_seen`).map((item, index) => receiptIdentity(item, `${path}.retail_projection_seen[${index}]`)),
-    strategy_states: map(parsed.strategy_states, `${path}.strategy_states`, accountKey, strategyState),
+    strategy_states: map(parsed.strategy_states, `${path}.strategy_states`, accountKey, parseRuntimeStrategyState),
   }
 }

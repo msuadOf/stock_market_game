@@ -1,0 +1,8 @@
+Error: 浏览器脚本执行失败：Error: 找不到日K标签
+    at <anonymous>:3:23
+    at <anonymous>:5:7
+Error: 浏览器脚本执行失败：Error: 找不到日K标签
+    at <anonymous>:3:23
+    at <anonymous>:5:7
+    at evaluate (file:///Users/asuad/workplace/stock_market_game/scripts/performance/market-ui-report.mjs:180:11)
+    at async main (file:///Users/asuad/workplace/stock_market_game/scripts/performance/market-ui-report.mjs:422:5)

@@ -25,7 +25,8 @@ test("审计G50：React错误状态实际展示原因、位置、复制反馈及
   assert.match(html, /控件布局失败/);
   assert.match(html, /复制错误反馈/);
   assert.match(html, /未保存的日内进度/);
-  assert.doesNotMatch(html, /private-secret|健康界面|行情引擎或协议无法继续/);
+  assert.match(html, /token=private-secret/);
+  assert.doesNotMatch(html, /健康界面|行情引擎或协议无法继续/);
 });
 
 test("审计G50：非Error异常也有明确出口，真实root在Provider与App外包裹boundary", () => {

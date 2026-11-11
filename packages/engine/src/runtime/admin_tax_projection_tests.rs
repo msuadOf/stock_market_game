@@ -1,6 +1,6 @@
 use super::*;
 use crate::runtime::group::{GroupScript, TickPlan};
-use crate::runtime::watchdog::WatchdogConfig;
+use crate::runtime::wait_contract::DeadlineConfig;
 use crate::runtime::world::{DeskStockSpec, World, WorldSpec};
 use std::sync::Arc;
 use std::time::Duration;
@@ -33,7 +33,7 @@ fn basic_spec(
             .expect("测试计数起日合法"),
         script_for,
         chunk: 8,
-        watchdog: WatchdogConfig {
+        deadline: DeadlineConfig {
             normal: Duration::from_secs(5),
             long: Duration::from_secs(10),
         },
@@ -61,7 +61,7 @@ fn basic_spec(
 fn world() -> World {
     let mut spec = basic_spec(2, 2, 2, Box::new(|_| Box::new(|_, _| TickPlan::default())));
     spec.initial_cash = 100;
-    spec.watchdog = WatchdogConfig {
+    spec.deadline = DeadlineConfig {
         normal: Duration::from_millis(500),
         long: Duration::from_millis(500),
     };

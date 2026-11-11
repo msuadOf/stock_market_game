@@ -5,7 +5,7 @@
 //! - 分钟归一在 desk 侧：集合竞价完成成交 → 固定分钟 565（OpenAuction）；
 //!   收盘竞价清算成交 → 900（ClosingAuction）；连续竞价成交 → 墙钟分钟
 //!   （旧管线按 `CivilInstant.second_of_day()/60`；desk 按 tick 线性映射
-//!   到 240 游戏分钟后折墙钟 570..690 / 780..900）。
+//!   到 237 或 240 分钟后折为墙钟，有收盘竞价时连续段止于 14:57）。
 //! - 零成交分钟不造 bar（观察面占位收盘价由 `minute_closes` 承载——两读
 //!   面语义分离，旧管线 `record()` 只消费真实成交的同式）。
 //! - OHLC/量/额/笔数并入既有成交更新循环（不加第二遍遍历）。
@@ -63,7 +63,7 @@ fn empty_script() -> Box<dyn Fn(GroupIdx) -> GroupScript> {
 }
 
 /// tpd=30 / auction=0 / closing=3（basic_spec 缺省形态；continuous=27）。
-/// tick1 的连续游戏分钟 idx = floor(1*240/27) = 8 → 墙钟 578。
+/// tick1 的连续分钟 idx = floor(1*237/27) = 8 → 墙钟 578。
 fn continuous_world(script: Box<dyn Fn(GroupIdx) -> GroupScript>) -> World {
     let mut spec = basic_spec(1, 1, 3, script);
     spec.config = config_no_cage();

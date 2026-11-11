@@ -655,7 +655,7 @@ fn settlement_empty_batch_does_not_repair_an_invalid_watchlist_during_settlement
         .collect();
     let game = crate::GameSession::new(setup, 42).unwrap();
     let mut save = game.save().unwrap();
-    save.retail_experience = experience.to_map();
+    save.retail_experience = experience.to_shared_map();
     // 数值断言替代原文本断言 "unheld watchlist limit"
     // （fault2039：未持仓观察股票数超上限）。
     assert!(matches!(

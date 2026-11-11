@@ -8,8 +8,10 @@ import { parseHostFailure } from "./protocol-failure.ts";
 class Port extends EventTarget {
   starts = 0;
   closes = 0;
+  peer?: Port;
   start() { this.starts += 1; }
   close() { this.closes += 1; }
+  postMessage(data: unknown) { this.peer?.emit(data); }
   emit(data: unknown) { this.dispatchEvent(new MessageEvent("message", { data })); }
 }
 class WorkerHandle extends EventTarget {
@@ -41,7 +43,7 @@ class Clock {
     this.now = end;
   }
 }
-function fixture(options: { deathAddress?: number; constructError?: unknown; postError?: Error; channelErrorAt?: number; spawnCallbackError?: Error; fatalCallbackError?: Error; onFatal?: () => void; withoutReporter?: boolean; beforePost?: (child: WorkerHandle, channel: { port1: Port; port2: Port }) => void } = {}) {
+function fixture(options: { primaryDeathAddress?: number; constructError?: unknown; postError?: Error; channelErrorAt?: number; spawnCallbackError?: Error; fatalCallbackError?: Error; onFatal?: () => void; withoutReporter?: boolean; beforePost?: (child: WorkerHandle, channel: { port1: Port; port2: Port }) => void } = {}) {
   const memory = new WebAssembly.Memory({ initial: 1, maximum: 4, shared: true });
   const layout = { baseAddr: 0, headerWords: HEADER_WORDS, slotStride: SLOT_STRIDE, joinStride: JOIN_STRIDE, capacity: 4, genBits: 29 };
   const words = new Int32Array(memory.buffer);
@@ -50,6 +52,7 @@ function fixture(options: { deathAddress?: number; constructError?: unknown; pos
   Atomics.store(words, FREE_HEAD, FREE_HEAD_EMPTY | 0);
   const engine = new WorkerHandle(), clock = new Clock();
   const children: WorkerHandle[] = [], channels: { port1: Port; port2: Port }[] = [];
+  let omitInitialEngineChannel = options.primaryDeathAddress !== undefined;
   const fatal: HostFailure[] = [], failures: HostFailure[] = [];
   const reporterErrors: Error[] = [];
   const supervisor = createEngineSupervisor({
@@ -65,7 +68,11 @@ function fixture(options: { deathAddress?: number; constructError?: unknown; pos
     },
     createChannel: () => {
       if (channels.length === options.channelErrorAt) throw new Error("Channel construct failed");
-      const channel = { port1: new Port(), port2: new Port() }; channels.push(channel); return channel as unknown as MessageChannel;
+      const port1 = new Port(), port2 = new Port(); port1.peer = port2; port2.peer = port1;
+      const channel = { port1, port2 };
+      if (omitInitialEngineChannel) omitInitialEngineChannel = false;
+      else channels.push(channel);
+      return channel as unknown as MessageChannel;
     },
     onFailurePending: () => {},
     onFatalFailure: (failure) => { options.onFatal?.(); fatal.push(failure); if (options.fatalCallbackError !== undefined) throw options.fatalCallbackError; },
@@ -73,7 +80,18 @@ function fixture(options: { deathAddress?: number; constructError?: unknown; pos
     ...(options.withoutReporter === true ? {} : { reportError: (error: Error) => { reporterErrors.push(error); } }),
     timers: { now: () => clock.now, setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout },
   });
-  supervisor.installSubstrate({ module: new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])), memory, layout, diagnostics: false, ...(options.deathAddress === undefined ? {} : { waitDeath: { address: options.deathAddress, bytes: 4 } }) });
+  if (options.primaryDeathAddress === undefined) {
+    supervisor.installSubstrate({ module: new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])), memory, layout, diagnostics: false });
+  } else {
+    supervisor.bootstrapEngine({ type: "init", runtimeOverride: false });
+    const control = (engine.sent.at(-1) as { controlPort: Port }).controlPort;
+    control.postMessage({ type: "facadeEngineMemory", allocationId: 1, memory });
+    control.postMessage({ type: "facadeEngineDeath", allocationId: 1, primary: {
+      engine: { workerId: 0, address: 4200 }, ingress: { workerId: 0xffffffff, address: 4456 },
+      death: { address: options.primaryDeathAddress, bytes: 4 },
+    } });
+    control.postMessage({ type: "facadeEngineConfiguration", allocationId: 1, module: new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])), layout, diagnostics: false });
+  }
   function publish(slot: number, gen = 0) {
     Atomics.store(words, BUMP, slot + 1);
     Atomics.store(words, slotFieldOffset(slot, SLOT_JOIN_INDEX), slot);
@@ -573,7 +591,7 @@ test("Rust 先发布 DeadPanic 时仍报告 child fatal 和记录", { timeout: 1
 
 
 test("全局死亡通知先于记录发布时显式报告未发布状态并终止实例", { timeout: 10000 }, async () => {
-  const f = fixture({ deathAddress: 16384 }); f.publish(0);
+  const f = fixture({ primaryDeathAddress: 16384 }); f.publish(0);
   f.channels[0].port1.emit({ type: "facadeSpawnV2", slot: 0, gen: 0, name: "fixture", recordAddr: 8192 });
   f.ready();
   const death = new Int32Array(f.memory.buffer, 16384, 1);
@@ -588,7 +606,7 @@ test("全局死亡通知先于记录发布时显式报告未发布状态并终�
 });
 
 test("dispose 后迟到的全局死亡通知不得报告", { timeout: 10000 }, async () => {
-  const f = fixture({ deathAddress: 16384 }); f.supervisor.dispose();
+  const f = fixture({ primaryDeathAddress: 16384 }); f.supervisor.dispose();
   const death = new Int32Array(f.memory.buffer, 16384, 1);
   Atomics.store(death, 0, 1); Atomics.notify(death, 0);
   await new Promise<void>((resolve) => setTimeout(resolve, 30));
@@ -606,7 +624,7 @@ test("报告器故障保留 V2 tombstone 快照", { timeout: 10000 }, () => {
 });
 
 test("死亡宽限内 child 错误优先，取消延迟报告", { timeout: 10000 }, async () => {
-  const f = fixture({ deathAddress: 16384 }); f.publish(0);
+  const f = fixture({ primaryDeathAddress: 16384 }); f.publish(0);
   f.channels[0].port1.emit({ type: "facadeSpawnV2", slot: 0, gen: 0, name: "fixture", recordAddr: 8192 });
   f.ready();
   const death = new Int32Array(f.memory.buffer, 16384, 1);
@@ -620,11 +638,14 @@ test("死亡宽限内 child 错误优先，取消延迟报告", { timeout: 10000
 });
 
 test("DEAD 布局不得与 arena 或 abort 重叠", { timeout: 10000 }, () => {
-  assert.throws(() => fixture({ deathAddress: 4 }), /重叠/);
+  const f = fixture({ primaryDeathAddress: 4 });
+  assert.equal(f.fatal.length, 1);
+  assert.match(f.fatal[0].message, /重叠/);
+  f.supervisor.dispose();
 });
 
 test("DEAD 后 writer 可完成发布，期限前不终止并保留首错", { timeout: 10000 }, async () => {
-  const f = fixture({ deathAddress: 16384 }); f.publish(0);
+  const f = fixture({ primaryDeathAddress: 16384 }); f.publish(0);
   f.channels[0].port1.emit({ type: "facadeSpawnV2", slot: 0, gen: 0, name: "fixture", recordAddr: 8192 }); f.ready();
   const words = new Uint32Array(f.memory.buffer, 8192, 4), halves = new Uint16Array(f.memory.buffer, 8192, 8), bytes = new Uint8Array(f.memory.buffer, 8192, 256);
   Atomics.store(words, 0, 1);
@@ -639,7 +660,7 @@ test("DEAD 后 writer 可完成发布，期限前不终止并保留首错", { ti
 });
 
 test("failurePending 保留首错并追加清理错误", { timeout: 10000 }, async () => {
-  const f = fixture({ deathAddress: 16384 });
+  const f = fixture({ primaryDeathAddress: 16384 });
   const death = new Int32Array(f.memory.buffer, 16384, 1); Atomics.store(death, 0, 1); Atomics.notify(death, 0);
   await new Promise<void>((resolve) => setTimeout(resolve, 30));
   f.supervisor.noteFailureDuringPending({ code: "CLEANUP", where: "fixture", message: "清理失败" });
@@ -649,7 +670,7 @@ test("failurePending 保留首错并追加清理错误", { timeout: 10000 }, asy
 });
 
 test("已到期的终态清理同步释放 Worker 并保留首错", { timeout: 10000 }, () => {
-  const f = fixture({ deathAddress: 16384 }); f.spawn(); f.ready();
+  const f = fixture({ primaryDeathAddress: 16384 }); f.spawn(); f.ready();
   f.supervisor.setDeadline(f.clock.now);
   f.supervisor.finishFailureAtDeadline({ code: "TIMEOUT", where: "fixture", message: "清理超时" });
   assert.equal(f.children[0].terminations, 1);
@@ -668,14 +689,14 @@ test("最终失败明确声明 last_committed_tick 未知并保留原诊断", { 
 
 test("已接管的 Worker error 阻止冒泡并保留故障与清理", { timeout: 10000 }, () => {
   for (const role of ["engine", "child"] as const) {
-    for (const deathAddress of [undefined, 16384]) {
-      const f = fixture({ deathAddress });
+    for (const primaryDeathAddress of [undefined, 16384]) {
+      const f = fixture({ primaryDeathAddress });
       const worker = role === "engine" ? f.engine : f.spawn();
       if (role === "child") f.ready();
       const event = Object.assign(new Event("error", { cancelable: true }), { error: new Error("原始 trap"), message: "原始 trap" });
       worker.dispatchEvent(event);
       assert.equal(event.defaultPrevented, true);
-      if (deathAddress === undefined) assert.equal(f.fatal.length, 1);
+      if (primaryDeathAddress === undefined) assert.equal(f.fatal.length, 1);
       f.supervisor.dispose();
       assert.equal(worker.terminations, 1);
     }

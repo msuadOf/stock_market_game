@@ -338,3 +338,21 @@ test("parseRawSaveJson 的错误路径保留既有拼接语义", { timeout: 10_0
     )
   }
 })
+
+test("原型存在 get/set 字段时私有解析仍保持完整存档", { timeout: 10000 }, () => {
+  const text = JSON.stringify(currentSaveFixture());
+  const expected = parseSaveJson(text);
+  const descriptor = Object.assign(Object.create(null), { value: 1, writable: true, configurable: true });
+  const previousGet = Object.getOwnPropertyDescriptor(Object.prototype, "get");
+  const previousSet = Object.getOwnPropertyDescriptor(Object.prototype, "set");
+  Object.defineProperty(Object.prototype, "get", descriptor);
+  Object.defineProperty(Object.prototype, "set", descriptor);
+  try {
+    assert.deepEqual(parseSaveJson(text), expected);
+  } finally {
+    if (previousGet) Object.defineProperty(Object.prototype, "get", previousGet);
+    else delete (Object.prototype as Record<string, unknown>).get;
+    if (previousSet) Object.defineProperty(Object.prototype, "set", previousSet);
+    else delete (Object.prototype as Record<string, unknown>).set;
+  }
+});

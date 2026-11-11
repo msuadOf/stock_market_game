@@ -76,7 +76,7 @@ export const setup = { stocks: [{ code: "000812" }] } as Parameters<typeof creat
 const capabilities = { npcDecisionDiagnostics: false, personalTradeHistory: false, indicatorCapabilities: { intradayAverage: false, macd: false, priceKdj: false, candleKdj: false } };
 
 /** 同时支持 pre-host init 与新 bootstrap；ready 只有新控制端真实 ACK 后才产生。 */
-export function fixture(options: { initError?: unknown; initAfterMemoryFailure?: unknown; initBeforeMemoryFailure?: unknown; claimUnallocatedAfterMemory?: boolean; engineConstructError?: unknown; channelError?: boolean; childConstructError?: unknown; spawnSink?: (failure: HostFailure) => void; beforeInitPost?: (clock: Clock) => void } = {}) {
+export function fixture(options: { initError?: unknown; initAfterMemoryFailure?: unknown; initBeforeMemoryFailure?: unknown; claimUnallocatedAfterMemory?: boolean; engineConstructError?: unknown; channelError?: boolean; childConstructError?: unknown; spawnSink?: (failure: HostFailure) => void; beforeInitPost?: (clock: Clock) => void; hostFactory?: typeof createWorkerHost } = {}) {
   const originals = new Map<string, PropertyDescriptor | undefined>();
   function install(name: string, value: unknown) {
     originals.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
@@ -94,7 +94,9 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
   const words = new Int32Array(memory.buffer);
   Atomics.store(words, CAPACITY, layout.capacity); Atomics.store(words, GEN_BITS, layout.genBits); Atomics.store(words, FREE_HEAD, FREE_HEAD_EMPTY | 0);
   const primary = { engine: { workerId: 0, address: 4200 }, ingress: { workerId: 0xffffffff, address: 4456 }, death: { address: 4100, bytes: 4 } };
-  const substrate = { module, memory, layout, diagnostics: false, waitAbort: { address: 4096, bytes: 1 as const }, waitDeath: { address: 4100, bytes: 4 as const } };
+  const libosFault = { globalStateAddress: 8192, domainAbortAddress: 8200, hostReadyAddress: 8204, slots: Array.from({ length: layout.capacity }, (_, index) => ({ abortAddress: 8208 + index * 8, waitAddress: 8212 + index * 8 })) };
+  Atomics.store(new Int32Array(memory.buffer, libosFault.globalStateAddress, 1), 0, 1);
+  const substrate = { module, memory, layout, diagnostics: false, libosFault, primary };
   let configured = 0;
   let configuredSubstrate: typeof substrate | undefined;
   class FixtureChannel extends NodeMessageChannel {
@@ -185,7 +187,7 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
               this.controlPort!.postMessage({ type: "facadeEngineDeath", allocationId: 1, primary });
             }
             if (request.type === "facadeEngineDeathRegistered") {
-              this.controlPort!.postMessage({ type: "facadeEngineConfiguration", allocationId: 1, module, layout, diagnostics: false, waitAbort: substrate.waitAbort, waitDeath: substrate.waitDeath });
+              this.controlPort!.postMessage({ type: "facadeEngineConfiguration", allocationId: 1, module, layout, diagnostics: false, libosFault });
             }
             if (request.type === "facadeEngineConfigured") { configured++; this.dataPort!.postMessage({ type: "initializationProgress", phase: "engine" }); this.dataPort!.postMessage({ type: "ready" }); }
           });
@@ -255,7 +257,7 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
   let outcome: Outcome = { status: "pending" };
   function launch(...args: [] | [unknown]) {
     const hostOptions = args.length === 0 ? { onSpawnFailure: sink } : args[0];
-    const creating = createWorkerHost(setup, 42n, hostOptions as Parameters<typeof createWorkerHost>[2]);
+    const creating = (options.hostFactory ?? createWorkerHost)(setup, 42n, hostOptions as Parameters<typeof createWorkerHost>[2]);
     void creating.then((host) => { outcome = { status: "fulfilled", host }; }, (error: unknown) => { outcome = { status: "rejected", error }; });
     return creating;
   }

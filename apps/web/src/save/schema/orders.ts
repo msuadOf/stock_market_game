@@ -73,21 +73,49 @@ function intent(value: unknown, path: string): Intent {
   }
 }
 
-export function parseOrderState(value: Record<string, unknown>): Pick<import("../../types/engine").SaveSlot, "resting_orders" | "book_next_sequences" | "filled_orders" | "price_history" | "market_minute_closes" | "rng_state" | "npc_attention" | "npc_order_lifecycles" | "pending_player" | "ingress_receipt_cursors" | "next_order_id"> {
-  const resting_orders = map(value.resting_orders, "resting_orders", stockCode, (items, path) => array(items, path).map((item, index): Order => { const order = record(item, `${path}[${index}]`); exact(order, ["id", "side", "price", "qty", "original_qty", "filled_qty", "filled_value", "owner", "seq"], `${path}[${index}]`); return { id: integer(order.id, `${path}[${index}].id`, 1), side: oneOf(order.side, `${path}[${index}].side`, side), price: money(order.price, `${path}[${index}].price`), qty: integer(order.qty, `${path}[${index}].qty`, 0), original_qty: integer(order.original_qty, `${path}[${index}].original_qty`, 1), filled_qty: integer(order.filled_qty, `${path}[${index}].filled_qty`, 0), filled_value: money(order.filled_value, `${path}[${index}].filled_value`), owner: accountId(order.owner, `${path}[${index}].owner`), seq: integer(order.seq, `${path}[${index}].seq`, 0) } }))
-  const book_next_sequences = map(value.book_next_sequences, "book_next_sequences", stockCode, decimal)
-  const filled_orders = map(value.filled_orders, "filled_orders", stockCode, (items, path) => array(items, path).map((item, index) => { const order = record(item, `${path}[${index}]`); exact(order, ["id", "owner"], `${path}[${index}]`); return { id: integer(order.id, `${path}[${index}].id`, 1), owner: accountId(order.owner, `${path}[${index}].owner`) } }))
-  const price_history = map(value.price_history, "price_history", stockCode, (items, path) => array(items, path).map((item, index) => money(item, `${path}[${index}]`)))
-  const market_minute_closes = map(value.market_minute_closes, "market_minute_closes", stockCode, (items, path) => array(items, path).map((item, index) => { const close = record(item, `${path}[${index}]`); exact(close, ["absolute_trading_minute", "close"], `${path}[${index}]`); return { absolute_trading_minute: integer(close.absolute_trading_minute, `${path}[${index}].absolute_trading_minute`, 0), close: money(close.close, `${path}[${index}].close`) } }))
-  const npc_attention = map(value.npc_attention, "npc_attention", accountKey, parseNpcAttention)
-  const npc_order_lifecycles = array(value.npc_order_lifecycles, "npc_order_lifecycles").map((item, index): NpcOrderLifecycle => { const lifecycle = record(item, `npc_order_lifecycles[${index}]`); exact(lifecycle, ["account", "code", "order_id", "placed_market_minute", "expires_market_minute"], `npc_order_lifecycles[${index}]`); return { account: accountId(lifecycle.account, `npc_order_lifecycles[${index}].account`), code: stockId(lifecycle.code, `npc_order_lifecycles[${index}].code`), order_id: integer(lifecycle.order_id, `npc_order_lifecycles[${index}].order_id`, 1), placed_market_minute: integer(lifecycle.placed_market_minute, `npc_order_lifecycles[${index}].placed_market_minute`, 0), expires_market_minute: integer(lifecycle.expires_market_minute, `npc_order_lifecycles[${index}].expires_market_minute`, 0) } })
-  const pending_player = array(value.pending_player, "pending_player").map((item, index): ReceiptBearingIntent => { const path = `pending_player[${index}]`; const receipt = record(item, path); exact(receipt, ["owner", "intent", "account_ordinal", "stock_ordinal"], path); return { owner: accountId(receipt.owner, `${path}.owner`), intent: intent(receipt.intent, `${path}.intent`), account_ordinal: receiptOrdinal(receipt.account_ordinal, `${path}.account_ordinal`), stock_ordinal: receiptOrdinal(receipt.stock_ordinal, `${path}.stock_ordinal`) } })
-  const ingress_receipt_cursors = record(value.ingress_receipt_cursors, "ingress_receipt_cursors")
+export function parsePriceHistory(value: unknown) {
+  return map(value, "price_history", stockCode, (items, path) => array(items, path).map((item, index) => money(item, `${path}[${index}]`)))
+}
+
+export function parseMarketMinuteCloses(value: unknown) {
+  return map(value, "market_minute_closes", stockCode, (items, path) => array(items, path).map((item, index) => { const close = record(item, `${path}[${index}]`); exact(close, ["absolute_trading_minute", "close"], `${path}[${index}]`); return { absolute_trading_minute: integer(close.absolute_trading_minute, `${path}[${index}].absolute_trading_minute`, 0), close: money(close.close, `${path}[${index}].close`) } }))
+}
+
+export function parseNpcOrderLifecycles(value: unknown) {
+  return array(value, "npc_order_lifecycles").map((item, index): NpcOrderLifecycle => { const lifecycle = record(item, `npc_order_lifecycles[${index}]`); exact(lifecycle, ["account", "code", "order_id", "placed_market_minute", "expires_market_minute"], `npc_order_lifecycles[${index}]`); return { account: accountId(lifecycle.account, `npc_order_lifecycles[${index}].account`), code: stockId(lifecycle.code, `npc_order_lifecycles[${index}].code`), order_id: integer(lifecycle.order_id, `npc_order_lifecycles[${index}].order_id`, 1), placed_market_minute: integer(lifecycle.placed_market_minute, `npc_order_lifecycles[${index}].placed_market_minute`, 0), expires_market_minute: integer(lifecycle.expires_market_minute, `npc_order_lifecycles[${index}].expires_market_minute`, 0) } })
+}
+
+export function parsePendingPlayer(value: unknown) {
+  return array(value, "pending_player").map((item, index): ReceiptBearingIntent => { const path = `pending_player[${index}]`; const receipt = record(item, path); exact(receipt, ["owner", "intent", "account_ordinal", "stock_ordinal"], path); return { owner: accountId(receipt.owner, `${path}.owner`), intent: intent(receipt.intent, `${path}.intent`), account_ordinal: receiptOrdinal(receipt.account_ordinal, `${path}.account_ordinal`), stock_ordinal: receiptOrdinal(receipt.stock_ordinal, `${path}.stock_ordinal`) } })
+}
+
+export function parseIngressReceiptCursors(value: unknown) {
+  const ingress_receipt_cursors = record(value, "ingress_receipt_cursors")
   exact(ingress_receipt_cursors, ["next_account_ordinal", "next_stock_ordinal"], "ingress_receipt_cursors")
   const cursorMap = (value: unknown, path: string, key: (key: string, path: string) => void) => map(value, path, key, receiptOrdinal)
-  const parsed_ingress_receipt_cursors = {
+  return {
     next_account_ordinal: cursorMap(ingress_receipt_cursors.next_account_ordinal, "ingress_receipt_cursors.next_account_ordinal", accountKey),
     next_stock_ordinal: cursorMap(ingress_receipt_cursors.next_stock_ordinal, "ingress_receipt_cursors.next_stock_ordinal", stockCode),
   }
+}
+
+export function parseRestingOrders(value: unknown) {
+  return map(value, "resting_orders", stockCode, (items, path) => array(items, path).map((item, index): Order => { const order = record(item, `${path}[${index}]`); exact(order, ["id", "side", "price", "qty", "original_qty", "filled_qty", "filled_value", "owner", "seq"], `${path}[${index}]`); return { id: integer(order.id, `${path}[${index}].id`, 1), side: oneOf(order.side, `${path}[${index}].side`, side), price: money(order.price, `${path}[${index}].price`), qty: integer(order.qty, `${path}[${index}].qty`, 0), original_qty: integer(order.original_qty, `${path}[${index}].original_qty`, 1), filled_qty: integer(order.filled_qty, `${path}[${index}].filled_qty`, 0), filled_value: money(order.filled_value, `${path}[${index}].filled_value`), owner: accountId(order.owner, `${path}[${index}].owner`), seq: integer(order.seq, `${path}[${index}].seq`, 0) } }))
+}
+
+export function parseFilledOrders(value: unknown) {
+  return map(value, "filled_orders", stockCode, (items, path) => array(items, path).map((item, index) => { const order = record(item, `${path}[${index}]`); exact(order, ["id", "owner"], `${path}[${index}]`); return { id: integer(order.id, `${path}[${index}].id`, 1), owner: accountId(order.owner, `${path}[${index}].owner`) } }))
+}
+
+export function parseOrderState(value: Record<string, unknown>): Pick<import("../../types/engine").SaveSlot, "resting_orders" | "book_next_sequences" | "filled_orders" | "price_history" | "market_minute_closes" | "rng_state" | "npc_attention" | "npc_order_lifecycles" | "pending_player" | "ingress_receipt_cursors" | "next_order_id"> {
+  const resting_orders = parseRestingOrders(value.resting_orders)
+  const book_next_sequences = map(value.book_next_sequences, "book_next_sequences", stockCode, decimal)
+  const filled_orders = parseFilledOrders(value.filled_orders)
+  const price_history = parsePriceHistory(value.price_history)
+  const market_minute_closes = parseMarketMinuteCloses(value.market_minute_closes)
+  const npc_attention = map(value.npc_attention, "npc_attention", accountKey, parseNpcAttention)
+  const npc_order_lifecycles = parseNpcOrderLifecycles(value.npc_order_lifecycles)
+  const pending_player = parsePendingPlayer(value.pending_player)
+  const parsed_ingress_receipt_cursors = parseIngressReceiptCursors(value.ingress_receipt_cursors)
   return { resting_orders, book_next_sequences, filled_orders, price_history, market_minute_closes, rng_state: decimal(value.rng_state, "rng_state"), npc_attention, npc_order_lifecycles, pending_player, ingress_receipt_cursors: parsed_ingress_receipt_cursors, next_order_id: integer(value.next_order_id, "next_order_id", 1) }
 }

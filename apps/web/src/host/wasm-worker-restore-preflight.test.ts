@@ -3,7 +3,7 @@ import { registerHooks } from "node:module";
 import test from "node:test";
 import { WorkerTransportFixture } from "./worker-transport.test-support.ts";
 
-for (const scenario of ["wrong-hash", "missing-export", "false-missing-setter"] as const) {
+for (const scenario of ["wrong-hash", "missing-export", "false-missing-setter", "chunk-missing"] as const) {
   test(`实际 Worker restore package ${scenario} 必须在 initializer/Memory 前拒绝`, { timeout: 10000 }, async (t) => {
     const key = Symbol.for(`restore-preflight-${scenario}`);
     const saved = new Map<PropertyKey, PropertyDescriptor | undefined>();
@@ -28,7 +28,7 @@ for (const scenario of ["wrong-hash", "missing-export", "false-missing-setter"] 
       });
     }
     let calls = 0; let handler!: (event: { data: Record<string, unknown> }) => void;
-    replace(key, { initialize() { calls++; return Promise.resolve(); }, dispose() {} });
+    replace(key, { initialize() { calls++; return Promise.resolve(); }, dispose() {}, async disposeAsync() {} });
     const lifecycle: Record<string, unknown>[] = [];
     replace("self", { postMessage: (message: Record<string, unknown>) => { lifecycle.push(message); }, reportError(error: unknown) { throw error; }, addEventListener(_type: string, listener: typeof handler) { handler = listener; } });
     const bytes = new Uint8Array([0,97,115,109,1,0,0,0]);
@@ -70,7 +70,7 @@ for (const scenario of ["wrong-hash", "missing-export", "false-missing-setter"] 
       const ownerBusinessPort = transport.channels[0]!.port1 as unknown as MessagePort;
       const originalPost = workerPort.postMessage.bind(workerPort);
       workerPort.postMessage = (message: unknown) => { const value = message as Record<string, unknown>; posted.push(value); resolvePosted(value); originalPost(message); };
-      transport.dispatch(ownerBusinessPort, { type: "init", ...(scenario === "false-missing-setter" ? { runtimeOverride: false } : {}), initialArchive: { marker: "唯一 X" }, restoreCapability: { kind: "verified-package", wasmSha256: scenario === "wrong-hash" ? "a".repeat(64) : wasmHash,
+      transport.dispatch(ownerBusinessPort, { type: "init", ...(scenario === "false-missing-setter" ? { runtimeOverride: false } : {}), ...(scenario === "chunk-missing" ? { initialChunked: {} } : { initialArchive: { marker: "唯一 X" } }), restoreCapability: { kind: "verified-package", wasmSha256: scenario === "wrong-hash" ? "a".repeat(64) : wasmHash,
         glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "wasm_tombstone_init_primary", "wasm_tombstone_bind_ingress"] } });
       if (scenario === "missing-export") {
         const progress = await awaitTestSignal(Promise.race([
@@ -84,7 +84,7 @@ for (const scenario of ["wrong-hash", "missing-export", "false-missing-setter"] 
           releaseCompile = undefined;
         }
       }
-      if (scenario === "false-missing-setter") assert.equal(fetches, 0, "缺 setter 在 package load 和 initializer 前拒绝");
+      if (scenario === "false-missing-setter" || scenario === "chunk-missing") assert.equal(fetches, 0, "缺能力在 package load 和 initializer 前拒绝");
       const failure = await awaitTestSignal(postedMessage);
       assert.equal(calls, 0, "PACKAGE_CHECK_MUST_PRECEDE_MEMORY_INITIALIZER");
       assert.equal(posted.length, 1); assert.equal(failure.type, "failure");

@@ -142,15 +142,16 @@ test("可信1GiB构造capacity无samples即可ordinary READY，活动F5一次仍
   assert.throws(() => nextOwner().admit(intent()), (error: unknown) => (error as { code: string }).code === "MEMORY_RESIDUAL_EXHAUSTED");
 });
 
-test("JS面真实totalJSHeapSize超过256MiB在admission锚前终局，未知noise不冒填", { timeout: 10000 }, () => {
+test("已分配 JS 堆超过256MiB本身不代表耗尽，仍准入并保留真实观测", { timeout: 10000 }, () => {
   const f = fixture();
   const owner = new WasmDocumentMemoryOwner({ maximumBytes: f.options.maximumBytes, reclaimBytes: f.options.reclaimBytes,
     readCapacity: () => ({ kind: "enforced-capacity", initialPages: 1024, maximumPages: 4096, liveUpperBoundBytes: 256 * MiB }),
     observeJsHeap: () => ({ kind: "observed", source: "performance.memory.totalJSHeapSize", bytes: 256 * MiB + 1 }),
     createStorage: (liveUpperBoundBytes) => new WasmMemoryStorage({ ...f.options, liveUpperBoundBytes }) });
-  assert.throws(() => owner.admit(intent()), (error: unknown) => (error as { code: string }).code === "MEMORY_BUDGET_EXCEEDED");
-  assert.equal(JSON.parse(f.session.data.get(SNAPSHOT_KEY)!).liveUpperBound, 0);
-  assert.throws(() => owner.admit(intent()), (error: unknown) => (error as { code: string }).code === "MEMORY_BUDGET_EXCEEDED");
+  const result = owner.admit(intent());
+  assert.equal(result.kind, "admitted");
+  assert.deepEqual(owner.latestJsObservation(), { kind: "observed", source: "performance.memory.totalJSHeapSize", bytes: 256 * MiB + 1 });
+  assert.equal(JSON.parse(f.session.data.get(SNAPSHOT_KEY)!).liveUpperBound, 256 * MiB);
 });
 
 test("JS不可观测登记能力位而不伪造0bytes，getter失败保持typed原因不准入", { timeout: 10000 }, () => {
@@ -227,4 +228,42 @@ test("发布包缺少消费导出或身份无效在准入时明确拒绝", { tim
       restoreCapabilities: { forArchive: () => invalid }, createStorage: (liveUpperBoundBytes) => new WasmMemoryStorage({ ...f.options, liveUpperBoundBytes }) });
     assert.throws(() => owner.admit({ kind: "load", archive: commandDayEndArchiveFixture() }), (error: unknown) => (error as { code?: string }).code === "WASM_RESTORE_TOPOLOGY_NOT_READY");
   }
+});
+
+test("可信 JSON 存档只解析一次并在准入时复用不可变快照", { timeout: 10000 }, async () => {
+  const { parseFrozenSaveJson } = await import("../save/save-schema.ts");
+  const s = setup();
+  const archive = parseFrozenSaveJson(JSON.stringify(commandDayEndArchiveFixture()));
+  const admitted = s.owner.admit({ kind: "load", archive });
+  assert.equal(admitted.kind, "admitted");
+  if (admitted.kind !== "admitted" || admitted.intent.kind !== "load") throw new Error("需要载入票");
+  assert.strictEqual(admitted.intent.archive, archive, "自有已校验冻结图无需再复制");
+  assert.ok(Object.isFrozen(archive) && Object.isFrozen(archive.snapshot) && Object.isFrozen(archive.setup.stocks));
+  assert.throws(() => { (archive.setup.stocks as unknown[]).push({}); });
+});
+
+test("普通冻结对象不能伪造可信存档且仍隔离外部引用", { timeout: 10000 }, () => {
+  const s = setup(); const original = commandDayEndArchiveFixture();
+  Object.freeze(original);
+  const admitted = s.owner.admit({ kind: "load", archive: original });
+  if (admitted.kind !== "admitted" || admitted.intent.kind !== "load") throw new Error("需要载入票");
+  assert.notStrictEqual(admitted.intent.archive, original);
+  const old = admitted.intent.archive.setup.stocks[0].code;
+  original.setup.stocks[0].code = "999999";
+  assert.equal(admitted.intent.archive.setup.stocks[0].code, old);
+});
+
+test("可信存档在 JS 堆观测超过旧阈值时仍按真实 WASM 预算准入", { timeout: 10000 }, async () => {
+  const { parseFrozenSaveJson } = await import("../save/save-schema.ts");
+  const f = fixture();
+  const owner = new WasmDocumentMemoryOwner({ maximumBytes: f.options.maximumBytes, reclaimBytes: f.options.reclaimBytes,
+    readCapacity: () => ({ kind: "enforced-capacity", initialPages: 1024, maximumPages: 4096, liveUpperBoundBytes: 256 * MiB }),
+    restoreCapabilities: { forArchive: () => verified },
+    observeJsHeap: () => ({ kind: "observed", source: "performance.memory.totalJSHeapSize", bytes: 256 * MiB + 1 }),
+    createStorage: (liveUpperBoundBytes) => new WasmMemoryStorage({ ...f.options, liveUpperBoundBytes }) });
+  const archive = parseFrozenSaveJson(JSON.stringify(commandDayEndArchiveFixture()));
+  const admitted = owner.admit({ kind: "load", archive });
+  assert.equal(admitted.kind, "admitted");
+  assert.equal(owner.latestJsObservation()?.kind, "observed");
+  assert.equal(JSON.parse(f.session.data.get(SNAPSHOT_KEY)!).liveUpperBound, 256 * MiB);
 });

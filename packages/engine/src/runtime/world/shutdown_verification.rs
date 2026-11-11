@@ -37,7 +37,7 @@ impl WorldStopProbe {
         &self,
         handles: &[(
             WorkerId,
-            crate::thread_facade::JoinHandle<Result<(), RuntimeError>>,
+            WorldWorkerHandle,
         )],
     ) {
         assert_eq!(handles.len(), 4, "fixture必须拥有2组2部真实handles");
@@ -58,17 +58,17 @@ impl WorldStopProbe {
 
 pub(super) fn inject_calendar_binding_failure(
     probe: &WorldStopProbe,
-    groups: &[Sender<GroupIn>],
-    desks: &mut [Sender<DeskMsg>],
-    up: &Receiver<UpMsg>,
-    watchdog: &WatchdogConfig,
+    groups: &[super::super::downstream::Sender<GroupIn>],
+    desks: &mut [super::super::downstream::Sender<DeskMsg>],
+    up: &super::super::upstream::UpReceiver<UpMsg>,
+    deadline: &super::wait_contract::DeadlineConfig,
 ) {
     assert_eq!(probe.mode(), 4);
     probe.stage(30);
     groups[0]
         .send(GroupIn::Continue { tick: 0, round: 0 })
         .expect("真实失序Continue入队");
-    match recv_deadline(up, Phase::TickConverge, watchdog).expect("必须先收到原group错误握手")
+    match recv_deadline(up, super::wait_contract::Phase::TickConverge, deadline).expect("必须先收到原group错误握手")
     {
         UpMsg::Failed {
             who: WorkerId::Group(0),
@@ -77,7 +77,7 @@ pub(super) fn inject_calendar_binding_failure(
         other => panic!("Calendar故障注入未得到预期原worker错误：{other:?}"),
     }
     probe.words[2].store(1, Ordering::SeqCst);
-    let (disconnected, receiver) = channel();
+    let (disconnected, receiver) = super::super::downstream::channel().expect("验证用下行故障槽");
     drop(receiver);
     desks[0] = disconnected;
     // guard独立wake仍保留原活desk的Sender；随后运行真实BindCalendar send/map_err?。
@@ -102,7 +102,7 @@ fn short_spec() -> WorldSpec {
         initial_pending_sell: Vec::new(),
         script_for: Box::new(|_| Box::new(|_, _| super::super::group::TickPlan::default())),
         chunk: 8,
-        watchdog: WatchdogConfig {
+        deadline: super::wait_contract::DeadlineConfig {
             normal: Duration::from_secs(5),
             long: Duration::from_secs(5),
         },
@@ -159,15 +159,15 @@ pub fn verify_world_stop(mode: u32, probe: &WorldStopProbe) -> Result<String, St
                 return Err("Calendar故障未触发真实构造错误".to_owned());
             }
         };
-        let RuntimeError::SendFailed { detail } = error else {
+        let RuntimeError::ConstructionFailure { primary, joined_workers, cleanup_errors } = error else {
             return Err(format!("错误类型丢失：{error}"));
         };
-        if !detail.contains("交易部 Calendar owner 绑定失败") || !detail.contains("Continue 错序")
-        {
-            return Err(format!("构造主错误或原worker次生错误丢失：{detail}"));
+        if primary != "交易部 Calendar owner 绑定失败" || joined_workers != 4
+            || !cleanup_errors.iter().any(|error| error.contains("group-0") && error.contains("Continue 错序")) {
+            return Err(format!("构造错误或回收事实不符：primary={primary} handles={joined_workers} cleanup={cleanup_errors:?}"));
         }
         probe.stage(60);
-        return Ok(detail);
+        return Ok(format!("{primary}；已消费 {joined_workers} 个 worker 句柄；回收错误={cleanup_errors:?}"));
     }
     let mut world = spawn(probe).map_err(|error| error.to_string())?;
     let publication = world.publication();
@@ -175,7 +175,7 @@ pub fn verify_world_stop(mode: u32, probe: &WorldStopProbe) -> Result<String, St
     probe.stage(45);
     match mode {
         0 => {
-            let (disconnected, receiver) = channel();
+            let (disconnected, receiver) = super::super::downstream::channel().expect("验证用下行故障槽");
             drop(receiver);
             world.group_txs[0] = disconnected;
             let error = world

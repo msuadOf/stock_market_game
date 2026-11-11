@@ -2,7 +2,7 @@ import { Button, HTMLSelect } from "@blueprintjs/core";
 import { useState, type ReactNode } from "react";
 import type { DeliveryMode } from "../host/engine-host.ts";
 import type { HostFailure } from "../host/host-update.ts";
-import { buildErrorFeedback, copyErrorFeedback, redactFeedbackText, type FeedbackClipboard, type FeedbackCopyStatus } from "./error-details.ts";
+import { buildErrorFeedback, copyErrorFeedback, type FeedbackClipboard, type FeedbackCopyStatus } from "./error-details.ts";
 
 export interface FatalHostErrorProps {
   readonly error: string | HostFailure;
@@ -26,7 +26,7 @@ export function FatalHostError({ error, onRetry, clipboard, title = "游戏已�
     <p>{description}</p>
     <Button intent="primary" onClick={onRetry}>刷新页面重试</Button>
     <FeedbackCopyButton onCopy={(report) => copyErrorFeedback(error, report, clipboard)} />
-    {typeof error === "string" && <pre>{redactFeedbackText(error)}</pre>}
+    {typeof error === "string" && <pre>{error}</pre>}
     <pre aria-label="错误反馈详情">{buildErrorFeedback(error)}</pre>
   </div>;
 }

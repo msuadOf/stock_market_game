@@ -9,7 +9,7 @@ use engine::calendar::{CalendarExchange, CivilDate, TradingCalendar};
 use engine::config::GameConfig;
 use engine::money::Money;
 use engine::runtime::decision::{DecisionSetup, NpcProfile};
-use engine::runtime::watchdog::WatchdogConfig;
+use engine::runtime::wait_contract::DeadlineConfig;
 use engine::runtime::world::{DeskStockSpec, ShutdownReport, World, WorldSpec};
 use engine::strategy::StrategyData;
 use std::sync::Arc;
@@ -53,7 +53,7 @@ fn probe_spec(n_groups: usize, per_group: usize) -> WorldSpec {
         initial_shares: vec![vec![vec![1_000u32; n_stocks]; per_group]; n_groups],
         script_for: Box::new(|_g| Box::new(|_t, _r| engine::runtime::group::TickPlan::default())),
         chunk: 512,
-        watchdog: WatchdogConfig {
+        deadline: DeadlineConfig {
             normal: Duration::from_secs(30),
             long: Duration::from_secs(120),
         },

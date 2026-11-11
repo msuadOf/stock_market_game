@@ -122,6 +122,15 @@ pub struct RetailExperienceState {
 }
 
 impl RetailExperienceState {
+    /// 保留组权威事实，仅补入镜像中组尚未接管的股票。
+    pub(crate) fn merge_missing_stocks_from(&mut self, mirror: &Self) {
+        for (code, entry) in &mirror.stocks {
+            if !self.stocks.contains_key(code) {
+                self.stocks.insert(*code, entry.clone());
+            }
+        }
+    }
+
     /// D5 #4 retail 链：组权威行与镜像行合并（组行值权威；保留组行没有
     /// 的股键——同拍投影段的首买 init 在组内观察接管前的承载面；组内
     /// capture 的 initialize 同键幂等不双载）。
@@ -434,5 +443,51 @@ mod optional_u64_decimal {
         Option::<String>::deserialize(deserializer)?
             .map(|value| value.parse::<u64>().map_err(serde::de::Error::custom))
             .transpose()
+    }
+}
+
+#[cfg(test)]
+mod administrative_merge_tests {
+    use super::*;
+
+    #[test]
+    fn group_authority_keeps_its_values_and_adopts_only_missing_stocks() {
+        let mut mirror = RetailExperienceState::without_equity_reference();
+        mirror.reference_equity = Some(Money::from_cents(100));
+        mirror
+            .stocks
+            .insert(StockId(1), RetailStockExperience::default());
+        mirror
+            .stocks
+            .insert(StockId(2), RetailStockExperience::default());
+        let mut group = RetailExperienceState::without_equity_reference();
+        group.reference_equity = Some(Money::from_cents(200));
+        mirror.feedback.latest_moment = Some(ExperienceMoment {
+            civil_date: CivilDate::from_iso("2030-01-07").unwrap(),
+            market_minute: 1,
+            trading_day: 1,
+        });
+        group.feedback.latest_moment = Some(ExperienceMoment {
+            civil_date: CivilDate::from_iso("2030-01-08").unwrap(),
+            market_minute: 2,
+            trading_day: 2,
+        });
+        group.stocks.insert(
+            StockId(1),
+            RetailStockExperience {
+                last_trade_market_minute: 42,
+                ..RetailStockExperience::default()
+            },
+        );
+        let expected = mirror.clone().merged_with_group_authority(&group);
+        group.merge_missing_stocks_from(&mirror);
+        assert_eq!(group, expected);
+        assert_eq!(group.stocks[&StockId(1)].last_trade_market_minute, 42);
+        group
+            .stocks
+            .get_mut(&StockId(2))
+            .unwrap()
+            .last_trade_market_minute = 99;
+        assert_eq!(mirror.stocks[&StockId(2)].last_trade_market_minute, 0);
     }
 }

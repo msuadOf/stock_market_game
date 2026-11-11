@@ -6,7 +6,7 @@ import type { HostFailure } from "../host/host-update.ts";
 import { browserWasmEnvironment, initialStartupTarget, resolveStartupTarget, type StartupMode, type StartupTarget } from "../host/startup-policy.ts";
 import { DayEndPersistence } from "../save/day-end-persistence.ts";
 import { InitialSaveSource } from "../save/session-replacement.ts";
-import type { StrictSaveEnvelope } from "../save/schema/root.ts";
+import type { InitialSaveValue } from "../save/initial-save-selection.ts";
 import { clearAutoOrders, setRunning, store } from "../store/store.ts";
 import type { SessionSetup } from "../types/engine.ts";
 import { HostSpawnFailureReport } from "./HostStatusViews.tsx";
@@ -26,7 +26,7 @@ const INITIAL_SESSION_SETUP: SessionSetup = TRADING_E2E_MODE
 
 export interface AppRootShellProps {
   startupTarget: StartupTarget;
-  initialSaveSourceRef: MutableRefObject<InitialSaveSource<StrictSaveEnvelope>>;
+  initialSaveSourceRef: MutableRefObject<InitialSaveSource<InitialSaveValue>>;
   dayEndPersistenceRef: MutableRefObject<DayEndPersistence>;
   sessionSetup: SessionSetup;
   setSessionSetup: Dispatch<SetStateAction<SessionSetup>>;
@@ -48,7 +48,7 @@ export function AppRoot({ renderShell }: { renderShell: (props: AppRootShellProp
     setSpawnFailures((visible) => [...visible, failure]);
   }, []);
   const dismissSpawnFailures = useCallback(() => setSpawnFailures([]), []);
-  const initialSaveSourceRef = useRef(new InitialSaveSource<StrictSaveEnvelope>());
+  const initialSaveSourceRef = useRef(new InitialSaveSource<InitialSaveValue>());
   const dayEndPersistenceRef = useRef(new DayEndPersistence());
   const [sessionSetup, setSessionSetup] = useState<SessionSetup>(INITIAL_SESSION_SETUP);
   const returningToStartupRef = useRef(false);

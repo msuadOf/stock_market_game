@@ -1668,13 +1668,20 @@ impl GameSession {
         &self,
         id: &crate::AccountId,
     ) -> Option<crate::RetailExperienceState> {
+        self.runtime_retail_experience_ref(id).cloned()
+    }
+
+    pub(crate) fn runtime_retail_experience_ref(
+        &self,
+        id: &crate::AccountId,
+    ) -> Option<&crate::RetailExperienceState> {
         let is_retail = self
             .state
             .accounts
             .get(id)
             .is_some_and(|account| account.kind() == crate::account::AccountKind::Retail);
         if is_retail {
-            self.state.retail_experience.get(id).cloned()
+            self.state.retail_experience.get(id)
         } else {
             None
         }

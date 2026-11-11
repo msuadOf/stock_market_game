@@ -1,6 +1,8 @@
 //! 消费现有 session owner；不创建第二个 driver，不证明整个 memory 已停止。
-use super::GameSession;
-use crate::runtime::world::{ShutdownCompletion, ShutdownFailure, ShutdownIssue};
+use super::{GameSession, StepFatal};
+use crate::runtime::world::{
+    ShutdownCompletion, ShutdownDiagnostic, ShutdownFailure, ShutdownIssue,
+};
 
 /// None 表示该 session 没有 runtime driver，不代表共享 ComputeContext 没有线程。
 #[derive(Clone, Debug, serde::Serialize)]
@@ -13,19 +15,15 @@ impl GameSession {
     pub fn shutdown(mut self) -> Result<SessionShutdownReport, ShutdownFailure> {
         let mut issues = Vec::new();
         if let Some(poison) = self.poison.take() {
-            issues.push(ShutdownIssue {
-                stage: "session_poison".to_owned(),
-                worker: None,
-                detail: format!("{poison:?}"),
-            });
+            issues.push(session_poison_issue(poison));
         }
         if let Some(binding) = &self.ingress {
             if let Err(error) = binding.source.close() {
-                issues.push(ShutdownIssue {
-                    stage: "ingress_close".to_owned(),
-                    worker: None,
-                    detail: error.to_string(),
-                });
+                issues.push(ShutdownIssue::new(
+                    "ingress_close",
+                    None,
+                    error.to_string(),
+                ));
             }
         }
         let mut completion = None;
@@ -33,11 +31,11 @@ impl GameSession {
             let driver = match driver.into_inner() {
                 Ok(driver) => driver,
                 Err(poison) => {
-                    issues.push(ShutdownIssue {
-                        stage: "runtime_driver_mutex".to_owned(),
-                        worker: None,
-                        detail: "runtime driver Mutex poison；仅取回 owner 作失败销毁".to_owned(),
-                    });
+                    issues.push(ShutdownIssue::new(
+                        "runtime_driver_mutex",
+                        None,
+                        "runtime driver Mutex poison；仅取回 owner 作失败销毁",
+                    ));
                     poison.into_inner()
                 }
             };
@@ -68,6 +66,27 @@ impl GameSession {
                 completion: completion.map(Box::new),
             })
         }
+    }
+}
+
+/// Session fatal 只导出位置和文本诊断；不把 session 私有状态、资产快照或恢复载荷放进 wire。
+fn session_poison_issue(fatal: StepFatal) -> ShutdownIssue {
+    match &fatal {
+        StepFatal::InvariantViolation {
+            description,
+            location,
+        } => ShutdownIssue {
+            stage: "session_poison".to_owned(),
+            worker: None,
+            // 保留既有 Debug 文本供旧调用方查看，新增字段提供可机器读取的安全诊断。
+            detail: format!("{fatal:?}"),
+            diagnostic: Some(ShutdownDiagnostic {
+                kind: "InvariantViolation".to_owned(),
+                location: location.clone(),
+                message: description.clone(),
+            }),
+            structured_error: None,
+        },
     }
 }
 

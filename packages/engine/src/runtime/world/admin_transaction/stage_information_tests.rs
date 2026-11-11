@@ -32,7 +32,7 @@ fn world() -> World {
             Some(snapshot)
         })
         .collect();
-    spec.watchdog = crate::runtime::watchdog::WatchdogConfig {
+    spec.deadline = crate::runtime::wait_contract::DeadlineConfig {
         normal: Duration::from_millis(300),
         long: Duration::from_millis(300),
     };

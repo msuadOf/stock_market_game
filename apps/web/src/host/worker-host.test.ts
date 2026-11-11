@@ -739,11 +739,16 @@ test("Worker reportError 的 error 事件将完整错误交付用户回调并终
     worker.emit({ ...catalogWorkerFixture(protocolSnapshot(0, 0)), type: "baseline", civilDate: "2030-01-02", generation: 1, snapshot: protocolSnapshot(0, 0) });
     host = await creating;
     const failures: unknown[] = [];
-    const starting = host.start(() => true, (failure) => { failures.push(failure); });
+    let reported!: () => void;
+    const failureReported = new Promise<void>(resolve => { reported = resolve; });
+    const starting = host.start(() => true, (failure) => { failures.push(failure); reported(); });
     await Promise.resolve();
     const detail = "STEP_FATAL：原始故障；首次发送：port failure 1；再次发送：port failure 0";
     worker.dispatchEvent(Object.assign(new Event("error"), { message: detail }));
     await assert.rejects(starting, /STEP_FATAL.*原始故障.*port failure 1.*port failure 0/);
+    await failureReported;
+    const failedHost = host; host = undefined;
+    await failedHost.dispose();
     assert.deepEqual(failures.map((value) => {
       const { code, where, message } = value as { code: string; where: string; message: string };
       return { code, where, message };
@@ -751,7 +756,7 @@ test("Worker reportError 的 error 事件将完整错误交付用户回调并终
     assert.equal((failures[0] as { cause: { message: string } }).cause.message, detail);
     assert.equal(worker.terminated, true);
   } finally {
-    await host?.dispose();
+    if (host !== undefined) await assert.rejects(host.dispose(), /WASM_WORKER_SCRIPT/);
     if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
     else Object.defineProperty(globalThis, "Worker", original);
   }

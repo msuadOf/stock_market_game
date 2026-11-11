@@ -13,6 +13,162 @@ fn session_with_runtime_state() -> GameSession {
 }
 
 #[test]
+fn 恢复保留存档中一致的精确观察概率() {
+    let session = session_with_runtime_state();
+    let mut save = session.save().unwrap();
+    let id = *save.runtime_state.strategy_states.keys().next().unwrap();
+    let state = save.runtime_state.strategy_states.get_mut(&id).unwrap();
+    let saved = f64::from_bits(state.base_observation_probability().to_bits() + 1);
+    state.set_base_observation_probability(saved);
+    save.npc_attention.get_mut(&id).unwrap().base_probability = saved;
+    let save: SaveSlot = serde_json::from_slice(&serde_json::to_vec(&save).unwrap()).unwrap();
+    let restored = GameSession::restore(&save).expect("一致的存档概率不应被重建时的末位差异拒绝");
+    assert_eq!(
+        restored.state.npc_attention[&id].base_probability.to_bits(),
+        saved.to_bits()
+    );
+    assert_eq!(
+        restored.state.npc_attention[&id].rng_state,
+        save.npc_attention[&id].rng_state
+    );
+    assert_eq!(
+        restored.state.npc_attention[&id].next_attention_candidate_tick,
+        save.npc_attention[&id].next_attention_candidate_tick
+    );
+    assert_eq!(
+        restored.state.npc_attention[&id].next_information_check,
+        save.npc_attention[&id].next_information_check
+    );
+    assert_eq!(
+        restored.state.npc_attention[&id].information_cadence,
+        save.npc_attention[&id].information_cadence
+    );
+    assert_eq!(
+        restored.save().unwrap().runtime_state.strategy_states[&id]
+            .base_observation_probability()
+            .to_bits(),
+        saved.to_bits()
+    );
+    let mut roundtrip = save.clone();
+    roundtrip
+        .npc_attention
+        .get_mut(&id)
+        .unwrap()
+        .base_probability = f64::from_bits(saved.to_bits() - 1);
+    let restored =
+        GameSession::restore(&roundtrip).expect("JSON 数字往返的末位误差应恢复为策略精确值");
+    assert_eq!(
+        restored.state.npc_attention[&id].base_probability.to_bits(),
+        saved.to_bits()
+    );
+    roundtrip
+        .npc_attention
+        .get_mut(&id)
+        .unwrap()
+        .base_probability = 0.5;
+    assert!(
+        matches!(GameSession::restore(&roundtrip), Err(SessionError::InvalidSave(fault)) if fault.code == 1041)
+    );
+}
+
+#[test]
+fn 日终快照共享散户经验并隔离后续修改() {
+    let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
+    setup.npcs.retail_count = 1;
+    let mut session = GameSession::new(setup, 42).unwrap();
+    let id = AccountId(1);
+    let original = session
+        .state
+        .retail_experience
+        .get_arc(&id)
+        .unwrap()
+        .clone();
+    let before = (*original).clone();
+    let mut save = session.save().unwrap();
+    assert!(
+        std::sync::Arc::strong_count(&original) >= 3,
+        "快照应共享既有经验行而非深拷贝"
+    );
+    let legacy = session.state.retail_experience.to_map();
+    assert_eq!(
+        serde_json::to_string(&save.retail_experience).unwrap(),
+        serde_json::to_string(&legacy).unwrap()
+    );
+    let decoded: SaveSlot = serde_json::from_str(&serde_json::to_string(&save).unwrap()).unwrap();
+    let mut restored = GameSession::restore(&decoded).unwrap();
+    restored
+        .state
+        .retail_experience
+        .get_mut(&id)
+        .unwrap()
+        .consecutive_failed_buys += 3;
+    assert_eq!(*decoded.retail_experience[&id], before);
+    session
+        .state
+        .retail_experience
+        .get_mut(&id)
+        .unwrap()
+        .consecutive_failed_buys += 1;
+    assert_eq!(*original, before);
+    assert_eq!(*save.retail_experience[&id], before);
+    std::sync::Arc::make_mut(save.retail_experience.get_mut(&id).unwrap())
+        .consecutive_failed_buys += 2;
+    assert_eq!(
+        session.state.retail_experience[&id].consecutive_failed_buys,
+        before.consecutive_failed_buys + 1
+    );
+}
+
+#[test]
+fn 日终公开截点使用权威_desk_游标而非旧簿游标() {
+    let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
+    setup.ticks_per_day = 6;
+    setup.auction_ticks = 3;
+    setup.closing_auction_ticks = 1;
+    let mut session = GameSession::new(setup, 42).unwrap();
+    for _ in 0..5 {
+        session.step_frame().unwrap();
+    }
+    assert_eq!(session.phase(), TradingPhase::ClosingAuction);
+    for (code, market) in &mut session.state.markets {
+        market.restore_resting_orders(&[], 1).unwrap();
+        session.state.desk_book_mirror.insert(
+            *code,
+            std::sync::Arc::new(DeskBookMirror {
+                orders: vec![],
+                last_price: market.last_price(),
+                public_cutoff_serial: 42,
+                next_serial: 43,
+            }),
+        );
+    }
+    let state = capture_runtime_state(&session).expect("旧簿游标落后时仍应使用 desk 权威游标");
+    let code = *session.state.markets.keys().next().unwrap();
+    assert_eq!(state.book_public_cutoff_sequences[&code], 42);
+    let mut invalid = state;
+    invalid.book_public_cutoff_sequences.insert(code, 44);
+    assert!(
+        matches!(validate_runtime_state(&session, &invalid), Err(SessionError::InvalidSave(fault)) if fault.code == 2291)
+    );
+    std::sync::Arc::make_mut(session.state.desk_book_mirror.get_mut(&code).unwrap()).next_serial =
+        0;
+    invalid.book_public_cutoff_sequences.insert(code, 1);
+    assert!(
+        matches!(validate_runtime_state(&session, &invalid), Err(SessionError::InvalidSave(fault)) if fault.code == 2291)
+    );
+    let mirror = session.state.desk_book_mirror.remove(&code).unwrap();
+    session.state.desk_book_mirror.insert(StockId(999), mirror);
+    assert!(
+        matches!(validate_runtime_state(&session, &invalid), Err(SessionError::InvalidSave(fault)) if fault.code == 2290)
+    );
+    session.state.desk_book_mirror.clear();
+    invalid.book_public_cutoff_sequences.insert(code, 2);
+    assert!(
+        matches!(validate_runtime_state(&session, &invalid), Err(SessionError::InvalidSave(fault)) if fault.code == 2291)
+    );
+}
+
+#[test]
 fn restore_keeps_cognitive_profiles_independent_from_execution_styles() {
     let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
     setup.npcs.retail_count = 1;
@@ -2115,20 +2271,22 @@ fn v5_adopt_partial_buy_seeds_exact_escrow_and_survives_quiet_save() {
         );
     }
     // fault2038：已成交持仓的经历条目；注意力推后（不自发交易）。
-    save.retail_experience
-        .get_mut(&AccountId(1))
-        .expect("经历行在")
-        .initialize_holding_dated(
-            &code,
-            Some(crate::money::Money::from_cents(990)),
-            crate::money::Money::from_cents(990),
-            crate::experience::ExperienceMoment {
-                civil_date: save.setup.start_date,
-                market_minute: 0,
-                trading_day: 0,
-            },
-        )
-        .expect("经历条目合法");
+    std::sync::Arc::make_mut(
+        save.retail_experience
+            .get_mut(&AccountId(1))
+            .expect("经历行在"),
+    )
+    .initialize_holding_dated(
+        &code,
+        Some(crate::money::Money::from_cents(990)),
+        crate::money::Money::from_cents(990),
+        crate::experience::ExperienceMoment {
+            civil_date: save.setup.start_date,
+            market_minute: 0,
+            trading_day: 0,
+        },
+    )
+    .expect("经历条目合法");
     if let Some(attention) = save.npc_attention.get_mut(&AccountId(1)) {
         attention.next_attention_candidate_tick = 10;
     }

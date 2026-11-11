@@ -136,7 +136,7 @@ Desktop 清单同时保留 LICENSE，Server、WebUI Server 与静态 Web 均须�
   wasm-pack 0.13.1 与 pnpm 11.19.0，原生 Desktop 下载官方 Tauri CLI 2.12.1。
   不跨 workflow 缓存前端；各原生产品只复用平台/架构隔离的 Cargo 编译缓存。
 - 编译失败同样保存已完成的 Cargo 缓存，但失败制品不打包、不上传。所有编译和
-  归档命令继续受各阶段的 300000ms 进程树上限约束，不通过放宽期限掩盖冷构建失败。
+  归档命令目前受各阶段的 300000ms 进程树上限约束；实际构建结果须如实记录。
   Desktop 先以 `--compile-only` 在独立受限阶段编译原生桌面库，再在另一受限阶段
   链接可执行程序并生成安装包；两者使用相同 Tauri feature graph、配置和 native target。
   库阶段显式启用与固定 CLI 相同的 `tauri/custom-protocol`，设置相同的 `TAURI_CONFIG`
@@ -260,18 +260,12 @@ NPC 开局的性能验收。
   运行中不提供无缝宿主迁移。失败或取消加载后重新选择也不能暗中重读快速槽。
 - 生产构建不再靠 `VITE_ENGINE_HOST` 或 `VITE_REMOTE_BASE_URL` 固定模式和地址；
   开发环境值只能作为启动表单初值。明确的 E2E 构建路径不属于生产能力。
-- 原生引擎（std-thread 运行时）的组线程等待默认启用**分级自旋**
-  （`worker_recv_spin`——B-1'，视图内生战役）：消息密集期热态自旋
-  免深 C-state 唤醒延迟（实测 A 口径 +5~9%）。**CPU 空转代价**：每
-  个组线程在空闲窗内至多自旋 500μs/消息间隔（128 核机器 10 组 ≈10
-  核间歇热）。关法：环境变量 `ENGINE_SPIN_DISABLE=1`（完全回落 50ms
-  步进睡眠等待）；`ENGINE_SPIN_US=<微秒>` 调档（默认 500——验证批
-  250/500/1000 三档配对不敏感，依据见
-  `agents/view-campaign/plans/seal-spread-wakeup-design.md` §4；
-  **显式设置但非法值（非数字/溢出）启动即显式 panic，不静默回落**）。
-  WASM 路径不读取 `ENGINE_SPIN_*`；其组/交易部等待参数由 `init_wasm_wait` 显式设置。
-  CI/容器注意：cgroup 限核环境自旋空转占比被放大，限核跑测试可用
-  `ENGINE_SPIN_DISABLE=1`。
+- 运行时不再提供 `ENGINE_SPIN_DISABLE`、`ENGINE_SPIN_US` 或 WASM `init_wasm_wait`
+  等等待策略开关。业务等待阶段与期限分档由 `runtime::wait_contract::{Phase,
+  DeadlineConfig}` 表达；实际通知、停止与故障等待由 LibOS 通道实现。Native/WASM
+  的端到端等待路径与故障清理仍在迁移，不能据此宣称统一运行路径或性能验收已经完成。
+  如需排查等待超时，应依据错误携带的业务 phase、worker 身份和等待时长定位；不要通过
+  旧 spin 环境变量调整行为。
 
 ## 协议与浏览器约束
 

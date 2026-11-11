@@ -35,6 +35,7 @@ export type HostFailure = {
   readonly code: string;
   readonly where: string;
   readonly message: string;
+  readonly stack?: string;
   readonly cause?: unknown;
   readonly context?: unknown;
   readonly recoverable?: boolean | null;

@@ -82,3 +82,18 @@ test("等待中 dispose 显式 reject，重复 configure/messageerror 不留下�
   g.port.dispatchEvent(new Event("messageerror")); await assert.rejects(pending, /messageerror/);
   assert.equal(g.port.closes, 1); assert.equal(g.timers.size, 0);
 });
+
+test("LibOS 故障布局只随 Memory 和 primary 确认后的配置消息传递", { timeout: 10000 }, async () => {
+  const f = fixture();
+  const fault = {globalStateAddress: 8};
+  assert.throws(() => f.handshake.configure({...f.substrate, libosFault:fault}), /Memory|primary/);
+  const memory = f.handshake.registerMemory(f.substrate.memory);
+  f.port.emit({type:"facadeEngineMemoryRegistered", allocationId:1}); await memory;
+  const death = f.handshake.registerDeath({});
+  f.port.emit({type:"facadeEngineDeathRegistered", allocationId:1}); await death;
+  const configured = f.handshake.configure({...f.substrate, libosFault:fault});
+  const message = f.port.sent.at(-1) as Record<string, unknown>;
+  assert.equal(message.type, "facadeEngineConfiguration"); assert.equal(message.libosFault, fault);
+  f.port.emit({type:"facadeEngineConfigured"}); await configured;
+  f.handshake.dispose();
+});

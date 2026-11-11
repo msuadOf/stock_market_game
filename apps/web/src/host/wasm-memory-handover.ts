@@ -4,10 +4,12 @@ import { validateDayEndArchive } from "../save/day-end-candidate.ts";
 import { parsePlanU64 } from "../utils/plan-identity.ts";
 import type { SessionSetup } from "../types/engine.ts";
 import type { StrictSaveEnvelope } from "../save/schema/root.ts";
+import { parseChunkedSourceDescriptor, type ChunkedSourceDescriptor } from "../save/chunked-handover-source.ts";
 
 export type WasmMemoryPendingIntent = null
   | { readonly kind: "new"; readonly setup: SessionSetup; readonly seed: string }
-  | { readonly kind: "load"; readonly archive: StrictSaveEnvelope };
+  | { readonly kind: "load"; readonly archive: StrictSaveEnvelope }
+  | ChunkedSourceDescriptor;
 export type WasmMemoryHandover = {
   readonly kind: "frozen";
   readonly code: "MEMORY_RESIDUAL_RELOAD_HANDOVER";
@@ -62,6 +64,7 @@ function checkJson(value: unknown, path: string, ancestors = new Set<object>()):
 function pendingIntent(value: unknown): WasmMemoryPendingIntent {
   if (value === null) return null;
   const row = record(value, "pendingIntent");
+  if (row.kind === "load-chunked-source") return parseChunkedSourceDescriptor(row);
   if (row.kind === "new") {
     exact(row, ["kind", "setup", "seed"], "pendingIntent.new");
     const setup = parseSetup(row.setup, "pendingIntent.setup");

@@ -105,7 +105,7 @@ impl SourceDesk {
         let (tx0, _rx0) = std::sync::mpsc::channel();
         let (tx1, rx1) = std::sync::mpsc::channel();
         self.state
-            .flush_batches(&[tx0, tx1], self.state.cur_tick, round)
+            .flush_batches(&[tx0, tx1], self.state.cur_tick, round, super::DeskFlushPhase::TickRound)
             .unwrap();
         let super::super::protocol::GroupIn::Batch(batch) =
             rx1.try_recv().expect("真实公司 Batch 必须已发送")

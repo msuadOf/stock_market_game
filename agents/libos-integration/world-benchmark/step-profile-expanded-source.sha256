@@ -1,0 +1,8 @@
+d806f80ef792f75559e7c97c4b87eb5c398f703a0b65e354bc695ae3b7a2336a  packages/engine/src/runtime/step_profile.rs
+6f8fdcff377ca6aecb6313ea978dbefd3190785d08c2d1755d01fc5899fa5798  packages/engine/src/runtime/downstream.rs
+ef809ef1cafb4f882d39ad19353e54faec465723c2777d06fd454857594ef7f2  packages/engine/src/runtime/world.rs
+2a8aebeb7ddf5fc9318045212375208e31455abb5bd3f6b5030271f614f8871a  packages/engine/src/runtime/drive.rs
+bfa405dce211096433acf48b5d4b2275febffb56e663100ef804a2aa464e4554  agents/web-architecture-diagnosis/wasm-stage/src/lib.rs
+f827628168bb7ff90a55d8a9356c37309916c79890479deaa799a8fe71f837b4  agents/web-architecture-diagnosis/bare-world/src/main.rs
+baef54da35b92068ef698f0f67d2b05a3d67c44d2c2474883a5c6eceb974b68d  agents/web-architecture-diagnosis/bare-world/Cargo.lock
+a884a7048cb9aff7b1930458b5130562e019320ce4d12b61dbae7b59c47147c1  agents/web-architecture-diagnosis/wasm-stage/Cargo.lock

@@ -171,6 +171,9 @@ test("单批按 warmup 后一轮 ABBA 独立启动六个样本并保留批次窗
     "every_tick", "day_end", "every_tick", "day_end", "day_end", "every_tick",
   ]);
   assert.equal(report.status, "PASS_BATCH");
+  assert.deepEqual(Object.keys(report.runtime_environment).sort(), ["ENGINE_STEP_RUNTIME", "STEP_PROFILE"]);
+  assert.equal(report.runtime_environment.ENGINE_STEP_RUNTIME, "1");
+  assert.equal(report.runtime_environment.STEP_PROFILE, process.env.STEP_PROFILE ?? null);
   assert.equal(report.batch_index, 3);
   assert.deepEqual(report.planned_batches, [1, 2, 3, 4, 5]);
   assert.equal(report.warmup_sample_count, 2);
@@ -498,6 +501,9 @@ test("memory-growth 单进程双观察点按真实 delta tick 报告负增长与
   const report = await runRuntimeSyncMemoryGrowth(memoryGrowthConfig(), hooks);
   assert.equal(hooks.calls.length, 1);
   assert.equal(report.status, "COMPLETE_MEMORY_GROWTH_DIAGNOSTIC");
+  assert.deepEqual(Object.keys(report.runtime_environment).sort(), ["ENGINE_STEP_RUNTIME", "STEP_PROFILE"]);
+  assert.equal(report.runtime_environment.ENGINE_STEP_RUNTIME, "1");
+  assert.equal(report.runtime_environment.STEP_PROFILE, process.env.STEP_PROFILE ?? null);
   assert.equal(report.domain_serialized_growth.save_slot.delta, "1");
   assert.equal(report.domain_serialized_growth.save_slot.delta_ticks, 0);
   assert.deepEqual(report.domain_serialized_growth.save_slot.per_tick_slope, { availability: "unavailable", value: null });

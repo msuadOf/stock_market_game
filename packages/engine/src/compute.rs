@@ -500,7 +500,7 @@ impl ComputeContext {
     /// 默认资源来自 OS 及进程亲和限制，不读取 caller 的 Rayon registry。
     pub fn available() -> Result<std::sync::Arc<Self>, ComputeInitError> {
         #[cfg(not(target_arch = "wasm32"))]
-        let workers = crate::thread_facade::available_parallelism()
+        let workers = crate::libos::thread::available_parallelism()
             .map_err(|error| ComputeInitError::AvailableResources {
                 os_code: error.raw_os_error(),
             })?

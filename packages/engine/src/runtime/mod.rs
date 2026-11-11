@@ -57,6 +57,13 @@ mod entities;
 mod facts;
 mod protocol;
 mod worker_context;
+mod worker_inbox;
+mod worker_stop;
+mod downstream;
+#[cfg(test)]
+mod worker_admission;
+#[cfg(test)]
+mod worker_mailbox;
 #[cfg(all(test, feature = "simulation-diagnostics", not(target_arch = "wasm32")))]
 pub(crate) use protocol::LifecycleKind;
 pub(crate) use protocol::{
@@ -161,16 +168,8 @@ mod treasury_autonomy_tests;
 /// 等待点分层账静态锚（wasm 线程抽象层 R4a 阶段 1——设计 §10.1/§11.1）。
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod wait_ledger_tests;
-#[cfg(target_family = "wasm")]
-mod wasm_wait;
-pub mod watchdog;
-/// B-1' 组线程等待分级自旋合同（协调者批 2026-10-19）。
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod watchdog_spin_tests;
-#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
-pub mod watchdog_verification;
-#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
-pub mod watchdog_wait_verification;
+mod upstream;
+pub mod wait_contract;
 // D5 wasm 方向 A：world 不再按 wasm 门控（session/bridge/drive 的类型
 // 引用面在 wasm 下编译必需）；wasm 宿主没有 OS 线程。串行 fallback 是缺省值，
 // 宿主可在首次读取前显式设置 step runtime override。
@@ -213,7 +212,7 @@ mod skeleton_tests;
 
 /// 查询 step 管线开关。native 缺省启用 runtime，可用 `ENGINE_STEP_RUNTIME=0`
 /// 临时回旧管线；WASM 缺省仍为串行，只有宿主在首次读取前显式设置
-/// `step runtime override` 才进入经 `thread_facade` 创建 worker 的 `World` 路径。
+/// `step runtime override` 才进入经 `libos::thread` 创建 worker 的 `World` 路径。
 /// 此处的编译级冒烟断言定义不表示本片已实跑 WASM cfg、ABI、`World` 或 Browser。
 pub fn step_runtime_enabled() -> bool {
     // wasm 缺省使用串行管线；宿主可在首次读取前显式设置一次 override。

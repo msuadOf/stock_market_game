@@ -3,12 +3,10 @@ import test from "node:test";
 import { parseWasmRuntimeOptions } from "./wasm-runtime-options.ts";
 import { drain, fixture } from "./worker-host-w1.test-support.ts";
 
-const WAIT_SETTINGS = { spinUs: 500, quietUs: 50_000, fineUs: 500, coarseUs: 500 };
-
 for (const [search, expected] of [
-  ["", { runtimeOverride: true, waitSettings: WAIT_SETTINGS }],
-  ["?theme=dark", { runtimeOverride: true, waitSettings: WAIT_SETTINGS }],
-  ["?wasmRuntime=1", { runtimeOverride: true, waitSettings: WAIT_SETTINGS }],
+  ["", { runtimeOverride: true }],
+  ["?theme=dark", { runtimeOverride: true }],
+  ["?wasmRuntime=1", { runtimeOverride: true }],
 ] as const) {
   test(`WASM runtime query ${search || "缺省"} 解析为显式契约`, { timeout: 10000 }, () => {
     assert.deepEqual(parseWasmRuntimeOptions(search), expected);
@@ -22,8 +20,8 @@ for (const search of ["?wasmRuntime=0", "?wasmRuntime=1&wasmRuntime=1", "?wasmRu
 }
 
 for (const [search, expected] of [
-  ["", { runtimeOverride: true, waitSettings: WAIT_SETTINGS }],
-  ["?wasmRuntime=1", { runtimeOverride: true, waitSettings: WAIT_SETTINGS }],
+  ["", { runtimeOverride: true }],
+  ["?wasmRuntime=1", { runtimeOverride: true }],
 ] as const) {
   test(`Worker init 对 ${search || "缺省"} query 保留真实 payload 语义`, { timeout: 10000 }, async () => {
     const f = fixture({ initError: new Error("测试在真实 init 传输后停止 Worker 初始化") });
@@ -52,16 +50,7 @@ for (const [search, expected] of [
     const rejected = assert.rejects(f.launch({ onSpawnFailure() {} }));
     await drain(); await rejected;
     const init = f.workers[0]?.sent.find((entry) => entry.type === "init");
-    assert.equal(init?.runtimeOverride, true);
-    assert.deepEqual(init?.waitSettings, WAIT_SETTINGS);
-  } finally { await f.cleanup(); }
-});
-
-test("直接创建 WorkerHost 不静默忽略未配对 waitSettings", { timeout: 10000 }, async () => {
-  const f = fixture();
-  try {
-    await assert.rejects(f.launch({ onSpawnFailure() {}, waitSettings: WAIT_SETTINGS }), /waitSettings/);
-    assert.equal(f.workers.length, 0);
+    assert.deepEqual(init?.runtimeOverride, true);
   } finally { await f.cleanup(); }
 });
 

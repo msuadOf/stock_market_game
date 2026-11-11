@@ -2,11 +2,124 @@
 
 use super::*;
 
+#[cfg(feature = "verification-harness")]
+thread_local! {
+    static OBSERVATION_TRACE: std::cell::RefCell<Option<Vec<ObservationTrace>>> = const { std::cell::RefCell::new(None) };
+    static OBSERVATION_ACCOUNT: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+    static OBSERVATION_MATH: std::cell::Cell<Option<fn(f64) -> f64>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(feature = "verification-harness")]
+struct ObservationMathGuard(Option<fn(f64) -> f64>);
+
+#[cfg(feature = "verification-harness")]
+impl Drop for ObservationMathGuard {
+    fn drop(&mut self) { OBSERVATION_MATH.with(|math| math.set(self.0)); }
+}
+
+/// 验证专用：仅在闭包期间替换当前线程的概率计算函数。
+#[cfg(feature = "verification-harness")]
+pub fn verification_with_observation_math<T>(math: fn(f64) -> f64, run: impl FnOnce() -> T) -> T {
+    let previous = OBSERVATION_MATH.with(|slot| slot.replace(Some(math)));
+    let _guard = ObservationMathGuard(previous);
+    run()
+}
+
+/// 验证专用：保留概率换算的输入、除法结果和输出的原始位值。
+#[cfg(feature = "verification-harness")]
+#[derive(Debug, PartialEq, Eq)]
+pub struct ObservationTrace {
+    pub account_id: Option<u64>,
+    pub observations_bits: u64,
+    pub ticks_per_day: u64,
+    pub argument_bits: u64,
+    pub probability_bits: u64,
+    pub canonical_bits: Option<u64>,
+}
+
+/// 验证专用：为同一账户的最近一次换算记录规范化结果，校验原始位值。
+#[cfg(feature = "verification-harness")]
+pub(crate) fn verification_record_observation_canonical(id: u64, raw: f64, canonical: f64) {
+    OBSERVATION_TRACE.with(|trace| {
+        if let Some(trace) = trace.borrow_mut().as_mut() {
+            let entry = trace.last_mut().expect("缺少观察概率换算记录");
+            assert_eq!(entry.account_id, Some(id), "观察概率账户不匹配");
+            assert_eq!(entry.probability_bits, raw.to_bits(), "观察概率原始值不匹配");
+            assert!(entry.canonical_bits.is_none(), "观察概率重复规范化");
+            entry.canonical_bits = Some(canonical.to_bits());
+        }
+    });
+}
+
+#[cfg(feature = "verification-harness")]
+struct ObservationAccountGuard(Option<u64>);
+
+#[cfg(feature = "verification-harness")]
+impl Drop for ObservationAccountGuard {
+    fn drop(&mut self) { OBSERVATION_ACCOUNT.with(|account| account.set(self.0)); }
+}
+
+/// 为当前线程中的策略构造关联账户身份，退出闭包时恢复先前身份。
+#[cfg(feature = "verification-harness")]
+pub(crate) fn verification_observation_account<T>(id: u64, run: impl FnOnce() -> T) -> T {
+    let previous = OBSERVATION_ACCOUNT.with(|account| account.replace(Some(id)));
+    let _guard = ObservationAccountGuard(previous);
+    run()
+}
+
+#[cfg(feature = "verification-harness")]
+struct ObservationTraceGuard;
+
+#[cfg(feature = "verification-harness")]
+impl Drop for ObservationTraceGuard {
+    fn drop(&mut self) {
+        OBSERVATION_TRACE.with(|trace| { trace.borrow_mut().take(); });
+    }
+}
+
+/// 仅在闭包期间采集当前线程的观察概率换算；异常退出时清理追踪状态。
+#[cfg(feature = "verification-harness")]
+pub fn verification_trace_observations<T>(run: impl FnOnce() -> T) -> (T, Vec<ObservationTrace>) {
+    OBSERVATION_TRACE.with(|trace| {
+        let mut trace = trace.borrow_mut();
+        assert!(trace.is_none(), "观察概率追踪不允许嵌套");
+        *trace = Some(Vec::new());
+    });
+    let _guard = ObservationTraceGuard;
+    let result = run();
+    let trace = OBSERVATION_TRACE.with(|trace| trace.borrow_mut().take().expect("观察概率追踪状态丢失"));
+    (result, trace)
+}
+
 pub(super) fn daily_observations_to_tick_probability(
     observations_per_day: f64,
     ticks_per_day: u64,
 ) -> f64 {
-    -(-observations_per_day / ticks_per_day as f64).exp_m1()
+    #[cfg(not(feature = "verification-harness"))]
+    {
+        -(-observations_per_day / ticks_per_day as f64).exp_m1()
+    }
+    #[cfg(feature = "verification-harness")]
+    {
+        let argument = -observations_per_day / ticks_per_day as f64;
+        let probability = OBSERVATION_MATH.with(|math| match math.get() {
+            Some(candidate) => candidate(argument),
+            None => -argument.exp_m1(),
+        });
+        OBSERVATION_TRACE.with(|trace| {
+            if let Some(trace) = trace.borrow_mut().as_mut() {
+                trace.push(ObservationTrace {
+                    account_id: OBSERVATION_ACCOUNT.with(|account| account.get()),
+                    observations_bits: observations_per_day.to_bits(),
+                    ticks_per_day,
+                    argument_bits: argument.to_bits(),
+                    probability_bits: probability.to_bits(),
+                    canonical_bits: None,
+                });
+            }
+        });
+        probability
+    }
 }
 
 pub(super) fn sample_between(rng: &mut dyn Rng, low: f64, high: f64) -> f64 {
@@ -59,6 +172,94 @@ fn sample_u64_inclusive(rng: &mut dyn Rng, low: u64, high: u64) -> u64 {
 #[cfg(test)]
 mod observation_probability_tests {
     use super::daily_observations_to_tick_probability;
+
+    #[cfg(feature = "verification-harness")]
+    #[test]
+    fn 验证候选计算仅作用于闭包并在异常后恢复() {
+        let original = daily_observations_to_tick_probability(5.5, 15_300);
+        let candidate = super::verification_with_observation_math(|argument| argument * -0.5, || {
+            let before = daily_observations_to_tick_probability(5.5, 15_300);
+            let nested = super::verification_with_observation_math(|_| 0.25, || daily_observations_to_tick_probability(5.5, 15_300));
+            assert_eq!(nested, 0.25);
+            assert_eq!(daily_observations_to_tick_probability(5.5, 15_300), before);
+            let child = std::thread::spawn(|| daily_observations_to_tick_probability(5.5, 15_300)).join().unwrap();
+            assert_eq!(child.to_bits(), original.to_bits());
+            before
+        });
+        assert_eq!(candidate.to_bits(), (5.5_f64 / 15_300.0 * 0.5).to_bits());
+        assert_eq!(daily_observations_to_tick_probability(5.5, 15_300).to_bits(), original.to_bits());
+        let (candidate, trace) = super::verification_trace_observations(|| {
+            super::verification_with_observation_math(|_| 0.25, || daily_observations_to_tick_probability(5.5, 15_300))
+        });
+        assert_eq!(trace[0].probability_bits, candidate.to_bits());
+        let failure = std::panic::catch_unwind(|| super::verification_with_observation_math(|_| 0.1, || panic!("验证恢复")));
+        assert!(failure.is_err());
+        assert_eq!(daily_observations_to_tick_probability(5.5, 15_300).to_bits(), original.to_bits());
+    }
+
+    #[cfg(feature = "verification-harness")]
+    #[test]
+    fn 验证追踪记录原始输入与结果并正确结束() {
+        let (result, trace) = super::verification_trace_observations(|| {
+            daily_observations_to_tick_probability(5.5, 15_300)
+        });
+        assert_eq!(trace.len(), 1);
+        assert_eq!(trace[0].observations_bits, 5.5_f64.to_bits());
+        assert_eq!(trace[0].ticks_per_day, 15_300);
+        assert_eq!(trace[0].argument_bits, (-5.5_f64 / 15_300.0).to_bits());
+        assert_eq!(trace[0].probability_bits, result.to_bits());
+        assert_eq!(trace[0].account_id, None);
+        let (_, named) = super::verification_trace_observations(|| {
+            super::verification_observation_account(310, || daily_observations_to_tick_probability(5.5, 15_300))
+        });
+        assert_eq!(named[0].account_id, Some(310));
+        let (_, canonical) = super::verification_trace_observations(|| {
+            let probability = super::verification_observation_account(310, || daily_observations_to_tick_probability(5.5, 15_300));
+            let adjusted = f64::from_bits(probability.to_bits() + 1);
+            super::verification_record_observation_canonical(310, probability, adjusted);
+        });
+        assert_eq!(canonical[0].canonical_bits, Some(canonical[0].probability_bits + 1));
+        let (_, nested) = super::verification_trace_observations(|| {
+            super::verification_observation_account(310, || {
+                super::verification_observation_account(311, || daily_observations_to_tick_probability(5.5, 15_300));
+                let failed = std::panic::catch_unwind(|| super::verification_observation_account(312, || panic!("验证账户恢复")));
+                assert!(failed.is_err());
+                daily_observations_to_tick_probability(5.5, 15_300);
+            });
+            daily_observations_to_tick_probability(5.5, 15_300);
+        });
+        assert_eq!(nested.iter().map(|value| value.account_id).collect::<Vec<_>>(), vec![Some(311), Some(310), None]);
+        let (_, next) = super::verification_trace_observations(|| ());
+        assert!(next.is_empty());
+        let failed = std::panic::catch_unwind(|| super::verification_trace_observations(|| panic!("验证清理")));
+        assert!(failed.is_err());
+        let (_, after_failure) = super::verification_trace_observations(|| ());
+        assert!(after_failure.is_empty());
+    }
+
+    #[cfg(feature = "verification-harness")]
+    #[test]
+    fn 规范化追踪拒绝缺失错账户错原值和重复写入() {
+        for scenario in 0..4 {
+            let result = std::panic::catch_unwind(|| super::verification_trace_observations(|| {
+                if scenario == 0 {
+                    super::verification_record_observation_canonical(310, 0.5, 0.5);
+                    return;
+                }
+                let raw = super::verification_observation_account(310, || daily_observations_to_tick_probability(5.5, 15_300));
+                match scenario {
+                    1 => super::verification_record_observation_canonical(311, raw, raw),
+                    2 => super::verification_record_observation_canonical(310, 0.5, raw),
+                    3 => {
+                        super::verification_record_observation_canonical(310, raw, raw);
+                        super::verification_record_observation_canonical(310, raw, raw);
+                    }
+                    _ => unreachable!(),
+                }
+            }));
+            assert!(result.is_err(), "场景 {scenario} 必须显式失败");
+        }
+    }
 
     fn assert_probability(observations_per_day: f64, ticks_per_day: u64, expected_bits: u64) {
         let actual = daily_observations_to_tick_probability(observations_per_day, ticks_per_day);

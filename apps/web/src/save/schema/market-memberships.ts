@@ -1,6 +1,5 @@
 import { decimal, exact, money, record, SaveSchemaError } from "./primitives.ts"
 import type { MarketMembershipState } from "../../types/generated/MarketMembershipState.ts"
-import type { SaveSnapshot } from "./save-snapshot.ts"
 import type { parseSetup } from "./market.ts"
 
 export function parseMarketMemberships(value: unknown): MarketMembershipState {
@@ -27,7 +26,7 @@ export function parseMarketMemberships(value: unknown): MarketMembershipState {
   return { members }
 }
 
-export function validateMembershipAccounts(memberships: MarketMembershipState, setup: ReturnType<typeof parseSetup>, snapshot: SaveSnapshot): void {
+export function validateMembershipAccounts(memberships: MarketMembershipState, setup: ReturnType<typeof parseSetup>, snapshot: { readonly accounts: Readonly<Record<string, unknown>> }): void {
   const npcCount = BigInt(setup.npcs.retail_count) + BigInt(setup.npcs.inst_count) + BigInt(setup.npcs.hot_count)
   const members = new Set<string>()
   for (const [subject, member] of Object.entries(memberships.members)) {

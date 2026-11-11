@@ -7,7 +7,7 @@ import { parseWasmSessionShutdown } from "./wasm-shutdown-report.ts";
 export interface EngineBusinessPort {
   addEventListener(type: "message", listener: (event: MessageEvent) => void): void;
   removeEventListener(type: "message", listener: (event: MessageEvent) => void): void;
-  postMessage(message: unknown): void;
+  postMessage(message: unknown, transfer?: Transferable[]): void;
   start(): void;
   close(): void;
 }
@@ -84,7 +84,7 @@ function businessPortHandle(port: MessagePort | null): EngineBusinessPort {
   return {
     addEventListener(type, listener) { requirePort().addEventListener(type, listener); listeners.add(listener); },
     removeEventListener(type, listener) { current?.removeEventListener(type, listener); listeners.delete(listener); },
-    postMessage(message) { requirePort().postMessage(message); },
+    postMessage(message, transfer) { if (transfer === undefined) requirePort().postMessage(message); else requirePort().postMessage(message, transfer); },
     start() { requirePort().start(); },
     close() {
       const closing = current;
@@ -112,7 +112,7 @@ export function createEngineControlClient(options: {
   readonly configured: Promise<void>;
   readonly release: Promise<WasmFinalRelease>;
   start(): void;
-  sendInitialization(message: Readonly<Record<string, unknown>>): void;
+  sendInitialization(message: Readonly<Record<string, unknown>>, transfer?: Transferable[]): void;
   bindIngress(generation: number, token: number): Promise<EngineBusinessPort>;
   beginShutdown(until: number): void;
   completeShutdown(): void;
@@ -327,7 +327,7 @@ export function createEngineControlClient(options: {
         throw detail;
       }
     },
-    sendInitialization(message) { enginePort.postMessage(message); },
+    sendInitialization(message, transfer) { enginePort.postMessage(message, transfer); },
     bindIngress(generation, token) {
       if (failed || terminal || controlWorker === null) return Promise.reject(new Error("controlWorker 已关闭，不能 bindIngress"));
       const id = positiveSafeInteger(++requestId, "controlWorker requestId");

@@ -8,7 +8,7 @@ import { test } from "node:test";
 const api = () => import("./frontend-build.mjs");
 
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
-const requiredExports = ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "set_step_runtime_override", "init_wasm_wait", "wasm_wait_abort_layout", "shutdown_session"];
+const requiredExports = ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "set_step_runtime_override", "wasm_tombstone_init_primary", "wasm_tombstone_bind_ingress", "libos_host_fault_layout", "shutdown_session"];
 
 async function sourceFixture(root) {
   const inputs = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/config.toml", "apps/web-wasm/Cargo.toml", "apps/web-wasm/.cargo/config.toml", "apps/web-wasm/src/lib.rs", "packages/engine/Cargo.toml", "packages/engine/src/lib.rs"];

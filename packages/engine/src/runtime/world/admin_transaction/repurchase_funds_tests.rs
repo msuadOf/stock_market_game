@@ -39,7 +39,7 @@ fn spec() -> (WorldSpec, [PlanId; 2]) {
             stock: 1,
         },
     ];
-    spec.watchdog = WatchdogConfig {
+    spec.deadline = DeadlineConfig {
         normal: Duration::from_millis(300),
         long: Duration::from_millis(300),
     };
@@ -51,7 +51,7 @@ fn accounts(w: &mut World) -> Vec<Vec<GroupAccount>> {
     }
     let mut out = vec![Vec::new(); w.n_groups];
     for _ in 0..w.n_groups {
-        match recv_deadline(&w.up_rx, Phase::Seal, &w.watchdog).unwrap() {
+        match recv_deadline(&w.up_rx, Phase::Seal, &w.deadline).unwrap() {
             UpMsg::GroupEcho { group, accounts } => out[group as usize] = accounts,
             other => panic!("P2真实账户回声错位：{other:?}"),
         }

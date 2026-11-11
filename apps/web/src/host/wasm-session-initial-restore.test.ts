@@ -2,6 +2,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { WasmSessionSlot } from "./wasm-session-slot.ts";
 
+test("分块初始恢复只消费对应 token 一次，失败不制造 generation", { timeout: 10000 }, () => {
+  const calls: number[] = []; const slot = new WasmSessionSlot(() => ({ create_session() { throw new Error("不可 create"); }, restore_json() { throw new Error("不可 String"); }, restore_prepared_chunks(token: number) { calls.push(token); if (token !== 7) throw new Error("过期 token"); return 9; }, snapshot: () => ({}), drop_session() {} }));
+  assert.throws(() => slot.restoreInitialChunked(8), /过期 token/);
+  assert.deepEqual(calls, [8]); assert.equal(slot.readGeneration(), 0);
+  assert.throws(() => slot.restoreInitialChunked(7), /一次/);
+  const next = new WasmSessionSlot(() => ({ create_session() { throw new Error("不可 create"); }, restore_json() { throw new Error("不可 String"); }, restore_prepared_chunks(token: number) { calls.push(token); return 9; }, snapshot: () => ({}), drop_session() {} }));
+  next.restoreInitialChunked(7); assert.equal(next.requireHandle()[0], 9); assert.equal(next.readGeneration(), 1);
+  assert.throws(() => next.restoreInitial(), /一次/);
+});
+
 test("restoreInitial 只消费同一完整 X，一次 restore_prepared，无空 create 或旧 drop", { timeout: 10000 }, () => {
   const calls: string[] = [];
   const slot = new WasmSessionSlot(() => ({ create_session() { calls.push("create"); return 9; }, restore_json() { throw new Error("不可重复解码"); }, restore_prepared() { calls.push("consume"); return 7; }, snapshot: () => ({}), drop_session() { calls.push("drop"); } }));

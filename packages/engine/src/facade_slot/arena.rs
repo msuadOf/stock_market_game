@@ -193,7 +193,7 @@ impl Accounts {
     }
 }
 
-use crate::thread_facade::FACADE_SLOT_MAX_CAPACITY as MAX_CAPACITY;
+use crate::libos::thread::FACADE_SLOT_MAX_CAPACITY as MAX_CAPACITY;
 
 /// 槽 arena（共享内存区；`Box<[AtomicU32]>` 连续，地址可导出给宿主视图）。
 pub struct SlotArena {

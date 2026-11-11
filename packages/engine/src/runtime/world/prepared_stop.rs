@@ -22,13 +22,7 @@ pub(crate) struct StopReport {
 }
 
 pub(super) fn panic_detail(payload: &(dyn std::any::Any + Send)) -> String {
-    if let Some(message) = payload.downcast_ref::<String>() {
-        return message.clone();
-    }
-    if let Some(message) = payload.downcast_ref::<&str>() {
-        return (*message).to_owned();
-    }
-    format!("非字符串 panic payload，type_id={:?}", payload.type_id())
+    crate::libos::thread::panic_payload_detail(payload)
 }
 
 /// getter 不得用 UpMsg 的省略 Debug 丢弃 panic 载荷详情。
@@ -63,7 +57,7 @@ impl World {
             .map_err(|_| RuntimeError::SendFailed {
                 detail: "停止失败 fixture 无法发送失序 Continue".to_owned(),
             })?;
-        match recv_deadline(&self.up_rx, Phase::TickConverge, &self.watchdog)? {
+        match recv_deadline(&self.up_rx, Phase::TickConverge, &self.deadline)? {
             UpMsg::Failed {
                 who: WorkerId::Group(0),
                 error: RuntimeError::ProtocolInvariant { detail },
@@ -73,28 +67,23 @@ impl World {
     }
 
     pub(crate) fn stop_without_drain(mut self) -> Result<StopReport, RuntimeError> {
-        #[cfg(target_family = "wasm")]
-        self.stop_permanently();
-        #[cfg(not(target_family = "wasm"))]
-        {
-            self.worker_shutdown.store(true, Ordering::SeqCst);
-            self.group_txs.clear();
-            self.desk_txs.clear();
-        }
+        self.sever();
         let mut errors = Vec::new();
-        let mut joined_workers = 0;
-        for (who, handle) in std::mem::take(&mut self.handles) {
-            joined_workers += 1;
-            match handle.join() {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => errors.push(format!("worker {who}：{error}")),
-                Err(error) => {
-                    #[cfg(not(target_family = "wasm"))]
-                    let detail = panic_detail(error.as_ref());
-                    #[cfg(target_family = "wasm")]
-                    let detail = error.to_string();
-                    errors.push(format!("join {who} 失败：{detail}"));
-                }
+        let results = self.join_worker_results_with_context(super::ExitReconcileContext {
+            phase: super::ExitReconcilePhase::PreparedStop,
+            last_committed_tick: Some(self.global.committed_tick),
+            active_tick: None,
+            round: None,
+            candidate_unpublished: false,
+        });
+        let joined_workers = results.iter().filter(|(_, result)| match result {
+            Err(RuntimeError::WorkerJoinPending { .. }) => false,
+            Err(RuntimeError::WorkerJoinFailed { child_released, .. }) => *child_released,
+            _ => true,
+        }).count();
+        for (who, result) in results {
+            if let Err(error) = result {
+                errors.push(format!("worker {who}：{error}"));
             }
         }
         let mut discarded_messages = 0;
@@ -184,7 +173,7 @@ mod tests {
         world.group_txs[0]
             .send(GroupIn::Continue { tick: 0, round: 0 })
             .expect("真实失序输入入队");
-        match recv_deadline(&world.up_rx, Phase::TickConverge, &world.watchdog)
+        match recv_deadline(&world.up_rx, Phase::TickConverge, &world.deadline)
             .expect("原worker失败握手")
         {
             UpMsg::Failed {

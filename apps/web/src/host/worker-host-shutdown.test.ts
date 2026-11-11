@@ -235,7 +235,7 @@ test("failurePending 立即冻结业务并等待 writer 的终态", { timeout: 1
     await started;
     f.spawn(); await drain(); const child = f.workers[2], init = child.sent[0];
     child.controlPort!.postMessage({ type: "facadeChildReady", workerId: init.workerId, slot: 0, gen: 0 }); await drain();
-    const death = new Int32Array(f.substrate.memory.buffer, f.substrate.waitDeath.address, 1);
+    const death = new Int32Array(f.substrate.memory.buffer, f.substrate.primary.death.address, 1);
     Atomics.store(death, 0, 1); Atomics.notify(death, 0); await drain();
     await assert.rejects(outcome.host.civilDate!(), /关闭|故障/);
     await assert.rejects(outcome.host.submitIntent({} as never), /关闭|故障/);

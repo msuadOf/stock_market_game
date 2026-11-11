@@ -9,13 +9,15 @@ import { parseInformationStates } from "./personal/information.ts"
 import { parseHistoryReads, parsePriceMemories, parseWatchlists } from "./personal/memory.ts"
 import { parsePlanBook } from "./personal/plans.ts"
 import { parseActiveMinuteBars, parsePersonalTradeConfirmations, parseReceiptWatermark, parseRetainedHistory, validateRetainedHistoryCandles, type StockTickById } from "./retained-history.ts"
-import { array, boolean, decimal, exact, integer, oneOf, record, SaveSchemaError, string } from "./primitives.ts"
+import { array, boolean, decimal, exact, integer, oneOf, parseSaveField, record, SaveSchemaError, string } from "./primitives.ts"
 import { u32 } from "./personal/common.ts"
 import { parseReportCorrectionAmount, parseReportCorrectionDate, type CompletedReportCorrectionInput, type CorrectionJournalEntry } from "../../host/report-corrections.ts"
 import { parseCivilClock } from "./civil-clock.ts"
 import { parseMarketMemberships, validateMembershipAccounts } from "./market-memberships.ts"
 import { parseSaveRuntime } from "./runtime-state.ts"
 import { parseUrgencyPolicy } from "./urgency-policy.ts"
+
+export { ROOT_KEYS }
 
 export type StrictSaveEnvelope = {
   readonly desk_mirrored_resting: boolean
@@ -110,7 +112,7 @@ function parseCompletedReportCorrection(value: unknown, path: string): Completed
   }
 }
 
-function parseReportCorrectionOperations(value: unknown): Readonly<Record<string, CompletedReportCorrectionInput>> {
+export function parseReportCorrectionOperations(value: unknown): Readonly<Record<string, CompletedReportCorrectionInput>> {
   const operations = record(value, "report_correction_operations")
   const result: [string, CompletedReportCorrectionInput][] = []
   for (const [identity, operation] of Object.entries(operations)) {
@@ -131,15 +133,16 @@ export function parseStrictSaveEnvelope(value: unknown): StrictSaveEnvelope {
     throw new Error("旧格式存档（含 pending_npc 键）不被当前版本接受：请用当前引擎重新生成存档")
   }
   exact(root, ROOT_KEYS, "根节点")
+  const field = <Value>(key: string, parse: (value: unknown) => Value): Value => parseSaveField(root, key, parse)
   const order = parseOrderState(root)
-  const setup = parseSetup(root.setup, "setup")
+  const setup = field("setup", value => parseSetup(value, "setup"))
   if (setup.simulation_policy_id !== "a-share-simulation") {
     throw new Error(`存档 setup.simulation_policy_id 必须为 a-share-simulation，实际为 ${JSON.stringify(setup.simulation_policy_id)}`)
   }
-  const snapshot = parseSaveSnapshot(root.snapshot, "snapshot")
-  const company_state = parseSavedSessionCompanies(root.company_state, setup)
-  const report_correction_operations = parseReportCorrectionOperations(root.report_correction_operations)
-  const public_library = parsePublicLibrary(root.public_library)
+  const snapshot = field("snapshot", value => parseSaveSnapshot(value, "snapshot"))
+  const company_state = field("company_state", value => parseSavedSessionCompanies(value, setup))
+  const report_correction_operations = field("report_correction_operations", parseReportCorrectionOperations)
+  const public_library = field("public_library", parsePublicLibrary)
   const selectedReportSource = "LegacyOperations" in company_state ? "SimulationAccounting" : "SimpleGenerated"
   for (const [index, report] of public_library.reports.entries()) {
     if (report.source !== selectedReportSource) throw new SaveSchemaError(`public_library.reports[${index}].source`, "必须来自当前 selected 公司权威")
@@ -151,9 +154,9 @@ export function parseStrictSaveEnvelope(value: unknown): StrictSaveEnvelope {
   exact(order.book_next_sequences, Object.keys(snapshot.markets), "book_next_sequences (snapshot.markets)")
   // B3 远程登录：成员关系 schema 校验+账户集合恰好校验（与引擎 fault2020
   // 域同语义——web 严格 parser 不放宽）。
-  const market_memberships = parseMarketMemberships(root.market_memberships)
+  const market_memberships = field("market_memberships", parseMarketMemberships)
   validateMembershipAccounts(market_memberships, setup, snapshot)
-  const runtime_state = parseSaveRuntime(root.runtime_state)
+  const runtime_state = field("runtime_state", parseSaveRuntime)
   exact(runtime_state.book_public_cutoff_sequences, expectedStockIdKeys, "runtime_state.book_public_cutoff_sequences (setup.stocks→StockId)")
   for (const [code, cutoff] of Object.entries(runtime_state.book_public_cutoff_sequences)) {
     if (BigInt(cutoff) > BigInt(order.book_next_sequences[code])) {
@@ -169,11 +172,11 @@ export function parseStrictSaveEnvelope(value: unknown): StrictSaveEnvelope {
     return { id, tick: stock.tick }
   })
   const stockConfig = { auction_ticks: setup.auction_ticks, closing_auction_ticks: setup.closing_auction_ticks }
-  const clock = parseCivilClock(root.civil_clock)
-  const marketMinuteBars = parseActiveMinuteBars(root.market_minute_bars, "market_minute_bars", stocksById, stockConfig)
-  const retainedDays = parseRetainedHistory(root.retained_market_days, { stocks: stocksById, start_date: setup.start_date, settled_through: clock.settled_through, ...stockConfig })
+  const clock = field("civil_clock", parseCivilClock)
+  const marketMinuteBars = field("market_minute_bars", value => parseActiveMinuteBars(value, "market_minute_bars", stocksById, stockConfig))
+  const retainedDays = field("retained_market_days", value => parseRetainedHistory(value, { stocks: stocksById, start_date: setup.start_date, settled_through: clock.settled_through, ...stockConfig }))
   validateRetainedHistoryCandles(retainedDays, snapshot.daily_candles)
-  const tradeConfirmations = parsePersonalTradeConfirmations(root.personal_trade_confirmations)
+  const tradeConfirmations = field("personal_trade_confirmations", parsePersonalTradeConfirmations)
   for (const [account, rows] of Object.entries(tradeConfirmations)) {
     const path = `personal_trade_confirmations.${account}`
     if (!Object.hasOwn(snapshot.accounts, account)) throw new Error(`存档 ${path} 账户不存在`)
@@ -182,5 +185,5 @@ export function parseStrictSaveEnvelope(value: unknown): StrictSaveEnvelope {
     }
   }
   const receiptWatermark = parseReceiptWatermark(root.receipt_watermark, tradeConfirmations)
-  return { desk_mirrored_resting: boolean(root.desk_mirrored_resting, "desk_mirrored_resting"), runtime_state, setup, seed: decimal(root.seed, "seed"), snapshot, ...order, retail_experience: parseRetailExperienceStates(root.retail_experience), civil_clock: clock, company_state, report_correction_operations, public_library, disclosures: parseDisclosureDispatch(root.disclosures), plans: parsePlanBook(root.plans), urgency_policy: parseUrgencyPolicy(root.urgency_policy), information_states: parseInformationStates(root.information_states), belief_books: parseBeliefBooks(root.belief_books), watchlists: parseWatchlists(root.watchlists), price_memories: parsePriceMemories(root.price_memories), history_reads: parseHistoryReads(root.history_reads), market_memberships, market_minute_bars: marketMinuteBars, retained_market_days: retainedDays, personal_trade_confirmations: tradeConfirmations, receipt_watermark: receiptWatermark }
+  return { desk_mirrored_resting: boolean(root.desk_mirrored_resting, "desk_mirrored_resting"), runtime_state, setup, seed: decimal(root.seed, "seed"), snapshot, ...order, retail_experience: field("retail_experience", parseRetailExperienceStates), civil_clock: clock, company_state, report_correction_operations, public_library, disclosures: field("disclosures", parseDisclosureDispatch), plans: field("plans", parsePlanBook), urgency_policy: field("urgency_policy", parseUrgencyPolicy), information_states: field("information_states", parseInformationStates), belief_books: field("belief_books", parseBeliefBooks), watchlists: field("watchlists", parseWatchlists), price_memories: field("price_memories", parsePriceMemories), history_reads: field("history_reads", parseHistoryReads), market_memberships, market_minute_bars: marketMinuteBars, retained_market_days: retainedDays, personal_trade_confirmations: tradeConfirmations, receipt_watermark: receiptWatermark }
 }

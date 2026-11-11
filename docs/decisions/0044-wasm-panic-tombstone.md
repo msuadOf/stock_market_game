@@ -14,7 +14,7 @@ Web 本地局使用共享 memory 的 WASM Workers。Worker 在 Rust panic 中死
 2. 早期入口先发布共享死亡字并唤醒等待者；已绑定 child 的 join 状态随后竞争式标记死亡并唤醒，最后才尽力发布该 Worker 的 tombstone。通知先于记录，消费者不得等待处于 `WRITING` 的记录，也不得假定通知到达时消息已发布。每条记录绑定 Worker 身份，地址不复用，直到整个实例废弃才回收。engine 的身份为 `0`，ingress 为 `u32::MAX`，child 使用 `1..u32::MAX-1`。实例化后分配 primary 记录，`registerDeath` 须获得主侧确认；ingress 验证预登记的地址和身份后绑定。child 的 TLS 在 trampoline 的 SLOT OK 和 Rust `SpawnJob` 双重检查之后绑定；JS 地址范围校验不能证明 Rust 对象的 owner。
 3. 单条记录固定 256 字节，其中 payload 最多 240 字节，超出时标记截断。仅使用无需格式化即可取得的字符串；动态格式或 `panic_any` 无此字符串时明确报告“panic 消息不可用”。字节按上限截取，读取端须区分无效 UTF-8、截断、缺席、写入中和非法记录，不得虚构消息。`phase=0` 表示未知。
 4. hard trap 不经过 Rust panic 入口；未绑定或记录未完成也可能没有 tombstone。宿主仍须显式报告死亡及已有上下文，不能把缺席解释为 panic payload，也不能等待已死亡 Worker 完成记录。相关错误不得当作成功的 tick 或存档发布；此诊断机制不改变 A 股撮合、资金、股份、单位或存档语义。
-   宿主无法可靠获知故障瞬间的权威 `last_committed_tick`，错误 context 明确标为 `unknown`，UI 反馈显示“未知”。此前已观察到的 tick 只能作为下界，不能冒充故障时的权威值。日终存档是独立的恢复点，也不能用于推断故障瞬间的提交位置。
+   宿主无法可靠获知故障瞬间的权威 `last_committed_tick`，错误 context 明确标为 `unknown`（未知），UI 反馈保留该原始值。此前已观察到的 tick 只能作为下界，不能冒充故障时的权威值。日终存档是独立的恢复点，也不能用于推断故障瞬间的提交位置。
 5. 构建脚本校验固定 rustc commit、完整 `rust-src` 和 panic 源文件的哈希，校验补丁锚点后在临时 sysroot 副本应用补丁；版本、源码或锚点不匹配即失败。原始 std 不含受控构建的 marker，强制链接及检查 marker，避免误用原始 std。构建结束清理副本，不修改安装的工具链。固定输入和校验使修改可重建，但不承诺跨环境产物字节一致。已有 `RUSTC_WRAPPER` 或 `RUSTC_WORKSPACE_WRAPPER` 时显式拒绝，避免绕过受控链。
 6. 受控 sysroot 构建入口编译并使用原生 rustc wrapper，Windows 选择 `.exe`；该路径尚未在 Windows 实机验证，不能把已有的跨平台分发目标视为此 WASM 构建链已在 Windows 可用。其他平台也须分别验证。缺少固定工具链、源码或受控构建能力时构建失败，不静默改用未修改的 std。
 

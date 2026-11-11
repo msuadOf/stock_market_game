@@ -15,6 +15,7 @@ type FixtureOptions = {
   readonly ownsIncomingArchive?: boolean;
   readonly restore?: (json: string) => void;
   readonly setup?: (setup: unknown) => void;
+  readonly runtime?: boolean;
 };
 function fixture(options: FixtureOptions = {}) {
   const channel = new MessageChannel(); const calls: string[] = []; const setups: unknown[] = []; const archives: unknown[] = [];
@@ -34,12 +35,24 @@ function fixture(options: FixtureOptions = {}) {
       facade_slot_init_for_setup: (setup: unknown) => { calls.push("setup-init"); setups.push(setup); options.setup?.(setup); },
       ...(options.hasRestore === false ? {} : { facade_slot_init_for_restore_json: (json: string) => { calls.push("restore-string-init"); archives.push(JSON.parse(json)); options.restore?.(json); } }),
       clear_prepared_restore: () => options.clear?.(),
+      ...(options.runtime ? {set_step_runtime_override() {}} : {}),
       facade_slot_layout: () => { calls.push("layout"); return layout; },
     } }; }, onFailure: (error) => { throw error; },
   });
   channel.port1.addEventListener("message", (event) => channel.port1.postMessage(event.data.type === "facadeEngineMemory" ? { type: "facadeEngineMemoryRegistered", allocationId: 1 } : event.data.type === "facadeEngineDeath" ? { type: "facadeEngineDeathRegistered", allocationId: 1 } : { type: "facadeEngineConfigured" })); channel.port1.start();
   return { initializer, channel, calls, setups, archives, close() { initializer.dispose(); channel.port1.close(); channel.port2.close(); } };
 }
+test("初始 String 档缺少正式 LibOS 导出时清理已准备档并拒绝配置", {timeout:10000}, async () => {
+  let cleared = 0;
+  const f = fixture({runtime:true, clear:()=>{cleared += 1;}});
+  try {
+    await assert.rejects(f.initializer.initialize({type:"init", initialArchive:dayEndArchive(), controlPort:f.channel.port2,
+      runtimeOverride:true}), /LibOS.*故障.*导出/);
+    assert.equal(cleared, 1);
+    assert.ok(f.calls.includes("restore-string-init"));
+    assert.throws(() => f.initializer.requireConfigured(), /尚未 configured|dispose/);
+  } finally { f.close(); }
+});
 test("初始档沿String ABI合同消费同一完整X，绝不调用default-new initializer", async () => {
   const f = fixture(); const archive = dayEndArchive(); const expected = structuredClone(archive);
   try {

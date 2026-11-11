@@ -31,7 +31,7 @@ fn world_with_cadence(cadence: crate::session::notices::NpcInformationCadence) -
             Some(p)
         })
         .collect();
-    spec.watchdog = WatchdogConfig {
+    spec.deadline = DeadlineConfig {
         normal: Duration::from_millis(300),
         long: Duration::from_millis(300),
     };

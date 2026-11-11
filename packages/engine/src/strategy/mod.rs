@@ -18,6 +18,10 @@ mod params;
 mod profile;
 mod retail;
 mod sampling;
+#[cfg(feature = "verification-harness")]
+pub use sampling::{verification_trace_observations, verification_with_observation_math, ObservationTrace};
+#[cfg(feature = "verification-harness")]
+pub(crate) use sampling::{verification_observation_account, verification_record_observation_canonical};
 mod sizing;
 mod state;
 mod technical;

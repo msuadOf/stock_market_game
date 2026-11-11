@@ -261,6 +261,11 @@ fn disconnected_group_desk_sender_after_real_purse_restores_all_final_accounts_a
         .any(|(who, result)| *who == WorkerId::Group(0)
             && matches!(result, Err(RuntimeError::SendFailed { detail })
             if detail == "组 0 → 交易部 0 Ops 发送失败")));
+    let failed_group = report.group_finals.iter().find(|group| group.group == 0).unwrap();
+    let undelivered = failed_group.undelivered_ops.as_ref().expect("真实失败后的 Final 必须携带未发送委托诊断");
+    assert_eq!((undelivered.tick, undelivered.round, undelivered.first_failed_stock, undelivered.final_flush), (4, 0, 0, true));
+    assert_eq!(undelivered.by_stock[0], seen.ops, "诊断必须保留真实扣资后的原始失败批次");
+    assert!(undelivered.by_stock[1].is_empty());
     for group in &report.group_finals {
         assert_eq!(
             group.plan_book_for_test,

@@ -1,0 +1,1 @@
+bf68c785ab6f6347380e34872dfebf36fe78d8c26e7a538644bee5f5e5acdde7  agents/web-architecture-diagnosis/wasm-stage/pkg/web_wasm_diagnostic_bg.wasm

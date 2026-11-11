@@ -32,7 +32,7 @@ impl GroupState {
 
     pub(super) fn send_issuer_repurchase(
         &mut self,
-        desks: &[Sender<super::super::protocol::DeskMsg>],
+        desks: &[impl WorkerSender<super::super::protocol::DeskMsg>],
     ) -> Result<u64, RuntimeError> {
         let mut sent = 0;
         let fail = |detail: &str| RuntimeError::ProtocolInvariant {

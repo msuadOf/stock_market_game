@@ -284,6 +284,7 @@ impl World {
         sent: &BTreeMap<GroupIdx, Vec<super::super::LocalIdx>>,
         mut failure: AdminFailure,
     ) -> Result<P, RuntimeError> {
+        let mut host_cleanup_diagnostics = String::new();
         if failure.terminal {
             self.day_end_prior_public_views = None;
             self.dead_reason = Some(format!("行政事务 {id:?} 失败：{}", failure.error));
@@ -297,6 +298,7 @@ impl World {
                         failure.payload = payload;
                     }
                     if !diagnostics.is_empty() {
+                        host_cleanup_diagnostics.push_str(&diagnostics);
                         self.dead_reason
                             .as_mut()
                             .expect("已判死")
@@ -308,18 +310,21 @@ impl World {
                         .as_mut()
                         .expect("已判死")
                         .push_str("；行政收尾再次 panic，强制回收");
-                    self.worker_shutdown.store(true, Ordering::SeqCst);
-                    for (who, handle) in std::mem::take(&mut self.handles) {
-                        let result = match handle.join() {
-                            Ok(result) => result,
-                            #[cfg(not(target_family = "wasm"))]
-                            Err(payload) => Err(invalid(format!(
-                                "收尾 join {who} 再次 panic：{}",
-                                prepared_stop::panic_detail(payload.as_ref())
-                            ))),
-                            #[cfg(target_family = "wasm")]
-                            Err(error) => Err(invalid(admin_wasm_join_diagnostic(who, error))),
-                        };
+                    self.sever();
+                    for (who, result) in self.join_worker_results_with_context(super::ExitReconcileContext {
+                        phase: super::ExitReconcilePhase::Administrative,
+                        last_committed_tick: Some(self.global.committed_tick),
+                        active_tick: None,
+                        round: None,
+                        candidate_unpublished: false,
+                    }) {
+                        if failure.payload.is_none() {
+                            failure.payload = result
+                                .as_ref()
+                                .err()
+                                .and_then(RuntimeError::retained_panic_payload)
+                                .and_then(|payload| payload.take());
+                        }
                         if let Err(error) = &result {
                             self.dead_reason
                                 .as_mut()
@@ -336,6 +341,15 @@ impl World {
         }
         if let Some(payload) = failure.payload {
             std::panic::resume_unwind(payload);
+        }
+        if matches!(&failure.error, RuntimeError::HostAborted { .. }) {
+            if host_cleanup_diagnostics.is_empty() {
+                return Err(failure.error);
+            }
+            return Err(RuntimeError::HostAbortedCleanup {
+                primary: Box::new(failure.error),
+                detail: host_cleanup_diagnostics,
+            });
         }
         if failure.terminal {
             return Err(invalid(
@@ -608,7 +622,7 @@ impl World {
         phase: AdminPhase,
         request: crate::runtime::protocol::DeskExRightsRequest,
     ) -> Result<crate::runtime::protocol::DeskExRightsCandidate, AdminFailure> {
-        match recv_deadline(&self.up_rx, Phase::Seal, &self.watchdog)? {
+        match recv_deadline(&self.up_rx, Phase::Seal, &self.deadline)? {
             UpMsg::DeskAdminReceipt {
                 id: actual,
                 stock,
@@ -859,7 +873,7 @@ impl World {
 
     /// 仅检查已经入队的额外消息，不引入等待未来消息的第四阶段。
     fn admin_quiet(&mut self) -> Result<(), AdminFailure> {
-        match self.up_rx.try_recv() {
+        match super::super::upstream::try_recv_up(&self.up_rx, Phase::Seal)? {
             Err(std::sync::mpsc::TryRecvError::Empty) => Ok(()),
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 Err(invalid("行政收齐后上行通道断连").into())
@@ -910,7 +924,7 @@ impl World {
         expected: &BTreeMap<GroupIdx, Vec<super::super::LocalIdx>>,
         seen: &mut BTreeSet<GroupIdx>,
     ) -> Result<(GroupIdx, Result<AdminGroupCandidate, RuntimeError>), AdminFailure> {
-        match recv_deadline(&self.up_rx, Phase::Seal, &self.watchdog)? {
+        match recv_deadline(&self.up_rx, Phase::Seal, &self.deadline)? {
             UpMsg::AdminReceipt {
                 id: actual,
                 group,
@@ -994,7 +1008,7 @@ impl World {
         let mut desks: Vec<Option<DeskFinalState>> = (0..self.n_stocks).map(|_| None).collect();
         let mut payload = None;
         while groups.iter().any(Option::is_none) || desks.iter().any(Option::is_none) {
-            match recv_deadline(&self.up_rx, Phase::Seal, &self.watchdog) {
+            match recv_deadline(&self.up_rx, Phase::Seal, &self.deadline) {
                 Ok(UpMsg::GroupFinal(final_state)) => {
                     let index = final_state.group as usize;
                     match groups.get_mut(index) {
@@ -1040,26 +1054,20 @@ impl World {
                 Err(error) => diagnostics.push(error.to_string()),
             }
         } else {
-            for (who, handle) in std::mem::take(&mut self.handles) {
-                let result = match handle.join() {
-                    Ok(result) => result,
-                    #[cfg(not(target_family = "wasm"))]
-                    Err(p) => {
-                        let error = invalid(format!(
-                            "{who} 未运输 panic：{}",
-                            prepared_stop::panic_detail(p.as_ref())
-                        ));
-                        if payload.is_none() {
-                            payload = Some(p);
-                        }
-                        Err(error)
-                    }
-                    #[cfg(target_family = "wasm")]
-                    Err(error) => {
-                        // DEAD kind/code 交给终态诊断；io::Error 不能填充原 panic payload。
-                        Err(invalid(admin_wasm_join_diagnostic(who, error)))
-                    }
-                };
+            for (who, result) in self.join_worker_results_with_context(super::ExitReconcileContext {
+                phase: super::ExitReconcilePhase::Administrative,
+                last_committed_tick: Some(self.global.committed_tick),
+                active_tick: None,
+                round: None,
+                candidate_unpublished: false,
+            }) {
+                if payload.is_none() {
+                    payload = result
+                        .as_ref()
+                        .err()
+                        .and_then(RuntimeError::retained_panic_payload)
+                        .and_then(|payload| payload.take());
+                }
                 if let Err(error) = &result {
                     diagnostics.push(format!("{who}：{error}"));
                 }
@@ -1133,6 +1141,16 @@ mod wasm_join_diagnostic_tests {
             "FACADE_DEAD_PANIC:0xA6",
         );
     }
+
+    #[test]
+    fn 通用故障清理将真实_wasm_join_错误作为诊断而不是_panic() {
+        let arena = SlotArena::alloc(1, GEN_BITS_DEFAULT);
+        assert_eq!(write_dead(&arena, &NullPlatform, 0, 0, DeadKind::HardTrap, 0xD5), DeadOutcome::Written);
+        let error = join_typed::<(), _>(&arena, &NullPlatform, 0, 0).expect_err("必须得到真实 DEAD join 错误");
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| super::super::wasm_fatal_join_failure(WorkerId::Group(3), error)))
+            .expect("join 的 io::Error 只能成为诊断，不能作为 panic 恢复");
+        assert!(matches!(result, crate::runtime::protocol::RuntimeError::ProtocolInvariant { detail } if detail.contains("group-3") && detail.contains("FACADE_DEAD_HARDTRAP:0xD5")));
+    }
 }
 
 #[cfg(test)]
@@ -1149,7 +1167,7 @@ mod tests {
     fn spec() -> WorldSpec {
         let mut spec = basic_spec(2, 1, 2, Box::new(|_| Box::new(|_, _| TickPlan::default())));
         spec.ticks_per_day = 100;
-        spec.watchdog = WatchdogConfig {
+        spec.deadline = DeadlineConfig {
             normal: Duration::from_millis(300),
             long: Duration::from_millis(300),
         };
@@ -1183,6 +1201,61 @@ mod tests {
     }
     fn credit() -> Vec<(GroupIdx, Vec<AdminOperation>)> {
         vec![(0, vec![dividend(0, 101)]), (1, vec![dividend(1, 202)])]
+    }
+
+    #[test]
+    fn 行政收尾必须保留宿主故障的原始类型与阶段() {
+        let mut world = World::spawn(
+            spec(),
+            crate::calendar::TradingCalendar::current_default_calendar().unwrap(),
+        ).unwrap();
+        let error = RuntimeError::HostAborted { phase: Phase::Drain, who: None };
+        world.mark_host_aborted(&error);
+        let result = world.finish_admin_failure::<()>(
+            AdminTransactionId(1),
+            &BTreeMap::new(),
+            super::AdminFailure::from(error),
+        );
+        let primary = match result {
+            Err(RuntimeError::HostAbortedCleanup { primary, detail }) => {
+                assert!(!detail.is_empty(), "次生清理诊断不得丢失");
+                *primary
+            }
+            Err(error) => error,
+            Ok(()) => panic!("宿主永久故障不得返回成功"),
+        };
+        assert!(matches!(primary, RuntimeError::HostAborted { phase: Phase::Drain, who: None }));
+        assert!(world.is_terminal());
+        assert!(world.run_ticks(1).is_err());
+    }
+
+    #[test]
+    #[cfg(not(target_family = "wasm"))]
+    fn 行政宿主故障与上行断连并存时保留主因和次生诊断() {
+        use std::error::Error;
+        let mut world = World::spawn(
+            spec(),
+            crate::calendar::TradingCalendar::current_default_calendar().unwrap(),
+        ).unwrap();
+        let who = WorkerId::Group(1);
+        let original = RuntimeError::HostAborted { phase: Phase::Drain, who: Some(who) };
+        world.mark_host_aborted(&original);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        drop(sender);
+        world.up_rx = receiver;
+        let error = world.finish_admin_failure::<()>(
+            AdminTransactionId(1),
+            &BTreeMap::new(),
+            super::AdminFailure::from(original),
+        ).expect_err("上行断连不得覆盖宿主故障");
+        assert!(matches!(&error, RuntimeError::HostAbortedCleanup { detail, .. } if detail.contains("Final 不完整")));
+        // thiserror 把 Box<RuntimeError> 本身作为 source 的动态类型。
+        let source = error.source()
+            .and_then(|source| source.downcast_ref::<Box<RuntimeError>>())
+            .map(Box::as_ref);
+        assert!(matches!(source, Some(RuntimeError::HostAborted { phase: Phase::Drain, who: Some(actual) }) if *actual == who));
+        assert!(error.to_string().contains("Final 不完整"));
+        assert!(world.is_terminal());
     }
 
     #[test]
@@ -1272,7 +1345,7 @@ mod tests {
         }
         let mut result = vec![Vec::new(); w.n_groups];
         for _ in 0..w.n_groups {
-            match recv_deadline(&w.up_rx, Phase::Seal, &w.watchdog).unwrap() {
+            match recv_deadline(&w.up_rx, Phase::Seal, &w.deadline).unwrap() {
                 UpMsg::GroupEcho { group, accounts } => result[group as usize] = accounts,
                 other => panic!("账户回声错位：{other:?}"),
             }
@@ -2124,7 +2197,7 @@ mod tests {
                 })
                 .unwrap();
             assert!(matches!(
-                recv_deadline(&w.up_rx, Phase::Seal, &w.watchdog).unwrap(),
+                recv_deadline(&w.up_rx, Phase::Seal, &w.deadline).unwrap(),
                 UpMsg::AdminReceipt { result: Ok(_), .. }
             ));
             let message = match mode {
@@ -2153,7 +2226,7 @@ mod tests {
             w.group_txs[0].send(message).unwrap();
             match (
                 mode,
-                recv_deadline(&w.up_rx, Phase::Seal, &w.watchdog).unwrap(),
+                recv_deadline(&w.up_rx, Phase::Seal, &w.deadline).unwrap(),
             ) {
                 (0, UpMsg::PendingStartRejected(rejection)) => {
                     assert_eq!(rejection.group, 0);
@@ -2177,7 +2250,7 @@ mod tests {
                 }
                 (_, other) => panic!("pending门须保原错误与精确来源阶段：{other:?}"),
             }
-            match recv_deadline(&w.up_rx, Phase::Seal, &w.watchdog).unwrap() {
+            match recv_deadline(&w.up_rx, Phase::Seal, &w.deadline).unwrap() {
                 UpMsg::GroupFinal(g) => assert_eq!(g.accounts, before[0]),
                 other => panic!("期望Final，收到{other:?}"),
             }

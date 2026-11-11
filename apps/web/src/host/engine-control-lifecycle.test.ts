@@ -136,7 +136,7 @@ async function withConfiguredOwner(run: (fixture: {
   readonly posted: Record<string, unknown>[];
   readonly words: Int32Array;
   readonly control: MessagePort;
-}) => Promise<void>, phase: "configured" | "registered" | "unallocated" | "wait-death" = "configured") {
+}) => Promise<void>, phase: "configured" | "registered" | "unallocated" | "allocation-configured" = "configured") {
   const channels: MessageChannel[] = [];
   const createChannel = () => { const channel = new MessageChannel(); channels.push(channel); return channel; };
   const data = createChannel(), engine = new WorkerHandle(), posted: Record<string, unknown>[] = [];
@@ -157,16 +157,15 @@ async function withConfiguredOwner(run: (fixture: {
   Atomics.store(words, CAPACITY, 4); Atomics.store(words, GEN_BITS, 29); Atomics.store(words, FREE_HEAD, FREE_HEAD_EMPTY | 0);
   if (phase === "configured") control.postMessage({ type: "facadeEngineSubstrate", module: new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])), memory,
     layout: { baseAddr: 0, headerWords: HEADER_WORDS, slotStride: SLOT_STRIDE, joinStride: JOIN_STRIDE, capacity: 4, genBits: 29 }, diagnostics: false });
-  else if (phase === "wait-death") {
+  else if (phase === "allocation-configured") {
     control.postMessage({ type: "facadeEngineMemory", allocationId: 1, memory });
     control.postMessage({ type: "facadeEngineConfiguration", allocationId: 1, module: new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])),
-      layout: { baseAddr: 0, headerWords: HEADER_WORDS, slotStride: SLOT_STRIDE, joinStride: JOIN_STRIDE, capacity: 4, genBits: 29 }, diagnostics: false,
-      waitAbort: { address: 4096, bytes: 1 }, waitDeath: { address: 4100, bytes: 4 } });
+      layout: { baseAddr: 0, headerWords: HEADER_WORDS, slotStride: SLOT_STRIDE, joinStride: JOIN_STRIDE, capacity: 4, genBits: 29 }, diagnostics: false });
   }
   else if (phase === "registered") control.postMessage({ type: "facadeEngineMemory", allocationId: 1, memory });
   try {
     for (let count = 0; count < 8; count++) await setImmediate();
-    assert.equal(posted.some((value) => value.type === "configured"), phase === "configured" || phase === "wait-death", JSON.stringify(posted));
+    assert.equal(posted.some((value) => value.type === "configured"), phase === "configured" || phase === "allocation-configured", JSON.stringify(posted));
     await run({ send, engine, posted, words, control });
   } finally {
     send({ type: "invalid", instanceId: 1 });
@@ -224,7 +223,7 @@ test("control owner 到期故障先终止 Worker 再发布 terminal", { timeout:
     const terminal = posted.findIndex((message) => message.type === "terminal");
     assert.ok(pending >= 0 && terminal > pending);
     assert.equal((posted[terminal].release as { kind: string }).kind, "unknown");
-  }, "wait-death");
+  }, "allocation-configured");
 });
 
 
@@ -242,5 +241,5 @@ test("control owner 原生错误不可克隆时仍交付首错与 terminal", { t
     assert.doesNotThrow(() => structuredClone(failure));
     assert.equal(posted.filter((message) => message.type === "terminal").length, 1);
     assert.equal(engine.terminations, 1);
-  }, "wait-death");
+  }, "allocation-configured");
 });

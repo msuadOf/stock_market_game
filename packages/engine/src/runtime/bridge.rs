@@ -14,7 +14,7 @@
 //! - 旧管线退役顺序（pipeline 执行体 → coordinator 调用替换）。
 
 use super::decision::{DecisionSetup, NpcProfile};
-use super::watchdog::WatchdogConfig;
+use super::wait_contract::DeadlineConfig;
 use super::world::{DeskStockSpec, WorldSpec};
 use crate::strategy::StrategyData;
 use crate::SessionSetup;
@@ -90,7 +90,7 @@ pub fn world_spec_from_setup(
         initial_pending_sell: Vec::new(),
         script_for,
         chunk: 512,
-        watchdog: WatchdogConfig {
+        deadline: DeadlineConfig {
             normal: Duration::from_secs(30),
             long: Duration::from_secs(120),
         },

@@ -119,12 +119,11 @@ impl super::RuntimeDriver {
         for (group, rows) in full.groups {
             for (local, id, mut snapshot) in rows {
                 if let Some(value) = &mut snapshot {
-                    if let Some(group) = &value.retail_experience {
-                        value.retail_experience =
-                            Some(match session.runtime_retail_experience_for(&id) {
-                                Some(existing) => existing.merged_with_group_authority(group),
-                                None => group.clone(),
-                            });
+                    if let (Some(group), Some(existing)) = (
+                        &mut value.retail_experience,
+                        session.runtime_retail_experience_ref(&id),
+                    ) {
+                        group.merge_missing_stocks_from(existing);
                     }
                 }
                 let index = self.global_index((group, local));

@@ -546,3 +546,43 @@ where
         }
     }
 }
+
+/// 在绝对 deadline 前等待 join 进入终态，不消费句柄或 join slot。
+pub fn wait_join_until<P: FacadePlatform>(
+    arena: &SlotArena,
+    platform: &P,
+    join_index: u32,
+    gen: u32,
+    deadline: crate::clock::Instant,
+) -> bool {
+    let gb = arena.gen_bits();
+    loop {
+        let jw = arena.join_word(join_index).load(Ordering::SeqCst);
+        if decode_gen(jw, gb) != gen {
+            arena
+                .tombstone_word()
+                .store(TombstoneCode::JoinResetMismatch as u32, Ordering::SeqCst);
+            panic!("facade_slot：deadline join 观察到 join 换代（join {join_index}，gen {gen}）");
+        }
+        match decode_join_state(jw, gb) {
+            JoinState::Done | JoinState::DeadHardtrap | JoinState::DeadPanic => return true,
+            JoinState::Consumed => {
+                arena
+                    .tombstone_word()
+                    .store(TombstoneCode::UnexpectedWriter as u32, Ordering::SeqCst);
+                panic!("facade_slot：deadline join 句柄已消费（join {join_index}）");
+            }
+            JoinState::Waiting | JoinState::DeadWriting => {
+                let remaining = deadline.saturating_duration_since(crate::clock::Instant::now());
+                if remaining.is_zero() {
+                    return false;
+                }
+                // futex 接口以毫秒为单位，向上取整避免提前于绝对 deadline 返回。
+                let nanos = remaining.as_nanos();
+                let millis = nanos.saturating_add(999_999) / 1_000_000;
+                let timeout_ms = u64::try_from(millis).unwrap_or(u64::MAX - 1);
+                platform.wait_u32(arena.join_word_ptr(join_index), jw, timeout_ms);
+            }
+        }
+    }
+}

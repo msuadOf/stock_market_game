@@ -197,7 +197,7 @@ impl World {
         let mut seen = BTreeSet::new();
         let mut profiles = BTreeMap::new();
         for _ in 0..self.n_groups {
-            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+            match self.recv_world_up(Phase::Drain)? {
                 UpMsg::GroupInformationHandover {
                     group,
                     source: actual,
@@ -404,7 +404,12 @@ impl World {
         }
         let mut seen = BTreeSet::new();
         for _ in 0..self.n_groups {
-            match recv_deadline(&self.up_rx, Phase::Drain, &self.watchdog)? {
+            #[cfg(test)]
+            if self.handover_host_abort_after == Some(seen.len()) {
+                self.handover_host_abort_after = None;
+                self.drain_host_abort_for_test = true;
+            }
+            match self.recv_world_up(Phase::Drain)? {
                 UpMsg::GroupInformationHandoverInstalled {
                     group,
                     source: actual,
@@ -529,6 +534,82 @@ mod tests {
                 .collect(),
             2,
         )
+    }
+
+    #[test]
+    fn 完整个人态和信息移交遇宿主故障必须终止且不发布() {
+        for read_personal in [true, false] {
+            let mut world = initial_world();
+            let before = world.publication.load();
+            world.drain_host_abort_for_test = true;
+            let result = if read_personal {
+                world.collect_personal_full_for_prepared().map(|_| ())
+            } else {
+                world.capture_information_handover().map(|_| ())
+            };
+            assert!(matches!(result, Err(RuntimeError::HostAborted { phase: Phase::Drain, .. })));
+            assert!(world.is_terminal());
+            assert!(Arc::ptr_eq(&world.publication.load(), &before));
+            assert!(world.run_ticks(1).is_err());
+        }
+    }
+
+    #[test]
+    fn 生产完整个人态宿主故障与清理诊断同时保留() {
+        let mut world = initial_world();
+        let before = world.publication.load();
+        world.drain_host_abort_for_test = true;
+        world.start_cleanup_message_for_test = Some(UpMsg::DayEndAborted {
+            who: WorkerId::Desk(0),
+            tick: 0,
+        });
+        let error = match world.collect_personal_full() {
+            Ok(_) => panic!("宿主故障不得返回个人态"),
+            Err(error) => error,
+        };
+        match error {
+            RuntimeError::HostAbortedCleanup { primary, detail } => {
+                assert!(matches!(*primary, RuntimeError::HostAborted { phase: Phase::Drain, .. }));
+                assert!(detail.contains("非期望消息"));
+            }
+            other => panic!("必须保留宿主故障和清理诊断：{other:?}"),
+        }
+        assert!(world.is_terminal());
+        assert!(world.handles.is_empty(), "生产清理应收获 owned handle");
+        assert!(Arc::ptr_eq(&world.publication.load(), &before));
+    }
+
+    #[test]
+    #[cfg(not(target_family = "wasm"))]
+    fn 局部合成故障在部分组安装后保留两端_publication() {
+        let mut old = initial_world();
+        let captured = old.capture_information_handover().unwrap();
+        let rows: Vec<_> = old.collect_personal_full_for_prepared().unwrap().groups
+            .into_iter().flat_map(|(_, slots)| slots.into_iter().map(|(_, owner, personal)| (owner, personal))).collect();
+        let mut next = world(rows, 2);
+        assert_eq!(next.n_groups, 2);
+        let (accounts, mut attention) = seeds(&mut next);
+        for (&owner, &profile) in &captured.profiles { attention.insert(owner, profile); }
+        let personal = personals(&mut next);
+        let old_publication = old.publication.load();
+        let next_publication = next.publication.load();
+        next.handover_host_abort_after = Some(1);
+        let error = next.install_initial_information_handover_for_prepared(
+            &captured, &accounts, &personal, &attention,
+        ).expect_err("一个组确认后宿主故障不得完成安装");
+        assert!(matches!(error, RuntimeError::HostAborted { phase: Phase::Drain, .. }));
+        assert!(next.is_terminal());
+        assert!(Arc::ptr_eq(&next.publication.load(), &next_publication));
+        assert!(Arc::ptr_eq(&old.publication.load(), &old_publication));
+        // 此 Native seam 没有广播实例级全局故障，旧 World 可读只限此测试。
+        assert!(old.capture_information_handover().is_ok(), "局部故障不得改变旧 World");
+        let (completion, issues) = next.stop_failed_with_completion();
+        assert!(completion.owned_workers > 0);
+        assert_eq!(completion.joined_workers, completion.owned_workers, "prepared World 必须收获全部 owned handle");
+        assert_eq!(completion.worker_results.len(), completion.joined_workers);
+        assert_eq!(completion.worker_results.iter().map(|entry| &entry.worker).collect::<std::collections::BTreeSet<_>>().len(), completion.joined_workers);
+        assert!(issues.is_empty(), "本次局部故障回收不应出现次生问题：{issues:?}");
+        old.stop_without_drain().unwrap();
     }
 
     fn seeds(
@@ -819,7 +900,7 @@ mod tests {
             })
             .unwrap();
         assert!(matches!(
-            recv_deadline(&world.up_rx, Phase::Drain, &world.watchdog).unwrap(),
+            recv_deadline(&world.up_rx, Phase::Drain, &world.deadline).unwrap(),
             UpMsg::GroupInformationHandoverInstalled { group: 0, .. }
         ));
         let error = world.capture_information_handover().unwrap_err();

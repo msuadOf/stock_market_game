@@ -165,3 +165,125 @@ fn prepared_restore_still_rejects_poisoned_runtime_and_consumes_archive() {
     }
     assert!(prepared.take().is_err());
 }
+
+#[test]
+fn chunked_restore_preserves_complete_prefix_and_single_consume() {
+    let json = serde_json::to_vec(&save(3)).unwrap();
+    let mut prepared = super::PreparedRestore::default();
+    let token = prepared.begin_chunks(json.len()).unwrap();
+    for chunk in json.chunks(257) {
+        prepared.push_chunk(token, chunk).unwrap();
+    }
+    assert_eq!(prepared.finish_chunks(token, |_| Ok(())).unwrap(), 12);
+    assert!(prepared.begin_chunks(1).is_err());
+    assert_eq!(prepared.take_chunks(token).unwrap().setup.stocks.len(), 3);
+    assert!(prepared.take_chunks(token).is_err());
+}
+
+#[test]
+fn chunked_restore_rejects_overflow_incomplete_invalid_and_init_failure() {
+    let json = serde_json::to_vec(&save(1)).unwrap();
+    let mut prepared = super::PreparedRestore::default();
+    assert!(prepared.push_chunk(1, b"x").is_err());
+    let token = prepared.begin_chunks(1).unwrap();
+    assert!(prepared.push_chunk(token, b"xx").is_err());
+    assert!(prepared.finish_chunks(token, |_| Ok(())).is_err());
+    let token = prepared.begin_chunks(json.len()).unwrap();
+    prepared.push_chunk(token, &json[..json.len() - 1]).unwrap();
+    assert!(prepared.finish_chunks(token, |_| Ok(())).is_err());
+    let token = prepared.begin_chunks(1).unwrap();
+    prepared.push_chunk(token, b"{").unwrap();
+    assert!(matches!(
+        prepared.finish_chunks(token, |_| Ok(())),
+        Err(super::RestoreFacadeInitError::Decode(_))
+    ));
+    let token = prepared.begin_chunks(json.len()).unwrap();
+    prepared.push_chunk(token, &json).unwrap();
+    assert!(prepared
+        .finish_chunks(token, |_| Err("初始化失败"))
+        .is_err());
+    assert!(prepared.take().is_err());
+    let token = prepared.begin_chunks(json.len()).unwrap();
+    prepared.clear();
+    assert!(prepared.finish_chunks(token, |_| Ok(())).is_err());
+}
+
+#[test]
+fn chunked_restore_preserves_typed_prefix_failure() {
+    let mut archive = save(1);
+    archive.setup.ticks_per_day = 0;
+    let json = serde_json::to_vec(&archive).unwrap();
+    let mut prepared = super::PreparedRestore::default();
+    let token = prepared.begin_chunks(json.len()).unwrap();
+    prepared.push_chunk(token, &json).unwrap();
+    match prepared.finish_chunks(token, |_| panic!("非法档不能初始化")) {
+        Err(RestoreFacadeInitError::Topology(SessionError::InvalidSave(fault))) => {
+            assert_eq!(fault.code, 2002)
+        }
+        other => panic!("必须保留 typed fault，实际 {other:?}"),
+    }
+    assert!(prepared.take().is_err());
+}
+
+#[test]
+fn chunked_restore_rejects_unreservable_length_and_preserves_active_input() {
+    let json = serde_json::to_vec(&save(1)).unwrap();
+    let mut prepared = super::PreparedRestore::default();
+    assert!(prepared.begin_chunks(usize::MAX).is_err());
+    let token = prepared.begin_chunks(json.len()).unwrap();
+    assert!(prepared.begin_chunks(1).is_err());
+    assert!(prepared.prepare("{}", |_| Ok(())).is_err());
+    for chunk in json.chunks(1) {
+        prepared.push_chunk(token, chunk).unwrap();
+    }
+    assert_eq!(prepared.finish_chunks(token, |_| Ok(())).unwrap(), 8);
+    assert!(prepared.begin_chunks(1).is_err());
+    assert!(prepared.take_chunks(token).is_ok());
+}
+
+#[test]
+fn chunked_restore_still_requires_full_restore_validation() {
+    let mut archive = save(1);
+    archive.runtime_state.poisoned = true;
+    let json = serde_json::to_vec(&archive).unwrap();
+    let mut prepared = super::PreparedRestore::default();
+    let token = prepared.begin_chunks(json.len()).unwrap();
+    prepared.push_chunk(token, &json).unwrap();
+    assert_eq!(prepared.finish_chunks(token, |_| Ok(())).unwrap(), 8);
+    match GameSession::restore(&prepared.take_chunks(token).unwrap()) {
+        Err(SessionError::InvalidSave(fault)) => assert_eq!(fault.code, 2200),
+        Ok(_) => panic!("完整恢复必须拒绝 poisoned runtime"),
+        Err(error) => panic!("完整恢复必须保留 fault2200：{error:?}"),
+    }
+    assert!(prepared.take().is_err());
+}
+
+#[test]
+fn stale_chunk_owner_cannot_modify_replacement_or_prepared_archive() {
+    let json = serde_json::to_vec(&save(1)).unwrap();
+    let mut prepared = super::PreparedRestore::default();
+    let old = prepared.begin_chunks(json.len()).unwrap();
+    prepared.clear();
+    let current = prepared.begin_chunks(json.len()).unwrap();
+    assert_ne!(old, current);
+    assert!(prepared.push_chunk(old, b"x").is_err());
+    assert!(prepared.finish_chunks(old, |_| Ok(())).is_err());
+    assert!(!prepared.clear_chunks(old));
+    prepared.push_chunk(current, &json).unwrap();
+    assert_eq!(prepared.finish_chunks(current, |_| Ok(())).unwrap(), 8);
+    assert!(!prepared.clear_chunks(old));
+    assert!(prepared.take().is_err());
+    assert!(prepared.take_chunks(old).is_err());
+    assert!(prepared.take_chunks(current).is_ok());
+    assert!(prepared.take_chunks(current).is_err());
+}
+
+#[test]
+fn chunk_owner_token_never_wraps_or_reuses() {
+    let mut prepared = super::PreparedRestore::default();
+    prepared.next_token = Some(u32::MAX);
+    let last = prepared.begin_chunks(0).unwrap();
+    assert_eq!(last, u32::MAX);
+    assert!(prepared.clear_chunks(last));
+    assert!(prepared.begin_chunks(0).is_err());
+}

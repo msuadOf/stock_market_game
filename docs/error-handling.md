@@ -59,7 +59,7 @@ generation 校验后保留原首个 fatal；健康 Engine 的纯 Host fatal 仍�
 WS 初始化及 Resync 发现 baseline 含 failure 时只发送 `HostFailure`，不先安装或发送健康 baseline。
 
 3018 经 Server、Desktop 的既有 `SessionHandles::save` 错误转换及 WASM 的 `SessionError` 转换保留
-`SAVE_TARGET_DAY_NOT_READY` 和中文原因。当前公开保存入口读取最新候选，没有目标自然日参数，
+`SAVE_TARGET_DAY_NOT_READY`；WASM 同时展示原始错误文本及原因链。当前公开保存入口读取最新候选，没有目标自然日参数，
 因此 UI 不能自然触发 3018；测试使用真实 `ProtocolSession::save_current_day` 错误验证这些转换，
 不据此宣称 UI 已支持按目标自然日保存。
 
@@ -152,11 +152,17 @@ UI 收到一个错误时，至少要能渲染以下字段（来自错误对象�
 | `message` | 给用户的人话描述 | "存档已损坏，无法继续游戏。" |
 | `where` | 发生位置（层 + 模块 + 函数） | `SaveModel.load` |
 | `cause` | 原始错误（链式） | 解析异常对象 |
-| `context` | 可复现细节（脱敏） | saveId、输入片段 |
+| `stack` | 宿主可取得的原始调用栈（可选） | JS / WASM 调用位置 |
+| `context` | 原始可复现细节 | saveId、输入片段 |
 | `recoverable` | 是否可恢复 + 建议动作 | "可重试 / 可上报 / 需重启存档" |
 
 **用户视角的目标**：当他点"反馈/上报"时，能一键复制一段**足够复现**的错误详情——
 这正是本项目"方便反馈和修改"原则的落点。
+
+反馈展示和复制须保留宿主实际提供的原始 message、cause、context、字段名和 stack，不以白名单、
+文本替换或任意展示深度删除诊断证据。普通 Error 的非枚举字段与 AggregateError.errors 同样保留；
+循环引用和无法读取的访问器须显式标记，不能让错误面板二次崩溃。缺失调用栈时不得虚构。
+此约定只改变诊断可见性，不改变交易校验、日终存档或恢复权限。
 
 ## 5. 输入校验（防御式编程的日常）
 

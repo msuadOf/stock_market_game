@@ -82,10 +82,18 @@ pub enum StepSegment {
     /// resting 事实收集往返（collect_resting_facts——嵌套在 envelope 段内；
     /// 差额=差分+增量应用）。
     EnvelopeCollect,
+    /// 单轮协调者收束等待，含 worker 完成和证据聚合。
+    WorldConverge,
+    /// 发送 Seal 并等待全部组确认。
+    WorldSeal,
+    /// 已收束 tick 的公开视图安装。
+    WorldInstall,
+    /// 收束时接收一条上行消息的墙钟时间，包含未就绪时等待。
+    ConvergeReceive,
 }
 
 impl StepSegment {
-    pub const ALL: [Self; 27] = [
+    pub const ALL: [Self; 31] = [
         Self::WorldRun,
         Self::VwapCalc,
         Self::AcctEchoCollect,
@@ -113,6 +121,10 @@ impl StepSegment {
         Self::UndoClear,
         Self::BeliefCollect,
         Self::EnvelopeCollect,
+        Self::WorldConverge,
+        Self::WorldSeal,
+        Self::WorldInstall,
+        Self::ConvergeReceive,
     ];
 
     /// 段名（诊断输出用；ASCII 稳定键）。
@@ -145,6 +157,10 @@ impl StepSegment {
             Self::UndoClear => "undo_clear",
             Self::BeliefCollect => "belief_collect",
             Self::EnvelopeCollect => "envelope_collect",
+            Self::WorldConverge => "world_converge",
+            Self::WorldSeal => "world_seal",
+            Self::WorldInstall => "world_install",
+            Self::ConvergeReceive => "converge_receive",
         }
     }
 
@@ -158,12 +174,12 @@ static ENABLED: AtomicBool = AtomicBool::new(false);
 
 thread_local! {
     /// 各段累计 ns + 进入次数（下标=StepSegment::index）。
-    static LEDGER: RefCell<Option<([u128; 27], [u64; 27])>> = const { RefCell::new(None) };
+    static LEDGER: RefCell<Option<([u128; 31], [u64; 31])>> = const { RefCell::new(None) };
 }
 
 /// 在当前线程启用分段画像（重复调用=账本重置）。
 pub fn enable_on_this_thread() {
-    LEDGER.with_borrow_mut(|slot| *slot = Some(([0; 27], [0; 27])));
+    LEDGER.with_borrow_mut(|slot| *slot = Some(([0; 31], [0; 31])));
     ENABLED.store(true, Ordering::Relaxed);
 }
 
