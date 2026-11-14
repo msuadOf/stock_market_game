@@ -77,6 +77,15 @@ function mounted() {
     submit() { const form = elements(tree).find((node) => node.type === "form"); assert.ok(form); form.props.onSubmit!({ preventDefault() {} }); render(); },
     change(label: string, value: string) { const field = elements(tree).find((node) => node.props["aria-label"] === label); assert.ok(field); field.props.onChange!({ currentTarget: { value } }); render(); },
     click(label: string) { const button = elements(tree).find((node) => node.type === "button" && text(node).includes(label)); assert.ok(button); assert.equal(button.props.disabled, false); button.props.onClick!(); render(); },
+    retry() {
+      const table = elements(tree).find((node) => node.props.rows !== undefined);
+      assert.ok(table && typeof table.type === "function");
+      const button = elements((table.type as React.FunctionComponent<Props>)(table.props))
+        .find((node) => node.type === "button" && text(node) === "重试");
+      assert.ok(button);
+      button.props.onClick!();
+      render();
+    },
     rows() { return elements(tree).find((node) => node.props.rows !== undefined)?.props.rows ?? []; },
     content() { return renderToStaticMarkup(tree); },
     replace(next: string) { scopeKey = next; render(); render(); },
@@ -150,5 +159,66 @@ test("本人日期查询失败明确展示详情并允许重新请求，不安�
     await settle(); ui.render();
     assert.equal(ui.rows().length, 100);
     assert.doesNotMatch(ui.content(), /交割历史服务失败/);
+  } finally { ui.dispose(); }
+});
+
+test("下一页失败时重试原游标与上界；成功后上一页仍使用原缓存", { timeout: 10000 }, async () => {
+  const ui = mounted();
+  try {
+    ui.change("交割证券筛选", "600001");
+    ui.change("交割方向筛选", "Buy");
+    ui.submit();
+    ui.queries[0].resolve(page(ui.queries[0].request, true));
+    await settle(); ui.render();
+    ui.click("下一页");
+    const expected = {
+      date_from: "2030-01-03", date_to: "2030-01-03", code: "600001", side: "Buy",
+      before_receipt: "1", as_of_receipt: "101", page_size: 100,
+    };
+    assert.deepEqual(ui.queries[1].request, expected);
+    ui.queries[1].reject(new Error("读取下一页中断"));
+    await settle(); ui.render();
+    assert.match(ui.content(), /读取下一页中断/);
+    ui.retry();
+    assert.equal(ui.queries.length, 3);
+    assert.deepEqual(ui.queries[2].request, expected);
+    ui.queries[2].reject(new Error("网络尚未恢复"));
+    await settle(); ui.render();
+    ui.retry();
+    assert.equal(ui.queries.length, 4);
+    assert.deepEqual(ui.queries[3].request, expected);
+    ui.queries[3].resolve(page(ui.queries[3].request, false));
+    await settle(); ui.render();
+    assert.deepEqual(ui.rows().map(({ receipt_id }) => receipt_id), ["0"]);
+    assert.match(ui.content(), /第2页/);
+    ui.click("上一页");
+    assert.equal(ui.rows().length, 100);
+    assert.equal(ui.queries.length, 4);
+  } finally { ui.dispose(); }
+});
+
+test("翻页失败后显式刷新开启新查询，切换会话使迟到的重试失效", { timeout: 10000 }, async () => {
+  const ui = mounted();
+  try {
+    ui.submit();
+    ui.queries[0].resolve(page(ui.queries[0].request, true));
+    await settle(); ui.render();
+    ui.click("下一页");
+    ui.queries[1].reject(new Error("读取下一页中断"));
+    await settle(); ui.render();
+    ui.submit();
+    assert.deepEqual(ui.queries[2].request, ui.queries[0].request);
+    ui.queries[2].resolve(page(ui.queries[2].request, true));
+    await settle(); ui.render();
+    ui.click("下一页");
+    ui.queries[3].reject(new Error("再次中断"));
+    await settle(); ui.render();
+    ui.retry();
+    ui.replace("2:7");
+    ui.queries[4].resolve(page(ui.queries[4].request, false));
+    await settle(); ui.render();
+    assert.deepEqual(ui.rows(), []);
+    assert.match(ui.content(), /查询本人交割单/);
+    assert.doesNotMatch(ui.content(), /再次中断|第2页/);
   } finally { ui.dispose(); }
 });
