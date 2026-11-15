@@ -60,7 +60,7 @@ fn 等待点账_capture_slot临界区不得send() {
 /// 阻塞形态，必须先入设计账再实现。
 #[test]
 fn 等待点账_deferred_drop提交面只允许try_send() {
-    let source = include_str!("../session/deferred_drop.rs");
+    let source = include_str!("../../../libos/src/deferred_drop.rs");
     for (index, line) in source.lines().enumerate() {
         let sender_call = line.contains("sender.try_send") || line.contains("sender.send");
         if sender_call {
@@ -87,14 +87,16 @@ fn 等待点账_锚注释在位() {
         // (模块文件, 锚关键片段)——片段取自账注释的稳定关键词。
         ("world.rs", "等待点账"),
         ("watchdog.rs", "等待点账"),
-        ("../session/deferred_drop.rs", "等待点账"),
+        ("../../../libos/src/deferred_drop.rs", "等待点账"),
         ("../compute.rs", "等待点账"),
     ];
     for (file, marker) in anchors {
         let source = match *file {
             "world.rs" => include_str!("world.rs"),
             "watchdog.rs" => include_str!("watchdog.rs"),
-            "../session/deferred_drop.rs" => include_str!("../session/deferred_drop.rs"),
+            "../../../libos/src/deferred_drop.rs" => {
+                include_str!("../../../libos/src/deferred_drop.rs")
+            }
             "../compute.rs" => include_str!("../compute.rs"),
             _ => unreachable!(),
         };

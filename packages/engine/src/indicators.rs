@@ -588,7 +588,7 @@ mod tests {
 ///   cargo test -p engine --lib indicators::indicators_over_2048_points_do_not_spawn_threads -- --ignored --exact --test-threads 1
 #[test]
 #[ignore = "口径=独立进程首触：cargo test -p engine --lib indicators::indicators_over_2048_points_do_not_spawn_threads -- --ignored --exact --test-threads 1；并行套件中兄弟测试线程活动噪声化进程计数，且池已初始化时护栏空转（状态不可检）——均为口径限制非缺陷"]
-#[cfg(target_os = "linux")]
+#[cfg(all(test, target_os = "linux"))]
 fn indicators_over_2048_points_do_not_spawn_threads() {
     fn task_count() -> usize {
         // /proc/self/task 条目数=线程数（与 /proc/self/status Threads 等效）。

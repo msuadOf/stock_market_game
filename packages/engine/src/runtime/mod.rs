@@ -5,8 +5,8 @@
 //! 实体互换、终结时原路退回。数据面（订单/实体）组↔交易部直发，不经协调者。
 //!
 //! 本模块导出协议类型（身份标识 / DeskIn / Entity / FillFact / DeskReceipt /
-//! DeskBatch）并接入组线程、交易部与协调者主循环；native 缺省启用，WASM 由宿主在
-//! 首次读取前设置 override。设计蓝本：迁移设计 F 收敛架构 §1 实体类型表 + 原型
+//! DeskBatch）并接入组线程、交易部与协调者主循环；所有产品宿主使用同一 World。
+//! 设计蓝本：迁移设计 F 收敛架构 §1 实体类型表 + 原型
 //! `packages/std-thread-proto/src/oworker.rs`。
 //!
 //! 零 String 纪律：身份全部数值化（组内名册下标、股数值索引、复合挂单号），字符串只
@@ -38,18 +38,6 @@ pub(crate) mod calendar_public_restore_fixture;
 pub(crate) mod information_fixture;
 
 pub(crate) mod admin_tax_projection;
-
-#[cfg(any(target_arch = "wasm32", test))]
-mod wasm_step_override;
-
-#[cfg(target_arch = "wasm32")]
-static STEP_RUNTIME_OVERRIDE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-
-/// 在 WASM 首次读取运行时开关前设置一次显式 override。
-#[cfg(target_arch = "wasm32")]
-pub fn set_step_runtime_override(enabled: bool) -> Result<(), &'static str> {
-    wasm_step_override::set_step_runtime_override(&STEP_RUNTIME_OVERRIDE, enabled)
-}
 
 pub mod type_aliases;
 
@@ -161,8 +149,6 @@ mod treasury_autonomy_tests;
 /// 等待点分层账静态锚（wasm 线程抽象层 R4a 阶段 1——设计 §10.1/§11.1）。
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod wait_ledger_tests;
-#[cfg(target_family = "wasm")]
-mod wasm_wait;
 pub mod watchdog;
 /// B-1' 组线程等待分级自旋合同（协调者批 2026-10-19）。
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -171,9 +157,7 @@ mod watchdog_spin_tests;
 pub mod watchdog_verification;
 #[cfg(all(target_family = "wasm", feature = "verification-harness"))]
 pub mod watchdog_wait_verification;
-// D5 wasm 方向 A：world 不再按 wasm 门控（session/bridge/drive 的类型
-// 引用面在 wasm 下编译必需）；wasm 宿主没有 OS 线程。串行 fallback 是缺省值，
-// 宿主可在首次读取前显式设置 step runtime override。
+// 所有产品宿主使用相同的 World；WASM 的 worker 底座由宿主预装配。
 pub mod world;
 
 pub use entities::Entity;
@@ -187,19 +171,6 @@ pub use protocol::{
     continuous_minute_of_day, minute_bar_apply, CLOSING_AUCTION_BAR_MINUTE, OPEN_AUCTION_BAR_MINUTE,
 };
 
-/// WASM 默认串行冒烟的编译级断言定义；不能据此认定默认行为已实测。
-/// 首次设置前 `step_runtime_enabled` 缺省为 false；本片未实跑 WASM 测试。
-#[cfg(all(test, target_arch = "wasm32"))]
-mod wasm_serial_smoke {
-    #[test]
-    fn runtime_step_disabled_on_wasm() {
-        assert!(
-            !crate::runtime::step_runtime_enabled(),
-            "wasm 未设置 override 时缺省走串行管线"
-        );
-    }
-}
-
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod desk_semantics_tests;
 #[cfg(test)]
@@ -211,26 +182,50 @@ mod protocol_tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod skeleton_tests;
 
-/// 查询 step 管线开关。native 缺省启用 runtime，可用 `ENGINE_STEP_RUNTIME=0`
-/// 临时回旧管线；WASM 缺省仍为串行，只有宿主在首次读取前显式设置
-/// `step runtime override` 才进入经 `thread_facade` 创建 worker 的 `World` 路径。
-/// 此处的编译级冒烟断言定义不表示本片已实跑 WASM cfg、ABI、`World` 或 Browser。
+/// 产品只走 World。旧串行管线只用于具名验证入口及独立的 native engine 单测进程。
+#[cfg(not(test))]
+pub const fn step_runtime_enabled() -> bool {
+    true
+}
+
+#[cfg(all(test, target_family = "wasm"))]
+pub const fn step_runtime_enabled() -> bool {
+    true
+}
+
+#[cfg(all(test, not(target_family = "wasm")))]
 pub fn step_runtime_enabled() -> bool {
-    // wasm 缺省使用串行管线；宿主可在首次读取前显式设置一次 override。
-    #[cfg(target_arch = "wasm32")]
-    {
-        wasm_step_override::step_runtime_override_enabled(&STEP_RUNTIME_OVERRIDE)
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var_os("SMG_VERIFY_LEGACY_STEP").as_deref() != Some(std::ffi::OsStr::new("1"))
+    })
+}
+
+/// 原部署变量只能缺省或显式为 1，兼容仍保留该标记的历史启动脚本。
+/// 拒绝关闭 World；不让旧部署配置被静默忽略，也不在业务层读取宿主环境。
+pub fn validate_production_step_runtime(value: Option<&std::ffi::OsStr>) -> Result<(), String> {
+    match value {
+        None => Ok(()),
+        Some(value) if value == std::ffi::OsStr::new("1") => Ok(()),
+        Some(value) => Err(format!(
+            "ENGINE_STEP_RUNTIME={value:?} 已不支持：正式宿主必须使用 World；删除此配置。旧串行只用于验证。"
+        )),
     }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        // native 缺省启用 runtime（std-thread 生产缺省）；显式
-        // ENGINE_STEP_RUNTIME=0 临时回旧管线。OnceLock 首读缓存——同进程不可中途切换。
-        static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        *ENABLED.get_or_init(|| {
-            std::env::var("ENGINE_STEP_RUNTIME")
-                .map(|v| v != "0")
-                .unwrap_or(true)
-        })
+}
+
+#[cfg(test)]
+#[test]
+fn production_runtime_configuration_rejects_legacy_switch() {
+    use std::ffi::OsStr;
+    assert_eq!(validate_production_step_runtime(None), Ok(()));
+    assert_eq!(
+        validate_production_step_runtime(Some(OsStr::new("1"))),
+        Ok(())
+    );
+    for value in ["0", "", "false"] {
+        let error = validate_production_step_runtime(Some(OsStr::new(value))).unwrap_err();
+        assert!(error.contains("ENGINE_STEP_RUNTIME"));
+        assert!(error.contains("必须使用 World"));
     }
 }
 

@@ -43,6 +43,8 @@ function shutdownErrorSnapshot(value: unknown, seen = new WeakSet<object>()): un
   } finally { seen.delete(value); }
 }
 
+export const WASM_CREATE_ONCE_ERROR = "Worker 会话只能初始化一次；失败后必须重建 Worker";
+
 /** bindings 的异步初始化归 Worker；当前 handle 与 generation 只归此槽。 */
 export class WasmSessionSlot<TBindings extends WasmSessionBindings> {
   private handle: number | null = null;
@@ -72,16 +74,17 @@ export class WasmSessionSlot<TBindings extends WasmSessionBindings> {
     return [this.handle, wasm];
   }
 
-  create(setup: unknown, seed: unknown): void {
+  create(setup: unknown, seed: unknown, onFfiStart?: () => void): void {
     const wasm = this.bindings();
     if (wasm === null) throw new Error("wasm 未初始化");
     if (typeof seed !== "bigint") throw new Error("seed 必须是 bigint");
     // create_session 失败时 Rust 侧可能已经构造或登记过资源；本槽无法证明可回收，
     // 因此首次尝试前即锁存，重复或失败后的 create 都只能由新 Worker 承担。
     if (this.createAttempted || this.initialRestoreAttempted || this.handle !== null) {
-      throw new Error("Worker 会话只能初始化一次；失败后必须重建 Worker");
+      throw new Error(WASM_CREATE_ONCE_ERROR);
     }
     this.createAttempted = true;
+    onFfiStart?.();
     this.handle = wasm.create_session(setup, seed);
     this.generation += 1;
   }

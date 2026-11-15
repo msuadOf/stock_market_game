@@ -8,10 +8,10 @@ import { test } from "node:test";
 const api = () => import("./frontend-build.mjs");
 
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
-const requiredExports = ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "set_step_runtime_override", "init_wasm_wait", "wasm_wait_abort_layout", "shutdown_session"];
+const requiredExports = ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "world_runtime_abi_version", "init_wasm_wait", "wasm_wait_abort_layout", "shutdown_session", "start_wasm_reclaimer", "close_wasm_reclaimer", "wasm_tombstone_bind_ingress", "wasm_tombstone_init_primary", "wasm_wait_death_layout"];
 
 async function sourceFixture(root) {
-  const inputs = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/config.toml", "apps/web-wasm/Cargo.toml", "apps/web-wasm/.cargo/config.toml", "apps/web-wasm/src/lib.rs", "packages/engine/Cargo.toml", "packages/engine/src/lib.rs"];
+  const inputs = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/config.toml", "apps/web-wasm/Cargo.toml", "apps/web-wasm/.cargo/config.toml", "apps/web-wasm/src/lib.rs", "packages/engine/Cargo.toml", "packages/engine/src/lib.rs", "packages/libos/Cargo.toml", "packages/libos/src/lib.rs"];
   const rows = [];
   for (const relative of inputs.sort()) {
     const bytes = relative === "apps/web-wasm/Cargo.toml" ? '[package]\nlicense-file = "../../LICENSE"\n' : "// fixture\n";
@@ -194,10 +194,12 @@ test("frontend 构建在 LICENSE 变更后阻断后续复制", { timeout: 10000 
   try {
     await mkdir(path.join(root, "apps/web-wasm/src"), { recursive: true });
     await mkdir(path.join(root, "packages/engine/src"), { recursive: true });
+    await mkdir(path.join(root, "packages/libos/src"), { recursive: true });
     await mkdir(path.join(root, ".cargo"), { recursive: true });
     await mkdir(path.join(root, "apps/web-wasm/.cargo"), { recursive: true });
     await writeFile(path.join(root, "apps/web-wasm/Cargo.toml"), '[package]\nlicense-file = "../../LICENSE"\n');
     await writeFile(path.join(root, "packages/engine/Cargo.toml"), "[package]\n");
+    await writeFile(path.join(root, "packages/libos/Cargo.toml"), "[package]\n");
     await writeFile(path.join(root, "Cargo.toml"), "[workspace]\n");
     await writeFile(path.join(root, "Cargo.lock"), "version = 4\n");
     await writeFile(path.join(root, "rust-toolchain.toml"), "[toolchain]\nchannel = \"nightly-2026-09-05\"\n");
@@ -205,6 +207,7 @@ test("frontend 构建在 LICENSE 变更后阻断后续复制", { timeout: 10000 
     await writeFile(path.join(root, "apps/web-wasm/.cargo/config.toml"), "[build]\n");
     await writeFile(path.join(root, "apps/web-wasm/src/lib.rs"), "// fixture\n");
     await writeFile(path.join(root, "packages/engine/src/lib.rs"), "// fixture\n");
+    await writeFile(path.join(root, "packages/libos/src/lib.rs"), "// fixture\n");
     await writeFile(path.join(root, "LICENSE"), "fixture license");
     const plan = createFrontendPlan({ jobs: 4 }, { root, host: "linux" });
     await assert.rejects(executeFrontendBuild(plan, { withSysroot: async (command, run) => run(command), commandRunner: async (command) => {

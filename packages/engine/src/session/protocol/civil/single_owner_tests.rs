@@ -506,13 +506,13 @@ fn civil_publication_copies_history_only_for_the_delivery_boundary() {
 
 #[test]
 fn projection_moves_the_same_record_batch_and_rejected_callback_installs_nothing() {
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(all(test, not(target_family = "wasm")))]
     if crate::runtime::step_runtime_enabled() {
         // 原 serial 候选可重试合同完整保留；父 case 继续核对 native 的首错终态。
         super::ProtocolSession::run_serial_checkpoint_probe_for_test();
     }
     let mut game = GameSession::new(two_stock_setup(), 66).unwrap();
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(all(test, not(target_family = "wasm")))]
     let native_before = if crate::runtime::step_runtime_enabled() {
         game.construct_runtime_driver_lazy_for_test().unwrap();
         Some(game.save().unwrap())
@@ -544,7 +544,7 @@ fn projection_moves_the_same_record_batch_and_rejected_callback_installs_nothing
         "必须真实执行到 candidate publication callback"
     );
     assert_eq!(game.business_state_hash().unwrap(), before);
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(all(test, not(target_family = "wasm")))]
     if let Some(saved) = native_before {
         assert_eq!(game.poison_reason(), Some(&fatal));
         assert_eq!(

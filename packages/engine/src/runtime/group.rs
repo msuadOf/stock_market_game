@@ -5067,7 +5067,7 @@ impl GroupState {
             std::panic::panic_any(payload);
         }
         if let Some(stall) = stall {
-            std::thread::sleep(stall);
+            libos::thread_facade::sleep_current(stall);
         }
         let group = self.group;
         let n_stocks = self.accounts.first().map(|a| a.shares.len()).unwrap_or(0);
@@ -7694,7 +7694,7 @@ pub(crate) fn group_main(
 // apply_staging——外来单的成交/终结事实不得触碰本票执行腿。
 // ═══ Sol 五审件 3（四审 A1 指定回归）：正常关停 >50ms 空闲窗 × 在途资源 ═══
 
-#[cfg(not(target_family = "wasm"))]
+#[cfg(all(test, not(target_family = "wasm")))]
 mod v5_shutdown_idle_window_tests {
     #[cfg(test)]
     use super::{
@@ -7704,11 +7704,11 @@ mod v5_shutdown_idle_window_tests {
 
     /// 四审 A1 关停竞态的确定性回归：正常关停（Drain→Shutdown→Final
     /// 消息协议）期间 **不置** worker_shutdown 永久标记——空闲 worker
-    /// 的 50ms 分片轮询必须持续等待 Shutdown 消息（协议退出），且
+    /// 必须持续等待 Shutdown 消息（协议退出），且
     /// Shutdown 处理 apply_staging 把在途回流实体落账。此前标记驱退
     /// 会使空闲 worker 在 >50ms 窗内提前退出上交 Final，漏合入退款。
     /// 构造：真实组线程通道；Batch（CashRefund 500）入 staging 未落账；
-    /// 闲置 120ms（跨 50ms 分片轮询片界——竞态窗）；发 Shutdown；
+    /// 闲置 120ms（覆盖历史提前退出窗口）；发 Shutdown；
     /// 断言 Final 经协议上交且退款已落账（旧缺陷形态=提前 Final 且
     /// 现金停留在 10_000_000）。
     #[test]
@@ -7771,8 +7771,7 @@ mod v5_shutdown_idle_window_tests {
                 receipts: Vec::new(),
             }))
             .expect("Batch 入队");
-        // >50ms 空闲窗：worker_recv 分片轮询跨片等待（四审竞态窗——
-        // 旧缺陷形态在此窗内提前退出）。
+        // 等过历史提前退出窗口，期间不能丢弃待结的回流。
         std::thread::sleep(std::time::Duration::from_millis(120));
         // 正常关停消息（协议路径——不置永久标记）。
         group_tx.send(GroupIn::Shutdown).expect("Shutdown 发送");
@@ -7845,7 +7844,7 @@ mod v5_shutdown_idle_window_tests {
 /// "关停前置永久标记"缺陷，空闲组在停顿窗内被标记驱退提前退出、
 /// Shutdown 消息不被处理 → observed 缺项显红（此前无 seam 时该
 /// 缺陷被 32/32 漏检——再复核实证）。
-#[cfg(not(target_family = "wasm"))]
+#[cfg(all(test, not(target_family = "wasm")))]
 #[test]
 fn v5_world_shutdown_stall_window_keeps_message_protocol() {
     let spec = crate::runtime::skeleton_tests::basic_spec(

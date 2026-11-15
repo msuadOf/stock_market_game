@@ -7,7 +7,7 @@ const WAIT_SETTINGS = { spinUs: 11, quietUs: 22, fineUs: 33, coarseUs: 44 };
 const LAYOUT = { baseAddr: 0, headerWords: HEADER_WORDS, slotStride: SLOT_STRIDE, joinStride: JOIN_STRIDE, capacity: 8, genBits: 29 };
 const MODULE = new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]));
 
-function fixture(glueMethods: Record<string, unknown> = {}, onLoad: () => void = () => {}, glueGetters: Record<string, () => unknown> = {}) {
+function fixture(glueMethods: Record<string, unknown> = {}, onLoad: () => void = () => {}, glueGetters: Record<string, () => unknown> = {}, allowE2ERuntimeTopology = false) {
   const channel = new MessageChannel();
   channel.port1.addEventListener("message", (event) => {
     if (event.data.type === "facadeEngineMemory") channel.port1.postMessage({ type: "facadeEngineMemoryRegistered", allocationId: 1 });
@@ -18,6 +18,7 @@ function fixture(glueMethods: Record<string, unknown> = {}, onLoad: () => void =
   const memory = new WebAssembly.Memory({ initial: 1, maximum: 2, shared: true });
   const initializer = createFacadeEngineInitializer({
     isolated: () => true,
+    allowE2ERuntimeTopology,
     createMemory: () => { calls.push("memory"); return memory; },
     environment: {
       bindFacadeThreadEnvironment: () => { calls.push("bind"); },
@@ -62,9 +63,9 @@ test("默认初始化不探测 runtime API，保持既有 setup 顺序", { timeo
   } finally { f.cleanup(); }
 });
 
-test("显式 true 在实例化后按原数值设置 runtime 和 wait，再执行 setup 与配置", { timeout: 10000 }, async () => {
+test("World 在实例化后核对 ABI 和原 wait 数值，再执行 setup 与配置", { timeout: 10000 }, async () => {
   const f = fixture({
-    set_step_runtime_override(value: boolean) { f.calls.push(`runtime:${value}`); },
+    world_runtime_abi_version() { f.calls.push("abi:1"); return 1; },
     init_wasm_wait(spinUs: number, quietUs: number, fineUs: number, coarseUs: number) {
       f.calls.push(`wait:${spinUs},${quietUs},${fineUs},${coarseUs}`);
     },
@@ -72,27 +73,51 @@ test("显式 true 在实例化后按原数值设置 runtime 和 wait，再执行
   try {
     const configuration = await initialize(f, { runtimeOverride: true, waitSettings: WAIT_SETTINGS });
     assert.deepEqual(configuration.waitDeath, { address: 65004, bytes: 4 });
-    assert.deepEqual(f.calls, ["memory", "bind", "load", "instantiate", "primary", "death-register", "runtime:true", "wait:11,22,33,44", "setup", "layout", "install"]);
+    assert.deepEqual(f.calls, ["memory", "bind", "load", "instantiate", "primary", "death-register", "abi:1", "wait:11,22,33,44", "setup", "layout", "install"]);
   } finally { f.cleanup(); }
 });
 
-test("显式 false 仅调用一次 runtime setter", { timeout: 10000 }, async () => {
-  const f = fixture({ set_step_runtime_override(value: boolean) { f.calls.push(`runtime:${value}`); } });
+test("双组 World 只在 E2E 按精确字面值 2 送入现有 setup 导出", { timeout: 10000 }, async () => {
+  const methods = {
+    world_runtime_abi_version: () => 1,
+    init_wasm_wait() {},
+    facade_slot_init_for_setup(_setup: unknown, groups?: 2) { f.calls.push(`groups:${groups}`); },
+  };
+  const f = fixture(methods, undefined, undefined, true);
+  try {
+    await initialize(f, { runtimeOverride: true, waitSettings: WAIT_SETTINGS, e2eRuntimeGroups: 2 });
+    assert.ok(f.calls.includes("groups:2"));
+  } finally { f.cleanup(); }
+
+  for (const [allowed, groups] of [[false, 2], [true, "2"], [true, 1], [true, 2.5]] as const) {
+    const denied = fixture({}, undefined, undefined, allowed);
+    try {
+      await assert.rejects(denied.initializer.initialize({
+        type: "init", setup: {}, controlPort: denied.channel.port2,
+        runtimeOverride: true, waitSettings: WAIT_SETTINGS, e2eRuntimeGroups: groups,
+      }), /只允许由 E2E World 以精确值 2 初始化/);
+      assert.deepEqual(denied.calls, []);
+    } finally { denied.cleanup(); }
+  }
+});
+
+test("底层测试专用 false 不切换执行模式，只读取一次 ABI 版本", { timeout: 10000 }, async () => {
+  const f = fixture({ world_runtime_abi_version() { f.calls.push("abi:1"); return 1; } });
   try {
     await initialize(f, { runtimeOverride: false });
-    assert.deepEqual(f.calls, ["memory", "bind", "load", "instantiate", "primary", "death-register", "runtime:false", "setup", "layout", "install"]);
+    assert.deepEqual(f.calls, ["memory", "bind", "load", "instantiate", "primary", "death-register", "abi:1", "setup", "layout", "install"]);
   } finally { f.cleanup(); }
 });
 
 test("显式请求缺少所需 glue 方法时 typed 拒绝且不初始化 slot 或配置", { timeout: 10000 }, async () => {
   for (const [extra, missing] of [
-    [{ runtimeOverride: false }, "set_step_runtime_override"],
-    [{ runtimeOverride: true, waitSettings: WAIT_SETTINGS }, "set_step_runtime_override"],
+    [{ runtimeOverride: false }, "world_runtime_abi_version"],
+    [{ runtimeOverride: true, waitSettings: WAIT_SETTINGS }, "world_runtime_abi_version"],
     [{ runtimeOverride: true, waitSettings: WAIT_SETTINGS }, "init_wasm_wait"],
     [{ runtimeOverride: true, waitSettings: WAIT_SETTINGS }, "wasm_wait_abort_layout"],
     [{ runtimeOverride: true, waitSettings: WAIT_SETTINGS }, "wasm_wait_death_layout"],
   ] as const) {
-    const methods = missing === "wasm_wait_death_layout" ? { set_step_runtime_override() {}, init_wasm_wait() {}, wasm_wait_death_layout: undefined } : missing === "wasm_wait_abort_layout" ? { set_step_runtime_override() {}, init_wasm_wait() {}, wasm_wait_abort_layout: undefined } : missing === "init_wasm_wait" ? { set_step_runtime_override() {} } : {};
+    const methods = missing === "wasm_wait_death_layout" ? { world_runtime_abi_version() { return 1; }, init_wasm_wait() {}, wasm_wait_death_layout: undefined } : missing === "wasm_wait_abort_layout" ? { world_runtime_abi_version() { return 1; }, init_wasm_wait() {}, wasm_wait_abort_layout: undefined } : missing === "init_wasm_wait" ? { world_runtime_abi_version() { return 1; } } : {};
     const f = fixture(methods);
     try {
       await assert.rejects(f.initializer.initialize({ type: "init", setup: {}, controlPort: f.channel.port2, ...extra }), (error: unknown) => {
@@ -103,9 +128,28 @@ test("显式请求缺少所需 glue 方法时 typed 拒绝且不初始化 slot �
       });
       assert.equal(f.calls.includes("setup"), false);
       assert.equal(f.calls.includes("install"), false);
-      assert.equal(f.calls.some((call) => call.startsWith("runtime:")), false);
+      assert.equal(f.calls.some((call) => call.startsWith("abi:")), false);
     } finally { f.cleanup(); }
   }
+});
+
+test("旧 World ABI 版本在 wait 和 slot 初始化前拒绝", { timeout: 10000 }, async () => {
+  const f = fixture({
+    world_runtime_abi_version: () => 0,
+    init_wasm_wait() { f.calls.push("wait"); },
+  });
+  try {
+    await assert.rejects(f.initializer.initialize({
+      type: "init", setup: {}, controlPort: f.channel.port2,
+      runtimeOverride: true, waitSettings: WAIT_SETTINGS,
+    }), (error: unknown) => {
+      assert.equal((error as { code?: string }).code, "WASM_RUNTIME_NOT_READY");
+      assert.match(String(error), /World ABI 版本/);
+      return true;
+    });
+    assert.equal(f.calls.includes("wait"), false);
+    assert.equal(f.calls.includes("setup"), false);
+  } finally { f.cleanup(); }
 });
 
 test("非法 runtime flag / wait 配对与 wait 内容在 Memory 和 load 之前拒绝", { timeout: 10000 }, async () => {
@@ -129,10 +173,10 @@ test("非法 runtime flag / wait 配对与 wait 内容在 Memory 和 load 之前
   }
 });
 
-test("runtime setter 与 wait 初始化异常保持原对象传播", { timeout: 10000 }, async () => {
+test("World ABI 与 wait 初始化异常保持原对象传播", { timeout: 10000 }, async () => {
   for (const [methods, extra, expected] of [
-    [{ set_step_runtime_override() { throw setterError; }, init_wasm_wait() {} }, { runtimeOverride: true, waitSettings: WAIT_SETTINGS }, setterError],
-    [{ set_step_runtime_override() {}, init_wasm_wait() { throw waitError; } }, { runtimeOverride: true, waitSettings: WAIT_SETTINGS }, waitError],
+    [{ world_runtime_abi_version() { throw abiError; }, init_wasm_wait() {} }, { runtimeOverride: true, waitSettings: WAIT_SETTINGS }, abiError],
+    [{ world_runtime_abi_version() { return 1; }, init_wasm_wait() { throw waitError; } }, { runtimeOverride: true, waitSettings: WAIT_SETTINGS }, waitError],
   ] as const) {
     const f = fixture(methods);
     try {
@@ -143,28 +187,28 @@ test("runtime setter 与 wait 初始化异常保持原对象传播", { timeout: 
   }
 });
 
-const setterError = new Error("原 setter 故障");
+const abiError = new Error("原 ABI 故障");
 const waitError = new Error("原 wait 故障");
 
 
 test("异步 load 期间 waitSettings 变更不能改变已校验的 FFI 快照", { timeout: 10000 }, async () => {
   const wait = { ...WAIT_SETTINGS };
   const f = fixture({
-    set_step_runtime_override(value: boolean) { f.calls.push(`runtime:${value}`); },
+    world_runtime_abi_version() { f.calls.push("abi:1"); return 1; },
     init_wasm_wait(spinUs: number, quietUs: number, fineUs: number, coarseUs: number) {
       f.calls.push(`wait:${spinUs},${quietUs},${fineUs},${coarseUs}`);
     },
   }, () => { wait.spinUs = -1; });
   try {
     await initialize(f, { runtimeOverride: true, waitSettings: wait });
-    assert.deepEqual(f.calls, ["memory", "bind", "load", "instantiate", "primary", "death-register", "runtime:true", "wait:11,22,33,44", "setup", "layout", "install"]);
+    assert.deepEqual(f.calls, ["memory", "bind", "load", "instantiate", "primary", "death-register", "abi:1", "wait:11,22,33,44", "setup", "layout", "install"]);
   } finally { f.cleanup(); }
 });
 
 test("runtimeOverride getter 只读取一次并消费已校验原值", { timeout: 10000 }, async () => {
   let reads = 0;
   const f = fixture({
-    set_step_runtime_override(value: boolean) { f.calls.push(`runtime:${value}`); },
+    world_runtime_abi_version() { f.calls.push("abi:1"); return 1; },
     init_wasm_wait(spinUs: number, quietUs: number, fineUs: number, coarseUs: number) {
       f.calls.push(`wait:${spinUs},${quietUs},${fineUs},${coarseUs}`);
     },
@@ -182,7 +226,7 @@ test("runtimeOverride getter 只读取一次并消费已校验原值", { timeout
     f.channel.port1.postMessage({ type: "facadeEngineConfigured" });
     await pending;
     assert.equal(reads, 1);
-    assert.deepEqual(f.calls, ["memory", "bind", "load", "instantiate", "primary", "death-register", "runtime:true", "wait:11,22,33,44", "setup", "layout", "install"]);
+    assert.deepEqual(f.calls, ["memory", "bind", "load", "instantiate", "primary", "death-register", "abi:1", "wait:11,22,33,44", "setup", "layout", "install"]);
   } finally { f.cleanup(); }
 });
 
@@ -190,18 +234,18 @@ test("显式 false 不读取不需要的 wait API getter", { timeout: 10000 }, a
   const original = new Error("不应触发的 wait getter");
   let reads = 0;
   const f = fixture({
-    set_step_runtime_override(value: boolean) { f.calls.push(`runtime:${value}`); },
+    world_runtime_abi_version() { f.calls.push("abi:1"); return 1; },
   }, () => {}, { init_wasm_wait() { reads += 1; throw original; } });
   try {
     await initialize(f, { runtimeOverride: false });
     assert.equal(reads, 0);
-    assert.deepEqual(f.calls, ["memory", "bind", "load", "instantiate", "primary", "death-register", "runtime:false", "setup", "layout", "install"]);
+    assert.deepEqual(f.calls, ["memory", "bind", "load", "instantiate", "primary", "death-register", "abi:1", "setup", "layout", "install"]);
   } finally { f.cleanup(); }
 });
 
 test("runtimeOverride true 要求 waitSettings 是自有字段", { timeout: 10000 }, async () => {
   const f = fixture({
-    set_step_runtime_override() {},
+    world_runtime_abi_version() { return 1; },
     init_wasm_wait() {},
   });
   const value = Object.assign(Object.create({ waitSettings: WAIT_SETTINGS }), {
@@ -239,20 +283,20 @@ test("coarseUs 为零在 Memory 与 load 之前拒绝", { timeout: 10000 }, asyn
 
 test("spinUs 与 quietUs 为零保留原数值传入 wait FFI", { timeout: 10000 }, async () => {
   const f = fixture({
-    set_step_runtime_override(value: boolean) { f.calls.push(`runtime:${value}`); },
+    world_runtime_abi_version() { f.calls.push("abi:1"); return 1; },
     init_wasm_wait(spinUs: number, quietUs: number, fineUs: number, coarseUs: number) {
       f.calls.push(`wait:${spinUs},${quietUs},${fineUs},${coarseUs}`);
     },
   });
   try {
     await initialize(f, { runtimeOverride: true, waitSettings: { ...WAIT_SETTINGS, spinUs: 0, quietUs: 0 } });
-    assert.deepEqual(f.calls, ["memory", "bind", "load", "instantiate", "primary", "death-register", "runtime:true", "wait:0,0,33,44", "setup", "layout", "install"]);
+    assert.deepEqual(f.calls, ["memory", "bind", "load", "instantiate", "primary", "death-register", "abi:1", "wait:0,0,33,44", "setup", "layout", "install"]);
   } finally { f.cleanup(); }
 });
 
 test("runtime 的非法 death layout 在配置前拒绝", { timeout: 10000 }, async () => {
   const f = fixture({
-    set_step_runtime_override() {}, init_wasm_wait() {},
+    world_runtime_abi_version() { return 1; }, init_wasm_wait() {},
     wasm_wait_death_layout: () => ({ address: 65005, bytes: 4 }),
   });
   try {

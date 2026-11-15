@@ -69,6 +69,8 @@ async function createFixture(
   const capabilities = { npcDecisionDiagnostics: false, indicatorCapabilities: { intradayAverage: false, macd: false, priceKdj: false, candleKdj: false }, personalTradeHistory: false };
   let boundMemory!: WebAssembly.Memory;
   const bindings: Record<string, unknown> = {
+      start_wasm_reclaimer() {},
+      close_wasm_reclaimer() { return true; },
     wasm_tombstone_init_primary: () => ({ engine: { workerId: 0, address: 60000 }, ingress: { workerId: 0xffffffff, address: 60256 }, death: { address: 65004, bytes: 4 } }),
       initSync: (input: { memory: WebAssembly.Memory }) => { boundMemory = input.memory; return { memory: options.sharedMemory ? boundMemory : memory, __wbindgen_thread_destroy() {} }; },
     facade_slot_init_for_setup: () => { const words = new Int32Array(boundMemory.buffer); Atomics.store(words, CAPACITY, 4); Atomics.store(words, GEN_BITS, 29); },

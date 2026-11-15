@@ -17,6 +17,7 @@ impl GameSession {
                 stage: "session_poison".to_owned(),
                 worker: None,
                 detail: format!("{poison:?}"),
+                join_failure: None,
             });
         }
         if let Some(binding) = &self.ingress {
@@ -25,6 +26,7 @@ impl GameSession {
                     stage: "ingress_close".to_owned(),
                     worker: None,
                     detail: error.to_string(),
+                    join_failure: None,
                 });
             }
         }
@@ -37,6 +39,7 @@ impl GameSession {
                         stage: "runtime_driver_mutex".to_owned(),
                         worker: None,
                         detail: "runtime driver Mutex poison；仅取回 owner 作失败销毁".to_owned(),
+                        join_failure: None,
                     });
                     poison.into_inner()
                 }

@@ -3,15 +3,9 @@ use super::*;
 
 #[derive(Debug)]
 pub(crate) struct StopReport {
-    #[cfg_attr(
-        not(any(
-            all(test, not(target_family = "wasm")),
-            all(target_family = "wasm", feature = "verification-harness")
-        )),
-        expect(
-            dead_code,
-            reason = "生产错误详情保留 join 数，native test 与 verification harness 逐字段核对"
-        )
+    #[allow(
+        dead_code,
+        reason = "保留实际已 join 的 worker 数，测试与验证收据逐字段核对"
     )]
     pub joined_workers: usize,
     #[expect(
@@ -73,14 +67,7 @@ impl World {
     }
 
     pub(crate) fn stop_without_drain(mut self) -> Result<StopReport, RuntimeError> {
-        #[cfg(target_family = "wasm")]
-        self.stop_permanently();
-        #[cfg(not(target_family = "wasm"))]
-        {
-            self.worker_shutdown.store(true, Ordering::SeqCst);
-            self.group_txs.clear();
-            self.desk_txs.clear();
-        }
+        self.sever();
         let mut errors = Vec::new();
         let mut joined_workers = 0;
         for (who, handle) in std::mem::take(&mut self.handles) {
@@ -88,13 +75,7 @@ impl World {
             match handle.join() {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) => errors.push(format!("worker {who}：{error}")),
-                Err(error) => {
-                    #[cfg(not(target_family = "wasm"))]
-                    let detail = panic_detail(error.as_ref());
-                    #[cfg(target_family = "wasm")]
-                    let detail = error.to_string();
-                    errors.push(format!("join {who} 失败：{detail}"));
-                }
+                Err(error) => errors.push(format!("join {who} 失败：{error}")),
             }
         }
         let mut discarded_messages = 0;
@@ -149,7 +130,7 @@ mod tests {
         assert!(error.to_string().contains("static Full"));
     }
 
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(all(test, not(target_family = "wasm")))]
     fn private_world() -> World {
         World::spawn(
             crate::runtime::skeleton_tests::basic_spec(
@@ -164,7 +145,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(all(test, not(target_family = "wasm")))]
     fn prepared_stop_joins_real_private_world_without_publishing_final() {
         let world = private_world();
         let publication = world.publication();
@@ -178,7 +159,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(all(test, not(target_family = "wasm")))]
     fn prepared_stop_keeps_real_worker_error_after_joining_all_workers() {
         let world = private_world();
         world.group_txs[0]

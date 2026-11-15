@@ -21,7 +21,7 @@ fn active_npc_setup() -> SessionSetup {
 
 #[test]
 fn active_npc_two_day_archive_restores_and_continues_without_pending_inputs() {
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(all(test, not(target_family = "wasm")))]
     if crate::runtime::step_runtime_enabled() {
         // 旧管线 attention/receipt seam 必须与 civil、存档和恢复共用 serial authority。
         ProtocolSession::run_serial_checkpoint_probe_for_test();

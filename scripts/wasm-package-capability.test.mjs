@@ -12,7 +12,7 @@ import {
 } from "./wasm-package-capability.mjs";
 
 const hash = (value) => createHash("sha256").update(value).digest("hex");
-const required = ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "set_step_runtime_override", "init_wasm_wait", "wasm_wait_abort_layout", "shutdown_session"];
+const required = ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "world_runtime_abi_version", "init_wasm_wait", "wasm_wait_abort_layout", "shutdown_session", "start_wasm_reclaimer", "close_wasm_reclaimer", "wasm_tombstone_bind_ingress", "wasm_tombstone_init_primary", "wasm_wait_death_layout"];
 const wasm = Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]);
 const glue = Buffer.from("export function restore_json() {}\n");
 function bytesFor(provenance = {}) {
@@ -38,7 +38,7 @@ test("metadata parser enforces the exact six-field cross-file identity contract"
 test("source identity is deterministic over the declared Rust compiler input closure", { timeout: 10000 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "wasm-source-id-"));
   try {
-    for (const relative of ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/config.toml", "apps/web-wasm/Cargo.toml", "apps/web-wasm/.cargo/config.toml", "apps/web-wasm/src/lib.rs", "packages/engine/Cargo.toml", "packages/engine/src/lib.rs"]) {
+    for (const relative of ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/config.toml", "apps/web-wasm/Cargo.toml", "apps/web-wasm/.cargo/config.toml", "apps/web-wasm/src/lib.rs", "packages/engine/Cargo.toml", "packages/engine/src/lib.rs", "packages/libos/Cargo.toml", "packages/libos/src/lib.rs"]) {
       const filename = path.join(root, relative);
       await mkdir(path.dirname(filename), { recursive: true });
       await writeFile(filename, relative);
@@ -47,6 +47,16 @@ test("source identity is deterministic over the declared Rust compiler input clo
     const second = await captureWasmBuildSourceIdentity(root);
     assert.deepEqual(first, second);
     assert.deepEqual(first.map(({ path: item }) => item), first.map(({ path: item }) => item).sort());
+    const libosSource = "packages/libos/src/lib.rs";
+    assert.ok(first.some(({ path: item }) => item === "packages/libos/Cargo.toml"));
+    assert.ok(first.some(({ path: item }) => item === libosSource));
+    await writeFile(path.join(root, libosSource), "// changed LibOS source\n");
+    await assert.rejects(produceWasmPackageMetadata({
+      root,
+      outDir: root,
+      command: { command: "wasm-pack", args: ["build", "--release"], env: { RUSTUP_TOOLCHAIN: "nightly-2026-09-05" } },
+      sourceSnapshot: first,
+    }), /Rust source closure changed during wasm-pack build/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

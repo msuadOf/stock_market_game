@@ -10,11 +10,11 @@ import { parseWasmWaitAbortLayout, type WasmWaitAbortLayout } from "./wasm-wait-
 import { parseWasmWaitDeathLayout, type WasmWaitDeathLayout } from "./wasm-wait-death.ts";
 
 export interface FacadeEngineGlue extends FacadeSyncInitializer {
-  readonly facade_slot_init_for_setup: (setup: unknown) => void;
-  readonly facade_slot_init_for_restore_json?: (saveJson: string) => void;
+  readonly facade_slot_init_for_setup: (setup: unknown, e2eRuntimeGroups?: 2) => void;
+  readonly facade_slot_init_for_restore_json?: (saveJson: string, e2eRuntimeGroups?: 2) => void;
   readonly clear_prepared_restore?: () => void;
   readonly facade_slot_layout: () => FacadeSlotLayout;
-  readonly set_step_runtime_override?: (enabled: boolean) => void;
+  readonly world_runtime_abi_version?: () => number;
   readonly init_wasm_wait?: (spinUs: number, quietUs: number, fineUs: number, coarseUs: number) => void;
   readonly wasm_wait_abort_layout?: () => unknown;
   readonly wasm_wait_death_layout?: () => unknown;
@@ -71,6 +71,7 @@ interface EngineEnvironment {
 export function createFacadeEngineInitializer(options: {
   readonly isolated: () => boolean;
   readonly ownsIncomingArchive?: boolean;
+  readonly allowE2ERuntimeTopology?: boolean;
   readonly createMemory?: () => WebAssembly.Memory;
   readonly environment: EngineEnvironment;
   readonly load: () => Promise<{ readonly module: WebAssembly.Module; readonly diagnostics: boolean; readonly glue: FacadeEngineGlue }>;
@@ -100,10 +101,17 @@ export function createFacadeEngineInitializer(options: {
         started = true;
         const hasSetup = Object.hasOwn(source, "setup"), hasArchive = Object.hasOwn(source, "initialArchive");
         if (source.type !== "init" || receivedPort === undefined || hasSetup === hasArchive
-          || Object.keys(source).some((key) => !["type", "setup", "initialArchive", "controlPort", "runtimeOverride", "waitSettings"].includes(key))) {
+          || Object.keys(source).some((key) => !["type", "setup", "initialArchive", "controlPort", "runtimeOverride", "waitSettings", "e2eRuntimeGroups"].includes(key))) {
           throw new Error("engine init 需要合法 controlPort 与互斥的唯一 setup 或 initialArchive，禁止未知字段");
         }
         const runtime = parseRuntimeOptions(source);
+        let e2eRuntimeGroups: 2 | undefined;
+        if (Object.hasOwn(source, "e2eRuntimeGroups")) {
+          if (options.allowE2ERuntimeTopology !== true || runtime.enabled !== true || source.e2eRuntimeGroups !== 2) {
+            throw new Error("双组拓扑只允许由 E2E World 以精确值 2 初始化");
+          }
+          e2eRuntimeGroups = 2;
+        }
         handshake = createFacadeEngineHandshake({ port: receivedPort, onFailure: (error) => { dispose(); options.onFailure(error); } });
         ownedPort = receivedPort;
         // Worker 的 MessagePort 已创建独占副本；直接调用方仍须克隆以隔离嵌套引用。
@@ -127,31 +135,32 @@ export function createFacadeEngineInitializer(options: {
         let waitAbort: WasmWaitAbortLayout | undefined;
         let waitDeath: WasmWaitDeathLayout | undefined;
         if (runtime.requested) {
-          const setRuntimeOverride = loaded.glue.set_step_runtime_override;
+          const abiVersion = loaded.glue.world_runtime_abi_version;
           const initializeWait = runtime.enabled ? loaded.glue.init_wasm_wait : undefined;
           const abortLayout = runtime.enabled ? loaded.glue.wasm_wait_abort_layout : undefined;
           const deathLayout = runtime.enabled ? loaded.glue.wasm_wait_death_layout : undefined;
-          const missing = typeof setRuntimeOverride !== "function" ? "set_step_runtime_override"
+          const missing = typeof abiVersion !== "function" ? "world_runtime_abi_version"
             : runtime.enabled && typeof initializeWait !== "function" ? "init_wasm_wait"
             : runtime.enabled && typeof abortLayout !== "function" ? "wasm_wait_abort_layout"
             : runtime.enabled && typeof deathLayout !== "function" ? "wasm_wait_death_layout" : undefined;
           if (missing !== undefined) throw Object.assign(new Error(`facade glue 缺少 runtime initializer: ${missing}`), {
             code: "WASM_RUNTIME_NOT_READY", where: "facade-engine-initialize.runtime", context: { operation: missing },
           });
+          if (typeof abiVersion !== "function") throw new Error("已校验的 World ABI getter 状态丢失");
+          const version = abiVersion.call(loaded.glue);
+          if (version !== 1) throw Object.assign(new Error(`不支持的 World ABI 版本：${String(version)}`), {
+            code: "WASM_RUNTIME_NOT_READY", where: "facade-engine-initialize.runtime", context: { operation: "world_runtime_abi_version" },
+          });
           if (runtime.enabled) {
             const wait = runtime.wait;
-            if (wait === undefined || typeof initializeWait !== "function" || typeof setRuntimeOverride !== "function") {
+            if (wait === undefined || typeof initializeWait !== "function") {
               throw new Error("已校验的 runtime initializer 状态丢失");
             }
-            setRuntimeOverride.call(loaded.glue, true);
             initializeWait.call(loaded.glue, wait.spinUs, wait.quietUs, wait.fineUs, wait.coarseUs);
             if (typeof abortLayout !== "function") throw new Error("已校验的 abort layout getter 状态丢失");
             waitAbort = parseWasmWaitAbortLayout(abortLayout.call(loaded.glue), memory);
             if (typeof deathLayout !== "function") throw new Error("已校验的 death layout getter 状态丢失");
             waitDeath = parseWasmWaitDeathLayout(deathLayout.call(loaded.glue), memory);
-          } else {
-            if (typeof setRuntimeOverride !== "function") throw new Error("已校验的 runtime setter 状态丢失");
-            setRuntimeOverride.call(loaded.glue, false);
           }
         }
         if (initialArchive !== null) {
@@ -162,8 +171,11 @@ export function createFacadeEngineInitializer(options: {
           const clear = loaded.glue.clear_prepared_restore;
           if (typeof clear !== "function") throw new Error("facade glue 缺少初始档释放接口");
           clearPrepared = clear;
-          initializeRestore(JSON.stringify(initialArchive));
-        } else loaded.glue.facade_slot_init_for_setup(setup);
+          const archive = JSON.stringify(initialArchive);
+          if (e2eRuntimeGroups === undefined) initializeRestore(archive);
+          else initializeRestore(archive, e2eRuntimeGroups);
+        } else if (e2eRuntimeGroups === undefined) loaded.glue.facade_slot_init_for_setup(setup);
+        else loaded.glue.facade_slot_init_for_setup(setup, e2eRuntimeGroups);
         const layout = loaded.glue.facade_slot_layout();
         options.environment.installFacadeSlotLayout(layout); options.environment.getArenaView();
         const candidate = Object.freeze({ module: loaded.module, memory, layout, diagnostics: loaded.diagnostics });

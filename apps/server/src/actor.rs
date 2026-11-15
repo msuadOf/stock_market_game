@@ -19,7 +19,7 @@ use engine::session::protocol::CivilUpdate;
 use engine::session::protocol::{
     EngineUpdate as ProtocolUpdate, PausePreferences, ProtocolSession,
 };
-use engine::session::{MarketMembership, OpaqueSubjectId};
+use engine::session::{HostRuntimeTopology, MarketMembership, OpaqueSubjectId};
 use engine::{AccountId, Intent, SaveSlot, SessionError, SessionSetup, Snapshot};
 use serde::Serialize;
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -565,7 +565,7 @@ pub enum SessionCommand {
     },
     Restore {
         slot: Box<SaveSlot>,
-        reply: oneshot::Sender<Result<Snapshot, SessionError>>,
+        reply: oneshot::Sender<Result<Snapshot, RestoreSessionError>>,
     },
     #[cfg(feature = "host-parity")]
     AdvanceCivilDay {
@@ -1700,6 +1700,15 @@ pub enum SendCommandError {
     InvalidSpeed(f64),
 }
 
+/// 读档既要校验引擎候选，也要独占 Native 日终写入世代；两类失败均保留原因。
+#[derive(Debug, thiserror::Error)]
+pub enum RestoreSessionError {
+    #[error(transparent)]
+    Engine(#[from] SessionError),
+    #[error("恢复已取消，未能接管日终存档写入：{0}")]
+    Archive(#[source] native_store::StoreError),
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum NewSessionError {
     #[error(transparent)]
@@ -1726,6 +1735,7 @@ pub struct SessionManager {
     sessions: Arc<DashMap<String, Arc<SessionHandles>>>,
     active_count: Arc<AtomicUsize>,
     base_ms: u64,
+    runtime_topology: HostRuntimeTopology,
 }
 
 impl SessionManager {
@@ -1737,6 +1747,13 @@ impl SessionManager {
     /// 绑定持久化原生存储（生产入口——文件 SQLite 独占 writer）。
     pub fn with_database(database: native_store::NativeDatabase) -> Self {
         Self::with_base_ms_and_database(BASE_TICK_MS, database)
+    }
+
+    /// 专用对照进程选择双组；生产 HTTP 请求不能改变执行拓扑。
+    #[cfg(feature = "host-parity")]
+    pub fn with_two_group_parity_topology(mut self) -> Self {
+        self.runtime_topology = HostRuntimeTopology::TwoGroupParity;
+        self
     }
 
     /// 身份服务的存储入口（identity_routes 装配用）。
@@ -1761,6 +1778,7 @@ impl SessionManager {
             sessions: Arc::new(DashMap::new()),
             active_count: Arc::new(AtomicUsize::new(0)),
             base_ms,
+            runtime_topology: HostRuntimeTopology::Standard,
         }
     }
 
@@ -1809,13 +1827,14 @@ impl SessionManager {
                 (current < MAX_SESSIONS).then_some(current + 1)
             })
             .map_err(|_| NewSessionError::Capacity { max: MAX_SESSIONS })?;
-        let mut game = match ProtocolSession::new(setup.clone(), seed) {
-            Ok(game) => game,
-            Err(error) => {
-                self.active_count.fetch_sub(1, Ordering::AcqRel);
-                return Err(error.into());
-            }
-        };
+        let mut game =
+            match ProtocolSession::new_with_topology(setup.clone(), seed, self.runtime_topology) {
+                Ok(game) => game,
+                Err(error) => {
+                    self.active_count.fetch_sub(1, Ordering::AcqRel);
+                    return Err(error.into());
+                }
+            };
         if let Some(creator) = &creator {
             if let Err(error) = game.bind_market_creator(creator.clone()) {
                 self.active_count.fetch_sub(1, Ordering::AcqRel);
@@ -1845,7 +1864,7 @@ impl SessionManager {
         };
         let setup = slot.setup.clone();
         let seed = slot.seed;
-        let game = ProtocolSession::restore(&slot)?;
+        let game = ProtocolSession::restore_with_topology(&slot, self.runtime_topology)?;
         self.active_count.fetch_add(1, Ordering::AcqRel);
         self.register_game(game, setup, seed, slot_id, true, None)
             .map(Some)
@@ -1939,6 +1958,7 @@ impl SessionManager {
             injected_step_failure: None,
             pacing: ServerPacing::new(self.base_ms, game.tick()),
             game,
+            runtime_topology: self.runtime_topology,
             cmd_rx,
             event_tx: handles.event_tx.clone(),
             session_id: session_id.clone(),
@@ -2036,6 +2056,7 @@ struct SessionActor {
     )>,
     pacing: ServerPacing,
     game: ProtocolSession,
+    runtime_topology: HostRuntimeTopology,
     cmd_rx: mpsc::UnboundedReceiver<SessionCommand>,
     event_tx: broadcast::Sender<EngineUpdate>,
     session_id: String,
@@ -2528,8 +2549,9 @@ impl SessionActor {
                         "重置市场的交易时钟配置必须与当前共享会话一致".into(),
                     ));
                 }
-                let mut replacement = ProtocolSession::new(*setup, seed)
-                    .map_err(|error| SendCommandError::Rejected(error.to_string()))?;
+                let mut replacement =
+                    ProtocolSession::new_with_topology(*setup, seed, self.runtime_topology)
+                        .map_err(|error| SendCommandError::Rejected(error.to_string()))?;
                 replacement
                     .bind_market_creator(subject.clone())
                     .map_err(reject)?;
@@ -3066,10 +3088,10 @@ impl SessionActor {
                 };
                 let _ = reply.send(result);
             }
-            SessionCommand::Restore { slot, reply } => match self
-                .fatal_rejection()
-                .map_or_else(|| ProtocolSession::restore(&slot), Err)
-            {
+            SessionCommand::Restore { slot, reply } => match self.fatal_rejection().map_or_else(
+                || ProtocolSession::restore_with_topology(&slot, self.runtime_topology),
+                Err,
+            ) {
                 Ok(restored) => {
                     let next_generation = match self.timeline_generation.checked_add(1) {
                         Some(generation) => generation,
@@ -3077,37 +3099,44 @@ impl SessionActor {
                             // 1292：世代计数耗尽。
                             let _ = reply.send(Err(SessionError::ResourceLimit(
                                 engine::error::ValidationFault::bare(1292),
-                            )));
+                            )
+                            .into()));
                             return;
                         }
                     };
-                    let replacement = self
-                        .ingress
-                        .write()
-                        .map_err(|_| {
-                            // 1293：ingress 生命周期锁中毒（防御式显式暴露）。
+                    let new_ingress = restored.shared_ingress();
+                    let new_members = restored.trading_subject_accounts();
+                    let install = || -> Result<(), native_store::StoreError> {
+                        // 锁序与 enqueue_for 一致；两把锁都取得后才关闭原入口。
+                        let mut ingress = self.ingress.write().map_err(|_| {
+                            // 1293：ingress 生命周期锁或成员名册锁中毒。
                             SessionError::ResourceLimit(engine::error::ValidationFault::bare(1293))
-                        })
-                        .and_then(|mut ingress| {
-                            ingress.1.close()?;
-                            *ingress = (next_generation, restored.shared_ingress());
-                            // B3 远程登录+复核建议 5：恢复档是成员名册权威——
-                            // 名册更新并入 ingress 写锁段（嵌套序恒 ingress→
-                            // members，与 enqueue_for 读锁同序无死锁；此前分
-                            // 两段的失败窗会留下部分替换状态）。
-                            let mut members = self.members.write().map_err(|_| {
-                                // 1293：成员名册锁中毒（与 ingress 同码域）。
-                                SessionError::ResourceLimit(engine::error::ValidationFault::bare(
-                                    1293,
-                                ))
-                            })?;
-                            *members = restored.trading_subject_accounts();
-                            Ok(())
-                        });
-                    if let Err(error) = replacement {
-                        let _ = reply.send(Err(error));
-                        return;
-                    }
+                        })?;
+                        let mut members = self.members.write().map_err(|_| {
+                            SessionError::ResourceLimit(engine::error::ValidationFault::bare(1293))
+                        })?;
+                        ingress.1.close()?;
+                        *ingress = (next_generation, new_ingress);
+                        *members = new_members;
+                        Ok(())
+                    };
+                    // 存档续写必须和 ingress 一起换世代；旧轨迹较高的 seq 不得拒绝新轨迹重放。
+                    // renew_after 先校验 writer，只有入口替换成功才会更新其写入栅栏。
+                    let archive = match &self.archive {
+                        Some(writer) => writer.renew_after(None, install).map(Some),
+                        None => install().map(|()| None),
+                    };
+                    self.archive = match archive {
+                        Ok(archive) => archive,
+                        Err(error) => {
+                            let error = match error {
+                                native_store::StoreError::Session(error) => error.into(),
+                                error => RestoreSessionError::Archive(error),
+                            };
+                            let _ = reply.send(Err(error));
+                            return;
+                        }
+                    };
                     self.game = restored;
                     self.timeline_generation = next_generation;
                     self.public_revision = self.public_revision.saturating_add(1);
@@ -3116,7 +3145,7 @@ impl SessionActor {
                     let _ = reply.send(Ok(self.game.snapshot()));
                 }
                 Err(error) => {
-                    let _ = reply.send(Err(error));
+                    let _ = reply.send(Err(error.into()));
                 }
             },
             #[cfg(feature = "host-parity")]

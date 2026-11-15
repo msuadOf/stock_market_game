@@ -717,7 +717,9 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
 pub fn run() {
     command_builder(tauri::Builder::default())
         .setup(|_app| {
-            // 预留：可在此读取 CLI 参数 / 初始化单例资源。当前无额外初始化。
+            engine::runtime::validate_production_step_runtime(
+                std::env::var_os("ENGINE_STEP_RUNTIME").as_deref(),
+            )?;
             Ok(())
         })
         .run(tauri::generate_context!())

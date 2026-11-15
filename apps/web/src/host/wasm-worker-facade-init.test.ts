@@ -28,7 +28,7 @@ test("生产 Worker init 把原输入交唯一initializer，配置前create拒�
     },
     load(url, context, next) {
       if (url === "virtual:facade-init:./facade-engine-initialize.ts") return { format: "module", shortCircuit: true, source: 'export function createFacadeEngineInitializer(options) { const f=globalThis[Symbol.for("stock-game-worker-facade-init-test")]; f.load=options.load; return f; }' };
-      if (url === "virtual:facade-init:../../wasm-pkg/web_wasm.js") return { format: "module", shortCircuit: true, source: 'const f=globalThis[Symbol.for("stock-game-worker-facade-init-test")]; export default async()=>f.substrate; export function create_session(setup){f.created.push(setup);return 1}; export function host_capabilities(){return {npcDecisionDiagnostics:false}}; export function ingress_token(){return 1}; export function snapshot(){return {}}; export function civil_date(){return "2030-01-02"}' };
+      if (url === "virtual:facade-init:../../wasm-pkg/web_wasm.js") return { format: "module", shortCircuit: true, source: 'const f=globalThis[Symbol.for("stock-game-worker-facade-init-test")]; export default async()=>f.substrate; export function start_wasm_reclaimer(){}; export function close_wasm_reclaimer(){return true}; export function create_session(setup){f.created.push(setup);return 1}; export function host_capabilities(){return {npcDecisionDiagnostics:false}}; export function ingress_token(){return 1}; export function snapshot(){return {}}; export function civil_date(){return "2030-01-02"}' };
       const loaded = next(url, context);
       if (url.includes("wasm-worker.ts?facade-init")) return { ...loaded, source: String(loaded.source).replaceAll("import.meta.env", '({DEV:false,MODE:"e2e"})') };
       return loaded;

@@ -122,6 +122,7 @@ fn production_actor_steps_and_delivers_tick_batches() {
         injected_step_failure: None,
         pacing: ServerPacing::new(1, game.tick()),
         game,
+        runtime_topology: Default::default(),
         cmd_rx,
         event_tx,
         session_id: "no-compute".into(),
@@ -369,6 +370,7 @@ async fn capture(successful_steps: usize) {
             requested_speed: RequestedSpeed::Fastest,
         },
         game,
+        runtime_topology: Default::default(),
         cmd_rx,
         event_tx,
         session_id: "fatal".into(),
@@ -514,7 +516,10 @@ async fn capture(successful_steps: usize) {
             reply,
         })
         .await;
-    assert_fatal_rejection(response.await.unwrap().unwrap_err());
+    match response.await.unwrap().unwrap_err() {
+        RestoreSessionError::Engine(error) => assert_fatal_rejection(error),
+        error => panic!("宿主 fatal 应保留引擎错误码：{error}"),
+    }
 
     let (reply, response) = oneshot::channel();
     actor
@@ -695,6 +700,7 @@ async fn authority_reads_reject_stale_generations() {
             requested_speed: RequestedSpeed::Fixed { multiplier: 1.0 },
         },
         game,
+        runtime_topology: Default::default(),
         cmd_rx,
         event_tx,
         session_id: "authority-read".into(),
@@ -781,6 +787,7 @@ async fn command_burst_keeps_submission_order_after_callers_stop_waiting() {
             requested_speed: RequestedSpeed::Fixed { multiplier: 1.0 },
         },
         game,
+        runtime_topology: Default::default(),
         cmd_rx,
         event_tx,
         session_id: "command-burst".into(),
@@ -922,6 +929,7 @@ fn zero_step_batch_keeps_progress_origin_and_ingress_facts() {
             requested_speed: RequestedSpeed::Fastest,
         },
         game,
+        runtime_topology: Default::default(),
         cmd_rx,
         event_tx,
         session_id: "graveyard".into(),
@@ -963,6 +971,7 @@ fn catalog_actor_fixture() -> (SessionActor, broadcast::Receiver<EngineUpdate>) 
             injected_step_failure: None,
             pacing: ServerPacing::new(1, game.tick()),
             game,
+            runtime_topology: Default::default(),
             cmd_rx,
             event_tx,
             session_id: "catalog-fixture".into(),

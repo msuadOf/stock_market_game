@@ -9,14 +9,9 @@
 //!
 //! 详见 docs/architecture.md 与 docs/decisions/0002-engine-rust-wasm.md。
 
-#![cfg_attr(target_arch = "wasm32", feature(stdarch_wasm_atomic_wait))]
-
-// Native workers allocate and release tick candidates on different threads.
-// The allocator choice is process-wide but does not own game state. Other
-// platforms keep their supported allocator. See ADR-0020 for measurements.
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+// 选择 LibOS 的宿主分配器；实际分配与释放直接链接对应的实现。
 #[global_allocator]
-static NATIVE_ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+static ALLOCATOR: libos::allocator::ProcessAllocator = libos::allocator::PROCESS_ALLOCATOR;
 
 pub mod shared_history;
 pub(crate) mod u64_decimal;
@@ -80,20 +75,8 @@ pub use compute::{
     ComputeWork, CpuBackend,
 };
 
-/// 时钟门面：native=std re-export，wasm=env.engine_clock_now（设计 §6.1.3-2/§8.3）。
-pub mod clock;
-/// 请求槽协议核心（wasm 生产面 + 全部单元测试；设计 §12.1/§13/§14.1）。
-///
-/// native生产路径仅用std re-export；协议核心只在wasm或测试参与编译，
-/// 避免把未使用的协议模块引入native codegen输入与CGU分区。
-/// 旧阶段曾把跨CGU调用形态变化归因于本模块，后续已撤回该实测归因；
-/// 本门控不声称已证明该因果关系或native热函数逐指令等价。
-#[cfg(any(target_family = "wasm", test))]
-mod facade_slot;
-/// 线程门面：native=std re-export，wasm=槽协议接线（设计 §0/§1.1/§12-14）。
-pub mod thread_facade;
-#[cfg(any(target_arch = "wasm32", test))]
-mod wasm_tombstone;
+// 引擎内部沿用模块路径；宿主直接依赖 LibOS，不经引擎重导出底座 ABI。
+pub(crate) use libos::{clock, thread_facade};
 
 pub mod verification_evidence;
 

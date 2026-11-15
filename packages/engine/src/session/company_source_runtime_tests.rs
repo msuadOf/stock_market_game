@@ -92,7 +92,7 @@ fn selected_none_really_calls_legacy_assembly_prehistory_and_one_live_advance() 
 fn selected_simple_month_end_projection_failure_preserves_all_facts_then_retries_once() {
     let setup = month_end_setup(true);
     let mut session = GameSession::new(setup.clone(), 42).unwrap();
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(all(test, not(target_family = "wasm")))]
     if crate::runtime::step_runtime_enabled() {
         // 先固定合法的静态接管镜像，避免失败前首次 lazy 接管污染存档基线。
         session.construct_runtime_driver_lazy_for_test().unwrap();
@@ -167,7 +167,7 @@ fn selected_simple_new_publication_failure_preserves_library_cursor_and_rng_then
         "本门必须未安装市场"
     );
     assert_eq!(session.tick(), 0, "周日披露不能靠推进市场制造");
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(all(test, not(target_family = "wasm")))]
     if crate::runtime::step_runtime_enabled() {
         // 先固定合法的静态接管镜像，避免失败前首次 lazy 接管污染存档基线。
         session.construct_runtime_driver_lazy_for_test().unwrap();
@@ -231,7 +231,7 @@ fn selected_simple_new_publication_failure_preserves_library_cursor_and_rng_then
 }
 
 #[test]
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 fn selected_simple_publication_failure_after_market_install_is_terminal_without_retry() {
     use crate::information::{
         MonthlyReportDelay, MonthlyReportSchedule, PublicationSource, ReportFrequency,

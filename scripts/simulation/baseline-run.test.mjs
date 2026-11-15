@@ -1197,6 +1197,24 @@ describe("模拟验收 capture 契约", () => {
     );
   });
 
+  it("仅修改 LibOS 源码时拒绝复用旧 simulation checkpoint", async () => {
+    const repoRoot = await createSimulationSourceRepo();
+    const outputDir = await newTempDir();
+    const libosSource = path.join(repoRoot, "packages", "libos", "src", "lib.rs");
+    await mkdir(path.dirname(libosSource), { recursive: true });
+    await writeFile(libosSource, "pub fn platform() {}\n");
+    const args = {
+      outputDir,
+      exec: sourceAwareSimulationExec(fakeSimulationExec()),
+      repoRoot,
+      primaryNaturalDays: TRADING_DAYS,
+      crossYearNaturalDays: TRADING_DAYS,
+    };
+    await captureAfter({ ...args, batchSize: 1 });
+    await writeFile(libosSource, "pub fn platform_changed() {}\n");
+    await assert.rejects(captureAfter({ ...args, resume: true }), /source fingerprint|identity/i);
+  });
+
   it("rejects an unsupported symlink in a declared simulation acceptance source root", async () => {
     const repoRoot = await createSimulationSourceRepo();
     const outputDir = await newTempDir();

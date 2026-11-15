@@ -38,6 +38,7 @@ export const FULL_REGRESSION_SOURCE_INPUTS = [
   "rust-toolchain.toml",
   "packages/engine",
   "packages/engine-gpu",
+  "packages/libos",
   "apps/server",
   "apps/web/package.json",
   "apps/web/src",

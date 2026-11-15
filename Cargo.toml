@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "packages/libos",
     "packages/engine",
     "packages/engine-gpu",
     "apps/web-wasm",

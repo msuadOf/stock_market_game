@@ -1,4 +1,4 @@
-//! 世界拓扑（批 2 骨架，非 wasm）：G 个组线程 + N 个交易部线程 + 协调者
+//! 世界拓扑：G 个组线程 + N 个交易部线程 + 协调者
 //! （协调者逻辑在调用线程上运行，不单独建线程）。
 //!
 //! 通道拓扑（F §4.2，全程 std::sync::mpsc）：
@@ -9,7 +9,7 @@
 //!
 //! 代码本体零线程数管理概念：线程数 = G+N(+调用线程)，由世界构造参数决定。
 
-#[cfg(not(target_family = "wasm"))]
+#[cfg(all(test, not(target_family = "wasm")))]
 mod native_construction;
 mod prepared_stop;
 #[cfg(all(test, not(target_family = "wasm")))]
@@ -24,27 +24,31 @@ pub use shutdown_completion::{
 };
 #[cfg(all(target_family = "wasm", feature = "verification-harness"))]
 mod shutdown_verification;
-#[cfg(any(target_family = "wasm", test))]
-mod wasm_shutdown;
+mod worker_lifecycle;
 #[cfg(all(target_family = "wasm", feature = "verification-harness"))]
 pub use shutdown_verification::{verify_world_stop, WorldStopProbe};
 
-#[cfg(target_family = "wasm")]
-type WasmConstructionGuard = wasm_shutdown::ConstructionGuard<
+type WorldConstructionGuard = worker_lifecycle::ConstructionGuard<
     GroupIn,
     DeskMsg,
     WorkerId,
-    crate::thread_facade::JoinHandle<Result<(), RuntimeError>>,
+    libos::thread_facade::WorkerHandle<Result<(), RuntimeError>>,
 >;
 
-#[cfg(target_family = "wasm")]
 fn join_constructed_worker(
-    handle: crate::thread_facade::JoinHandle<Result<(), RuntimeError>>,
+    handle: libos::thread_facade::WorkerHandle<Result<(), RuntimeError>>,
 ) -> Result<(), String> {
     match handle.join() {
-        Ok(Ok(())) => Ok(()),
-        Ok(Err(error)) => Err(format!("worker执行失败：{error}")),
-        Err(error) => Err(format!("join失败：{error}")),
+        Ok(result) => result.map_err(|error| error.to_string()),
+        Err(error) => Err(format!("join 失败：{error}")),
+    }
+}
+
+fn worker_join_failure(who: WorkerId, error: &JoinFailure) -> RuntimeError {
+    RuntimeError::WorkerJoinFailed {
+        who,
+        diagnostic: error.into(),
+        detail: error.to_string(),
     }
 }
 
@@ -65,6 +69,8 @@ use super::{GroupIdx, StockIdx};
 use crate::config::GameConfig;
 use crate::money::Money;
 use crate::StockExchange;
+use libos::lifecycle::ShutdownWake;
+use libos::thread_facade::{JoinFailure, WorkerHandle};
 #[cfg(feature = "simulation-diagnostics")]
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -494,17 +500,13 @@ pub struct World {
     group_txs: Vec<Sender<GroupIn>>,
     desk_txs: Vec<Sender<DeskMsg>>,
     up_rx: Receiver<UpMsg>,
-    handles: Vec<(
-        WorkerId,
-        crate::thread_facade::JoinHandle<Result<(), RuntimeError>>,
-    )>,
+    handles: Vec<(WorkerId, WorkerHandle<Result<(), RuntimeError>>)>,
     abort: Arc<AtomicBool>,
     /// Sol 终审三审：永久关停标记（sever/Drop/显式 shutdown 置位）——
     /// worker_recv 的退出判定源（与 abort 正交：abort=tick 级回滚语义，
     /// 可重试 Abort 窗口内 worker 存活）。
     worker_shutdown: Arc<AtomicBool>,
-    #[cfg(target_family = "wasm")]
-    shutdown_wake: Option<wasm_shutdown::WakeSenders<GroupIn, DeskMsg>>,
+    shutdown_wake: ShutdownWake<GroupIn, DeskMsg>,
     /// Sol 五审再复核 P1-2（四审 A1 指定回归的确定性 seam）：正常关停
     /// 序列在组 Shutdown 广播**前**的可控停顿（cfg(test)——复现四审
     /// 竞态窗"协调者停顿>50ms 时空闲 worker 提前退出"）。None=不停顿
@@ -882,8 +884,7 @@ impl World {
             });
         }
         admin_treasury_binding::validate(&spec)?;
-        #[cfg(target_family = "wasm")]
-        super::watchdog::require_wasm_wait_initialized()
+        super::watchdog::require_wait_initialized()
             .map_err(|detail| RuntimeError::ProtocolInvariant { detail })?;
         let information_roster = (0..spec.n_groups)
             .map(|group| {
@@ -1043,17 +1044,11 @@ impl World {
             desk_txs.push(tx);
             desk_rxs.push(rx);
         }
-        #[cfg(not(target_family = "wasm"))]
-        let mut native_construction = native_construction::NativeConstructionGuard::new(
+        let mut construction = WorldConstructionGuard::new(
             Arc::clone(&worker_shutdown),
-            n_groups + n_stocks,
-        );
-        #[cfg(target_family = "wasm")]
-        let mut construction = WasmConstructionGuard::new(
-            Arc::clone(&worker_shutdown),
-            wasm_shutdown::WakeSenders::new(
-                group_txs.clone(),
-                desk_txs.clone(),
+            ShutdownWake::for_workers(
+                &group_txs,
+                &desk_txs,
                 || GroupIn::Shutdown,
                 || DeskMsg::Shutdown,
             ),
@@ -1192,74 +1187,62 @@ impl World {
             state.install_repurchase_seeds(&initial_repurchase_projections);
             let rx = group_rxs.remove(0);
             #[cfg(all(test, not(target_family = "wasm")))]
-            if let Some(worker_error) = native_construction.inject_failure() {
+            if let Some(worker_error) =
+                native_construction::inject_failure(construction.worker_count())
+            {
                 if worker_error {
                     native_construction::fail_worker_for_test(&group_txs, &up_rx, &watchdog);
                 }
-                return Err(native_construction.spawn_failure(
+                return Err(construction.spawn_failure(
                     format!("注入 spawn rt-group-{g} 失败"),
                     &mut group_txs,
                     &mut desk_txs,
                 ));
             }
-            let handle = crate::thread_facade::Builder::new()
-                .name(format!("rt-group-{g}"))
-                .spawn({
-                    let desk_txs = desk_txs.clone();
-                    let up_tx = up_tx.clone();
-                    let abort = Arc::clone(&abort);
-                    let shutdown = Arc::clone(&worker_shutdown);
-                    let capture = std::sync::Arc::clone(&capture_slot);
-                    move || {
-                        group_main(
-                            state,
-                            desk_txs,
-                            rx,
-                            super::worker_context::WorkerContext {
-                                up_tx,
-                                abort,
-                                shutdown,
-                                watchdog,
-                                capture,
-                            },
-                        )
-                    }
-                });
-            #[cfg(not(target_family = "wasm"))]
+            let handle = WorkerHandle::spawn(format!("rt-group-{g}"), {
+                let desk_txs = desk_txs.clone();
+                let up_tx = up_tx.clone();
+                let abort = Arc::clone(&abort);
+                let shutdown = Arc::clone(&worker_shutdown);
+                let capture = std::sync::Arc::clone(&capture_slot);
+                move || {
+                    group_main(
+                        state,
+                        desk_txs,
+                        rx,
+                        super::worker_context::WorkerContext {
+                            up_tx,
+                            abort,
+                            shutdown,
+                            watchdog,
+                            capture,
+                        },
+                    )
+                }
+            });
             let handle = match handle {
                 Ok(handle) => handle,
                 Err(error) => {
-                    return Err(native_construction.spawn_failure(
+                    return Err(construction.spawn_failure(
                         format!("spawn rt-group-{g} 失败：{error}"),
                         &mut group_txs,
                         &mut desk_txs,
-                    ))
+                    ));
                 }
             };
-            #[cfg(target_family = "wasm")]
-            let handle = match handle {
-                Ok(handle) => handle,
-                Err(error) => {
-                    return Err(RuntimeError::SendFailed {
-                        detail: construction
-                            .spawn_failure(format!("spawn rt-group-{g} 失败：{error}")),
-                    });
-                }
-            };
-            #[cfg(not(target_family = "wasm"))]
-            native_construction.push(WorkerId::Group(g), handle);
-            #[cfg(target_family = "wasm")]
             construction.push(WorkerId::Group(g), handle);
         }
         for (s, stock_spec) in stocks.into_iter().enumerate() {
             let s = s as StockIdx;
             let rx = desk_rxs.remove(0);
             #[cfg(all(test, not(target_family = "wasm")))]
-            if let Some(worker_error) = native_construction.inject_failure() {
+            if let Some(worker_error) =
+                native_construction::inject_failure(construction.worker_count())
+            {
                 if worker_error {
                     native_construction::fail_worker_for_test(&group_txs, &up_rx, &watchdog);
                 }
-                return Err(native_construction.spawn_failure(
+                return Err(construction.spawn_failure(
                     format!("注入 spawn rt-desk-{s} 失败"),
                     &mut group_txs,
                     &mut desk_txs,
@@ -1293,56 +1276,40 @@ impl World {
                     .copied()
                     .unwrap_or(0),
             };
-            let handle = crate::thread_facade::Builder::new()
-                .name(format!("rt-desk-{s}"))
-                .spawn({
-                    let group_txs = group_txs.clone();
-                    let up_tx = up_tx.clone();
-                    let abort = Arc::clone(&abort);
-                    let shutdown = Arc::clone(&worker_shutdown);
-                    let config = Arc::clone(&config);
-                    let capture = std::sync::Arc::clone(&capture_slot);
-                    move || {
-                        desk_main(
-                            setup,
-                            n_groups,
-                            config,
-                            rx,
-                            group_txs,
-                            super::worker_context::WorkerContext {
-                                up_tx,
-                                abort,
-                                shutdown,
-                                watchdog,
-                                capture,
-                            },
-                        )
-                    }
-                });
-            #[cfg(not(target_family = "wasm"))]
+            let handle = WorkerHandle::spawn(format!("rt-desk-{s}"), {
+                let group_txs = group_txs.clone();
+                let up_tx = up_tx.clone();
+                let abort = Arc::clone(&abort);
+                let shutdown = Arc::clone(&worker_shutdown);
+                let config = Arc::clone(&config);
+                let capture = std::sync::Arc::clone(&capture_slot);
+                move || {
+                    desk_main(
+                        setup,
+                        n_groups,
+                        config,
+                        rx,
+                        group_txs,
+                        super::worker_context::WorkerContext {
+                            up_tx,
+                            abort,
+                            shutdown,
+                            watchdog,
+                            capture,
+                        },
+                    )
+                }
+            });
             let handle = match handle {
                 Ok(handle) => handle,
                 Err(error) => {
-                    return Err(native_construction.spawn_failure(
+                    return Err(construction.spawn_failure(
                         format!("spawn rt-desk-{s} 失败：{error}"),
                         &mut group_txs,
                         &mut desk_txs,
-                    ))
+                    ));
                 }
             };
-            #[cfg(target_family = "wasm")]
-            let handle = match handle {
-                Ok(handle) => handle,
-                Err(error) => {
-                    return Err(RuntimeError::SendFailed {
-                        detail: construction
-                            .spawn_failure(format!("spawn rt-desk-{s} 失败：{error}")),
-                    });
-                }
-            };
-            #[cfg(not(target_family = "wasm"))]
-            native_construction.push(WorkerId::Desk(s), handle);
-            #[cfg(target_family = "wasm")]
             construction.push(WorkerId::Desk(s), handle);
         }
         // 世界不持上行发送端：全部 worker 退出后 recv 才会断连（显式失败面）。
@@ -1374,16 +1341,7 @@ impl World {
                 }
                 let detail = "交易部 Calendar owner 绑定失败".to_owned();
                 // 普通 Err 必须显式回收，保留主错与全部次生错误，避免 Drop panic 覆盖主错。
-                #[cfg(target_family = "wasm")]
-                return Err(RuntimeError::SendFailed {
-                    detail: construction.spawn_failure(detail),
-                });
-                #[cfg(not(target_family = "wasm"))]
-                return Err(native_construction.spawn_failure(
-                    detail,
-                    &mut group_txs,
-                    &mut desk_txs,
-                ));
+                return Err(construction.spawn_failure(detail, &mut group_txs, &mut desk_txs));
             }
         }
         let global_v0 = GlobalState {
@@ -1415,10 +1373,7 @@ impl World {
                 hashes: super::publication::TickHashes::default(),
             }),
         ));
-        #[cfg(target_family = "wasm")]
         let (shutdown_wake, handles) = construction.transfer();
-        #[cfg(not(target_family = "wasm"))]
-        let handles = native_construction.transfer();
         Ok(World {
             calendar_source,
             calendar_bindings,
@@ -1448,7 +1403,6 @@ impl World {
             handles,
             abort,
             worker_shutdown,
-            #[cfg(target_family = "wasm")]
             shutdown_wake,
             #[cfg(test)]
             shutdown_stall_for_test: None,
@@ -3302,10 +3256,11 @@ impl World {
             "{stage}(tick={tick}) 失败，world 已终止且不可重试：{error}"
         ));
         if mode == FatalCleanupMode::StopImmediately {
-            #[cfg(not(target_family = "wasm"))]
-            self.worker_shutdown.store(true, Ordering::SeqCst);
-            #[cfg(target_family = "wasm")]
-            self.stop_permanently();
+            self.shutdown_wake.start_fatal_stop(
+                &self.worker_shutdown,
+                &mut self.group_txs,
+                &mut self.desk_txs,
+            );
         }
         if mode == FatalCleanupMode::PendingStartBeforeFinal {
             // 只有来源门已证明失败组未发final时，desk才不会向正在退出的group回流Batch。
@@ -3331,27 +3286,24 @@ impl World {
         let mut worker_results = Vec::new();
         // 上行通道无界，worker 不等待协调者读 Final；先 join 可保证异常收集也不漏线程。
         {
-            let mut join_one =
-                |who, handle: crate::thread_facade::JoinHandle<Result<(), RuntimeError>>| {
-                    let result = match handle.join() {
-                        Ok(result) => result,
-                        Err(payload) => {
-                            // wasm join 的 io::Error 保留诊断载荷，在此统一进入失败收集。
-                            #[cfg(target_family = "wasm")]
-                            let payload = Box::new(payload) as Box<dyn std::any::Any + Send>;
+            let mut join_one = |who, handle: WorkerHandle<Result<(), RuntimeError>>| {
+                let result = match handle.join() {
+                    Ok(result) => result,
+                    Err(error) => {
+                        let failure = worker_join_failure(who, &error);
+                        if let Ok(payload) = error.into_panic_payload() {
                             panics.push((who, payload));
-                            Err(RuntimeError::ProtocolInvariant {
-                                detail: format!("worker {who} 未经 TaskDied 运输的线程 panic"),
-                            })
                         }
-                    };
-                    if let Err(failure) = &result {
-                        if expected_failure != Some((who, failure)) {
-                            errors.push(format!("join {who}：{failure}"));
-                        }
+                        Err(failure)
                     }
-                    worker_results.push((who, result));
                 };
+                if let Err(failure) = &result {
+                    if expected_failure != Some((who, failure)) {
+                        errors.push(format!("join {who}：{failure}"));
+                    }
+                }
+                worker_results.push((who, result));
+            };
             let handles = std::mem::take(&mut self.handles);
             if mode == FatalCleanupMode::PendingStartBeforeFinal {
                 let (groups, desks): (Vec<_>, Vec<_>) = handles
@@ -3490,6 +3442,11 @@ impl World {
                 worker_results,
                 drained_minute_bars: std::mem::take(&mut self.pending_day_bars),
             });
+        }
+        // 只能恢复第一个真实 panic；其余载荷仅附加到终态诊断。
+        for (who, payload) in panics.iter().skip(1) {
+            let detail = prepared_stop::panic_detail(payload.as_ref());
+            errors.push(format!("次生 worker {who} panic：{detail}"));
         }
         let detail = format!(
                 "{stage}(tick={tick}, round={round}) 失败，world 已终止且不可重试：{error}；已 join {} 个真实 worker；在途 GroupReport={}、DeskReport={}、Failed={}、TaskDied/线程panic={}；清理异常={errors:?}",
@@ -4438,11 +4395,9 @@ impl World {
         &mut self,
         stage: &mut &'static str,
     ) -> Result<ShutdownReport, RuntimeError> {
-        // Sol 终审四审 A1：正常关停**不置**永久标记——Drain/Shutdown/
-        // Final 是完整消息协议（组在 Shutdown 消息处 apply_staging 后
-        // 上交 Final）；标记驱退会旁路 Final 上交（空闲 worker 50ms
-        // 提前退出，特定交错漏合入回流实体）。标记仅用于通道不可达
-        // 场景（sever/Drop）。消息协议失败时 Drop 兜底仍回收。
+        // 正常关停不置永久标记：Drain/Shutdown/Final 是消息协议，组须在
+        // Shutdown 处合入已排队的回流。硬停止会旁路消息处理，只用于协议
+        // 已不可完成或无需保留 Final 的失败销毁；Drop 仍保证回收。
         if let Some(report) = self.dead_finals.take() {
             // 已在失败撤退路径收齐 Final：只补 join。
             Ok(report)
@@ -4516,7 +4471,7 @@ impl World {
             // 在此窗内被标记驱退提前退出、Shutdown 消息不被处理）。
             #[cfg(test)]
             if let Some(stall) = self.shutdown_stall_for_test {
-                std::thread::sleep(stall);
+                libos::thread_facade::sleep_current(stall);
             }
             *stage = "GroupShutdown";
             for tx in &self.group_txs {
@@ -4640,68 +4595,34 @@ impl World {
             .map(|(who, handle)| {
                 let result = match handle.join() {
                     Ok(result) => result,
-                    Err(error) => {
-                        #[cfg(not(target_family = "wasm"))]
-                        let detail = prepared_stop::panic_detail(error.as_ref());
-                        #[cfg(target_family = "wasm")]
-                        let detail = error.to_string();
-                        Err(RuntimeError::ProtocolInvariant {
-                            detail: format!("worker {who} join 失败：{detail}"),
-                        })
-                    }
+                    Err(error) => Err(worker_join_failure(who, &error)),
                 };
                 (who, result)
             })
             .collect()
     }
 
-    #[cfg(target_family = "wasm")]
-    fn stop_permanently(&mut self) {
-        wasm_shutdown::permanent_stop(&self.worker_shutdown, &mut self.shutdown_wake);
-        self.group_txs.clear();
-        self.desk_txs.clear();
-    }
-
-    /// 切断协调者下行通道；wasm 先向互持Sender的组和交易部发送永久停止消息。
+    /// 切断协调者下行通道。先置永久关停，必要时唤醒互持 Sender 的 worker。
     pub fn sever(&mut self) {
-        #[cfg(target_family = "wasm")]
-        self.stop_permanently();
-        #[cfg(not(target_family = "wasm"))]
-        {
-            // Sol 终审三审：置永久关停（worker_recv 分片窗口内观察退出）——
-            // sever 后下行断连互等（组↔部互持 clone），消息不可达只能走标记。
-            self.worker_shutdown.store(true, Ordering::SeqCst);
-            self.group_txs.clear();
-            self.desk_txs.clear();
-        }
+        self.shutdown_wake.sever(
+            &self.worker_shutdown,
+            &mut self.group_txs,
+            &mut self.desk_txs,
+        );
     }
 }
 
 impl Drop for World {
-    /// D0 兜底关停：显式 shutdown 之外的丢弃路径（如 session 析构带走
-    /// 常驻 driver）也必须回收组/部线程——发 Shutdown（失败=已退出）并
-    /// join（结果忽略：worker 错误本经上行通道报告，Drop 期无处报告，
-    /// 此处只保证线程回收）。
-    /// Sol 终审二审阻断 2：**先置全局中止标记再 join**——sever 后下行
-    /// sender 已全部 drop（Shutdown 不可达），worker 的 recv 断连分支
-    /// 本可立即退出，但处于超时等待中的 worker（正常档 5s/测试注入
-    /// 档更长）须凭 abort 标记在超时点干净退出（worker_recv 的
-    /// Timeout+abort 分支），否则 Drop 的 join 被拖到看门狗满档——
-    /// sol3_install_candles 的 10 秒硬上限实测击穿。断连检测语义
-    /// 不变（P1 时代的通道面一致性守卫——send 侧显式报错不受影响）。
+    /// 兜底只保证线程回收，不替换显式 Drain 或安装 Final。先通过 LibOS
+    /// 永久唤醒，再 join；组与交易部互持 Sender，不能只靠通道断开退出。
     fn drop(&mut self) {
-        #[cfg(target_family = "wasm")]
-        self.stop_permanently();
-        #[cfg(not(target_family = "wasm"))]
-        {
-            self.worker_shutdown.store(true, Ordering::SeqCst);
-            for tx in &self.group_txs {
-                let _ = tx.send(GroupIn::Shutdown);
-            }
-            for tx in &self.desk_txs {
-                let _ = tx.send(DeskMsg::Shutdown);
-            }
-        }
+        self.shutdown_wake.drop_wake(
+            &self.worker_shutdown,
+            &mut self.group_txs,
+            &mut self.desk_txs,
+            || GroupIn::Shutdown,
+            || DeskMsg::Shutdown,
+        );
         for (_, handle) in std::mem::take(&mut self.handles) {
             let _ = handle.join();
         }

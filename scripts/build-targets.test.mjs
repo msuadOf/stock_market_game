@@ -623,10 +623,12 @@ test("native UI 构建在 wasm-pack 修改 LICENSE 后停止，不运行 Cargo �
   try {
     await mkdir(path.join(root, "apps/web-wasm/src"), { recursive: true });
     await mkdir(path.join(root, "packages/engine/src"), { recursive: true });
+    await mkdir(path.join(root, "packages/libos/src"), { recursive: true });
     await mkdir(path.join(root, ".cargo"), { recursive: true });
     await mkdir(path.join(root, "apps/web-wasm/.cargo"), { recursive: true });
     await writeFile(path.join(root, "apps/web-wasm/Cargo.toml"), '[package]\nlicense-file = "../../LICENSE"\n');
     await writeFile(path.join(root, "packages/engine/Cargo.toml"), "[package]\n");
+    await writeFile(path.join(root, "packages/libos/Cargo.toml"), "[package]\n");
     await writeFile(path.join(root, "Cargo.toml"), "[workspace]\n");
     await writeFile(path.join(root, "Cargo.lock"), "version = 4\n");
     await writeFile(path.join(root, "rust-toolchain.toml"), "[toolchain]\nchannel = \"nightly-2026-09-05\"\n");
@@ -634,6 +636,7 @@ test("native UI 构建在 wasm-pack 修改 LICENSE 后停止，不运行 Cargo �
     await writeFile(path.join(root, "apps/web-wasm/.cargo/config.toml"), "[build]\n");
     await writeFile(path.join(root, "apps/web-wasm/src/lib.rs"), "// fixture\n");
     await writeFile(path.join(root, "packages/engine/src/lib.rs"), "// fixture\n");
+    await writeFile(path.join(root, "packages/libos/src/lib.rs"), "// fixture\n");
     await writeFile(path.join(root, "LICENSE"), "fixture license");
     await assert.rejects(executeBuild(parseBuildArgs(["webui", "--jobs", "4"]), {
       root, host: "linux", buildId: "license", withSysroot: async (command, run) => run(command), commandRunner: async (command) => {

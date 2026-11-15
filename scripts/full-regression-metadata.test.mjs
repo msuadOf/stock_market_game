@@ -106,6 +106,7 @@ it("fingerprints Rust, Web, package-manager, and deadline-runner inputs", () => 
   for (const required of [
     "Cargo.lock",
     "packages/engine",
+    "packages/libos",
     "package.json",
     "pnpm-lock.yaml",
     "apps/web/package.json",
@@ -118,7 +119,7 @@ it("ignores only Tauri-generated schemas while detecting changes to real desktop
   const workspaceRoot = await resolveWorkspaceRoot(process.cwd());
   const sourceRoot = await mkdtemp(path.join(workspaceRoot, ".tmp", "full-regression-source-"));
   const directoryInputs = new Set([
-    ".cargo", "packages/engine", "packages/engine-gpu", "apps/server",
+    ".cargo", "packages/engine", "packages/engine-gpu", "packages/libos", "apps/server",
     "apps/web/src", "apps/web-wasm", "apps/desktop/src-tauri", "scripts",
   ]);
   const desktopRoot = path.join(sourceRoot, "apps", "desktop", "src-tauri");
@@ -160,6 +161,15 @@ it("ignores only Tauri-generated schemas while detecting changes to real desktop
       assert.notEqual(changed.digest, before.digest, `${input} must remain source-bound`);
       await writeFile(target, "source-A");
     }
+    const libosSource = path.join(sourceRoot, "packages", "libos", "src", "lib.rs");
+    await mkdir(path.dirname(libosSource), { recursive: true });
+    await writeFile(libosSource, "source-A");
+    const withLibos = await collectFullRegressionSourceFingerprint(sourceRoot);
+    assert.notEqual(withLibos.digest, before.digest, "新增 LibOS 源码必须进入指纹");
+    await writeFile(libosSource, "source-B");
+    assert.notEqual((await collectFullRegressionSourceFingerprint(sourceRoot)).digest, withLibos.digest,
+      "仅修改 LibOS 也必须使既有制品指纹失效");
+    await rm(libosSource);
     const nestedScript = path.join(sourceRoot, "scripts", "simulation", "nested.test.mjs");
     await mkdir(path.dirname(nestedScript), { recursive: true });
     await writeFile(nestedScript, "test source");

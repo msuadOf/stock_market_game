@@ -74,7 +74,7 @@ fn solfinal2_real_trade_parity_cash_position_t1_cost() {
     // 两臂都走旧路径（parity 变成旧对旧的假绿），此处显式断言分叉开
     // 启；=0 模式下本对照跳过（两臂同径无判别力，如实报告）。
     if !crate::runtime::step_runtime_enabled() {
-        eprintln!("ENGINE_STEP_RUNTIME=0：两臂同走旧管线，成交 parity 无判别力——跳过（默认模式的运行承载真对照）");
+        eprintln!("SMG_VERIFY_LEGACY_STEP=1：两臂同走旧管线，成交 parity 无判别力——跳过（默认模式的运行承载真对照）");
         return;
     }
     let make = || {

@@ -12,7 +12,7 @@ async function fixture(run) {
     await mkdir(path.join(root, "apps/web-wasm"), { recursive: true });
     await writeFile(path.join(root, "apps/web-wasm/Cargo.toml"), '[package]\nlicense-file = "../../LICENSE"\n');
     await writeFile(path.join(root, "LICENSE"), "MIT fixture license\n");
-    for (const relative of ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/config.toml", "apps/web-wasm/.cargo/config.toml", "apps/web-wasm/src/lib.rs", "packages/engine/Cargo.toml", "packages/engine/src/lib.rs"]) {
+    for (const relative of ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/config.toml", "apps/web-wasm/.cargo/config.toml", "apps/web-wasm/src/lib.rs", "packages/engine/Cargo.toml", "packages/engine/src/lib.rs", "packages/libos/Cargo.toml", "packages/libos/src/lib.rs"]) {
       const filename = path.join(root, relative);
       await mkdir(path.dirname(filename), { recursive: true });
       await writeFile(filename, "// fixture\n");
@@ -24,8 +24,8 @@ async function fixture(run) {
 const command = (root, outDir) => ({ command: "wasm-pack", args: ["build", "apps/web-wasm", "--target", "web", "--release", "--out-dir", outDir], cwd: root, env: { CARGO_BUILD_JOBS: "4", RUSTUP_TOOLCHAIN: "nightly-2026-09-05" } });
 const api = () => import("./wasm-pack-build.mjs");
 
-function wasmPackageFixture() {
-  const names = ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "set_step_runtime_override", "init_wasm_wait", "wasm_wait_abort_layout", "shutdown_session"];
+function wasmPackageFixture(omit) {
+  const names = ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "world_runtime_abi_version", "init_wasm_wait", "wasm_wait_abort_layout", "shutdown_session", "start_wasm_reclaimer", "close_wasm_reclaimer", "wasm_tombstone_bind_ingress", "wasm_tombstone_init_primary", "wasm_wait_death_layout"].filter((name) => name !== omit);
   const uleb = (value) => { const bytes = []; do { let byte = value & 0x7f; value >>>= 7; if (value !== 0) byte |= 0x80; bytes.push(byte); } while (value !== 0); return bytes; };
   const section = (id, payload) => [id, ...uleb(payload.length), ...payload];
   const type = section(1, [1, 0x60, 0, 0]);
@@ -60,10 +60,26 @@ test("成功的默认 release wasm-pack 构建生成精确绑定实际 pkg bytes
   assert.equal(capability.buildManifestSha256, createHash("sha256").update(provenanceBytes).digest("hex"));
   assert.equal(capability.wasmSha256, createHash("sha256").update(wasm).digest("hex"));
   assert.equal(capability.glueSha256, createHash("sha256").update(glue).digest("hex"));
-  assert.deepEqual(capability.exports, ["clear_prepared_restore", "facade_slot_init_for_restore_json", "init_wasm_wait", "restore_json", "restore_prepared", "set_step_runtime_override", "shutdown_session", "wasm_wait_abort_layout"]);
+  assert.deepEqual(capability.exports, ["clear_prepared_restore", "close_wasm_reclaimer", "facade_slot_init_for_restore_json", "init_wasm_wait", "restore_json", "restore_prepared", "shutdown_session", "start_wasm_reclaimer", "wasm_tombstone_bind_ingress", "wasm_tombstone_init_primary", "wasm_wait_abort_layout", "wasm_wait_death_layout", "world_runtime_abi_version"]);
   assert.ok(provenanceBytes.toString("utf8").endsWith("\n"));
   assert.ok(capabilityBytes.toString("utf8").endsWith("\n"));
 }));
+
+for (const missing of ["wasm_wait_death_layout", "wasm_tombstone_init_primary", "wasm_tombstone_bind_ingress"]) {
+  test(`release 缺少必需的 World 导出 ${missing} 时拒绝发布 metadata`, { timeout: 10000 }, async () => fixture(async (root) => {
+    const { executeWasmPackBuild } = await api();
+    const outDir = path.join(root, "safe/wasm/pkg");
+    const { wasm, glue } = wasmPackageFixture(missing);
+    await assert.rejects(executeWasmPackBuild(root, command(root, outDir), async () => {
+      await mkdir(outDir, { recursive: true });
+      await writeFile(path.join(outDir, "web_wasm_bg.wasm"), wasm);
+      await writeFile(path.join(outDir, "web_wasm.js"), glue);
+    }), new RegExp(`lack required public function ${missing}`));
+    for (const name of ["wasm-build-provenance.json", "verified-restore-capability.json"]) {
+      await assert.rejects(readFile(path.join(outDir, name)), { code: "ENOENT" });
+    }
+  }));
+}
 
 test("wasm-pack 构建显式补齐并验证实际 pkg/LICENSE", { timeout: 10000 }, async () => fixture(async (root) => {
   const { executeWasmPackBuild } = await api();

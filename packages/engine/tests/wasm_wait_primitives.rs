@@ -1,14 +1,23 @@
 //! W2 wasm 收件纯机制合同；独立运行不代表 engine 或浏览器整链通过。
 
-#[path = "../src/runtime/wasm_wait.rs"]
+#[path = "../../libos/src/wait/wasm_mechanism.rs"]
 mod wasm_wait;
 
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::channel;
+use std::sync::mpsc::{channel, Receiver};
 use std::time::Duration;
-use wasm_wait::{recv_coordinator, recv_worker, WaitConfig, WaitFailure, WaitRuntime};
+use wasm_wait::{recv_coordinator, WaitConfig, WaitFailure, WaitRuntime};
+
+fn recv_worker<T, R: WaitRuntime>(
+    rx: &Receiver<T>,
+    shutdown: &AtomicBool,
+    config: &WaitConfig,
+    runtime: &R,
+) -> Result<Option<T>, WaitFailure> {
+    wasm_wait::recv_worker(rx, shutdown, config, config.spin(), runtime)
+}
 
 fn us(value: u64) -> Duration {
     Duration::from_micros(value)
@@ -23,6 +32,7 @@ struct FakeRuntime<'a> {
     spins: Cell<usize>,
     abort: Cell<bool>,
     after_sleep: RefCell<Option<Box<dyn FnMut() + 'a>>>,
+    during_sleep: RefCell<Option<(Duration, Box<dyn FnMut(Duration) + 'a>)>>,
     clock_samples: RefCell<Option<VecDeque<Duration>>>,
     host_checks: Cell<usize>,
     on_host_check: RefCell<Option<Box<dyn FnMut(usize) -> bool + 'a>>>,
@@ -39,6 +49,7 @@ impl Default for FakeRuntime<'_> {
             spins: Cell::new(0),
             abort: Cell::new(false),
             after_sleep: RefCell::new(None),
+            during_sleep: RefCell::new(None),
             clock_samples: RefCell::new(None),
             host_checks: Cell::new(0),
             on_host_check: RefCell::new(None),
@@ -57,7 +68,13 @@ impl WaitRuntime for FakeRuntime<'_> {
     }
     fn sleep(&self, duration: Duration) {
         self.sleeps.borrow_mut().push(duration);
-        self.now.set(self.now.get() + duration + self.overshoot);
+        let started = self.now.get();
+        if let Some((offset, mut action)) = self.during_sleep.borrow_mut().take() {
+            assert!(offset < duration, "测试事件应明确定在唤醒前");
+            self.now.set(started + offset);
+            action(self.now.get());
+        }
+        self.now.set(started + duration + self.overshoot);
         if self.abort_after_sleep {
             self.abort.set(true);
         }
@@ -118,18 +135,16 @@ fn coordinator_uses_coarse_slice_and_remaining_deadline() {
 }
 
 #[test]
-fn oversleep_reports_actual_wait_without_consuming_late_message() {
-    let (tx, rx) = channel();
+fn oversleep_empty_channel_reports_actual_wait() {
+    let (_tx, rx) = channel::<()>();
     let runtime = FakeRuntime {
         overshoot: us(4),
-        after_sleep: RefCell::new(Some(Box::new(move || tx.send(44).unwrap()))),
         ..FakeRuntime::default()
     };
     assert_eq!(
         recv_coordinator(&rx, us(3), &config(), false, &runtime),
         Err(WaitFailure::Deadline { waited: us(5) })
     );
-    assert_eq!(rx.try_recv().unwrap(), 44);
 }
 
 #[test]
@@ -233,18 +248,77 @@ fn zero_deadline_polls_buffered_empty_and_disconnected_queue_without_sleep() {
     assert!(runtime.sleeps.borrow().is_empty());
 }
 
+// 超时限制空队列的等待，不把超时判定点已可见的数据/断连抹成超时。
 #[test]
-fn exact_deadline_does_not_consume_message_arriving_during_last_slice() {
+fn coordinator_delivers_message_observable_at_deadline_decision() {
+    for overshoot in [us(0), us(4)] {
+        let (tx, rx) = channel();
+        let runtime = FakeRuntime {
+            overshoot,
+            after_sleep: RefCell::new(Some(Box::new(move || tx.send(45).unwrap()))),
+            ..FakeRuntime::default()
+        };
+        assert_eq!(recv_coordinator(&rx, us(1), &config(), false, &runtime), Ok(45));
+        assert!(rx.try_recv().is_err(), "同一个值只能交付一次");
+    }
+}
+
+#[test]
+fn coordinator_delivers_when_receiver_resumes_after_predeadline_publication() {
     let (tx, rx) = channel();
     let runtime = FakeRuntime {
-        after_sleep: RefCell::new(Some(Box::new(move || tx.send(45).unwrap()))),
+        during_sleep: RefCell::new(Some((us(3), Box::new(move |at| {
+            assert_eq!(at, us(3));
+            tx.send(48).unwrap();
+        })))),
+        overshoot: us(2),
+        ..FakeRuntime::default()
+    };
+    let cfg = WaitConfig::new(us(0), us(0), us(5), us(5)).unwrap();
+    assert_eq!(recv_coordinator(&rx, us(5), &cfg, false, &runtime), Ok(48));
+    assert_eq!(runtime.now.get(), us(7));
+    assert_eq!(*runtime.sleeps.borrow(), [us(5)]);
+}
+
+#[test]
+fn coordinator_reports_disconnect_observable_at_deadline_decision() {
+    let (tx, rx) = channel::<()>();
+    let mut sender = Some(tx);
+    let runtime = FakeRuntime {
+        after_sleep: RefCell::new(Some(Box::new(move || drop(sender.take())))),
         ..FakeRuntime::default()
     };
     assert_eq!(
         recv_coordinator(&rx, us(1), &config(), false, &runtime),
+        Err(WaitFailure::Disconnected)
+    );
+}
+
+#[test]
+fn coordinator_timeout_does_not_consume_a_message_published_after_decision() {
+    let (tx, rx) = channel();
+    let runtime = FakeRuntime::default();
+    assert_eq!(
+        recv_coordinator(&rx, us(1), &config(), false, &runtime),
         Err(WaitFailure::Deadline { waited: us(1) })
     );
-    assert_eq!(rx.try_recv().unwrap(), 45);
+    tx.send(46).unwrap();
+    assert_eq!(recv_coordinator(&rx, us(0), &config(), false, &runtime), Ok(46));
+}
+
+#[test]
+fn coordinator_host_abort_still_wins_when_message_is_observable_at_deadline() {
+    let (tx, rx) = channel();
+    let runtime = FakeRuntime {
+        abort_after_sleep: true,
+        after_sleep: RefCell::new(Some(Box::new(move || tx.send(47).unwrap()))),
+        ..FakeRuntime::default()
+    };
+    assert_eq!(
+        recv_coordinator(&rx, us(1), &config(), false, &runtime),
+        Err(WaitFailure::HostAborted)
+    );
+    assert_eq!(rx.try_recv(), Ok(47));
 }
 
 fn regressing_runtime(samples: &[u64]) -> FakeRuntime<'static> {

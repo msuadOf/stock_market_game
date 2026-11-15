@@ -19,8 +19,11 @@ declare module "*wasm-pkg/web_wasm.js" {
   const init: (input?: InitInput | Promise<InitInput> | { module_or_path: InitInput | Promise<InitInput>; memory?: WebAssembly.Memory; thread_stack_size?: number }, memory?: WebAssembly.Memory) => Promise<InitOutput>;
   export default init;
   export function initSync(options: { module: BufferSource | WebAssembly.Module; memory?: WebAssembly.Memory; thread_stack_size?: number } | BufferSource | WebAssembly.Module, memory?: WebAssembly.Memory): InitOutput;
+  export function world_runtime_abi_version(): number;
+  export function start_wasm_reclaimer(): void;
+  export function close_wasm_reclaimer(): boolean;
   export function facade_slot_init(capacity: number): void;
-  export function facade_slot_init_for_setup(setup: SessionSetup): void;
+  export function facade_slot_init_for_setup(setup: SessionSetup, e2eRuntimeGroups?: 2): void;
   export function facade_slot_layout(): import("./host/facade-thread-binding.ts").FacadeSlotLayout;
   export function facade_child_trampoline(slot: number, gen: number, workerId: number): number;
   export function ingress_token(handle: number): number;

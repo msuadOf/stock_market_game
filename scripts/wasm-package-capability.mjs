@@ -12,10 +12,15 @@ export const WASM_RESTORE_REQUIRED_EXPORTS = Object.freeze([
   "facade_slot_init_for_restore_json",
   "restore_prepared",
   "clear_prepared_restore",
-  "set_step_runtime_override",
+  "world_runtime_abi_version",
   "init_wasm_wait",
   "wasm_wait_abort_layout",
+  "wasm_wait_death_layout",
+  "wasm_tombstone_init_primary",
+  "wasm_tombstone_bind_ingress",
   "shutdown_session",
+  "start_wasm_reclaimer",
+  "close_wasm_reclaimer",
 ]);
 const TOOLCHAIN = "nightly-2026-09-05";
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -67,12 +72,14 @@ export function publicGlueFunctions(ts, source) {
 async function rustSourcePaths(root) {
   const paths = new Set([
     "Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/config.toml",
-    "apps/web-wasm/Cargo.toml", "apps/web-wasm/.cargo/config.toml", "apps/web-wasm/build.rs", "packages/engine/Cargo.toml", "packages/engine/build.rs",
+    "apps/web-wasm/Cargo.toml", "apps/web-wasm/.cargo/config.toml", "apps/web-wasm/build.rs",
+    "packages/engine/Cargo.toml", "packages/engine/build.rs",
+    "packages/libos/Cargo.toml", "packages/libos/build.rs",
   ]);
-  for (const optional of ["apps/web-wasm/build.rs", "packages/engine/build.rs"]) {
+  for (const optional of ["apps/web-wasm/build.rs", "packages/engine/build.rs", "packages/libos/build.rs"]) {
     try { await lstat(path.join(root, optional)); } catch (error) { if (error.code === "ENOENT") paths.delete(optional); else throw error; }
   }
-  for (const directory of ["apps/web-wasm/src", "packages/engine/src"]) {
+  for (const directory of ["apps/web-wasm/src", "packages/engine/src", "packages/libos/src"]) {
     const visit = async (relative) => {
       const entries = await readdir(path.join(root, relative), { withFileTypes: true });
       entries.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);

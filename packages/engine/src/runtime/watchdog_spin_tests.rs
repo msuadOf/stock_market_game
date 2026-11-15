@@ -1,8 +1,4 @@
-//! B-1' 分级自旋合同（协调者批 2026-10-19）：组线程等待热态自旋窗
-//! （`worker_recv_spin`——seal-spread-wakeup-design.md）。判别面核心：
-//! 自旋耗尽后**立即**查 shutdown 返回（~T_spin），现行睡眠路径每步
-//! 50ms 才查——返回耗时把两条路径分开。语义等价面：消息序/断连/
-//! 关停/watchdog 判定全部保持（自旋段计入 waited）。
+//! Native 自旋启停只改变等待策略，不改变 FIFO、断连和永久停止合同。
 
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
@@ -15,10 +11,9 @@ fn who() -> WorkerId {
     WorkerId::Group(0)
 }
 
-/// 判别面（红先行锚）：活 sender（不 send、不断连），shutdown 置位后
-/// 调用——自旋实现 ~500μs 返回 Ok(None)；睡眠实现 ≥50ms。
+/// 活 sender 保持开放时，入口已关停也不进入阻塞。
 #[test]
-fn spin_exhausted_shutdown_returns_fast() {
+fn spin_enabled_with_stop_set_returns_fast() {
     let (tx, rx) = mpsc::channel::<u32>();
     let shutdown = AtomicBool::new(true);
     let cfg = WatchdogConfig::default_config();
@@ -40,10 +35,9 @@ fn spin_exhausted_shutdown_returns_fast() {
     drop(tx);
 }
 
-/// 禁用旋钮（ENGINE_SPIN_DISABLE 语义）：行为与现行 worker_recv 完全
-/// 一致——shutdown 观察仍经 50ms 步进（≥50ms 返回 Ok(None)）。
+/// 禁用自旋同样在入口观察永久停止，不需要周期唤醒。
 #[test]
-fn spin_disabled_preserves_sleep_path() {
+fn spin_disabled_observes_stop_at_entry() {
     let (tx, rx) = mpsc::channel::<u32>();
     let shutdown = AtomicBool::new(true);
     let cfg = WatchdogConfig::default_config();
@@ -56,8 +50,8 @@ fn spin_disabled_preserves_sleep_path() {
     let elapsed = started.elapsed();
     assert!(matches!(out, Ok(None)));
     assert!(
-        elapsed >= Duration::from_millis(50),
-        "禁用时须保持现行 50ms 步进关停观察（耗时 {elapsed:?}）"
+        elapsed < Duration::from_millis(30),
+        "禁用自旋也不等待旧的 50ms 轮询片（耗时 {elapsed:?}）"
     );
     drop(tx);
 }
@@ -75,6 +69,30 @@ fn spin_window_message_arrival_returns_message() {
     };
     let out = worker_recv_spin(&rx, &cfg, &shutdown, who(), spin);
     assert_eq!(out, Ok(Some(7)));
+}
+
+/// 永久停止在入口可见时，保留缓冲但不交付。
+#[test]
+fn native_stop_precedes_buffered_messages() {
+    let (tx, rx) = mpsc::channel::<u32>();
+    tx.send(7).expect("队首入队");
+    tx.send(8).expect("下一条入队");
+    let shutdown = AtomicBool::new(true);
+    let cfg = WatchdogConfig::default_config();
+    let spin = SpinConfig {
+        enabled: true,
+        window: Duration::from_micros(500),
+    };
+    assert_eq!(
+        super::watchdog::worker_recv(&rx, &cfg, &shutdown, who()),
+        Ok(None)
+    );
+    assert_eq!(
+        worker_recv_spin(&rx, &cfg, &shutdown, who(), spin),
+        Ok(None)
+    );
+    assert_eq!(rx.try_recv(), Ok(7));
+    assert_eq!(rx.try_recv(), Ok(8));
 }
 
 /// 自旋期断连：Ok(None)（干净退出——现行语义保持）。
@@ -118,26 +136,28 @@ fn spin_exhausted_falls_back_to_sleep_and_receives() {
     sender.join().expect("发送线程");
 }
 
-/// watchdog 判定保持：自旋段计入空闲等待——注入小 limit（300μs）时
-/// 500μs 自旋窗耗尽 limit 即 Watchdog Err（不进睡眠放大）。
+/// 业务 watchdog 即使设置为零，也不结束正常 worker 的空闲等待。
 #[test]
-fn spin_respects_watchdog_limit() {
+fn coordinator_deadline_does_not_expire_idle_worker() {
     let (tx, rx) = mpsc::channel::<u32>();
+    let sender = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(20));
+        tx.send(31).expect("空闲 worker 仍可接收新消息");
+    });
     let shutdown = AtomicBool::new(false);
     let cfg = WatchdogConfig {
-        normal: Duration::from_micros(300),
-        long: Duration::from_secs(60),
+        normal: Duration::ZERO,
+        long: Duration::from_secs(1),
     };
     let spin = SpinConfig {
         enabled: true,
         window: Duration::from_micros(500),
     };
-    let out = worker_recv_spin(&rx, &cfg, &shutdown, who(), spin);
-    assert!(
-        matches!(out, Err(super::protocol::RuntimeError::Watchdog { .. })),
-        "自旋段耗尽 limit 必须 Watchdog（got: {out:?}）"
+    assert_eq!(
+        worker_recv_spin(&rx, &cfg, &shutdown, who(), spin),
+        Ok(Some(31))
     );
-    drop(tx);
+    sender.join().expect("发送线程");
 }
 
 /// 复核建议②收口：ENGINE_SPIN_US 显式设置但非法（非数字/溢出）必须

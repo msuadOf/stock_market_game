@@ -41,6 +41,34 @@ fn real_calendar_transitions_produce_exact_ordered_kinds() {
 }
 
 #[test]
+fn restored_closed_day_continues_civil_fact_identity_at_same_tick() {
+    // 两个连续闭市日没有市场 tick、Desk 抢占或 NPC 输入，固定相同自然日事实。
+    let (mut live, _, saturday) = settled("2030-01-05");
+    let slot = live
+        .save_candidate(&SaveCandidateKey {
+            seq: saturday.seq_to,
+            settled_date: saturday.boundary.settled_date,
+        })
+        .unwrap();
+    let mut restored = ProtocolSession::restore(&slot).unwrap();
+    let next = live.end_civil_day_update().unwrap();
+    let repeated = restored.end_civil_day_update().unwrap();
+    assert_eq!(
+        (repeated.tick, repeated.seq_from, repeated.seq_to),
+        (next.tick, next.seq_from, next.seq_to)
+    );
+    assert_eq!(repeated.boundary, next.boundary);
+    assert_eq!(
+        repeated.events().collect::<Vec<_>>(),
+        next.events().collect::<Vec<_>>()
+    );
+    assert_eq!(
+        repeated.facts, next.facts,
+        "相同已提交 Civil 事实在恢复后不得更换同 tick 的稳定身份"
+    );
+}
+
+#[test]
 fn malformed_boundary_matrix_rejects_without_relying_on_replay_guard() {
     let (_, _, original) = settled("2030-01-02");
     let (_, _, closed) = settled("2030-01-05");

@@ -302,7 +302,7 @@ mod tests {
     use crate::{LimitPrice, Money, Side};
 
     #[test]
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(all(test, not(target_family = "wasm")))]
     fn shutdown_ingress_close_failure_still_consumes_real_driver() {
         let mut game = game();
         game.construct_runtime_driver_lazy_for_test()
@@ -330,7 +330,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(all(test, not(target_family = "wasm")))]
     fn shutdown_retains_session_primary_and_ingress_secondary_after_real_cleanup() {
         let mut game = game();
         game.construct_runtime_driver_lazy_for_test()

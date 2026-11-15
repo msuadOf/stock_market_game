@@ -1,6 +1,7 @@
 //! 实际 wasm adapter 的配置、相位与永久关停边界；不复用 std timeout 或虚拟时钟。
 use super::protocol::{RuntimeError, WorkerId};
 use super::watchdog::{self, Phase, SpinConfig, WatchdogConfig};
+use libos::wait;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{channel, TryRecvError};
 use std::time::Duration;
@@ -8,7 +9,7 @@ use std::time::Duration;
 /// 独立 memory 的初始化合同；所有非法值与重复初始化必须保持显式错误。
 pub fn verify_wait_configuration() -> Result<String, String> {
     assert!(
-        watchdog::wasm_wait_abort_layout().is_err(),
+        wait::wasm_wait_abort_layout().is_err(),
         "未初始化不能泄露可用 abort 布局"
     );
     let (_tx, rx) = channel::<u32>();
@@ -16,15 +17,22 @@ pub fn verify_wait_configuration() -> Result<String, String> {
     assert!(
         matches!(watchdog::recv_deadline(&rx, Phase::Seal, &cfg), Err(RuntimeError::ProtocolInvariant { detail }) if detail.contains("尚未初始化"))
     );
-    assert!(watchdog::init_wasm_wait(0, 0, 0, 1).is_err());
-    assert!(watchdog::init_wasm_wait(0, 0, 1, 0).is_err());
-    watchdog::init_wasm_wait(500, 2000, 250, 2000)?;
-    assert!(watchdog::init_wasm_wait(500, 2000, 250, 2000).is_err());
-    let layout = watchdog::wasm_wait_abort_layout()?;
+    assert!(wait::init_wasm_wait(0, 0, 0, 1).is_err());
+    assert!(wait::init_wasm_wait(0, 0, 1, 0).is_err());
+    wait::init_wasm_wait(500, 2000, 250, 2000)?;
+    assert!(wait::init_wasm_wait(500, 2000, 250, 2000).is_err());
+    let layout = wait::wasm_wait_abort_layout()?;
     assert!(layout.address > 0);
     assert_eq!(
         layout.bytes, 1,
         "宿主必须使用 1B 原子 store，不覆盖相邻字段"
+    );
+    let death_layout = wait::wasm_wait_death_layout()?;
+    assert!(death_layout.address > 0);
+    assert_eq!(death_layout.bytes, 4, "全局 DEAD 使用 4B 原子字");
+    assert_ne!(
+        death_layout.address, layout.address,
+        "宿主 abort 与 DEAD 独立"
     );
     let spin = watchdog::spin_config();
     assert!(spin.enabled);
@@ -65,6 +73,9 @@ pub fn verify_wait_phase_limits() -> Result<String, String> {
 
 /// 两个 worker 入口均须在永久 shutdown 后拒绝交付已缓冲消息；它与 tick Abort 不共享标记。
 pub fn verify_wait_permanent_shutdown() -> Result<String, String> {
+    libos::wait::verify_worker_delivery_contract();
+    libos::wait::verify_coordinator_delivery_contract();
+    libos::clock::verify_duration_contract();
     let (tx, rx) = channel();
     tx.send(41u32).expect("真实缓冲消息入队");
     let shutdown = AtomicBool::new(true);

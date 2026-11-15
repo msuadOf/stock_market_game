@@ -1,6 +1,6 @@
 //! 活动 World 显式停止结果；这里只记录 owned worker，不代表宿主 child exit。
 use super::{ShutdownReport, World};
-use crate::runtime::protocol::{RuntimeError, UpMsg, WorkerId};
+use crate::runtime::protocol::{RuntimeError, UpMsg, WorkerId, WorkerJoinDiagnostic};
 
 /// 显式停止诊断；worker 使用 WorkerId::Display 的 group-N / desk-N 身份。
 #[derive(Clone, Debug, serde::Serialize)]
@@ -8,6 +8,8 @@ pub struct ShutdownIssue {
     pub stage: String,
     pub worker: Option<String>,
     pub detail: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub join_failure: Option<WorkerJoinDiagnostic>,
 }
 
 /// 一次真实 owned handle join 的结果，保留 worker 原错误或 join 错误详情。
@@ -50,6 +52,7 @@ impl World {
                     stage: "world_terminated".to_owned(),
                     worker: None,
                     detail: reason,
+                    join_failure: None,
                 },
                 secondary,
                 completion: Some(Box::new(completion)),
@@ -62,7 +65,7 @@ impl World {
                 complete_shutdown_report(owned, report)
             }
             Err(error) => {
-                let primary = runtime_issue(stage, error);
+                let primary = runtime_issue(stage, &error);
                 let (completion, secondary) = self.stop_failed_with_completion();
                 Err(ShutdownFailure {
                     primary,
@@ -89,15 +92,16 @@ impl World {
         let mut issues = Vec::new();
         for message in self.up_rx.try_iter() {
             match message {
-                UpMsg::Failed { who, error } => issues.push(ShutdownIssue {
-                    stage: "shutdown_upstream".to_owned(),
-                    worker: Some(who.to_string()),
-                    detail: error.to_string(),
-                }),
+                UpMsg::Failed { who, error } => {
+                    let mut issue = runtime_issue("shutdown_upstream", &error);
+                    issue.worker = Some(who.to_string());
+                    issues.push(issue);
+                }
                 UpMsg::TaskDied { who, payload } => issues.push(ShutdownIssue {
                     stage: "shutdown_upstream".to_owned(),
                     worker: Some(who.to_string()),
                     detail: super::prepared_stop::panic_detail(payload.as_ref()),
+                    join_failure: None,
                 }),
                 // 失败路径只耗尽未发布事实，不能把它们冒作已核验的正常 Final。
                 _ => {}
@@ -157,6 +161,7 @@ fn complete_shutdown_report(
                     "owned={owned_workers}，实际join={}",
                     completion.joined_workers
                 ),
+                join_failure: None,
             },
         );
     }
@@ -172,11 +177,11 @@ fn complete_shutdown_report(
     }
 }
 
-fn runtime_issue(stage: &str, error: RuntimeError) -> ShutdownIssue {
-    let worker = match &error {
+fn runtime_issue(stage: &str, error: &RuntimeError) -> ShutdownIssue {
+    let worker = match error {
+        RuntimeError::WorkerJoinFailed { who, .. } => Some(who.to_string()),
         RuntimeError::WorkerFailed { who, .. } => Some(who.to_string()),
         RuntimeError::Disconnected { who, .. } => who.map(|who| who.to_string()),
-        #[cfg(target_family = "wasm")]
         RuntimeError::HostAborted { who, .. } => who.map(|who| who.to_string()),
         _ => None,
     };
@@ -184,6 +189,10 @@ fn runtime_issue(stage: &str, error: RuntimeError) -> ShutdownIssue {
         stage: stage.to_owned(),
         worker,
         detail: error.to_string(),
+        join_failure: match error {
+            RuntimeError::WorkerJoinFailed { diagnostic, .. } => Some(*diagnostic),
+            _ => None,
+        },
     }
 }
 
@@ -194,17 +203,14 @@ fn completion_worker_results(
     let workers = results
         .into_iter()
         .map(|(who, result)| {
-            let result = result.map_err(|error| error.to_string());
-            if let Err(detail) = &result {
-                issues.push(ShutdownIssue {
-                    stage: "worker_join".to_owned(),
-                    worker: Some(who.to_string()),
-                    detail: detail.clone(),
-                });
+            if let Err(error) = &result {
+                let mut issue = runtime_issue("worker_join", error);
+                issue.worker = Some(who.to_string());
+                issues.push(issue);
             }
             ShutdownWorkerResult {
                 worker: who.to_string(),
-                result,
+                result: result.map_err(|error| error.to_string()),
             }
         })
         .collect();

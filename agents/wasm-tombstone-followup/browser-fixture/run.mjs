@@ -3,6 +3,16 @@ import { spawn } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { symlink, unlink } from 'node:fs/promises';
 import path from 'node:path';
+import { assertDeferredReclamationContract, assertKnownDeferredObservation } from './deferred-contract.mjs';
+import { assertDeferredLifecycleContract, deferredLifecycleModes } from './deferred-lifecycle-contract.mjs';
+import { runJoinLifecycleContract } from './join-lifecycle-contract.mjs';
+const args = process.argv.slice(2);
+const strictDeferredContract = args.length === 1 && args[0] === '--deferred-contract';
+const strictDeferredLifecycle = args.length === 1 && args[0] === '--deferred-lifecycle-contract';
+const joinLifecycleOnly = args.length === 1 && args[0] === '--join-lifecycle-contract';
+const deferredOnly = strictDeferredContract || strictDeferredLifecycle || (args.length === 1 && args[0] === '--deferred-observation');
+const selectedOnly = deferredOnly || joinLifecycleOnly;
+if (args.length !== 0 && !selectedOnly) throw new Error('仅支持 --deferred-contract、--deferred-observation、--deferred-lifecycle-contract、--join-lifecycle-contract 或不传参数');
 const pkg = process.env.WASM_PKG;
 if (!pkg || !path.isAbsolute(pkg)) throw new Error('WASM_PKG 必须指向绝对路径的验证构建目录');
 const link = 'agents/wasm-tombstone-followup/browser-fixture/pkg';
@@ -19,7 +29,8 @@ try {
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   browser = await chromium.launch({headless:true});
-  for (const [mode,pending] of [[0,false],[1,false],[2,false],[0,true],[1,true],[2,true]]) {
+  if (!deferredOnly) await runJoinLifecycleContract(browser, 'http://127.0.0.1:4179/');
+  for (const [mode,pending] of selectedOnly ? [] : [[0,false],[1,false],[2,false],[0,true],[1,true],[2,true]]) {
     const page = await browser.newPage();
     page.on('pageerror', error => console.error('页面错误',error));
     await page.goto(`http://127.0.0.1:4179/agents/wasm-tombstone-followup/browser-fixture/?mode=${mode}&pending=${Number(pending)}`);
@@ -50,7 +61,57 @@ try {
     }
     await page.close();
   }
-  for (const role of ['engine','ingress']) {
+  const groups = joinLifecycleOnly ? [] : strictDeferredLifecycle ? [['deferred-lifecycle', Object.values(deferredLifecycleModes)]] :
+    deferredOnly ? [['deferred-drop', [0]]] : [
+    ['world-stop', [0, 1, 2, 3, 4]],
+    ['watchdog', [0, 1, 2]],
+    ['watchdog-contract', [1, 2, 4, 5, 11]],
+    ['deferred-drop', [0]],
+    ['deferred-lifecycle', Object.values(deferredLifecycleModes)],
+  ];
+  for (const [fixture, modes] of groups) {
+    const cases = await Promise.allSettled(modes.map(async mode => {
+      const page = await browser.newPage();
+      try {
+        const pending = fixture === 'deferred-lifecycle' && mode === deferredLifecycleModes.consumerPanic;
+        await page.goto(`http://127.0.0.1:4179/agents/wasm-tombstone-followup/browser-fixture/?fixture=${fixture}&mode=${mode}&pending=${Number(pending)}`);
+        await page.waitForFunction(() => window.results?.failure !== undefined ||
+          window.results?.events.some(event => typeof event.type === 'string' &&
+            (event.type.startsWith('verification-') || event.type === 'deferred-submissions-observed')), null, {timeout:8000});
+        const evidence = await page.evaluate(() => window.results);
+        console.log(JSON.stringify({fixture,mode,...evidence}));
+        if (fixture === 'deferred-lifecycle') {
+          assertDeferredLifecycleContract(evidence, mode);
+          return;
+        }
+        assert.equal(evidence.failure, undefined, '正常回收/有类型的失败不得出现 supervisor fatal');
+        const result = evidence.events.find(event => typeof event.type === 'string' && event.type.startsWith('verification-'));
+        assert.equal(result?.type, 'verification-result', result?.message);
+        assert.equal(result.children, 0);
+        assert.equal(result.protocolEntries, 0);
+        assert.equal(result.pendingRecovery, 0);
+        if (fixture === 'deferred-drop') {
+          if (deferredOnly && !strictDeferredContract) assertKnownDeferredObservation(evidence);
+          else assertDeferredReclamationContract(evidence);
+          return;
+        }
+        const [reportedMode, stage, observed, handles] = result.observation;
+        assert.equal(reportedMode, mode);
+        assert.equal(stage, 60, '必须从被测 Rust 路径完成所有内部断言');
+        if (fixture === 'world-stop') {
+          assert.equal(handles, 4);
+          assert.equal(new Set(result.observation.slice(4, 8)).size, 4);
+          assert.deepEqual(result.observation.slice(8, 12), [0, 1, 65536, 65537]);
+          assert.equal(observed, mode === 4 ? 1 : 0);
+        } else if (fixture === 'watchdog') assert.equal(observed, 2, '真实 watchdog 必须按 FIFO 收到两个消息');
+      } finally {
+        await page.close();
+      }
+    }));
+    const failed = cases.filter(result => result.status === 'rejected').map(result => result.reason);
+    if (failed.length > 0) throw new AggregateError(failed, `${fixture} 独立浏览器验收失败`);
+  }
+  for (const role of selectedOnly ? [] : ['engine','ingress']) {
     const page = await browser.newPage();
     page.on('pageerror', error => console.error('主 Worker 页面错误', error));
     page.on('console', message => console.error('主 Worker console', message.text()));
@@ -65,7 +126,7 @@ try {
     if (role === 'ingress') assert.ok(result.events.some(event => event.type === 'bound' && event.invalidIdentity && event.invalidAddress && event.duplicate));
     await page.close();
   }
-  {
+  if (!selectedOnly) {
     const page = await browser.newPage();
     page.on('pageerror', error => console.error('owner 页面错误',error));
     await page.goto('http://127.0.0.1:4179/agents/wasm-tombstone-followup/browser-fixture/owner.html');

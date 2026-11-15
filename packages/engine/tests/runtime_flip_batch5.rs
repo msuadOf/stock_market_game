@@ -170,17 +170,32 @@ fn batch5_diag_minute_counts() {
 }
 
 #[test]
-fn flip_opt_in_runtime_step_drives_and_old_default_unchanged() {
-    // 翻转开关实测（翻转批）：显式 ENGINE_STEP_RUNTIME=1 走 runtime——
-    // 子进程级验证（env 缓存 OnceLock 进程级）。
-    // 缺省（0）路径已由 lib 1545 绿锚定。
-    let out = std::process::Command::new(std::env::current_exe().unwrap())
-        .arg("--list")
-        .env("ENGINE_STEP_RUNTIME", "1")
+fn deployment_environment_cannot_replace_product_world_with_legacy_serial() {
+    // 集成测试链接产品模式的 engine；两个变量均不能改变该模式。
+    const PROBE: &str = "SMG_PRODUCT_WORLD_LOCK_PROBE";
+    if std::env::var_os(PROBE).is_some() {
+        assert!(engine::runtime::step_runtime_enabled());
+        assert!(engine::runtime::validate_production_step_runtime(
+            std::env::var_os("ENGINE_STEP_RUNTIME").as_deref()
+        )
+        .is_err());
+        return;
+    }
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "deployment_environment_cannot_replace_product_world_with_legacy_serial",
+            "--nocapture",
+        ])
+        .env("ENGINE_STEP_RUNTIME", "0")
+        .env("SMG_VERIFY_LEGACY_STEP", "1")
+        .env(PROBE, "1")
         .output()
-        .expect("子进程");
+        .expect("执行唯一产品 World 配置探针");
+    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        out.status.success() || out.status.code() == Some(0),
-        "开关不破坏测试运行器"
+        output.status.success() && stdout.contains("1 passed"),
+        "产品模式探针失败：{stdout}；{}",
+        String::from_utf8_lossy(&output.stderr)
     );
 }

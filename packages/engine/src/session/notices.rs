@@ -974,7 +974,7 @@ mod tests {
             .args(["9000", "--"])
             .arg(std::env::current_exe().expect("读取当前 test binary 失败"))
             .args([exact, "--exact", "--test-threads=1"])
-            .env("ENGINE_STEP_RUNTIME", "0")
+            .env("SMG_VERIFY_LEGACY_STEP", "1")
             .output()
             .expect("通过既有 deadline supervisor 启动 serial 子进程失败");
         let stdout = std::str::from_utf8(&output.stdout).expect("serial 子进程 stdout 不是 UTF-8");

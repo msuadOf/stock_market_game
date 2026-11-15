@@ -152,7 +152,7 @@ fn v0_publication_failure_installs_nothing_and_keeps_session_steppable() {
         );
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     {
         session
             .construct_runtime_driver_lazy_for_test()

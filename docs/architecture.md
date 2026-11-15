@@ -9,8 +9,10 @@ React UI / Redux
        ↓ EngineHost
 浏览器 Worker  |  远程 server  |  Tauri actor
        ↓                  ↓               ↓
-   WASM 绑定        Rust engine      Rust engine
-       └──────────────────┴───────────────┘
+   WASM 绑定              │               │
+       └───────────→ Rust engine ←────────┘
+                          ↓
+                        LibOS
 ```
 
 `packages/engine` 负责规则、市场模拟、撮合、账户和组合计算，不依赖 UI、网络或持久化。宿主负责计时、传输和存储，把用户动作交给 engine，并向 UI 发布结果。核心状态与规则可独立于渲染层测试；同一 engine 可由浏览器、server、desktop 和测试分别运行。引擎内部的 runtime 使用线程和消息通道，并不意味着它负责外部 I/O。语言与部署决策见 [ADR-0002](decisions/0002-engine-rust-wasm.md)、[ADR-0005](decisions/0005-unified-engine-three-deployments.md)。
@@ -31,7 +33,11 @@ React 应用通过 `EngineHost` 提交命令，消费统一的 `HostUpdate`：�
 
 ## 运行时与状态
 
-native 默认使用 [ADR-0043](decisions/0043-std-thread-ownership-runtime.md) 的所有权转移 runtime：NPC 分组和各股票交易部分别处理决策与撮合，协调者收敛并提交 tick。native 的 `ENGINE_STEP_RUNTIME=0` 是临时旧管线回退口。Web 产品宿主显式启用同一 runtime，经 thread facade 使用 Workers；WASM engine 未设置 override 时仍有串行管线。ADR-0043 仍为 draft，路径存在不代表完整验收已通过。
+Server、Desktop 与浏览器产品只使用 [ADR-0043](decisions/0043-std-thread-ownership-runtime.md) 的所有权转移 World：NPC 分组和各股票交易部处理决策与撮合，协调者收敛并提交 tick。Native 启动拒绝旧配置 `ENGINE_STEP_RUNTIME=0`；旧管线仅用于具名验证入口或专用 engine 单测进程。浏览器宿主校验 World ABI、等待设置和线程门面后才建立会话，底座未就绪立即报错，不回退串行。路径存在不代表完整验收已经通过。
+
+`packages/libos` 提供分配器选型、线程创建与回收、单调时钟、阻塞等待、worker 死亡通知及有界后台析构，不依赖 engine 或产品宿主。Native 使用 OS 线程，Browser 使用 `packages/libos/browser` 内的共享内存、Worker 槽协议和 supervisor。engine 决定交易相位、正常日结、可重试 Abort 和永久停止等业务顺序，不检测宿主。各宿主仍负责 UI、传输、存档与业务错误映射，例如 Axum HTTP/WS、Browser postMessage 装配和 IndexedDB。底座返回的 Worker death 不是可重抛的 Rust panic payload，不能伪造；保留清理次错不覆盖主错。
+
+LibOS 收件合同：协调者有相位 deadline；worker 正常空闲没有自退出时限，消息与普通断连按 FIFO 交付缓冲。永久停止优先于业务交付，必须同时发送唤醒哨兵；正常 `Drain → Shutdown → Final` 与可重试 tick Abort 不置永久停止标记。时钟逆序差值饱和为零，严格顺序检查用 `checked_duration_since`。相同合同不等于同一 OS 原语、时钟原点或诊断精度。两个宿主的 `deferred_drop` 在正常和拥塞时共用同一有界队列策略，满队列只允许显式内联。Native owner 随进程存活，Browser owner 随共享 Memory 存活；在会话关闭后停止提交、排空并 join，再由 supervisor 验证真实 Worker 退出。Rust join 已取结果并不等同于物理退出。启动和死亡诊断因底座而不同；性能需按同底座对照独立验证。
 
 Web WASM 宿主的保守内存总账上限为 3 GiB，每个产品 `WebAssembly.Memory` 的 maximum 为 1 GiB、initial 为 64 MiB，残留重载阈值为 512 MiB。这些约束彼此独立，不代表真实 World 步进或 Browser 二十次验收已完成。
 
@@ -53,6 +59,7 @@ apps/
   desktop/src-tauri/   Tauri 宿主及 engine actor
 packages/
   engine/              游戏核心与 runtime
+  libos/               跨目标的线程、时钟、等待与 worker 生命周期设施
   engine-gpu/          GPU 探测和实验管线
   native-store/        server 使用的原生 SQLite 存储
   std-thread-proto/    runtime 选型原型

@@ -500,7 +500,7 @@ impl GameSession {
     }
 
     /// runtime 驱动入口：native 缺省启用 runtime 时 `step()` 走 RuntimeDriver
-    /// （常驻 World+安装面）；`ENGINE_STEP_RUNTIME=0` 可临时切回旧管线
+    /// （常驻 World+安装面）；engine 单测进程可显式选择旧管线
     /// （见 `runtime::step_runtime_enabled`）。
     /// step_frame 接轨件 4 起 `step_frame_and_commit`（生产便捷入口，
     /// capture=false）同走 runtime 分叉；Escrow 验证面
@@ -919,9 +919,9 @@ impl GameSession {
     /// 返回的事件数组是从已提交事实记录批次投影出的交付视图（架构项 #6）：
     /// 会话内部不保留第二份事件权威，身份仍只存在于 `EventFact` 记录中。
     pub fn step(&mut self) -> Result<Vec<Event>, StepFatal> {
-        // native 缺省启用 runtime；`ENGINE_STEP_RUNTIME=0` 可临时切回旧管线，
+        // 产品固定启用 runtime；只有 engine 单测进程可以选择旧管线，
         // 首次读取后本进程不可切换（见 runtime/mod.rs 与 ADR-0043「翻转现状」）。
-        // WASM 由宿主在首次读取前设置一次 override；未设置时回退串行管线。
+        // WASM 宿主底座未装配会显式失败，不会改走旧管线。
         if crate::runtime::step_runtime_enabled() {
             return self.step_via_runtime();
         }
@@ -929,10 +929,6 @@ impl GameSession {
             .map(|committed| committed.facts.into_iter().map(|fact| fact.event).collect())
     }
 
-    /// 执行与 [`Self::step`] 相同的生产权威路径，并返回
-    /// 保留成功提交前一刻捕获的不可变执行事实。
-    ///
-    /// 此验证入口只用于观察；证据不会留在 session、序列化、参与 hash 或后续决策。
     /// 旧管线契约测试入口（D2 登记）：staged handover / 旧簿 fixture 等
     /// **旧管线专有注入面**的契约测试显式走旧管线——runtime step() 无
     /// 对应注入面（决策在组线程、簿在交易部），经 step() 混跑只会把
@@ -944,6 +940,8 @@ impl GameSession {
             .map(|committed| committed.facts.into_iter().map(|f| f.event).collect())
     }
 
+    /// Escrow 验证专用入口：运行旧管线并捕获提交证据；不得由产品宿主调用，
+    /// 也不得对持有 live World 的产品会话调用。从这里取得的证据不参与存档或后续决策。
     pub fn step_with_commit_evidence(
         &mut self,
     ) -> Result<(Vec<Event>, super::pipeline::TickCommitEvidence), StepFatal> {

@@ -13,13 +13,8 @@ import type { StrictSaveEnvelope } from "../save/schema/root.ts";
 import { observeJsHeap } from "./wasm-memory-observation.ts";
 import type { JsHeapObservation } from "./wasm-memory-observation.ts";
 
-/** released 只由真实终结器产生：全组终止、最后观测不可再 grow 的 Memory、清除全部强引用。 */
-export type WasmFinalRelease = Readonly<{
-  kind: "released";
-  finalBytes: number;
-  growthStopped: true;
-  referencesDropped: true;
-}> | Readonly<{ kind: "not-allocated" }>;
+import type { WasmFinalRelease } from "../../../../packages/libos/browser/wasm-final-release.ts";
+export type { WasmFinalRelease } from "../../../../packages/libos/browser/wasm-final-release.ts";
 
 /** 工厂必须在首次 Worker/init 可能分配 Memory 之前同步登记一次，构造失败也须完成该回执。 */
 export interface WasmMemoryAdmissionTicket {

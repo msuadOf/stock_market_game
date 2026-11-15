@@ -1,12 +1,9 @@
 //! engine → WASM 绑定（ADR-0007 §4）。
 //!
-//! native 缺省使用 std::thread 运行时（ADR-0043）；WASM 的 `World` 也保留，
-//! worker 创建经 `thread_facade` 接入。WASM engine 内部在宿主未设置 override 时
-//! 缺省走串行管线；Web 产品宿主在首次读取前显式设置 `runtimeOverride: true` 并
-//! 传入 `waitSettings`，`runtimeOverride: false` 会被拒绝。WASM 多 worker 产物由
-//! wasm32 nightly build 配置（`+atomics`、`build-std`）构建，宿主以 COOP/COEP 与
-//! 共享内存门禁提供运行环境。本注释描述当前接线；完整 WASM cfg、ABI、`World` 与
-//! Browser 验收仍以对应验收记录为准，不在此宣称通过。
+//! Native 与 WASM 产品均使用同一 World；WASM 宿主显式初始化 wait settings 和线程门面，未就绪
+//! 时创建或恢复会话须报错，不切换到旧管线。WASM 多 worker 产物由 wasm32 nightly build 配置
+//!（`+atomics`、`build-std`）构建，宿主以 COOP/COEP 与共享内存门禁提供运行环境；完整验收
+//! 以对应验收记录为准。
 //!
 //! GameSession 不可序列化（含 `Box<dyn Strategy + Send + Sync>`），故存于 thread_local
 //! 句柄注册表；仅 `Snapshot`/`Event`/`Intent`/`SessionSetup` 经 serde-wasm-bindgen 跨界。
@@ -17,7 +14,8 @@
 use engine::company::{PublicReportPage, PublicReportQuery, PublicReportSummary};
 use engine::session::protocol::{EngineUpdate, ProtocolSession, SaveCandidateKey};
 use engine::session::{
-    CurrentMinuteHistoryRequest, MarketHistoryRequest, PersonalTradeHistoryRequest,
+    CurrentMinuteHistoryRequest, HostRuntimeTopology, MarketHistoryRequest,
+    PersonalTradeHistoryRequest,
 };
 use engine::{AccountId, Intent, SaveSlot, SessionError, SessionSetup};
 use serde::Serialize;
@@ -27,11 +25,11 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 use wasm_bindgen::prelude::*;
 
-/// 在 WASM 首次读取运行时开关前设置一次显式 override。
-#[cfg(target_arch = "wasm32")]
+/// 纯 ABI 判别；没有可以切换交易管线的宿主 setter。
+#[cfg(target_family = "wasm")]
 #[wasm_bindgen]
-pub fn set_step_runtime_override(enabled: bool) -> Result<(), JsValue> {
-    engine::runtime::set_step_runtime_override(enabled).map_err(JsValue::from_str)
+pub fn world_runtime_abi_version() -> u32 {
+    1
 }
 
 /// 序列化为 JsValue。map 默认序列化为 JS Map（AccountId 是数字键，无法作 Object 键）；
@@ -229,26 +227,47 @@ static NEXT: AtomicU32 = AtomicU32::new(1);
 static INGRESS: Mutex<Option<HashMap<u32, engine::SharedSessionIngress>>> = Mutex::new(None);
 
 #[derive(Debug)]
-struct WasmRuntimeRequired;
+struct WasmRuntimeRequired(String);
 
 impl std::fmt::Display for WasmRuntimeRequired {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "WASM_RUNTIME_NOT_READY：WASM 会话需要启用 World/RuntimeDriver"
-        )
+        write!(formatter, "WASM_RUNTIME_NOT_READY：{}", self.0)
+    }
+}
+
+#[cfg(any(target_family = "wasm", test))]
+fn require_wasm_substrate(
+    check: impl FnOnce() -> Result<(), String>,
+) -> Result<(), WasmRuntimeRequired> {
+    check().map_err(WasmRuntimeRequired)
+}
+
+#[cfg(any(target_family = "wasm", test))]
+fn require_wasm_wait_ready() -> Result<(), WasmRuntimeRequired> {
+    #[cfg(target_family = "wasm")]
+    {
+        require_wasm_substrate(|| libos::wait::wasm_wait_abort_layout().map(|_| ()))
+    }
+    #[cfg(all(test, not(target_family = "wasm")))]
+    {
+        require_wasm_substrate(|| Ok(()))
     }
 }
 
 fn require_wasm_runtime() -> Result<(), WasmRuntimeRequired> {
-    require_wasm_runtime_enabled(engine::runtime::step_runtime_enabled())
-}
-
-fn require_wasm_runtime_enabled(enabled: bool) -> Result<(), WasmRuntimeRequired> {
-    if enabled {
+    #[cfg(target_family = "wasm")]
+    {
+        require_wasm_wait_ready()?;
+        require_wasm_substrate(|| {
+            libos::thread_facade::facade_layout()
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        })
+    }
+    #[cfg(not(target_family = "wasm"))]
+    {
+        // Native 宿主测试直接运行同一 World，不需要 WASM 内存和 slot。
         Ok(())
-    } else {
-        Err(WasmRuntimeRequired)
     }
 }
 
@@ -310,9 +329,14 @@ fn reserve_session_handle(next: &AtomicU32) -> Result<u32, SessionError> {
 #[derive(Default)]
 struct SessionRegistry {
     sessions: HashMap<u32, ProtocolSession>,
+    runtime_topology: HostRuntimeTopology,
 }
 
 mod shutdown;
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+mod libos_join_verification;
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+mod libos_performance_verification;
 
 impl SessionRegistry {
     fn register(
@@ -347,13 +371,13 @@ impl SessionRegistry {
 
     fn create(&mut self, setup: SessionSetup, seed: u64) -> Result<u32, HostSessionInitError> {
         require_wasm_runtime().map_err(HostSessionInitError::WasmRuntimeRequired)?;
-        let session = ProtocolSession::new(setup, seed)?;
+        let session = ProtocolSession::new_with_topology(setup, seed, self.runtime_topology)?;
         self.register(session, &NEXT).map_err(Into::into)
     }
 
     fn restore(&mut self, slot: &SaveSlot) -> Result<u32, HostSessionInitError> {
         require_wasm_runtime().map_err(HostSessionInitError::WasmRuntimeRequired)?;
-        let session = ProtocolSession::restore(slot)?;
+        let session = ProtocolSession::restore_with_topology(slot, self.runtime_topology)?;
         self.register(session, &NEXT).map_err(Into::into)
     }
 
@@ -1138,8 +1162,8 @@ pub fn clear_prepared_restore() {
 #[wasm_bindgen]
 pub fn facade_slot_init(capacity: u32) -> Result<(), JsValue> {
     // engine 单线程期先锚定共享 ORIGIN，之后才允许 child/ingress 首次取时。
-    let _ = engine::clock::Instant::now();
-    engine::thread_facade::init_wasm_facade(capacity).map_err(JsValue::from_str)
+    let _ = libos::clock::Instant::now();
+    libos::thread_facade::init_wasm_facade(capacity).map_err(JsValue::from_str)
 }
 
 #[cfg(any(target_family = "wasm", test))]
@@ -1150,8 +1174,10 @@ fn facade_slot_capacity_for_topology(groups: usize, desks: usize) -> Result<u32,
         .checked_add(desks)
         .and_then(|count| count.checked_add(2))
         .and_then(|count| count.checked_mul(2))
+        // 同一 Memory 的 Reclaimer 在换代期间继续存在，只需一个额外 slot。
+        .and_then(|count| count.checked_add(1))
         .ok_or("facade topology 容量计算超出 u32 范围")?;
-    if capacity > engine::thread_facade::FACADE_SLOT_MAX_CAPACITY {
+    if capacity > libos::thread_facade::FACADE_SLOT_MAX_CAPACITY {
         return Err("facade topology 容量超出既有 arena 的 2^20 slot 上限");
     }
     Ok(capacity)
@@ -1178,17 +1204,20 @@ enum RestoreFacadeInitError {
 /// 按完整 SaveSlot JSON 校验构造前缀并计算 slot 容量；不分配 arena 或完成恢复。
 #[cfg(test)]
 fn facade_slot_capacity_for_restore_json(save_json: &str) -> Result<u32, RestoreFacadeInitError> {
-    Ok(decode_restore_and_capacity(save_json)?.1)
+    Ok(decode_restore_and_capacity(save_json, HostRuntimeTopology::Standard)?.1)
 }
 
 #[cfg(any(target_family = "wasm", test))]
-fn decode_restore_and_capacity(save_json: &str) -> Result<(SaveSlot, u32), RestoreFacadeInitError> {
+fn decode_restore_and_capacity(
+    save_json: &str,
+    topology: HostRuntimeTopology,
+) -> Result<(SaveSlot, u32), RestoreFacadeInitError> {
     let save: SaveSlot = serde_json::from_str(save_json).map_err(RestoreFacadeInitError::Decode)?;
-    require_wasm_runtime().map_err(RestoreFacadeInitError::WasmRuntimeRequired)?;
-    let (groups, desks) = save
+    require_wasm_wait_ready().map_err(RestoreFacadeInitError::WasmRuntimeRequired)?;
+    let (_, desks) = save
         .restore_runtime_topology()
         .map_err(RestoreFacadeInitError::Topology)?;
-    let capacity = facade_slot_capacity_for_topology(groups, desks)
+    let capacity = facade_slot_capacity_for_topology(topology.group_count(), desks)
         .map_err(RestoreFacadeInitError::Capacity)?;
     Ok((save, capacity))
 }
@@ -1201,15 +1230,25 @@ struct PreparedRestore {
 
 #[cfg(any(target_family = "wasm", test))]
 impl PreparedRestore {
+    #[cfg(test)]
     fn prepare(
         &mut self,
         json: &str,
         initialize: impl FnOnce(u32) -> Result<(), &'static str>,
     ) -> Result<u32, RestoreFacadeInitError> {
+        self.prepare_with_topology(json, HostRuntimeTopology::Standard, initialize)
+    }
+
+    fn prepare_with_topology(
+        &mut self,
+        json: &str,
+        topology: HostRuntimeTopology,
+        initialize: impl FnOnce(u32) -> Result<(), &'static str>,
+    ) -> Result<u32, RestoreFacadeInitError> {
         if self.slot.is_some() {
             return Err(RestoreFacadeInitError::Capacity("已存在待消费的恢复档"));
         }
-        let (slot, capacity) = decode_restore_and_capacity(json)?;
+        let (slot, capacity) = decode_restore_and_capacity(json, topology)?;
         initialize(capacity).map_err(RestoreFacadeInitError::Capacity)?;
         self.slot = Some(slot);
         Ok(capacity)
@@ -1225,25 +1264,57 @@ impl PreparedRestore {
 #[cfg(target_family = "wasm")]
 thread_local! { static PREPARED_RESTORE: RefCell<PreparedRestore> = RefCell::new(PreparedRestore::default()); }
 
+#[cfg(any(target_family = "wasm", test))]
+fn initialization_runtime_topology(
+    parity_groups: Option<u32>,
+) -> Result<HostRuntimeTopology, &'static str> {
+    match parity_groups {
+        None => Ok(HostRuntimeTopology::Standard),
+        Some(2) => Ok(HostRuntimeTopology::TwoGroupParity),
+        Some(_) => Err("WASM 对照组数只能是 2 或不设置"),
+    }
+}
+
+#[cfg(target_family = "wasm")]
+fn init_facade_for_topology(capacity: u32, topology: HostRuntimeTopology) -> Result<(), JsValue> {
+    facade_slot_init(capacity)?;
+    // 分配成功后只把已验证的拓扑绑定到唯一 engine owner；同实例读档复用。
+    REGISTRY.with(|registry| registry.borrow_mut().runtime_topology = topology);
+    Ok(())
+}
+
 /// 仅按经过完整校验的默认 new setup 初始化 facade 槽；不创建 Session 或 World。
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen]
-pub fn facade_slot_init_for_setup(setup: JsValue) -> Result<(), JsValue> {
+pub fn facade_slot_init_for_setup(
+    setup: JsValue,
+    parity_groups: Option<u32>,
+) -> Result<(), JsValue> {
     let setup: SessionSetup = serde_wasm_bindgen::from_value(setup)?;
-    require_wasm_runtime().map_err(|error| JsValue::from_str(&error.to_string()))?;
-    let (groups, desks) = setup
+    let topology = initialization_runtime_topology(parity_groups).map_err(JsValue::from_str)?;
+    require_wasm_wait_ready().map_err(|error| JsValue::from_str(&error.to_string()))?;
+    let (_, desks) = setup
         .default_new_runtime_topology()
         .map_err(session_error_to_js)?;
-    let capacity = facade_slot_capacity_for_topology(groups, desks).map_err(JsValue::from_str)?;
-    facade_slot_init(capacity)
+    let capacity = facade_slot_capacity_for_topology(topology.group_count(), desks)
+        .map_err(JsValue::from_str)?;
+    init_facade_for_topology(capacity, topology)
 }
 
 /// 仅按完整存档的构造前缀初始化 slot；不创建或登记会话，成功不表示完整恢复成功。
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen]
-pub fn facade_slot_init_for_restore_json(save_json: String) -> Result<(), JsValue> {
+pub fn facade_slot_init_for_restore_json(
+    save_json: String,
+    parity_groups: Option<u32>,
+) -> Result<(), JsValue> {
+    let topology = initialization_runtime_topology(parity_groups).map_err(JsValue::from_str)?;
     let capacity = PREPARED_RESTORE
-        .with(|prepared| prepared.borrow_mut().prepare(&save_json, |_| Ok(())))
+        .with(|prepared| {
+            prepared
+                .borrow_mut()
+                .prepare_with_topology(&save_json, topology, |_| Ok(()))
+        })
         .map_err(|error| match error {
             RestoreFacadeInitError::Decode(error) => JsValue::from_str(&error.to_string()),
             RestoreFacadeInitError::WasmRuntimeRequired(error) => {
@@ -1252,7 +1323,7 @@ pub fn facade_slot_init_for_restore_json(save_json: String) -> Result<(), JsValu
             RestoreFacadeInitError::Topology(error) => session_error_to_js(error),
             RestoreFacadeInitError::Capacity(error) => JsValue::from_str(error),
         })?;
-    if let Err(error) = facade_slot_init(capacity) {
+    if let Err(error) = init_facade_for_topology(capacity, topology) {
         clear_prepared_restore();
         return Err(error);
     }
@@ -1268,23 +1339,40 @@ mod facade_restore_json_tests;
 
 #[cfg(test)]
 mod facade_slot_capacity_tests {
-    use super::facade_slot_capacity_for_topology;
+    use super::{facade_slot_capacity_for_topology, initialization_runtime_topology};
+
+    #[test]
+    fn only_explicit_two_group_fixture_changes_topology_and_slot_capacity() {
+        let standard = initialization_runtime_topology(None).unwrap();
+        let parity = initialization_runtime_topology(Some(2)).unwrap();
+        assert_eq!(
+            facade_slot_capacity_for_topology(standard.group_count(), 2),
+            Ok(11)
+        );
+        assert_eq!(
+            facade_slot_capacity_for_topology(parity.group_count(), 2),
+            Ok(13)
+        );
+        for rejected in [0, 1, 3, u32::MAX] {
+            assert!(initialization_runtime_topology(Some(rejected)).is_err());
+        }
+    }
 
     #[test]
     fn facade_slot_capacity_matches_default_new_formula() {
-        for (desks, expected) in [(1, 8), (3, 12)] {
+        for (desks, expected) in [(1, 9), (3, 13)] {
             assert_eq!(facade_slot_capacity_for_topology(1, desks), Ok(expected));
         }
     }
 
     #[test]
     fn facade_slot_capacity_accepts_existing_arena_maximum_without_allocating() {
-        assert_eq!(facade_slot_capacity_for_topology(1, 524_285), Ok(1 << 20));
+        assert_eq!(facade_slot_capacity_for_topology(1, 524_284), Ok((1 << 20) - 1));
     }
 
     #[test]
     fn facade_slot_capacity_rejects_first_value_above_existing_arena_maximum() {
-        assert!(facade_slot_capacity_for_topology(1, 524_286).is_err());
+        assert!(facade_slot_capacity_for_topology(1, 524_285).is_err());
     }
 
     #[test]
@@ -1318,7 +1406,7 @@ struct FacadeSlotLayout {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen]
 pub fn facade_slot_layout() -> Result<JsValue, JsValue> {
-    let info = engine::thread_facade::facade_layout()
+    let info = libos::thread_facade::facade_layout()
         .map_err(|error| JsValue::from_str(&format!("facade_slot_layout 失败：{error}")))?;
     to_js(&FacadeSlotLayout {
         base_addr: info.base_addr,
@@ -1335,7 +1423,7 @@ pub fn facade_slot_layout() -> Result<JsValue, JsValue> {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen]
 pub fn facade_child_trampoline(slot: u32, gen: u32, worker_id: u32) -> u32 {
-    engine::thread_facade::child_trampoline(slot, gen, worker_id)
+    libos::thread_facade::child_trampoline(slot, gen, worker_id)
 }
 
 /// wasm 收件显式一次初始化：四参数单位均为微秒；无默认策略，不允许同 memory 重置。
@@ -1347,28 +1435,41 @@ pub fn init_wasm_wait(
     fine_us: u32,
     coarse_us: u32,
 ) -> Result<(), JsValue> {
-    engine::runtime::watchdog::init_wasm_wait(spin_us, quiet_us, fine_us, coarse_us)
+    libos::wait::init_wasm_wait(spin_us, quiet_us, fine_us, coarse_us)
         .map_err(|error| JsValue::from_str(&error))
+}
+
+/// 浏览器胶水的 wire DTO；LibOS 只暴露底层共享字布局，不依赖序列化。
+#[cfg(target_family = "wasm")]
+#[derive(serde::Serialize)]
+struct WasmWaitWordLayout {
+    address: u32,
+    bytes: u32,
+}
+
+#[cfg(target_family = "wasm")]
+fn serialize_wait_layout(
+    kind: &str,
+    layout: Result<libos::wait::WaitWordLayout, String>,
+) -> Result<JsValue, JsValue> {
+    let libos::wait::WaitWordLayout { address, bytes } =
+        layout.map_err(|error| JsValue::from_str(&error))?;
+    serde_wasm_bindgen::to_value(&WasmWaitWordLayout { address, bytes })
+        .map_err(|error| JsValue::from_str(&format!("wasm {kind} 布局序列化失败：{error}")))
 }
 
 /// 返回同一 memory 的单向宿主 abort 字布局；只允许 Uint8Array 原子写入 1，bytes 必须为 1。
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen]
 pub fn wasm_wait_abort_layout() -> Result<JsValue, JsValue> {
-    let layout = engine::runtime::watchdog::wasm_wait_abort_layout()
-        .map_err(|error| JsValue::from_str(&error))?;
-    serde_wasm_bindgen::to_value(&layout)
-        .map_err(|error| JsValue::from_str(&format!("wasm abort 布局序列化失败：{error}")))
+    serialize_wait_layout("abort", libos::wait::wasm_wait_abort_layout())
 }
 
 /// 返回同一 memory 的单向 Worker 死亡字布局；宿主只能观察，不能写入。
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen]
 pub fn wasm_wait_death_layout() -> Result<JsValue, JsValue> {
-    let layout = engine::runtime::watchdog::wasm_wait_death_layout()
-        .map_err(|error| JsValue::from_str(&error))?;
-    serde_wasm_bindgen::to_value(&layout)
-        .map_err(|error| JsValue::from_str(&format!("wasm death 布局序列化失败：{error}")))
+    serialize_wait_layout("death", libos::wait::wasm_wait_death_layout())
 }
 
 /// WASM 主 Worker 的预登记记录；身份值在单个共享 memory 内唯一。
@@ -1400,7 +1501,7 @@ struct TombstonePrimaryLayout {
 #[wasm_bindgen]
 pub fn wasm_tombstone_init_primary() -> Result<JsValue, JsValue> {
     let (engine, ingress, death) =
-        engine::thread_facade::init_tombstone_primary().map_err(JsValue::from_str)?;
+        libos::thread_facade::init_tombstone_primary().map_err(JsValue::from_str)?;
     let layout = TombstonePrimaryLayout {
         engine: TombstonePrimaryRecord {
             worker_id: 0,
@@ -1423,7 +1524,7 @@ pub fn wasm_tombstone_init_primary() -> Result<JsValue, JsValue> {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen]
 pub fn wasm_tombstone_bind_ingress(address: u32, worker_id: u32) -> Result<(), JsValue> {
-    engine::thread_facade::bind_tombstone_ingress(address, worker_id).map_err(JsValue::from_str)
+    libos::thread_facade::bind_tombstone_ingress(address, worker_id).map_err(JsValue::from_str)
 }
 
 // ---------------------------------------------------------------------------
@@ -1439,7 +1540,7 @@ pub fn wasm_tombstone_bind_ingress(address: u32, worker_id: u32) -> Result<(), J
 #[cfg(all(target_family = "wasm", feature = "verification-harness"))]
 #[wasm_bindgen]
 pub fn verification_facade_spawn(ack_timeout_ms: u32) -> Result<u32, JsValue> {
-    let handle = engine::thread_facade::Builder::new()
+    let handle = libos::thread_facade::Builder::new()
         .name("verification-spawn".to_owned())
         .spawn(|| 0x5A5Au32)
         .map_err(|error| JsValue::from_str(&format!("verification_facade_spawn 失败：{error}")))?;
@@ -1465,7 +1566,7 @@ pub fn verification_facade_spawn_death(mode: u32) -> Result<u32, JsValue> {
     if mode > 2 {
         return Err(JsValue::from_str("未知 death fixture"));
     }
-    let handle = engine::thread_facade::Builder::new()
+    let handle = libos::thread_facade::Builder::new()
         .name("verification-death".to_owned())
         .spawn(move || -> u32 {
             match mode {
@@ -1494,7 +1595,7 @@ pub fn verification_facade_spawn_death(mode: u32) -> Result<u32, JsValue> {
 pub fn verification_facade_spawn_probed(ack_timeout_ms: u32) -> Result<u32, JsValue> {
     verification_begin_probe()?;
     verification_capture_probe(0);
-    let handle = engine::thread_facade::Builder::new()
+    let handle = libos::thread_facade::Builder::new()
         .name("verification-spawn".to_owned())
         .spawn(|| {
             verification_capture_probe(1);
@@ -1522,11 +1623,11 @@ pub fn verification_facade_spawn_probed(ack_timeout_ms: u32) -> Result<u32, JsVa
 pub fn verification_facade_spawn_nested() -> Result<u32, JsValue> {
     verification_begin_probe()?;
     verification_capture_probe(0);
-    let handle = engine::thread_facade::Builder::new()
+    let handle = libos::thread_facade::Builder::new()
         .name("verification-outer".to_owned())
         .spawn(|| {
             verification_capture_probe(1);
-            engine::thread_facade::Builder::new()
+            libos::thread_facade::Builder::new()
                 .name("verification-inner".to_owned())
                 .spawn(|| {
                     verification_capture_probe(2);
@@ -1576,8 +1677,8 @@ fn verification_capture_probe(index: usize) {
     );
     let marker = 0x5A5Au32;
     let stack_addr = &marker as *const u32 as u32;
-    let now = engine::clock::Instant::now();
-    let monotonic = engine::clock::Instant::now() >= now;
+    let now = libos::clock::Instant::now();
+    let monotonic = libos::clock::Instant::now() >= now;
     FACADE_VERIFY_TLS.with(|cell| {
         let previous = cell.replace(marker);
         for (offset, value) in [
@@ -1619,12 +1720,12 @@ pub fn verification_facade_join() -> Result<u32, JsValue> {
 
 #[cfg(all(target_family = "wasm", feature = "verification-harness"))]
 thread_local! {
-    static FACADE_VERIFY_HANDLES: RefCell<Option<engine::thread_facade::JoinHandle<u32>>> =
+    static FACADE_VERIFY_HANDLES: RefCell<Option<libos::thread_facade::JoinHandle<u32>>> =
         const { RefCell::new(None) };
 }
 
 #[cfg(all(target_family = "wasm", feature = "verification-harness"))]
-fn facade_join_index_of(handle: &engine::thread_facade::JoinHandle<u32>) -> u32 {
+fn facade_join_index_of(handle: &libos::thread_facade::JoinHandle<u32>) -> u32 {
     handle.join_index()
 }
 
@@ -1798,4 +1899,41 @@ mod runtime_sync_policy_tests;
 #[wasm_bindgen]
 pub fn verification_tombstone_primary_panic() {
     panic!("WASM_PRIMARY_TOMBSTONE_PROBE");
+}
+
+/// 验证专用：通过实际消费者栏杆度量提交返回与析构完成的不同边界。
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+#[wasm_bindgen]
+pub fn verification_deferred_reclamation() -> Result<String, JsValue> {
+    deferred_lifecycle_verification::observe_normal()
+        .map(|observation| observation.to_string())
+        .map_err(JsValue::from_str)
+}
+
+/// 由 engine Worker 在 supervisor 确认 substrate 后启动唯一后台析构消费者。
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen]
+pub fn start_wasm_reclaimer() -> Result<(), JsValue> {
+    libos::deferred_drop::start_wasm_reclaimer()
+        .map_err(|error| JsValue::from_str(&error.to_string()))
+}
+
+/// 消费 engine 持有的后台析构队列；退出及槽回收仍由 supervisor 独立证明。
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen]
+pub fn close_wasm_reclaimer() -> Result<bool, JsValue> {
+    libos::deferred_drop::close_wasm_reclaimer()
+        .map_err(|error| JsValue::from_str(&error.to_string()))
+}
+
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+mod deferred_lifecycle_verification;
+
+/// 验证专用：观察真实 LibOS 析构提交，不让夹具替代产品 owner。
+#[cfg(all(target_family = "wasm", feature = "verification-harness"))]
+#[wasm_bindgen]
+pub fn verification_deferred_lifecycle_contract(stage: &str) -> Result<String, JsValue> {
+    deferred_lifecycle_verification::observe(stage)
+        .map(|observation| observation.to_string())
+        .map_err(JsValue::from_str)
 }

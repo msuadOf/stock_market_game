@@ -55,6 +55,14 @@ it("verifies the WASM thread lock matrix right after the wasm-pack version gate"
   assert.ok(lock > check && lock < stepContaining("run: node scripts/frontend-build.mjs"));
 });
 
+it("checks the LibOS dependency boundary and real browser worker combination", () => {
+  assert.ok(stepContaining("scripts/libos-build-dependencies.test.mjs")
+    > stepContaining("scripts/run-full-regression.mjs build"));
+  const browserCombo = stepContaining("verify-wasm-thread-combo.mjs --browser");
+  assert.ok(browserCombo > stepContaining("playwright install chromium"));
+  assert.match(steps[browserCombo], /if: runner\.os == 'Linux'/);
+});
+
 it("Windows cold builds prepare libraries in a separate bounded stage before sealing test executables", () => {
   const restore = stepContaining("Restore sealed Cargo cache");
   const prepare = stepContaining("Prepare Windows native libraries");

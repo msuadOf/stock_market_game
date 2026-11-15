@@ -72,6 +72,7 @@ const SIMULATION_SOURCE_INPUTS = [
   "Cargo.lock",
   "Cargo.toml",
   "packages/engine",
+  "packages/libos",
   "rust-toolchain.toml",
   "scripts/simulation/baseline-run.mjs",
   "scripts/simulation/verify-simulation-artifacts.mjs",

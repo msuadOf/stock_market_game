@@ -634,9 +634,7 @@ fn panic_transport_resumes_original_payload_and_survivors_rollback() {
 
 #[test]
 fn severed_control_channels_fail_explicitly() {
-    // 切断协调者下行：worker 收不到 Start。组通道仍被交易部交叉持有 ⇒ 组靠
-    // 看门狗空闲超时显式上报（断连路径由 worker 退出后的 Final 错位兜底）——
-    // 两条检测路径都是显式失败，不允许静默挂死。
+    // Sever 独立唤醒互持通道的 worker，之后 Start 必须显式失败。
     let mut spec = basic_spec(2, 2, 1, Box::new(|_| idle_script()));
     spec.watchdog = WatchdogConfig {
         normal: Duration::from_millis(200),
@@ -725,7 +723,6 @@ fn watchdog_phase_limits_differ_for_long_phases() {
         cfg.limit_for(Phase::TickConverge),
         Duration::from_millis(50)
     );
-    assert_eq!(cfg.limit_for(Phase::WorkerIdle), Duration::from_millis(50));
     assert_eq!(cfg.limit_for(Phase::Drain), Duration::from_secs(5));
     assert_eq!(
         cfg.limit_for(Phase::FinalCollection),

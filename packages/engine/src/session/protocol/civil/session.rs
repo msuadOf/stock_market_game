@@ -189,7 +189,7 @@ impl ProtocolSession {
         let name = thread.name().expect("libtest case 必须有完整名字");
         let output = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", name, "--nocapture", "--test-threads=1"])
-            .env("ENGINE_STEP_RUNTIME", "0")
+            .env("SMG_VERIFY_LEGACY_STEP", "1")
             .output()
             .expect("启动原 checkpoint 合同的 serial exact probe");
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -235,9 +235,16 @@ impl ProtocolSession {
     }
 
     pub fn restore(slot: &crate::SaveSlot) -> Result<Self, SessionError> {
+        Self::restore_with_topology(slot, crate::session::HostRuntimeTopology::Standard)
+    }
+
+    pub fn restore_with_topology(
+        slot: &crate::SaveSlot,
+        topology: crate::session::HostRuntimeTopology,
+    ) -> Result<Self, SessionError> {
         // 批 9 A5（with_compute 注入面退役）：wasm 与生产统一走
         // shared_default 内部构造。
-        let game =
+        let mut game =
             GameSession::restore_with_compute(slot, crate::ComputeContext::shared_default()?)?;
         let sessions_through_current_date =
             game.civil_clock().completed_trading_sessions_expected()?;
@@ -275,15 +282,24 @@ impl ProtocolSession {
             // fault3014: 公共日级档不能包含日内活动委托或待处理输入。
             return Err(SessionError::InvalidSave(ValidationFault::bare(3014)));
         }
+        // 读档继续使用当前宿主选择，不将执行拓扑写入存档。
+        game.runtime_group_count = topology.group_count();
         Ok(Self::from_game(game, Some(Arc::new(slot.clone()))))
     }
 
     pub fn new(setup: SessionSetup, seed: u64) -> Result<Self, SessionError> {
-        // 批 9 A5：同 restore——注入面退役，内部 shared_default。
-        Ok(Self::from_game(
-            GameSession::new_with_compute(setup, seed, crate::ComputeContext::shared_default()?)?,
-            None,
-        ))
+        Self::new_with_topology(setup, seed, crate::session::HostRuntimeTopology::Standard)
+    }
+
+    pub fn new_with_topology(
+        setup: SessionSetup,
+        seed: u64,
+        topology: crate::session::HostRuntimeTopology,
+    ) -> Result<Self, SessionError> {
+        let mut game =
+            GameSession::new_with_compute(setup, seed, crate::ComputeContext::shared_default()?)?;
+        game.runtime_group_count = topology.group_count();
+        Ok(Self::from_game(game, None))
     }
 
     /// Restore a validated in-memory verification checkpoint, without making
@@ -495,7 +511,7 @@ impl ProtocolSession {
         Ok(frame)
     }
 
-    /// 证据与 frame 来自同一 prepared candidate；提交前不外发任何事实。
+    /// Escrow 验证专用入口：证据与 frame 来自同一旧管线 candidate；不供产品宿主调用。
     pub fn step_frame_with_commit_evidence(
         &mut self,
     ) -> Result<(TickFrame, crate::session::pipeline::TickCommitEvidence), StepFatal> {
@@ -715,7 +731,7 @@ mod rollback_tests {
     use super::*;
 
     /// native callback 失败已经越过 World 提交；只核对未安装镜像，不公开绕过健康门的存档。
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(all(test, not(target_family = "wasm")))]
     struct NativePublicationBaseline {
         save: crate::SaveSlot,
         business_hash: crate::session::StateHash,
@@ -727,7 +743,7 @@ mod rollback_tests {
         pending_saves: serde_json::Value,
     }
 
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(all(test, not(target_family = "wasm")))]
     impl NativePublicationBaseline {
         fn capture(session: &ProtocolSession) -> Self {
             Self {
@@ -920,7 +936,7 @@ mod rollback_tests {
 
     #[test]
     fn checkpoint_restores_prior_candidates_and_frozen_save_after_two_civil_updates() {
-        #[cfg(not(target_family = "wasm"))]
+        #[cfg(all(test, not(target_family = "wasm")))]
         if crate::runtime::step_runtime_enabled() {
             ProtocolSession::run_serial_checkpoint_probe_for_test();
             return;
@@ -1451,7 +1467,7 @@ mod rollback_tests {
 
     #[test]
     fn day_end_save_is_frozen_during_intraday_and_after_failed_day_end() {
-        #[cfg(not(target_family = "wasm"))]
+        #[cfg(all(test, not(target_family = "wasm")))]
         if crate::runtime::step_runtime_enabled() {
             // 原完整回滚/重试合同仍由 serial exact 子进程执行；native 下继续核对终态零安装。
             ProtocolSession::run_serial_checkpoint_probe_for_test();
@@ -1472,13 +1488,13 @@ mod rollback_tests {
             serde_json::to_value(session.save().unwrap()).unwrap(),
             saved
         );
-        #[cfg(not(target_family = "wasm"))]
+        #[cfg(all(test, not(target_family = "wasm")))]
         let native_baseline = crate::runtime::step_runtime_enabled()
             .then(|| NativePublicationBaseline::capture(&session));
         session.malformed_civil = true;
         let error = session.end_civil_day_update().unwrap_err();
         assert!(matches!(error, SessionError::Step(_)));
-        #[cfg(not(target_family = "wasm"))]
+        #[cfg(all(test, not(target_family = "wasm")))]
         if let Some(baseline) = native_baseline {
             let SessionError::Step(fatal) = error else {
                 panic!("预期 publication 首错：{error:?}")
@@ -1570,7 +1586,7 @@ mod rollback_tests {
 
     #[test]
     fn protocol_closed_january_first_freezes_exact_day_end_candidate() {
-        #[cfg(not(target_family = "wasm"))]
+        #[cfg(all(test, not(target_family = "wasm")))]
         if crate::runtime::step_runtime_enabled() {
             ProtocolSession::run_serial_checkpoint_probe_for_test();
             return;
@@ -1626,7 +1642,7 @@ mod rollback_tests {
 
     #[test]
     fn protocol_consecutive_closed_days_keep_each_candidate_immutable_and_ordered() {
-        #[cfg(not(target_family = "wasm"))]
+        #[cfg(all(test, not(target_family = "wasm")))]
         if crate::runtime::step_runtime_enabled() {
             ProtocolSession::run_serial_checkpoint_probe_for_test();
             return;
@@ -1708,7 +1724,7 @@ mod rollback_tests {
 
     #[test]
     fn protocol_rejected_malformed_civil_update_preserves_state_for_single_retry() {
-        #[cfg(not(target_family = "wasm"))]
+        #[cfg(all(test, not(target_family = "wasm")))]
         if crate::runtime::step_runtime_enabled() {
             ProtocolSession::run_serial_checkpoint_probe_for_test();
             return;
@@ -1838,7 +1854,7 @@ mod rollback_tests {
 
     #[test]
     fn protocol_does_not_freeze_unfinished_trading_day_as_closed() {
-        #[cfg(not(target_family = "wasm"))]
+        #[cfg(all(test, not(target_family = "wasm")))]
         if crate::runtime::step_runtime_enabled() {
             ProtocolSession::run_serial_checkpoint_probe_for_test();
             return;
@@ -2069,7 +2085,7 @@ mod rollback_tests {
 
     #[test]
     fn closed_day_archive_defers_active_npc_requests_and_restores_exactly() {
-        #[cfg(not(target_family = "wasm"))]
+        #[cfg(all(test, not(target_family = "wasm")))]
         if crate::runtime::step_runtime_enabled() {
             // fixture 使用旧管线 attention/ledger seam，整段保持同一 serial authority。
             ProtocolSession::run_serial_checkpoint_probe_for_test();
@@ -2081,7 +2097,7 @@ mod rollback_tests {
 
     #[test]
     fn trading_day_archive_defers_active_npc_requests_and_restores_exactly() {
-        #[cfg(not(target_family = "wasm"))]
+        #[cfg(all(test, not(target_family = "wasm")))]
         if crate::runtime::step_runtime_enabled() {
             // fixture 使用旧管线 attention/ledger seam，整段保持同一 serial authority。
             ProtocolSession::run_serial_checkpoint_probe_for_test();
@@ -2211,7 +2227,7 @@ mod rollback_tests {
 
     #[test]
     fn outer_rollback_across_close_and_weekend_restores_history_and_can_repeat() {
-        #[cfg(not(target_family = "wasm"))]
+        #[cfg(all(test, not(target_family = "wasm")))]
         if crate::runtime::step_runtime_enabled() {
             ProtocolSession::run_serial_checkpoint_probe_for_test();
             return;
@@ -2368,7 +2384,7 @@ mod rollback_tests {
 
     #[test]
     fn malformed_civil_after_mutation_rolls_back_and_can_retry() {
-        #[cfg(not(target_family = "wasm"))]
+        #[cfg(all(test, not(target_family = "wasm")))]
         if crate::runtime::step_runtime_enabled() {
             // 原完整回滚/重试合同仍由 serial exact 子进程执行；native 下继续核对终态零安装。
             ProtocolSession::run_serial_checkpoint_probe_for_test();
@@ -2381,7 +2397,7 @@ mod rollback_tests {
         }
         let before = serde_json::to_value(session.state.game.save().unwrap()).unwrap();
         let history = serde_json::to_value(&session.state.intraday).unwrap();
-        #[cfg(not(target_family = "wasm"))]
+        #[cfg(all(test, not(target_family = "wasm")))]
         let native_baseline = crate::runtime::step_runtime_enabled()
             .then(|| NativePublicationBaseline::capture(&session));
         session.malformed_civil = true;
@@ -2389,7 +2405,7 @@ mod rollback_tests {
         let error = session.end_civil_day_update().unwrap_err();
 
         assert!(matches!(error, SessionError::Step(_)));
-        #[cfg(not(target_family = "wasm"))]
+        #[cfg(all(test, not(target_family = "wasm")))]
         if let Some(baseline) = native_baseline {
             let SessionError::Step(fatal) = error else {
                 panic!("预期 publication 首错：{error:?}")
@@ -2419,7 +2435,7 @@ mod rollback_tests {
     /// 泄漏及重试契约）。红态：失败后 day==day_before+1。
     #[test]
     fn solfinal1a_day_end_projection_failure_rolls_back_day() {
-        #[cfg(not(target_family = "wasm"))]
+        #[cfg(all(test, not(target_family = "wasm")))]
         if crate::runtime::step_runtime_enabled() {
             // 原完整回滚/重试合同仍由 serial exact 子进程执行；native 下继续核对终态零安装。
             ProtocolSession::run_serial_checkpoint_probe_for_test();
@@ -2434,13 +2450,13 @@ mod rollback_tests {
         }
         let day_before = session.game().day();
         let before = serde_json::to_value(session.state.game.save().unwrap()).unwrap();
-        #[cfg(not(target_family = "wasm"))]
+        #[cfg(all(test, not(target_family = "wasm")))]
         let native_baseline = crate::runtime::step_runtime_enabled()
             .then(|| NativePublicationBaseline::capture(&session));
         session.malformed_frame = true;
         let error = session.step_frame().unwrap_err();
         assert!(matches!(error, StepFatal::InvariantViolation { .. }));
-        #[cfg(not(target_family = "wasm"))]
+        #[cfg(all(test, not(target_family = "wasm")))]
         if let Some(baseline) = native_baseline {
             baseline.assert_terminal(&mut session, error);
             return;
@@ -2467,7 +2483,7 @@ mod rollback_tests {
 
     #[test]
     fn malformed_frame_after_mutation_rolls_back_game_history_and_fact_cursor() {
-        #[cfg(not(target_family = "wasm"))]
+        #[cfg(all(test, not(target_family = "wasm")))]
         if crate::runtime::step_runtime_enabled() {
             // 原完整回滚/重试合同仍由 serial exact 子进程执行；native 下继续核对终态零安装。
             ProtocolSession::run_serial_checkpoint_probe_for_test();
@@ -2476,7 +2492,7 @@ mod rollback_tests {
         // 本用例验证市场候选提交及回滚，首拍须为开市日。
         setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
         let mut session = ProtocolSession::new(setup, 40).unwrap();
-        #[cfg(not(target_family = "wasm"))]
+        #[cfg(all(test, not(target_family = "wasm")))]
         if crate::runtime::step_runtime_enabled() {
             session
                 .state
@@ -2508,7 +2524,7 @@ mod rollback_tests {
         let history = serde_json::to_value(&session.state.intraday).unwrap();
         let fact_tick = session.state.fact_cursor.tick();
         let cursor_before = session.state.fact_cursor.clone();
-        #[cfg(not(target_family = "wasm"))]
+        #[cfg(all(test, not(target_family = "wasm")))]
         let native_baseline = crate::runtime::step_runtime_enabled()
             .then(|| NativePublicationBaseline::capture(&session));
         session.malformed_frame = true;
@@ -2516,7 +2532,7 @@ mod rollback_tests {
         let error = session.step_frame().unwrap_err();
 
         assert!(matches!(error, StepFatal::InvariantViolation { .. }));
-        #[cfg(not(target_family = "wasm"))]
+        #[cfg(all(test, not(target_family = "wasm")))]
         if let Some(baseline) = native_baseline {
             baseline.assert_terminal(&mut session, error);
             return;

@@ -17,10 +17,11 @@ simulation-diagnostics = ["engine/simulation-diagnostics"]
 # 验证专用构建（独立产物 wasm-verification-pkg，正式产物零暴露）：
 # R4a 阶段 2 真实双 Worker 槽协议闭环的入口。开关同时打开 engine 的同名
 # feature，使 thread_facade 的 wasm spawn/join 调用链不被 DCE 消除。
-verification-harness = ["engine/verification-harness"]
+verification-harness = ["engine/verification-harness", "libos/verification-harness"]
 
 [dependencies]
 engine = { path = "../../packages/engine" }
+libos = { path = "../../packages/libos" }
 wasm-bindgen = "=0.2.93"
 serde-wasm-bindgen = "0.6"
 serde = { workspace = true }

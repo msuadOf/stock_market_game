@@ -1272,12 +1272,9 @@ pub(crate) enum GroupIn {
         wanted: Vec<super::LocalIdx>,
     },
     /// K 线投影请求（驱动器回写 candle_book；轻量）。
-    #[cfg_attr(
-        not(all(test, not(target_family = "wasm"))),
-        expect(
-            dead_code,
-            reason = "K 线请求由协调者发往交易部；组收到时须保留显式错路由错误"
-        )
+    #[allow(
+        dead_code,
+        reason = "K 线请求由协调者发往交易部；组收到时须保留显式错路由错误"
     )]
     EchoCandles,
     /// D5 #4 retail 链：本拍零售决策 trace 请求（组回 RetailTraces——
@@ -2022,18 +2019,51 @@ pub struct DeskReport {
     pub causal: Vec<super::diagnostics::DeskCausalFact>,
 }
 
-/// 运行时显式失败（不静默吞错）。panic 走 `TaskDied` 运输，不进本枚举。
+/// 只记录已经观察到的 join 失败分类，不携带可重抛的 native panic payload。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum WorkerJoinDiagnostic {
+    /// 兼容既有 wire 名称；判据是可运输原 panic 对象，不是目标平台。
+    NativePanic,
+    WorkerPanic { code: u32 },
+    WorkerHardTrap { code: u32 },
+    Transport,
+}
+
+impl From<&libos::thread_facade::JoinFailure> for WorkerJoinDiagnostic {
+    fn from(error: &libos::thread_facade::JoinFailure) -> Self {
+        use libos::thread_facade::{JoinFailureClass, WorkerDeathKind};
+        match error.class() {
+            JoinFailureClass::PanicPayload => Self::NativePanic,
+            JoinFailureClass::WorkerDied(death) => match death.kind {
+                WorkerDeathKind::Panic => Self::WorkerPanic { code: death.code },
+                WorkerDeathKind::HardTrap => Self::WorkerHardTrap { code: death.code },
+            },
+            JoinFailureClass::Transport => Self::Transport,
+        }
+    }
+}
+
+/// 运行时显式失败（不静默吞错）。panic 原载荷仍只走 `TaskDied` 或 unwind。
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
 pub enum RuntimeError {
+    /// worker 入口没有正常返回；分类与诊断文本分开，不能从文本推测分类。
+    #[error("worker {who} join 失败：{detail}")]
+    WorkerJoinFailed {
+        who: WorkerId,
+        diagnostic: WorkerJoinDiagnostic,
+        detail: String,
+    },
     /// World 尚未形成时的主错误与全部已启动 worker 的回收结果。
-    #[error("{primary}；native construction 已 join {joined_workers} 个 worker；回收错误={cleanup_errors:?}")]
+    #[error(
+        "{primary}；World 构造已 join {joined_workers} 个 worker；回收错误={cleanup_errors:?}"
+    )]
     ConstructionFailure {
         primary: String,
         joined_workers: usize,
         cleanup_errors: Vec<String>,
     },
     /// wasm 宿主永久 abort，与 tick Abort、相位超时及通道断连分开报告。
-    #[cfg(target_family = "wasm")]
     #[error("wasm 宿主已永久终止：phase={phase:?}, who={who:?}")]
     HostAborted {
         phase: super::watchdog::Phase,

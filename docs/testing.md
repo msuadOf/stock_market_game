@@ -281,3 +281,11 @@ NPC 策略的现金/股份估算只用于减少无效候选，不能替代 T 时
 - [x] 引入浏览器 E2E，覆盖桌面/移动关键交互和本地 WASM 存读档
 - [ ] 扩展浏览器 E2E 到远程/Tauri 宿主与需要跨交易日的撤单、恢复旅程
 - [x] 将移动显示剩余源码守卫迁移为 SSR、回调与图表数据行为测试（2026-09-30）；完整 App 生命周期及真实浏览器旅程仍由 E2E 待办覆盖，不把 SSR 当浏览器验收
+
+## 9. LibOS 跨宿主验收的证据边界
+
+- 正常路径：手动 CI 的 `Compare Native Server and Browser product facts` 使用独立的 `host-parity` Server 制品及正式 shared-memory WASM 包，通过实际 API/WS 与 `createWorkerHost` 驱动同一 World。普通产品默认仍为一个 Group；对照 Server 由进程参数 `STOCK_GAME_PARITY_GROUPS=2` 显式选择双组，Browser 仅允许 E2E 装配传入数字 `2`，不新增 WASM 导出。执行拓扑不进入游戏设置或存档；同一对照宿主恢复时保持原拓扑。只有核对两次构造均存在两组两部、能用已成交 NPC 身份证明每组有活动、并核对权威游标、成交、撤单和日终恢复事实，才可报告双组对照通过。该验收用 Server 制品不用于分发。
+- 自由恢复与固定收据重放分别验证。对照夹具的显式 `--contract free-restart` 模式核对已完成的日终存档、恢复前后同宿主存档/游标，以及不间断、恢复两臂各自合法的闭市日界和双 Desk 集合竞价首拍。它分别保留两端的原始事实，核对每批全覆盖 seq、唯一 EventStableKey、真实撤单和成交；不把独立自由调度的订单、成交或终点 seq 当作同一批受理事实。现有默认 `strict-diagnostic` 的字节诊断仍保留，不把它当作固定事实重放的证明。
+- `--contract fixed-accepted-facts` 在缺少完整生产 World 受理收据的捕获与原序重放入口时显式失败，不生成通过报告；旧 Escrow 验证路径不能代替产品路径。独立的 `protocol_civil::restored_closed_day_continues_civil_fact_identity_at_same_tick` 用连续闭市日控制输入，先核对相同日期/游标/载荷，再严格核对 EventStableKey，不允许自由调度解释同一已定自然日事实的身份漂移。
+- 关停与恢复：`verify-wasm-thread-combo.mjs --browser` 将正式包运行和独立 `verification-harness` 证据分开。后者包含部分构造、提前停止、重复释放及私有候选回收检查；通用协议测试与诊断单测不能替代两端逐阶段的端到端关停证明。对每项验收分别记录已提交市场事实与确已回收的资源；离开调用不代表一定已 join，也不代表所有应发布事实均已发布。
+- 性能：见 [`scripts/performance/README.md`](../scripts/performance/README.md)。采集器在同一平台交错运行前后两份制品；比较器只读取已采集记录，不拿 Native 与 Browser 的绝对速度互相比。采集与比较脚本的单测通过，不代表已经获得配对实测数据。

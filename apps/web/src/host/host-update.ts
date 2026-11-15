@@ -31,15 +31,7 @@ export type HostUpdate =
       readonly update: unknown;
     } & PublicMetadata);
 
-export type HostFailure = {
-  readonly code: string;
-  readonly where: string;
-  readonly message: string;
-  readonly cause?: unknown;
-  readonly context?: unknown;
-  readonly recoverable?: boolean | null;
-  readonly recoveryActions?: readonly string[] | null;
-};
+export type { HostFailure } from "../../../../packages/libos/browser/host-failure.ts";
 
 export function createBaselineUpdate(
   generation: string,

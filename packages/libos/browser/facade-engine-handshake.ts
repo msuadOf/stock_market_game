@@ -1,0 +1,112 @@
+import type { FacadeControlMessage } from "./facade-thread-binding.ts";
+import type { FacadeSubstrate } from "./engine-supervisor.ts";
+import { parseFacadeEngineConfigured } from "./facade-engine-protocol.ts";
+import type { WasmWaitAbortLayout } from "./wasm-wait-abort.ts";
+import type { WasmWaitDeathLayout } from "./wasm-wait-death.ts";
+
+interface HandshakeTimers {
+  setTimeout(callback: () => void, milliseconds: number): number;
+  clearTimeout(id: number): void;
+}
+/** 只在 engine 初始化期等一次主线程确认；运行期 spawn/join 不依赖 JS 收件。 */
+export function createFacadeEngineHandshake(options: { readonly port: MessagePort; readonly onFailure: (error: unknown) => void; readonly timers?: HandshakeTimers }) {
+  const { port, onFailure } = options;
+  const timers = options.timers === undefined ? {
+    setTimeout: (callback: () => void, milliseconds: number) => globalThis.setTimeout(callback, milliseconds) as unknown as number,
+    clearTimeout: (id: number) => globalThis.clearTimeout(id),
+  } : options.timers;
+  let started = false, configured = false, closed = false;
+  let memoryStarted = false, memoryRegistered = false;
+  let deathStarted = false, deathRegistered = false;
+  let timer: number | undefined;
+  let resolve: (() => void) | undefined, reject: ((error: unknown) => void) | undefined;
+  function close(): void {
+    if (closed) return;
+    closed = true; configured = false;
+    if (timer !== undefined) { timers.clearTimeout(timer); timer = undefined; }
+    port.removeEventListener("message", receive); port.removeEventListener("messageerror", messageError); port.close();
+  }
+  function fail(error: unknown): void {
+    if (closed) return;
+    const pending = reject; resolve = undefined; reject = undefined;
+    close();
+    if (pending !== undefined) pending(error); else onFailure(error);
+  }
+  function receive(event: MessageEvent<unknown>): void {
+    if (closed) return;
+    try {
+      const value: unknown = event.data;
+      if (value !== null && typeof value === "object" && (value as Record<string, unknown>).type === "facadeEngineMemoryRegistered") {
+        const source = value as Record<string, unknown>;
+        if (!memoryStarted || memoryRegistered || started || Object.keys(source).sort().join(",") !== "allocationId,type" || source.allocationId !== 1) throw new Error("Memory 登记确认提前、重复或身份错误");
+        memoryRegistered = true;
+        if (timer !== undefined) { timers.clearTimeout(timer); timer = undefined; }
+        const done = resolve; resolve = undefined; reject = undefined; done?.();
+        return;
+      }
+      if (value !== null && typeof value === "object" && (value as Record<string, unknown>).type === "facadeEngineDeathRegistered") {
+        const source = value as Record<string, unknown>;
+        if (!deathStarted || deathRegistered || started || Object.keys(source).sort().join(",") !== "allocationId,type" || source.allocationId !== 1) throw new Error("DEAD 登记确认提前、重复或身份错误");
+        deathRegistered = true;
+        if (timer !== undefined) { timers.clearTimeout(timer); timer = undefined; }
+        const done = resolve; resolve = undefined; reject = undefined; done?.();
+        return;
+      }
+      parseFacadeEngineConfigured(event.data);
+      if (!started || configured) throw new Error("facadeEngineConfigured 提前或重复发送");
+      configured = true;
+      if (timer !== undefined) { timers.clearTimeout(timer); timer = undefined; }
+      const done = resolve; resolve = undefined; reject = undefined; done?.();
+    } catch (error) { fail(error); }
+  }
+  function messageError(): void { fail(new Error("engine 控制端 messageerror")); }
+  port.addEventListener("message", receive); port.addEventListener("messageerror", messageError); port.start();
+  function assertConfigured(): void {
+    if (!configured || closed) throw new Error("engine 尚未 configured 或控制端已关闭");
+  }
+  return {
+    registerMemory(memory: WebAssembly.Memory): Promise<void> {
+      if (memoryStarted || started || closed) throw new Error("engine Memory 只允许登记一次");
+      memoryStarted = true;
+      return new Promise<void>((done, failed) => {
+        resolve = done; reject = failed;
+        timer = timers.setTimeout(() => fail(new Error("engine Memory 登记等待超过 10000ms")), 10000);
+        try { port.postMessage({ type: "facadeEngineMemory", allocationId: 1, memory }); }
+        catch (error) { fail(error); }
+      });
+    },
+    registerDeath(primary: unknown): Promise<void> {
+      if (!memoryRegistered || deathStarted || started || closed) throw new Error("DEAD 只允许在 Memory 登记后登记一次");
+      deathStarted = true;
+      return new Promise<void>((done, failed) => {
+        resolve = done; reject = failed;
+        timer = timers.setTimeout(() => fail(new Error("engine DEAD 登记等待超过 10000ms")), 10000);
+        try { port.postMessage({ type: "facadeEngineDeath", allocationId: 1, primary }); }
+        catch (error) { fail(error); }
+      });
+    },
+    configure(substrate: FacadeSubstrate, waitAbort?: WasmWaitAbortLayout, waitDeath?: WasmWaitDeathLayout): Promise<void> {
+      if (started || closed) throw new Error("engine substrate 只允许发送一次");
+      if (memoryStarted && !memoryRegistered) throw new Error("engine Memory 尚未由主侧确认");
+      if (deathStarted && !deathRegistered) throw new Error("engine DEAD 尚未由主侧确认");
+      started = true;
+      return new Promise<void>((done, failed) => {
+        resolve = done; reject = failed;
+        timer = timers.setTimeout(() => fail(new Error("engine configured 等待超过 10000ms")), 10000);
+        try {
+          // 已登记 Memory 时不再跨消息 clone wrapper；控制端阶段就是一次分配权威。
+          port.postMessage(memoryRegistered
+            ? { type: "facadeEngineConfiguration", allocationId: 1, module: substrate.module, layout: substrate.layout, diagnostics: substrate.diagnostics, ...(waitAbort === undefined ? {} : { waitAbort }), ...(waitDeath === undefined ? {} : { waitDeath }) }
+            : { type: "facadeEngineSubstrate", ...substrate });
+        }
+        catch (error) { fail(error); }
+      });
+    },
+    assertConfigured,
+    postControl(message: FacadeControlMessage): void { assertConfigured(); port.postMessage(message); },
+    dispose(): void {
+      if (closed) return;
+      const pending = reject; reject = undefined; resolve = undefined; close(); pending?.(new Error("engine 初始化已 dispose"));
+    },
+  };
+}

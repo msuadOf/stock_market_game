@@ -17,8 +17,8 @@ import {
 // 解析 Rust 源常量并与本文件导出比对——任一侧漂移未同步即红。
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
-const arenaRs = readFileSync(path.join(repoRoot, "packages/engine/src/facade_slot/arena.rs"), "utf8");
-const codecRs = readFileSync(path.join(repoRoot, "packages/engine/src/facade_slot/codec.rs"), "utf8");
+const arenaRs = readFileSync(path.join(repoRoot, "packages/libos/src/facade_slot/arena.rs"), "utf8");
+const codecRs = readFileSync(path.join(repoRoot, "packages/libos/src/facade_slot/codec.rs"), "utf8");
 
 function rustConst(source: string, name: string): number {
   const match = new RegExp(`pub const ${name}: usize = (\\d+);`).exec(source);

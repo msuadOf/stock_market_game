@@ -1016,7 +1016,7 @@ mod tests {
         assert_eq!(origin.code, stock);
         assert_eq!(origin.company, Some(company));
     }
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     mod runtime_prepare_tests {
         use super::*;
 

@@ -14,7 +14,7 @@
 //!
 //! 探针式双进程（翻转批 batch8 同款基建）：`step_runtime_enabled` 的
 //! OnceLock 进程级缓存使本进程无法中途切串行——主入口 spawn 子进程
-//! （`ENGINE_STEP_RUNTIME=0`）承载真串行断言；子进程内 `step()` /
+//! （`SMG_VERIFY_LEGACY_STEP=1`）承载真串行断言；子进程内 `step()` /
 //! `end_civil_day()` 走的正是 wasm32 的分叉路径。
 
 use super::GameSession;
@@ -246,7 +246,7 @@ fn serial_no_trade_day_keeps_ex_reference_after_a_trade() {
     );
 }
 
-/// 真串行（ENGINE_STEP_RUNTIME=0 子进程）四查询面出数主入口。
+/// 真串行（SMG_VERIFY_LEGACY_STEP=1 子进程）四查询面出数主入口。
 #[test]
 fn serial_pipeline_produces_all_four_query_surfaces() {
     if std::env::var(SERIAL_PROBE).is_ok() {
@@ -263,7 +263,7 @@ fn serial_pipeline_produces_all_four_query_surfaces() {
         .arg("--exact")
         .arg("session::serial_b2_surface_tests::serial_pipeline_produces_all_four_query_surfaces")
         .arg("--nocapture")
-        .env("ENGINE_STEP_RUNTIME", "0")
+        .env("SMG_VERIFY_LEGACY_STEP", "1")
         .env(SERIAL_PROBE, "1")
         .output()
         .expect("串行探针子进程启动");

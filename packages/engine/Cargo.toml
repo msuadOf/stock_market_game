@@ -13,7 +13,7 @@ crate-type = ["rlib"]
 [features]
 simulation-diagnostics = []
 # Explicitly opt in to non-persistent executor verification controls.
-verification-harness = []
+verification-harness = ["libos/verification-harness"]
 
 [[test]]
 name = "diagnostic_parity"
@@ -48,6 +48,7 @@ name = "simulation_baseline_fixture"
 required-features = ["simulation-diagnostics"]
 
 [dependencies]
+libos = { path = "../libos" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -57,7 +58,5 @@ ts-rs = { workspace = true }
 
 # TypeScript formatting is used only by binding export tests, not runtime builds.
 [dev-dependencies]
+libos = { path = "../libos", features = ["verification-harness"] }
 ts-rs = { workspace = true, features = ["format"] }
-
-[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
-tikv-jemallocator = "0.6"

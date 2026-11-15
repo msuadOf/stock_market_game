@@ -1189,11 +1189,11 @@ checksum = "4ef6b89e5b37196644d8796de5268852ff179b44e96276cf4290264843743bb7"
 name = "engine"
 version = "0.1.0"
 dependencies = [
+ "libos",
  "num-bigint",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
- "tikv-jemallocator",
  "ts-rs",
 ]
 
@@ -2415,6 +2415,13 @@ checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
 dependencies = [
  "cfg-if",
  "windows-link 0.2.1",
+]
+
+[[package]]
+name = "libos"
+version = "0.1.0"
+dependencies = [
+ "tikv-jemallocator",
 ]
 
 [[package]]
@@ -5753,6 +5760,7 @@ name = "web-wasm"
 version = "0.1.0"
 dependencies = [
  "engine",
+ "libos",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",

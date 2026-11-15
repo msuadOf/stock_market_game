@@ -1,15 +1,25 @@
 use super::*;
 use crate::runtime::protocol::{AdminGroupCandidate, AdminPhase};
+use libos::thread_facade::JoinFailure;
 use std::collections::{BTreeMap, BTreeSet};
 mod stages;
 pub(crate) use stages::{AdminOperationStage, PreparedAdministrativeStages};
 
 type PanicPayload = Box<dyn std::any::Any + Send>;
 
-/// wasm join 的 io::Error 是显式失败诊断，不是可 resume_unwind 的 native panic payload。
-#[cfg(any(test, target_family = "wasm"))]
-fn admin_wasm_join_diagnostic(who: WorkerId, error: std::io::Error) -> String {
-    format!("{who} wasm join 失败：kind={:?}；{error}", error.kind())
+/// 只运输首个可重抛的原 panic；所有 join 失败仍各自保留在诊断中。
+fn admin_join_failure(
+    who: WorkerId,
+    error: JoinFailure,
+    first_payload: &mut Option<PanicPayload>,
+) -> RuntimeError {
+    let diagnostic = worker_join_failure(who, &error);
+    if let Ok(payload) = error.into_panic_payload() {
+        if first_payload.is_none() {
+            *first_payload = Some(payload);
+        }
+    }
+    diagnostic
 }
 /// 同一行政作用域预先算出的 Prepare 写集与回执校验基线。
 struct AdminPreparation {
@@ -304,32 +314,21 @@ impl World {
                     }
                 }
                 Err(payload) => {
+                    let mut diagnostics = vec![format!(
+                        "行政收尾再次 panic，强制回收：{}",
+                        prepared_stop::panic_detail(payload.as_ref())
+                    )];
+                    let mut cleanup_payload = Some(payload);
+                    // unwind 可能发生在第一条 Shutdown 入队前；硬停先唤醒裸 recv，再 join。
+                    self.sever();
+                    let workers = self.join_admin_workers(&mut cleanup_payload, &mut diagnostics);
+                    self.dead_worker_results.extend(workers);
                     self.dead_reason
                         .as_mut()
                         .expect("已判死")
-                        .push_str("；行政收尾再次 panic，强制回收");
-                    self.worker_shutdown.store(true, Ordering::SeqCst);
-                    for (who, handle) in std::mem::take(&mut self.handles) {
-                        let result = match handle.join() {
-                            Ok(result) => result,
-                            #[cfg(not(target_family = "wasm"))]
-                            Err(payload) => Err(invalid(format!(
-                                "收尾 join {who} 再次 panic：{}",
-                                prepared_stop::panic_detail(payload.as_ref())
-                            ))),
-                            #[cfg(target_family = "wasm")]
-                            Err(error) => Err(invalid(admin_wasm_join_diagnostic(who, error))),
-                        };
-                        if let Err(error) = &result {
-                            self.dead_reason
-                                .as_mut()
-                                .expect("已判死")
-                                .push_str(&format!("；收尾 join {who} 失败：{error}"));
-                        }
-                        self.dead_worker_results.push((who, result));
-                    }
+                        .push_str(&format!("；收尾：{}", diagnostics.join("；")));
                     if failure.payload.is_none() {
-                        failure.payload = Some(payload);
+                        failure.payload = cleanup_payload;
                     }
                 }
             }
@@ -962,6 +961,7 @@ impl World {
     }
 
     /// 不发送普通 Abort/Drain；已发布 tick、市场句柄和交易部事实均不倒放。
+    /// 正常消息清理不置硬停标记，必须让 AdminAbort/Shutdown 依 FIFO 真正执行。
     fn terminate_admin(
         &mut self,
         id: AdminTransactionId,
@@ -989,7 +989,6 @@ impl World {
                 diagnostics.push(format!("交易部 {stock} Shutdown 发送失败"));
             }
         }
-        self.worker_shutdown.store(true, Ordering::SeqCst);
         let mut groups: Vec<Option<GroupFinalState>> = (0..self.n_groups).map(|_| None).collect();
         let mut desks: Vec<Option<DeskFinalState>> = (0..self.n_stocks).map(|_| None).collect();
         let mut payload = None;
@@ -1010,7 +1009,10 @@ impl World {
                     }
                 }
                 Ok(UpMsg::TaskDied { who, payload: p }) => {
-                    diagnostics.push(format!("收尾 worker panic：{who}"));
+                    diagnostics.push(format!(
+                        "收尾 worker panic：{who}：{}",
+                        prepared_stop::panic_detail(p.as_ref())
+                    ));
                     if payload.is_none() {
                         payload = Some(p);
                     }
@@ -1027,111 +1029,164 @@ impl World {
                 }
             }
         }
-        self.worker_shutdown.store(true, Ordering::SeqCst);
-        if groups.iter().all(Option::is_some) && desks.iter().all(Option::is_some) {
-            let report = ShutdownReport {
+        let complete = groups.iter().all(Option::is_some) && desks.iter().all(Option::is_some);
+        if !complete {
+            // 消息协议已经不能证明收齐；保留首错，转由 LibOS 硬停唤醒全部剩余线程。
+            self.sever();
+        }
+        let workers = self.join_admin_workers(&mut payload, &mut diagnostics);
+        if complete {
+            self.dead_finals = Some(ShutdownReport {
                 group_finals: groups.into_iter().map(|g| g.expect("已验证")).collect(),
                 desk_finals: desks.into_iter().map(|d| d.expect("已验证")).collect(),
-                worker_results: Vec::new(),
+                worker_results: workers,
                 drained_minute_bars: std::mem::take(&mut self.pending_day_bars),
-            };
-            match self.join_workers(report) {
-                Ok(report) => self.dead_finals = Some(report),
-                Err(error) => diagnostics.push(error.to_string()),
-            }
+            });
         } else {
-            for (who, handle) in std::mem::take(&mut self.handles) {
+            self.dead_worker_results.extend(workers);
+        }
+        (payload, diagnostics.join("；"))
+    }
+
+    fn join_admin_workers(
+        &mut self,
+        payload: &mut Option<PanicPayload>,
+        diagnostics: &mut Vec<String>,
+    ) -> Vec<(WorkerId, Result<(), RuntimeError>)> {
+        std::mem::take(&mut self.handles)
+            .into_iter()
+            .map(|(who, handle)| {
                 let result = match handle.join() {
                     Ok(result) => result,
-                    #[cfg(not(target_family = "wasm"))]
-                    Err(p) => {
-                        let error = invalid(format!(
-                            "{who} 未运输 panic：{}",
-                            prepared_stop::panic_detail(p.as_ref())
-                        ));
-                        if payload.is_none() {
-                            payload = Some(p);
-                        }
-                        Err(error)
-                    }
-                    #[cfg(target_family = "wasm")]
-                    Err(error) => {
-                        // DEAD kind/code 交给终态诊断；io::Error 不能填充原 panic payload。
-                        Err(invalid(admin_wasm_join_diagnostic(who, error)))
-                    }
+                    Err(error) => Err(admin_join_failure(who, error, payload)),
                 };
                 if let Err(error) = &result {
                     diagnostics.push(format!("{who}：{error}"));
                 }
-                self.dead_worker_results.push((who, result));
-            }
-        }
-        (payload, diagnostics.join("；"))
+                (who, result)
+            })
+            .collect()
     }
 }
 
 #[cfg(test)]
-mod wasm_join_diagnostic_tests {
-    use super::admin_wasm_join_diagnostic;
-    use crate::facade_slot::arena::SlotArena;
-    use crate::facade_slot::codec::{decode_join_state, JoinState, GEN_BITS_DEFAULT};
-    use crate::facade_slot::platform::NullPlatform;
-    use crate::facade_slot::roles::join_typed;
-    use crate::facade_slot::test_supervisor::{write_dead, DeadKind, DeadOutcome};
-    use crate::runtime::protocol::WorkerId;
-    use std::sync::atomic::Ordering;
+mod join_diagnostic_tests {
+    use super::admin_join_failure;
+    use crate::runtime::protocol::{RuntimeError, WorkerId, WorkerJoinDiagnostic};
+    use libos::thread_facade::{JoinFailure, WorkerDeath, WorkerDeathKind};
 
-    fn assert_dead_join_diagnostic(who: WorkerId, kind: DeadKind, code: u32, expected: &str) {
-        let arena = SlotArena::alloc(1, GEN_BITS_DEFAULT);
-        assert_eq!(
-            write_dead(&arena, &NullPlatform, 0, 0, kind, code),
-            DeadOutcome::Written
+    fn assert_dead_join_diagnostic(
+        who: WorkerId,
+        kind: WorkerDeathKind,
+        code: u32,
+        expected: &str,
+    ) {
+        let error = std::io::Error::other(WorkerDeath::new(kind, code));
+        let failure = JoinFailure::from(error);
+        assert!(matches!(&failure, JoinFailure::WorkerDied(_)));
+        let mut payload = None;
+        let failure = admin_join_failure(who, failure, &mut payload);
+        let diagnostic = failure.to_string();
+        let expected_kind = match kind {
+            WorkerDeathKind::Panic => WorkerJoinDiagnostic::WorkerPanic { code },
+            WorkerDeathKind::HardTrap => WorkerJoinDiagnostic::WorkerHardTrap { code },
+        };
+        assert!(matches!(failure, RuntimeError::WorkerJoinFailed {
+            who: worker, diagnostic, ..
+        } if worker == who && diagnostic == expected_kind));
+        assert!(
+            payload.is_none(),
+            "WorkerDied 不能伪装为 native panic payload"
         );
-        let error = join_typed::<(), _>(&arena, &NullPlatform, 0, 0)
-            .expect_err("真实 DEAD join 必须交出 io::Error");
-        assert_eq!(error.kind(), std::io::ErrorKind::Other);
-        let rendered = error.to_string();
-        assert!(rendered.contains(expected));
-        let diagnostic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            admin_wasm_join_diagnostic(who, error)
-        }))
-        .expect("wasm join 失败必须返回诊断，不能伪装 panic payload");
         assert!(
             diagnostic.contains(&who.to_string()),
-            "诊断必须保留真实 worker 身份：{diagnostic}"
+            "诊断必须保留 worker 身份：{diagnostic}"
         );
         assert!(
-            diagnostic.contains("Other"),
-            "诊断必须保留 io::ErrorKind：{diagnostic}"
-        );
-        assert!(
-            diagnostic.contains(&rendered),
+            diagnostic.contains(expected),
             "死亡种类与结构化 code 不能丢失：{diagnostic}"
-        );
-        assert_eq!(
-            decode_join_state(arena.join_word(0).load(Ordering::SeqCst), GEN_BITS_DEFAULT),
-            JoinState::Consumed
         );
     }
 
     #[test]
-    fn admin_wasm_join_hardtrap_keeps_real_identity_kind_code_and_consumes_join() {
+    fn admin_join_hardtrap_keeps_identity_and_code_without_panic_payload() {
         assert_dead_join_diagnostic(
             WorkerId::Group(3),
-            DeadKind::HardTrap,
+            WorkerDeathKind::HardTrap,
             0xD5,
             "FACADE_DEAD_HARDTRAP:0xD5",
         );
     }
 
     #[test]
-    fn admin_wasm_join_panic_signal_is_io_diagnostic_and_consumes_join() {
+    fn admin_join_worker_panic_signal_is_not_a_native_payload() {
         assert_dead_join_diagnostic(
             WorkerId::Desk(5),
-            DeadKind::Panic,
+            WorkerDeathKind::Panic,
             0xA6,
             "FACADE_DEAD_PANIC:0xA6",
         );
+    }
+
+    #[test]
+    fn admin_join_transport_error_is_diagnostic_only() {
+        let failure = JoinFailure::from(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "等待超时",
+        ));
+        assert!(matches!(&failure, JoinFailure::Transport(_)));
+        let mut payload = None;
+        let failure = admin_join_failure(WorkerId::Desk(5), failure, &mut payload);
+        assert!(matches!(
+            &failure,
+            RuntimeError::WorkerJoinFailed {
+                who: WorkerId::Desk(5),
+                diagnostic: WorkerJoinDiagnostic::Transport,
+                ..
+            }
+        ));
+        let diagnostic = failure.to_string();
+        assert!(payload.is_none());
+        assert!(diagnostic.contains("等待超时"));
+    }
+
+    #[test]
+    fn admin_join_keeps_first_native_payload_and_reports_later_panics() {
+        let mut first_payload = None;
+        let first = admin_join_failure(
+            WorkerId::Group(3),
+            JoinFailure::NativePanic(Box::new("首次 panic")),
+            &mut first_payload,
+        );
+        let later = admin_join_failure(
+            WorkerId::Desk(5),
+            JoinFailure::NativePanic(Box::new("次生 panic")),
+            &mut first_payload,
+        );
+        assert_eq!(
+            first_payload
+                .as_ref()
+                .and_then(|payload| payload.downcast_ref::<&str>()),
+            Some(&"首次 panic")
+        );
+        assert!(first.to_string().contains("首次 panic"));
+        assert!(later.to_string().contains("次生 panic"));
+        assert!(matches!(
+            first,
+            RuntimeError::WorkerJoinFailed {
+                who: WorkerId::Group(3),
+                diagnostic: WorkerJoinDiagnostic::NativePanic,
+                ..
+            }
+        ));
+        assert!(matches!(
+            later,
+            RuntimeError::WorkerJoinFailed {
+                who: WorkerId::Desk(5),
+                diagnostic: WorkerJoinDiagnostic::NativePanic,
+                ..
+            }
+        ));
     }
 }
 
@@ -1140,7 +1195,7 @@ mod tests {
     use super::super::*;
     use super::invalid;
     use crate::orderbook::Side;
-    use crate::runtime::group::{PlaceSpec, TickPlan};
+    use crate::runtime::group::{Observed, PlaceSpec, TickPlan};
     use crate::runtime::protocol::{AdminFault, AdminOperation, AdminPhase};
     use crate::runtime::skeleton_tests::basic_spec;
     use crate::runtime::world::AdminCandidate;
@@ -1705,7 +1760,54 @@ mod tests {
         let report = w.dead_finals.as_ref().unwrap();
         for (group, expected) in report.group_finals.iter().zip(&baseline) {
             assert_eq!(&group.accounts, expected);
+            assert!(group.observed.contains(&Observed::Shutdown));
         }
+        // AdminAbort → Shutdown → Final 是消息协议；永久标记不得使 recv 跳过队首。
+        assert!(!w.worker_shutdown.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    #[cfg(all(test, not(target_family = "wasm")))]
+    fn admin_cleanup_unwind_wakes_workers_before_join_and_keeps_primary_panic() {
+        let mut w = World::spawn(
+            spec(),
+            crate::calendar::TradingCalendar::current_default_calendar().unwrap(),
+        )
+        .unwrap();
+        let published = w.publication.load();
+        w.shutdown_wake = ShutdownWake::with_explicit_wake_for_verification(
+            w.group_txs.clone(),
+            w.desk_txs.clone(),
+            || GroupIn::Shutdown,
+            || DeskMsg::Shutdown,
+        );
+        let first = Arc::new(17_u8);
+        let payload = first.clone();
+        // 损坏的参与者坐标使清理在第一条控制消息入队前 unwind。
+        let invalid_participant = BTreeMap::from([(GroupIdx::MAX, Vec::new())]);
+        let trapped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            w.finish_admin_failure::<()>(
+                super::AdminTransactionId(1),
+                &invalid_participant,
+                super::AdminFailure {
+                    error: invalid("首次行政失败"),
+                    payload: Some(Box::new(payload)),
+                    terminal: true,
+                    committing: false,
+                },
+            )
+        }))
+        .unwrap_err();
+        assert!(Arc::ptr_eq(
+            trapped.downcast_ref::<Arc<u8>>().unwrap(),
+            &first
+        ));
+        assert!(w.shutdown_wake.is_drained_for_verification());
+        assert!(w.group_txs.is_empty() && w.desk_txs.is_empty() && w.handles.is_empty());
+        assert_eq!(w.dead_worker_results.len(), w.n_groups + w.n_stocks);
+        let diagnostic = w.dead_reason.as_deref().unwrap();
+        assert!(diagnostic.contains("首次行政失败") && diagnostic.contains("行政收尾再次 panic"));
+        assert!(Arc::ptr_eq(&published, &w.publication.load()));
     }
     #[test]
     fn admin_10_partial_prepare_and_commit_send_failure_kill_and_join() {

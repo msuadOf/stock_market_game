@@ -92,6 +92,7 @@ fn correction_actor(
         injected_step_failure: None,
         pacing,
         game,
+        runtime_topology: Default::default(),
         cmd_rx,
         event_tx,
         session_id: "correction-recovery".into(),

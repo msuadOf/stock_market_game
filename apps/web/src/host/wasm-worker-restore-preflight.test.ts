@@ -3,7 +3,7 @@ import { registerHooks } from "node:module";
 import test from "node:test";
 import { WorkerTransportFixture } from "./worker-transport.test-support.ts";
 
-for (const scenario of ["wrong-hash", "missing-export", "false-missing-setter"] as const) {
+for (const scenario of ["wrong-hash", "missing-export", "false-missing-abi"] as const) {
   test(`实际 Worker restore package ${scenario} 必须在 initializer/Memory 前拒绝`, { timeout: 10000 }, async (t) => {
     const key = Symbol.for(`restore-preflight-${scenario}`);
     const saved = new Map<PropertyKey, PropertyDescriptor | undefined>();
@@ -70,8 +70,8 @@ for (const scenario of ["wrong-hash", "missing-export", "false-missing-setter"] 
       const ownerBusinessPort = transport.channels[0]!.port1 as unknown as MessagePort;
       const originalPost = workerPort.postMessage.bind(workerPort);
       workerPort.postMessage = (message: unknown) => { const value = message as Record<string, unknown>; posted.push(value); resolvePosted(value); originalPost(message); };
-      transport.dispatch(ownerBusinessPort, { type: "init", ...(scenario === "false-missing-setter" ? { runtimeOverride: false } : {}), initialArchive: { marker: "唯一 X" }, restoreCapability: { kind: "verified-package", wasmSha256: scenario === "wrong-hash" ? "a".repeat(64) : wasmHash,
-        glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "wasm_tombstone_init_primary", "wasm_tombstone_bind_ingress"] } });
+      transport.dispatch(ownerBusinessPort, { type: "init", ...(scenario === "false-missing-abi" ? { runtimeOverride: false } : {}), initialArchive: { marker: "唯一 X" }, restoreCapability: { kind: "verified-package", wasmSha256: scenario === "wrong-hash" ? "a".repeat(64) : wasmHash,
+        glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "wasm_tombstone_init_primary", "wasm_tombstone_bind_ingress", "start_wasm_reclaimer", "close_wasm_reclaimer"] } });
       if (scenario === "missing-export") {
         const progress = await awaitTestSignal(Promise.race([
           compileStarted.then(() => "compile" as const),
@@ -84,7 +84,7 @@ for (const scenario of ["wrong-hash", "missing-export", "false-missing-setter"] 
           releaseCompile = undefined;
         }
       }
-      if (scenario === "false-missing-setter") assert.equal(fetches, 0, "缺 setter 在 package load 和 initializer 前拒绝");
+      if (scenario === "false-missing-abi") assert.equal(fetches, 0, "缺 World ABI 在 package load 和 initializer 前拒绝");
       const failure = await awaitTestSignal(postedMessage);
       assert.equal(calls, 0, "PACKAGE_CHECK_MUST_PRECEDE_MEMORY_INITIALIZER");
       assert.equal(posted.length, 1); assert.equal(failure.type, "failure");

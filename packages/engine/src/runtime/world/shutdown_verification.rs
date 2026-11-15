@@ -37,7 +37,7 @@ impl WorldStopProbe {
         &self,
         handles: &[(
             WorkerId,
-            crate::thread_facade::JoinHandle<Result<(), RuntimeError>>,
+            libos::thread_facade::WorkerHandle<Result<(), RuntimeError>>,
         )],
     ) {
         assert_eq!(handles.len(), 4, "fixture必须拥有2组2部真实handles");
@@ -159,15 +159,25 @@ pub fn verify_world_stop(mode: u32, probe: &WorldStopProbe) -> Result<String, St
                 return Err("Calendar故障未触发真实构造错误".to_owned());
             }
         };
-        let RuntimeError::SendFailed { detail } = error else {
+        let RuntimeError::ConstructionFailure {
+            primary,
+            joined_workers,
+            cleanup_errors,
+        } = &error
+        else {
             return Err(format!("错误类型丢失：{error}"));
         };
-        if !detail.contains("交易部 Calendar owner 绑定失败") || !detail.contains("Continue 错序")
+        if primary != "交易部 Calendar owner 绑定失败"
+            || *joined_workers != 4
+            || cleanup_errors.len() != 1
+            || !cleanup_errors[0].contains("Continue 错序")
         {
-            return Err(format!("构造主错误或原worker次生错误丢失：{detail}"));
+            return Err(format!(
+                "构造主错误、join 数量或原worker次生错误不符：{error}"
+            ));
         }
         probe.stage(60);
-        return Ok(detail);
+        return Ok(error.to_string());
     }
     let mut world = spawn(probe).map_err(|error| error.to_string())?;
     let publication = world.publication();
@@ -188,14 +198,14 @@ pub fn verify_world_stop(mode: u32, probe: &WorldStopProbe) -> Result<String, St
             assert!(
                 world.dead_reason.is_some()
                     && world.handles.is_empty()
-                    && world.shutdown_wake.is_none()
+                    && world.shutdown_wake.is_drained_for_verification()
             );
             drop(world);
         }
         1 => {
             world.sever();
             assert!(
-                world.shutdown_wake.is_none()
+                world.shutdown_wake.is_drained_for_verification()
                     && world.group_txs.is_empty()
                     && world.desk_txs.is_empty()
             );

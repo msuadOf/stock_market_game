@@ -478,8 +478,8 @@ fn auxiliary_state_domains_have_runtime_equivalents_registered() {
 // 记录占位（零判别力——断言强度批 a-1 修复）。历史前提（附带域等价 +
 // 撮合域集成迁移）已由翻转批兑现：**缺省已翻转为 runtime**
 // （runtime/mod.rs step_runtime_enabled 缺省 true）。本测试改为可
-// 执行的翻转状态锚：子进程清除 ENGINE_STEP_RUNTIME 后缺省必须仍为
-// runtime（env=0 逃生门不改变缺省值语义）。进程外断言避免本进程
+// 执行的翻转状态锚：子进程清除 SMG_VERIFY_LEGACY_STEP 后缺省必须仍为
+// runtime（明确的旧管线验证不改变缺省语义）。进程外断言避免本进程
 // OnceLock 缓存与本测试套自身运行模式的耦合。
 #[test]
 fn batch8_final_verdict_flip_requires_integration_migration_batch() {
@@ -496,13 +496,13 @@ fn batch8_final_verdict_flip_requires_integration_migration_batch() {
         .arg("--exact")
         .arg("runtime::equivalence_tests::batch8_final_verdict_flip_requires_integration_migration_batch")
         .arg("--nocapture")
-        .env_remove("ENGINE_STEP_RUNTIME")
+        .env_remove("SMG_VERIFY_LEGACY_STEP")
         .env(PROBE, "1")
         .output()
         .expect("子进程执行翻转缺省探针");
     assert!(
         out.status.success(),
-        "缺省（未设 ENGINE_STEP_RUNTIME）子进程必须全绿——stdout:\n{}",
+        "缺省（未设 SMG_VERIFY_LEGACY_STEP）子进程必须全绿——stdout:\n{}",
         String::from_utf8_lossy(&out.stdout)
     );
 }

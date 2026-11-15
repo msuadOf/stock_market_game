@@ -1837,11 +1837,11 @@ pub(crate) fn next_routable_sell_qty(
 #[cfg(test)]
 mod chain_restructure_tests {
     include!("decision_chain/company_source_tests.rs");
-    #[cfg(all(feature = "simulation-diagnostics", not(target_arch = "wasm32")))]
+    #[cfg(all(test, feature = "simulation-diagnostics", not(target_arch = "wasm32")))]
     include!("decision_chain/runtime_trace_tests.rs");
-    #[cfg(all(feature = "simulation-diagnostics", not(target_arch = "wasm32")))]
+    #[cfg(all(test, feature = "simulation-diagnostics", not(target_arch = "wasm32")))]
     include!("decision_chain/runtime_causal_tests.rs");
-    #[cfg(all(feature = "simulation-diagnostics", not(target_arch = "wasm32")))]
+    #[cfg(all(test, feature = "simulation-diagnostics", not(target_arch = "wasm32")))]
     include!("decision_chain/runtime_other_npc_causal_tests.rs");
     use crate::session::plan_continuation_domain::PlanContinuationDomain;
 

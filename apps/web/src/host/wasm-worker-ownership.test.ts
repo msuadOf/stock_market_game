@@ -9,10 +9,11 @@ import { civilUpdate, frame, snapshot, tickBatch } from "./protocol-test-fixture
 import { CAPACITY, GEN_BITS, FREE_HEAD, FREE_HEAD_EMPTY, HEADER_WORDS, SLOT_STRIDE, JOIN_STRIDE } from "./facade-slot-protocol.ts";
 
 type Message = Record<string, unknown> & { type: string };
+type ReclaimerMode = "ready" | "start-fails" | "missing-export" | "close-fails" | "close-unproven";
 let fixtureId = 0;
 const bindingsKey = Symbol.for("stock-game-wasm-owner-tests");
 
-async function withWorker(run: (fixture: Awaited<ReturnType<typeof createFixture>>) => Promise<void>, missingWrites: boolean | "malformed" | "initial-archive" = false) {
+async function withWorker(run: (fixture: Awaited<ReturnType<typeof createFixture>>) => Promise<void>, missingWrites: boolean | "malformed" | "initial-archive" = false, reclaimer?: ReclaimerMode) {
   const globals = new Map<PropertyKey, PropertyDescriptor | undefined>();
   const replace = (key: PropertyKey, value: unknown) => {
     globals.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
@@ -28,7 +29,7 @@ async function withWorker(run: (fixture: Awaited<ReturnType<typeof createFixture
   });
   let hooks: ReturnType<typeof registerHooks> | undefined;
   try {
-    const f = await createFixture(replace, (registered) => { hooks = registered; }, missingWrites);
+    const f = await createFixture(replace, (registered) => { hooks = registered; }, missingWrites, reclaimer);
     await run(f);
   } finally {
     for (const channel of channels) {
@@ -47,9 +48,11 @@ async function createFixture(
   replace: (key: PropertyKey, value: unknown) => void,
   register: (hooks: ReturnType<typeof registerHooks>) => void,
   missingWrites: boolean | "malformed" | "initial-archive",
+  reclaimer?: ReclaimerMode,
 ) {
   const posted: Message[] = [];
   const globalLifecycle: Message[] = [];
+  const ownerTrace: string[] = [];
   let initialized: () => void = () => { throw new Error("初始化信号未安装"); };
   const ready = new Promise<void>((resolve) => { initialized = resolve; });
   const calls: string[] = [];
@@ -74,6 +77,23 @@ async function createFixture(
       const words = new Int32Array(sharedMemory.buffer); Atomics.store(words, CAPACITY, 4); Atomics.store(words, GEN_BITS, 29); Atomics.store(words, FREE_HEAD, FREE_HEAD_EMPTY | 0);
     },
     facade_slot_layout: () => layout,
+    ...(reclaimer === undefined ? {} : {
+      world_runtime_abi_version: () => 1,
+      init_wasm_wait: () => {},
+      wasm_wait_abort_layout: () => ({ address: 65000, bytes: 1 }),
+      wasm_wait_death_layout: () => ({ address: 65004, bytes: 4 }),
+    }),
+      ...(reclaimer === "missing-export" ? {} : {
+        start_wasm_reclaimer: () => {
+          ownerTrace.push("reclaimer:start");
+          if (reclaimer === "start-fails") throw new Error("RECLAIMER_SPAWN_SENTINEL");
+        },
+      }),
+      close_wasm_reclaimer: () => {
+        ownerTrace.push("reclaimer:close");
+        if (reclaimer === "close-fails") throw new Error("RECLAIMER_JOIN_SENTINEL");
+        return reclaimer !== "close-unproven";
+      },
     ingress_token: (current: number) => current,
     create_session: () => { calls.push(`create:${handle}`); if (failing === "create") throw new Error("create failed"); return handle; },
     civil_date: (current: number) => current === 7 ? "2030-01-02" : "2031-02-03",
@@ -83,6 +103,7 @@ async function createFixture(
     prepare_public_baseline: (current: number) => { calls.push(`prepare:${current}`); if (failing === "prepare") throw new Error("prepare failed"); },
     shutdown_session: (current: number) => {
       calls.push(`shutdown:${current}`);
+      ownerTrace.push("session:shutdown");
       if (failing === "shutdown") throw { handle: current, result: { primary: { stage: "join", worker: "group-0", detail: "真实 primary fixture" }, secondary: [{ stage: "final", worker: undefined, detail: "真实 secondary fixture" }], completion: { owned_workers: 1, joined_workers: 1, worker_results: [{ worker: "group-0", result: { Err: "panic fixture" } }], group_finals: 0, desk_finals: 0 } } };
       return { handle: current, result: { runtime: undefined } };
     },
@@ -124,12 +145,20 @@ async function createFixture(
     },
   };
   replace(bindingsKey, bindings);
-  replace("self", { crossOriginIsolated: true, postMessage: (message: Message) => { if (message.type === "engineLifecycle") globalLifecycle.push(message); }, addEventListener: (_type: string, callback: typeof listener) => { listener = callback; } });
+  replace("self", { crossOriginIsolated: true, postMessage: (message: Message) => { if (message.type === "engineLifecycle") {
+    globalLifecycle.push(message);
+    ownerTrace.push(`lifecycle:${String(message.state)}`);
+  } }, addEventListener: (_type: string, callback: typeof listener) => { listener = callback; } });
   const emptyModule = [0,97,115,109,1,0,0,0];
-  const exportNames = ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "wasm_tombstone_init_primary", "wasm_tombstone_bind_ingress"];
+  const exportNames = ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "wasm_tombstone_init_primary", "wasm_tombstone_bind_ingress", "start_wasm_reclaimer", "close_wasm_reclaimer"];
   const exportEntries = exportNames.flatMap((name, index) => [name.length, ...new TextEncoder().encode(name), 0, index]);
   const exportSize = exportEntries.length + 1;
-  const wasmBytes = Uint8Array.from(missingWrites === "initial-archive" ? [...emptyModule, 1,4,1,96,0,0, 3,7,6,0,0,0,0,0,0, 7, (exportSize & 127) | 128, exportSize >> 7, 6,...exportEntries, 10,19,6,2,0,11,2,0,11,2,0,11,2,0,11,2,0,11,2,0,11] : emptyModule);
+  const countExports = exportNames.length;
+  const wasmBytes = Uint8Array.from(missingWrites === "initial-archive" ? [
+    ...emptyModule, 1,4,1,96,0,0, 3,countExports + 1,countExports, ...Array(countExports).fill(0),
+    7,(exportSize & 127) | 128,exportSize >> 7,countExports,...exportEntries,
+    10,3 * countExports + 1,countExports,...exportNames.flatMap(() => [2,0,11]),
+  ] : emptyModule);
   const wasmHash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", wasmBytes))].map((byte) => byte.toString(16).padStart(2, "0")).join("");
   replace("fetch", async () => ({ ok: true, arrayBuffer: async () => wasmBytes.buffer }));
   replace("setTimeout", (callback: () => void) => { const id = ++nextTimer; timers.set(id, callback); return id; });
@@ -161,13 +190,32 @@ async function createFixture(
   }));
   await import(`./wasm-worker.ts?owner-test=${id}`);
   assert.ok(listener);
-  const control = new MessageChannel(); control.port1.addEventListener("message", (event) => { const value = event.data as Message; control.port1.postMessage(value.type === "facadeEngineMemory" ? { type: "facadeEngineMemoryRegistered", allocationId: 1 } : value.type === "facadeEngineDeath" ? { type: "facadeEngineDeathRegistered", allocationId: 1 } : { type: "facadeEngineConfigured" }); }); control.port1.start();
+  const control = new MessageChannel();
+  control.port1.addEventListener("message", (event) => {
+    const value = event.data as Message;
+    switch (value.type) {
+      case "facadeEngineMemory":
+        control.port1.postMessage({ type: "facadeEngineMemoryRegistered", allocationId: 1 });
+        break;
+      case "facadeEngineDeath":
+        control.port1.postMessage({ type: "facadeEngineDeathRegistered", allocationId: 1 });
+        break;
+      case "facadeEngineConfiguration":
+        control.port1.postMessage({ type: "facadeEngineConfigured" });
+        ownerTrace.push("substrate:configured-ack");
+        break;
+      default:
+        assert.fail(`意外 engine control 消息：${value.type}`);
+    }
+  });
+  control.port1.start();
   const business = new MessageChannel();
   const actualPost = business.port1.postMessage.bind(business.port1);
   business.port1.postMessage = (value: unknown) => {
     const message = value as Message;
     if (message.type === failingPost) throw new DOMException("发送失败", "DataCloneError");
     posted.push(message);
+    if (["ready", "failure", "shutdownCompleted", "operationError"].includes(message.type)) ownerTrace.push(`business:${message.type}`);
     if (message.type === "ready" || message.type === "failure") initialized();
     actualPost(value);
   };
@@ -183,11 +231,13 @@ async function createFixture(
     throw new Error(`真实 MessagePort 未在期限内处理 ${message.type}`);
   };
   listener!({ data: { type: "bindEngineTransport", instanceId: 1, dataPort: business.port1, controlPort: control.port2 } });
-  send({ type: "init", ...(missingWrites === "initial-archive" ? { initialArchive: saved, restoreCapability: { kind: "verified-package", wasmSha256: wasmHash, glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: exportNames } } : { setup: {} }) });
+  send({ type: "init", ...(missingWrites === "initial-archive" ? { initialArchive: saved, restoreCapability: { kind: "verified-package", wasmSha256: wasmHash, glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: exportNames } } : { setup: {} }),
+    ...(reclaimer === undefined ? {} : { runtimeOverride: true, waitSettings: { spinUs: 500, quietUs: 50_000, fineUs: 500, coarseUs: 500 } }) });
   await ready;
-  assert.deepEqual(posted, [{ type: "initializationProgress", phase: "engine" }, { type: "ready" }]);
+  const initialization = [...posted];
+  if (reclaimer === undefined) assert.deepEqual(posted, [{ type: "initializationProgress", phase: "engine" }, { type: "ready" }]);
   posted.length = 0;
-  return { send, sendAsync, calls, posted: posted as Message[], globalLifecycle, timers, saved, handle: (next: number) => { handle = next; }, fail: (next: typeof failing) => { failing = next; }, failPost: (type: string | null) => { failingPost = type; }, failWrite: (error: unknown) => { writeFailure = error; } };
+  return { send, sendAsync, calls, ownerTrace, initialization, posted: posted as Message[], globalLifecycle, timers, saved, handle: (next: number) => { handle = next; }, fail: (next: typeof failing) => { failing = next; }, failPost: (type: string | null) => { failingPost = type; }, failWrite: (error: unknown) => { writeFailure = error; } };
 }
 
 const correctionWriteRequest = { operation_id: "传输检查", company: 0, supersedes: 7, entries: [{ source: 900000001, date: "2030-01-02", kind: "CashRevenue", cash_flow: "Operating", lines: [{ account: "1002", side: "Debit", amount: "10.00" }, { account: "6001", side: "Credit", amount: "10.00" }] }], reason: "synthetic transport fixture" };
@@ -657,6 +707,8 @@ test("真实 MessagePort 异步 create 的 seed 参数错误不消耗唯一创�
       assert.equal(f.posted[0].type, "failure");
       assert.match(String(f.posted[0].message), /seed|必填/);
       assert.equal(f.calls.some((call) => call.startsWith("create:")), false);
+      assert.ok(!f.ownerTrace.includes("reclaimer:close"), "seed 校验失败不消费已就绪的 owner");
+      assert.deepEqual(f.globalLifecycle, [], "seed 校验错误不是 Memory 退休");
     }
     f.posted.length = 0;
     await f.sendAsync({ type: "create", seed: 1n }, () => f.posted.some((message) => message.type === "baseline"));
@@ -775,4 +827,118 @@ test("生产 Worker 默认新局拒绝 restoreInitial，不隐式建立或恢复
     assert.equal(f.timers.size, 0);
     assert.equal(f.posted.some(message => ["ingress", "created", "baseline"].includes(message.type)), false);
   });
+});
+
+test("LibOS Reclaimer：按 Memory 启动一次、同 Memory 恢复不关闭、退休先 drain 才报告 quiescent", { timeout: 10000 }, async () => {
+  await withWorker(async f => {
+    assert.ok(f.initialization.some(message => message.type === "ready"), "正控：真实 Worker 装配完成");
+    f.send({ type: "create", seed: 1n });
+    assert.ok(f.posted.some(message => message.type === "created" && message.generation === 1));
+    f.handle(9);
+    f.send({ type: "restore", generation: 1, requestId: 33, slot: f.saved });
+    assert.ok(f.posted.some(message => message.type === "restored" && message.nextGeneration === 2), "正控：确有同 Memory 换代");
+    assert.ok(!f.ownerTrace.includes("reclaimer:close"), "换代不具备 Memory 关闭权限");
+    assert.equal(f.globalLifecycle.length, 0);
+    await f.sendAsync({ type: "shutdown", requestId: 34, generation: 2 }, () => f.posted.some(message => message.type === "shutdownCompleted"));
+    assert.ok(f.calls.includes("shutdown:9"), "正控：已消费实际恢复后的会话");
+    const trace = [...f.ownerTrace];
+    const before = f.calls.length;
+    f.send({ type: "shutdown", requestId: 39, generation: 2 });
+    assert.equal(f.calls.length, before, "重复关闭不能再次消费 session");
+    assert.equal(f.ownerTrace.filter(item => item === "reclaimer:close").length,
+      trace.filter(item => item === "reclaimer:close").length, "重复关闭不能再次消费 reclaimer");
+    assert.deepEqual(trace, [
+      "substrate:configured-ack", "reclaimer:start", "business:ready",
+      "session:shutdown", "reclaimer:close", "business:shutdownCompleted", "lifecycle:quiescent",
+    ]);
+  }, false, "ready");
+});
+
+for (const mode of ["close-fails", "close-unproven"] as const) {
+  test(`LibOS Reclaimer：${mode} 不得伪造 Memory 退休成功`, { timeout: 10000 }, async () => {
+    await withWorker(async f => {
+      assert.ok(f.initialization.some(message => message.type === "ready"));
+      f.send({ type: "create", seed: 1n });
+      assert.ok(f.posted.some(message => message.type === "created" && message.generation === 1));
+      f.posted.length = 0;
+      await f.sendAsync({ type: "shutdown", generation: 1, requestId: 35 }, () => f.posted.length > 0);
+      assert.ok(f.calls.includes("shutdown:7"), "正控：测试触发了同一个生产退出入口");
+      assert.equal(f.posted.some(message => message.type === "shutdownCompleted"), false, "join 失败或未证明完成都不能产生成功回复");
+      assert.equal(f.globalLifecycle.length, 0, "owner 不得将 Memory 标记为静止");
+      assert.ok(f.ownerTrace.includes("reclaimer:close"));
+      assert.ok(f.posted.some(message => message.type === "failure" || message.type === "operationError"));
+      if (mode === "close-fails") assert.match(JSON.stringify(f.posted), /RECLAIMER_JOIN_SENTINEL/);
+    }, false, mode);
+  });
+}
+
+for (const mode of ["start-fails", "missing-export"] as const) {
+  test(`LibOS Reclaimer：${mode} 不得报告 Browser World ready 或降级为同步模式`, { timeout: 10000 }, async () => {
+    await withWorker(async f => {
+      assert.equal(f.initialization.some(message => message.type === "ready"), false);
+      assert.equal(f.initialization.filter(message => message.type === "failure").length, 1);
+      assert.match(JSON.stringify(f.initialization), mode === "start-fails" ? /RECLAIMER_SPAWN_SENTINEL/ : /start_wasm_reclaimer/);
+      assert.ok(f.calls.every(call => !call.startsWith("create:")));
+    }, false, mode);
+  });
+}
+
+
+test("LibOS Reclaimer：首次 create 失败时关闭 Memory owner，不能重试或伪造未分配", { timeout: 10000 }, async () => {
+  await withWorker(async f => {
+    assert.ok(f.initialization.some(message => message.type === "ready"), "正控：已经登记 Memory");
+    f.fail("create");
+    await f.sendAsync({ type: "create", seed: 1n }, () => f.posted.length > 0);
+    const failure = f.posted.find(message => message.type === "failure");
+    assert.ok(failure);
+    assert.match(JSON.stringify(failure), /create failed/);
+    assert.equal(failure.memoryAllocation, undefined, "已经登记过的 Memory 不得冒充未分配");
+    assert.equal(failure.engineQuiescent, "initialization-failed");
+    assert.deepEqual(f.globalLifecycle, [{ type: "engineLifecycle", instanceId: 1, state: "quiescent" }]);
+    const closedAt = f.ownerTrace.indexOf("reclaimer:close");
+    assert.ok(closedAt >= 0 && closedAt < f.ownerTrace.indexOf("lifecycle:quiescent"));
+    const before = f.calls.length;
+    f.send({ type: "create", seed: 2n });
+    assert.equal(f.calls.length, before);
+  }, false, "ready");
+});
+
+test("LibOS Reclaimer：会话报告与 reclaimer join 都失败时保留两条诊断", { timeout: 10000 }, async () => {
+  await withWorker(async f => {
+    assert.ok(f.initialization.some(message => message.type === "ready"));
+    f.send({ type: "create", seed: 1n });
+    f.fail("shutdown");
+    f.posted.length = 0;
+    await f.sendAsync({ type: "shutdown", generation: 1, requestId: 36 }, () => f.posted.length > 0);
+    assert.ok(f.calls.includes("shutdown:7"));
+    assert.equal(f.posted.some(message => message.type === "shutdownCompleted"), false);
+    assert.equal(f.globalLifecycle.length, 0);
+    const errors = JSON.stringify(f.posted);
+    assert.match(errors, /真实 primary fixture/);
+    assert.match(errors, /RECLAIMER_JOIN_SENTINEL/);
+  }, false, "close-fails");
+});
+
+test("LibOS Reclaimer：drop 会话与析构队列均失败时保留会话主错和关闭次错", { timeout: 10000 }, async () => {
+  await withWorker(async f => {
+    assert.ok(f.initialization.some(message => message.type === "ready"));
+    f.send({ type: "create", seed: 1n });
+    assert.ok(f.posted.some(message => message.type === "created" && message.generation === 1));
+    f.fail("drop");
+    f.posted.length = 0;
+    await f.sendAsync({ type: "drop" }, () => f.posted.length > 0);
+    assert.equal(f.posted.length, 1);
+    assert.equal(f.posted[0].type, "failure");
+    const failure = parseWorkerFailure(structuredClone(f.posted[0]));
+    assert.equal(failure.code, "WASM_SESSION_DROP_CLEANUP_FAILED");
+    const cause = failure.cause as { primary: string; reclaimer: string };
+    assert.match(cause.primary, /drop failed/);
+    assert.match(cause.reclaimer, /RECLAIMER_JOIN_SENTINEL/);
+    assert.equal(f.globalLifecycle.length, 0, "合并失败不能伪造 quiescence");
+    const cleanupCalls = () => [f.calls.filter(item => item === "drop:7").length,
+      f.ownerTrace.filter(item => item === "reclaimer:close").length];
+    assert.deepEqual(cleanupCalls(), [1, 1]);
+    f.send({ type: "drop" });
+    assert.deepEqual(cleanupCalls(), [1, 1], "失败也不得重复消费 session/close 权");
+  }, false, "close-fails");
 });

@@ -5,10 +5,10 @@ use crate::{
     TradingPhase,
 };
 
-#[cfg(not(target_arch = "wasm32"))]
-#[cfg(not(target_arch = "wasm32"))]
-#[cfg(not(target_arch = "wasm32"))]
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 #[test]
 fn compute_context_shared_sessions_preserve_budget_and_failure_atomicity() {
     let compute = crate::ComputeContext::with_workers(2).unwrap();

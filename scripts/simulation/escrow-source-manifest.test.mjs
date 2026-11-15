@@ -47,6 +47,22 @@ test("complete source manifest binds host source and docs but excludes workspace
   assert.notEqual((await escrowSourceManifest(root)).sha256, docsChanged.sha256);
 });
 
+test("仅修改 LibOS 必须使既有 escrow 源码清单失效", async (context) => {
+  const root = await fixture(context);
+  const relative = "packages/libos/src/lib.rs";
+  const source = path.join(root, relative);
+  await mkdir(path.dirname(source), { recursive: true });
+  await writeFile(source, "pub fn platform() {}\n");
+  const before = await escrowSourceManifest(root);
+  assert.ok(before.files.some(({ path: item }) => item === relative));
+
+  await writeFile(source, "pub fn platform_changed() {}\n");
+  const after = await escrowSourceManifest(root);
+  assert.notEqual(after.sha256, before.sha256);
+  assert.deepEqual(after.files.filter(({ path: item }) => item !== relative),
+    before.files.filter(({ path: item }) => item !== relative));
+});
+
 test("complete source manifest refuses a symlinked included input", async (context) => {
   const root = await fixture(context);
   await symlink(path.join(root, "docs/architecture.md"), path.join(root, "docs/linked.md"));

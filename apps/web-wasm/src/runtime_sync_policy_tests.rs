@@ -42,12 +42,13 @@ fn runtime_create_and_restore_support_all_policies() {
 }
 
 #[test]
-fn session_requires_runtime_independently_of_policy() {
-    assert!(require_wasm_runtime_enabled(true).is_ok());
-    assert!(require_wasm_runtime_enabled(false)
+fn missing_substrate_preserves_runtime_readiness_diagnostic() {
+    assert!(require_wasm_substrate(|| Ok(())).is_ok());
+    let error = require_wasm_substrate(|| Err("等待设置未初始化".into()))
         .unwrap_err()
-        .to_string()
-        .contains("WASM_RUNTIME_NOT_READY"));
+        .to_string();
+    assert!(error.contains("WASM_RUNTIME_NOT_READY"));
+    assert!(error.contains("等待设置未初始化"));
 }
 
 #[test]

@@ -1,4 +1,12 @@
-export interface WasmShutdownIssue { readonly stage: string; readonly worker: string | null; readonly detail: string }
+export type WasmWorkerJoinDiagnostic =
+  | { readonly kind: "native_panic" | "transport" }
+  | { readonly kind: "worker_panic" | "worker_hard_trap"; readonly code: number };
+export interface WasmShutdownIssue {
+  readonly stage: string;
+  readonly worker: string | null;
+  readonly detail: string;
+  readonly joinFailure?: WasmWorkerJoinDiagnostic;
+}
 export interface WasmShutdownWorker { readonly worker: string; readonly result: { readonly kind: "ok" } | { readonly kind: "error"; readonly message: string } }
 export interface WasmShutdownCompletion {
   readonly ownedWorkers: number; readonly joinedWorkers: number; readonly workers: readonly WasmShutdownWorker[];
@@ -43,9 +51,30 @@ function worker(value: unknown): string {
   if (!/^(group|desk)-(0|[1-9]\d*)$/.test(name)) throw new Error("shutdown worker 身份非法");
   return name;
 }
+function hasOwn(value: unknown, key: string): boolean {
+  return value !== null && typeof value === "object" && Object.hasOwn(value, key);
+}
+function joinDiagnostic(value: unknown): WasmWorkerJoinDiagnostic {
+  const kind = hasOwn(value, "kind") ? (value as Record<string, unknown>).kind : undefined;
+  if (kind === "worker_panic" || kind === "worker_hard_trap") {
+    const source = exact(value, ["kind", "code"], "join failure");
+    const code = count(source.code, "join failure code");
+    if (code > 0xffff_ffff) throw new Error("join failure code 必须为 u32");
+    return { kind, code };
+  }
+  if (kind === "native_panic" || kind === "transport") {
+    exact(value, ["kind"], "join failure");
+    return { kind };
+  }
+  throw new Error("join failure kind 非法");
+}
 function issue(value: unknown): WasmShutdownIssue {
-  const source = exact(value, ["stage", "worker", "detail"], "shutdown issue");
-  return { stage: text(source.stage, "stage"), worker: source.worker === undefined ? null : worker(source.worker), detail: text(source.detail, "detail") };
+  const hasJoin = hasOwn(value, "join_failure");
+  const source = exact(value, hasJoin ? ["stage", "worker", "detail", "join_failure"] : ["stage", "worker", "detail"], "shutdown issue");
+  const identity = source.worker === undefined ? null : worker(source.worker);
+  if (hasJoin && identity === null) throw new Error("join failure 缺少 worker 身份");
+  return { stage: text(source.stage, "stage"), worker: identity, detail: text(source.detail, "detail"),
+    ...(hasJoin ? { joinFailure: joinDiagnostic(source.join_failure) } : {}) };
 }
 function completion(value: unknown, success: boolean): WasmShutdownCompletion {
   const source = exact(value, ["owned_workers", "joined_workers", "worker_results", "group_finals", "desk_finals"], "shutdown completion");
@@ -80,8 +109,10 @@ export function parseWasmSessionShutdown(value: unknown): WasmSessionShutdown {
   if (kind !== "success" && kind !== "failure") throw new Error("shutdown report kind 非法");
   const handle = count(source.handle, "handle");
   function wireIssue(value: unknown): unknown {
-    const item = exact(value, ["stage", "worker", "detail"], "Worker shutdown issue");
-    return { ...item, worker: item.worker === null ? undefined : item.worker };
+    const hasJoin = hasOwn(value, "joinFailure");
+    const item = exact(value, hasJoin ? ["stage", "worker", "detail", "joinFailure"] : ["stage", "worker", "detail"], "Worker shutdown issue");
+    return { stage: item.stage, worker: item.worker === null ? undefined : item.worker, detail: item.detail,
+      ...(hasJoin ? { join_failure: item.joinFailure } : {}) };
   }
   function wireCompletion(value: unknown): unknown {
     if (value === null) return undefined;

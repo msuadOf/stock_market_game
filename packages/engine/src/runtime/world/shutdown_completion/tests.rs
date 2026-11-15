@@ -12,6 +12,37 @@ fn shutdown_failure_stays_within_the_error_layout_budget() {
     );
 }
 
+#[test]
+fn shutdown_join_issue_serializes_diagnostic_without_changing_result_shape() {
+    let who = WorkerId::Desk(1);
+    let (workers, issues) = completion_worker_results(vec![
+        (WorkerId::Group(0), Ok(())),
+        (
+            who,
+            Err(RuntimeError::WorkerJoinFailed {
+                who,
+                diagnostic: WorkerJoinDiagnostic::WorkerHardTrap { code: 0xD5 },
+                detail: "硬件 trap 无可重抛载荷".to_owned(),
+            }),
+        ),
+    ]);
+    assert_eq!(workers.len(), 2);
+    assert_eq!(issues.len(), 1);
+    let wire = serde_json::to_value(&issues[0]).unwrap();
+    assert_eq!(
+        wire.get("worker").and_then(|value| value.as_str()),
+        Some("desk-1")
+    );
+    assert_eq!(
+        wire["join_failure"],
+        serde_json::json!({ "kind": "worker_hard_trap", "code": 0xD5 })
+    );
+    assert_eq!(
+        serde_json::to_value(&workers[1]).unwrap()["result"],
+        serde_json::json!({ "Err": "worker desk-1 join 失败：硬件 trap 无可重抛载荷" })
+    );
+}
+
 fn world() -> World {
     let spec = crate::runtime::skeleton_tests::basic_spec(
         2,
@@ -29,7 +60,7 @@ fn world() -> World {
 #[test]
 fn active_shutdown_returns_all_real_joins_and_verified_finals_without_publication() {
     let mut world = world();
-    // 沿用既有正常 Shutdown 前停顿 seam，超过 native worker 50ms 检查片。
+    // 沿用既有正常 Shutdown 前停顿 seam，覆盖历史提前退出窗口。
     world.shutdown_stall_for_test = Some(std::time::Duration::from_millis(80));
     let publication = world.publication();
     let before = publication.load();

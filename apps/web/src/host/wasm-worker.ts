@@ -3,7 +3,7 @@ import { WasmRestartGate } from "./wasm-restart-gate.ts";
 import { prepareBaselineUpdate } from "./host-update.ts";
 import { parseSaveSlot } from "../save/save-schema.ts";
 import { normalizePublicReportById, normalizePublicReportPage, normalizeSerdeMaps } from "./serde-normalize.ts";
-import { WasmSessionSlot } from "./wasm-session-slot.ts";
+import { WASM_CREATE_ONCE_ERROR, WasmSessionSlot } from "./wasm-session-slot.ts";
 import { WasmTickLoop } from "./wasm-tick-loop.ts";
 import { WorkerTaskScheduler } from "./worker-task-scheduler.ts";
 import { classifyWasmFailure, describeWasmFailure, describeReadFailureFields, type WasmFailureClassification } from "./wasm-failure.ts";
@@ -25,6 +25,8 @@ type WasmNpcDecisionTrace = (handle: number, account: bigint) => readonly NpcDec
 type WasmTransportExtensions = Omit<typeof import("../../wasm-pkg/web_wasm.js"), "query_stock_history"> & {
   readonly flush_runtime_sync?: (handle: number) => unknown;
   readonly shutdown_session?: (handle: number) => unknown;
+  readonly start_wasm_reclaimer?: () => void;
+  readonly close_wasm_reclaimer?: () => boolean;
   readonly ingress_token?: (handle: number) => number;
   readonly prepare_public_baseline?: (handle: number) => void;
   readonly stock_catalog_view: (handle: number) => unknown;
@@ -99,6 +101,7 @@ const loop = new WasmTickLoop({
 });
 const engineInitializer = createFacadeEngineInitializer({
   ownsIncomingArchive: true,
+  allowE2ERuntimeTopology: E2E_STEP_ENABLED,
   isolated: () => self.crossOriginIsolated === true,
   environment: { bindFacadeThreadEnvironment, installFacadeSlotLayout, getArenaView },
   load: loadEngineModule,
@@ -337,11 +340,77 @@ async function loadEngineModule(expected?: VerifiedWasmRestoreCapability): Promi
   return { module, diagnostics: diagnosticsWasm, glue: wasmModule as unknown as FacadeEngineGlue };
 }
 
+let reclaimerStarted = false;
+let closedAfterCreateFailure = false;
+
+function startReclaimer(): void {
+  if (wasmModule === null) throw new Error("WASM bindings 尚未完成装配");
+  const { start_wasm_reclaimer: start, close_wasm_reclaimer: close } = transportExtensions(wasmModule);
+  if (typeof start !== "function") throw new Error("WASM 缺少 start_wasm_reclaimer，请重建 bindings");
+  if (typeof close !== "function") throw new Error("WASM 缺少 close_wasm_reclaimer，请重建 bindings");
+  start();
+  reclaimerStarted = true;
+}
+
+function closeReclaimer(): void {
+  if (!reclaimerStarted) return;
+  const close = wasmModule === null ? undefined : transportExtensions(wasmModule).close_wasm_reclaimer;
+  // 消费关闭权，不得 duplicate join；错误时宿主不能宣称 quiescence。
+  reclaimerStarted = false;
+  if (typeof close !== "function" || close() !== true) throw new Error("未取得 WASM 析构队列的排空和 join 证明");
+}
+
+/** 两个清理权都至多消费一次；原会话错误不能被次生 close 错误覆盖。 */
+function dropSessionAndReclaimer(): void {
+  let dropped: { error: unknown } | undefined;
+  try { slot.drop(); }
+  catch (error) { dropped = { error }; }
+  try { closeReclaimer(); }
+  catch (cleanup) {
+    if (dropped === undefined) throw cleanup;
+    const primary = describeWasmFailure(dropped.error);
+    const reclaimer = describeWasmFailure(cleanup);
+    throw Object.assign(new Error(`会话与析构队列均未完成清理：${primary}；${reclaimer}`, {
+      cause: { primary, reclaimer },
+    }), { code: "WASM_SESSION_DROP_CLEANUP_FAILED", where: "wasm-worker.drop" });
+  }
+  if (dropped !== undefined) throw dropped.error;
+}
+
+function shutdownSessionAndReclaimer() {
+  let report;
+  let sessionThrown: { error: unknown } | undefined;
+  try { report = slot.shutdown(); }
+  catch (error) { sessionThrown = { error }; }
+  try { closeReclaimer(); }
+  catch (error) {
+    const primary = sessionThrown === undefined
+      ? report?.kind === "failure" ? report : undefined
+      : describeWasmFailure(sessionThrown.error);
+    throw Object.assign(new Error(`析构队列关闭失败：${describeWasmFailure(error)}`, {
+      cause: { primary, cleanup: describeWasmFailure(error) },
+    }), { code: "WASM_RECLAIMER_SHUTDOWN_FAILED", where: "wasm-worker.shutdown" });
+  }
+  if (sessionThrown !== undefined) throw sessionThrown.error;
+  if (report === undefined) throw new Error("WASM 退出缺少会话报告");
+  return report;
+}
+
 function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
   const message = event.data;
   void (async () => {
+    let initialCreateAttempt = false;
     let restoreAttempt: { handle: number; generation: number; token: number; restartWanted: boolean } | null = null;
     try {
+      // 真正的首次 create 失败已退休 owner；协议拒绝仍保持 create-once 与 stale-generation 语义。
+      if (closedAfterCreateFailure) {
+        if (message.type === "create") {
+          exact({ ...message }, ["type", "seed"], "Worker create");
+          if (typeof message.seed !== "bigint") throw new Error("seed 必须是 bigint");
+          throw new Error(WASM_CREATE_ONCE_ERROR);
+        }
+        if (Object.hasOwn(message, "generation")) slot.requireGeneration(message.generation);
+      }
       if (closingSession && message.type !== "shutdown") throw new Error("Worker 会话正在关闭，拒绝新请求");
       if (fatalSession && message.type !== "drop" && message.type !== "shutdown") throw new Error("Worker 会话已停止，必须重建有效会话");
       switch (message.type) {
@@ -359,6 +428,8 @@ function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
           ctx.postMessage({ type: "initializationProgress", phase: "engine" });
           if (engineControlPort === undefined) throw new Error("engine transport controlPort 尚未绑定");
           await engineInitializer.initialize({ ...initializerMessage, controlPort: engineControlPort });
+          if (closingSession) throw new Error("WASM 装配完成时实例已经关闭");
+          startReclaimer();
           ctx.postMessage({ type: "ready" });
           return;
         }
@@ -381,7 +452,9 @@ function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
           if (configured.initialArchive !== null) throw new Error("初始完整 X 只能 restoreInitial，禁止先建空局");
           // setup 已由首次 init 的唯一配置持有；create 只携带一次性种子，未知字段显式拒绝。
           exact({ ...message }, ["type", "seed"], "Worker create");
-          slot.create(configured.setup, message.seed);
+          // 只在通过 JS 校验并锁存创建权后、实际进入 Rust FFI 时标记退休责任。
+          slot.create(configured.setup, message.seed, () => { initialCreateAttempt = true; });
+          initialCreateAttempt = false;
           const [, wasm] = slot.requireHandle();
           const capabilities = readWasmCapabilities(wasm);
           postIngressBridge();
@@ -729,7 +802,7 @@ function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
           closingSession = true;
           restoreRestart.invalidate();
           loop.stop();
-          const report = slot.shutdown();
+          const report = shutdownSessionAndReclaimer();
           ctx.postMessage({ type: "shutdownCompleted", requestId: message.requestId, generation: requestedGeneration, report });
           reportEngineQuiescence();
           return;
@@ -737,7 +810,8 @@ function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
         case "drop": {
           restoreRestart.invalidate();
           loop.stop();
-          slot.drop();
+          closingSession = true;
+          dropSessionAndReclaimer();
           return;
         }
         default:
@@ -746,11 +820,20 @@ function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
     } catch (error) {
       let failureError = error;
       let initializationClosed = false;
-      if (message.type === "init" || message.type === "restoreInitial") {
+      if (message.type === "init" || message.type === "restoreInitial" || initialCreateAttempt) {
+        if (initialCreateAttempt) closedAfterCreateFailure = true;
         closingSession = true;
         restoreRestart.invalidate(); loop.stop();
         try {
-          slot.drop(); engineInitializer.dispose(); verifiedRestoreModule = undefined;
+          let dropped: { error: unknown } | undefined;
+          try { slot.drop(); } catch (error) { dropped = { error }; }
+          try { closeReclaimer(); }
+          catch (error) {
+            if (dropped === undefined) throw error;
+            throw new AggregateError([dropped.error, error], `会话与析构队列均未完成清理：${describeWasmFailure(dropped.error)}；${describeWasmFailure(error)}`);
+          }
+          if (dropped !== undefined) throw dropped.error;
+          engineInitializer.dispose(); verifiedRestoreModule = undefined;
           initializationClosed = true;
         } catch (cleanupError) {
           failureError = new AggregateError([error, cleanupError], "初始会话失败且清理失败，quiescence 未证明", { cause: { primary: error, cleanup: cleanupError } });
@@ -777,12 +860,14 @@ function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
         if (closeAuthority) {
           try { slot.drop(); }
           catch (cleanupError) { failure = { ...failure, cause: { primary: failure.cause, cleanup: describeWasmFailure(cleanupError) } }; }
+          try { closeReclaimer(); }
+          catch (cleanupError) { failure = { ...failure, cause: { primary: failure.cause, reclaimer: describeWasmFailure(cleanupError) } }; }
         }
-        postFailureDetails(`wasm-worker.${message.type}`, failure, initializationClosed ? message.type === "init" ? "initialization-failed" : "initial-session-failed" : false, initializationClosed && message.type === "init" && !memoryInitializationStarted);
+        postFailureDetails(`wasm-worker.${message.type}`, failure, initializationClosed ? message.type === "restoreInitial" ? "initial-session-failed" : "initialization-failed" : false, initializationClosed && message.type === "init" && !memoryInitializationStarted);
         if (initializationClosed) reportEngineQuiescence(message.type === "init" && !memoryInitializationStarted ? "unallocated" : "quiescent");
       } else if (typeof message.requestId === "number") respondOperationError(message, classified.description);
       else {
-        postFailureDetails("wasm-worker.message", unstructuredFailureDetails(classified.description, "wasm-worker.message", classified.cause), initializationClosed ? message.type === "init" ? "initialization-failed" : "initial-session-failed" : false, initializationClosed && message.type === "init" && !memoryInitializationStarted);
+        postFailureDetails("wasm-worker.message", unstructuredFailureDetails(classified.description, "wasm-worker.message", classified.cause), initializationClosed ? message.type === "restoreInitial" ? "initial-session-failed" : "initialization-failed" : false, initializationClosed && message.type === "init" && !memoryInitializationStarted);
         if (initializationClosed) reportEngineQuiescence(message.type === "init" && !memoryInitializationStarted ? "unallocated" : "quiescent");
       }
     }

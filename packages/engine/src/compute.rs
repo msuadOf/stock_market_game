@@ -1,11 +1,10 @@
-//! 计算后端抽象（ADR-0008）：批 7 起 rayon 全面退役——本文件是**串行垫片**
-//! （公共 API 保持，池/派发语义以串行立即执行实现；并行由 `runtime/` 组线程/
-//! 交易部所有权模型接管，GameSession 接线前的过渡形态）。
+//! 计算后端抽象（ADR-0008、ADR-0043）：CPU 借用任务在两端均内联执行。
+//! 不创建 Rayon 池；真正的市场并发来自 `runtime/` 的 Group/Desk 所有权模型。
 //!
 //! 设计原则：
 //! - 只抽象「并行可独立」的工作（NPC decide）。
 //! - 顺序依赖部分（撮合、结算、路由）留在 session.rs，不经 ComputeBackend。
-//! - CPU 实现 = rayon 并行（零行为变化）。
+//! - CPU 实现 = 同一执行线程内联；逻辑分块宽度不等于物理线程数。
 //! - GPU 实现 = wgpu compute shader（整数定点，跨厂商确定性）。
 //! - 动态切换：SessionSetup.compute 控制。
 //!
@@ -17,6 +16,7 @@ use crate::compute::parallel::*;
 use crate::config::GameConfig;
 use crate::session::SplitMix64;
 use crate::strategy::{Intent, MarketView, SelfView, StrategyData};
+pub(crate) use libos::thread_facade::{inline_scope as scope, InlineScope as Scope};
 
 /// 会话计算资源的唯一执行上下文；宿主可共享同一个 Arc，shadow 不另建池。
 /// 不承载交易权威状态、Tokio I/O 或旧状态析构。
@@ -36,7 +36,7 @@ pub struct ComputeContext {
     /// 入口被拒的协调者不进入池内执行路径（不登记、不派发预留，只在自己
     /// 线程内联推进自有工作）；派发预留被拒的任务留在 pending 由协调者内联
     /// 或池外等待容量。只做准入登记与容量唤醒，不含任何调度行为。
-    /// WASM 单线程恒为空转。
+    /// 内联分块宽度为 1 时，不以多槽准入台账决定进度。
     admission: std::sync::Mutex<PoolAdmission>,
     /// 容量变化广播：占槽退出/派发预留释放时唤醒等待容量的池外协调者。
     /// 等待点账（R4a 阶段 1，设计 §10.1）：`wait_for_spawn_capacity` 的
@@ -262,8 +262,9 @@ type ComputeObserver = std::sync::Arc<dyn Fn(ComputeObservation) + Send + Sync>;
 pub struct ComputeObservation {
     pub work: ComputeWork,
     pub configured_workers: usize,
+    /// 本次内联计算的真实参与线程数，不包括其他 World Worker。
     pub executing_workers: usize,
-    /// ThreadPool::current_thread_index 检查实际 registry，不是自行分配的 tag。
+    /// 没有计算池 registry，内联工作没有池内 worker index。
     pub owner_worker: Option<usize>,
 }
 
@@ -279,8 +280,7 @@ mod context_tests {
         ));
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     #[test]
     fn compute_context_default_uses_available_os_resources() {
         assert_eq!(
@@ -294,7 +294,7 @@ mod context_tests {
     /// 数 = min(len, active_width)；active_width 可低于池宽（128=上限语义，
     /// 实际参与宽度按需收缩，空闲线程无可见工作即入睡，消灭 join 等待自旋
     /// 与全池空扫描）。
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     #[test]
     fn parallel_map_chunks_gathers_in_order_with_active_width_cap() {
         let compute = ComputeContext::with_workers(4).unwrap();
@@ -367,14 +367,27 @@ mod context_tests {
         assert!(9usize.div_ceil(parallel_grain(9, 4)) <= 4);
     }
 
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(test, target_arch = "wasm32"))]
     #[test]
     fn compute_context_wasm_is_explicitly_sequential() {
-        assert!(matches!(
-            ComputeContext::with_workers(2),
-            Err(ComputeInitError::ThreadsUnavailable { workers: 2 })
-        ));
-        assert_eq!(ComputeContext::with_workers(1).unwrap().install(|| 7), 7);
+        let compute = ComputeContext::available().unwrap();
+        assert_eq!(compute.workers(), 1);
+        assert_eq!(compute.install(|| 7), 7);
+    }
+
+    #[test]
+    fn compute_observer_does_not_report_logical_chunks_as_executing_threads() {
+        let context = ComputeContext::with_workers(4).unwrap();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let recorder = std::sync::Arc::clone(&seen);
+        context.set_observer(std::sync::Arc::new(move |event| {
+            *recorder.lock().unwrap() = Some(event);
+        }));
+        context.record(ComputeWork::Decide);
+        let event = seen.lock().unwrap().expect("计算观察必须收到一条记录");
+        assert_eq!(event.configured_workers, 4);
+        assert_eq!(event.executing_workers, 1);
+        assert_eq!(event.owner_worker, None);
     }
 }
 
@@ -497,16 +510,13 @@ impl ComputeContext {
         Self::with_workers(workers).expect("from_workers：workers 必须为正")
     }
 
-    /// 默认资源来自 OS 及进程亲和限制，不读取 caller 的 Rayon registry。
+    /// 由 LibOS 提供默认内联分块宽度，不探测或创建计算池。
     pub fn available() -> Result<std::sync::Arc<Self>, ComputeInitError> {
-        #[cfg(not(target_arch = "wasm32"))]
-        let workers = crate::thread_facade::available_parallelism()
+        let workers = libos::thread_facade::default_inline_chunk_width()
             .map_err(|error| ComputeInitError::AvailableResources {
                 os_code: error.raw_os_error(),
             })?
             .get();
-        #[cfg(target_arch = "wasm32")]
-        let workers = 1;
         Self::with_workers(workers)
     }
 
@@ -619,7 +629,7 @@ impl ComputeContext {
         admission.drives + admission.spawned < workers
     }
 
-    /// fire-and-forget 任务进入本上下文池；WASM 顺序立即执行。
+    /// 两端均在当前线程顺序立即执行；不启动后台线程。
     /// 两段式任务：`bound` 在继承的计时/扰动绑定内执行并返回载荷；
     /// `finish`（发送等收尾动作）在绑定释放之后执行——协调者可见的完成信号
     /// 因此严格晚于最后一个绑定克隆的析构，收尾 try_unwrap 无需等待即独占。
@@ -672,7 +682,7 @@ impl ComputeContext {
         (left(), right())
     }
 
-    /// scope 体保留在协调调用线程；spawn 的借用任务只进入此池。
+    /// scope 体和所有 spawn 的借用任务均在协调调用线程内联执行。
     pub(crate) fn in_place_scope<'scope, R>(
         &self,
         body: impl FnOnce(&crate::compute::Scope<'scope>) -> R,
@@ -995,12 +1005,11 @@ impl ComputeContext {
             .expect("计算 observer 锁被 poison")
             .as_ref()
         {
-            let (executing_workers, owner_worker) = (self.workers(), None);
             observe(ComputeObservation {
                 work,
                 configured_workers: self.workers(),
-                executing_workers,
-                owner_worker,
+                executing_workers: 1,
+                owner_worker: None,
             });
         }
         let _ = work;
@@ -1013,22 +1022,6 @@ pub(crate) fn join<A: Send, B: Send>(
     right: impl FnOnce() -> B + Send,
 ) -> (A, B) {
     (left(), right())
-}
-
-/// 串行 Scope：spawn 的借用任务立即执行，不建立队列或调度器。
-pub(crate) struct Scope<'scope>(std::marker::PhantomData<&'scope ()>);
-
-impl<'scope> Scope<'scope> {
-    pub fn spawn<F>(&self, work: F)
-    where
-        F: FnOnce(&Scope<'scope>) + Send + 'scope,
-    {
-        work(self);
-    }
-}
-
-pub(crate) fn scope<'scope, R>(work: impl FnOnce(&Scope<'scope>) -> R) -> R {
-    work(&Scope(std::marker::PhantomData))
 }
 
 thread_local! {
@@ -1073,13 +1066,13 @@ pub fn parallel_grain(len: usize, workers: usize) -> usize {
 }
 
 pub(crate) fn yield_work() {
-    std::thread::yield_now();
+    libos::thread_facade::yield_hint();
 }
 
 /// 串行 parallel 垫片（全平台；原 wasm 兼容层提升为唯一实现）：par_iter 等
 /// 解析为顺序迭代——消费面（pipeline 散点）零改动。
 pub(crate) mod parallel {
-    /// WASM 不调用 Rayon 初始化或 spawn；只替换独立遍历的执行方式。
+    /// 两端都不调用 Rayon 初始化或 spawn，迭代器本身按顺序求值。
     pub trait IntoParallelIterator: IntoIterator + Sized {
         fn into_par_iter(self) -> Self::IntoIter {
             self.into_iter()

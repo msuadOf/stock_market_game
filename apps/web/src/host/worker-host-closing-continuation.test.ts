@@ -184,9 +184,13 @@ test("真实 ingress bind operationError 在关闭 continuation 前到达仍报�
     const binding = f.workers[1].sent.findLast((request) => request.type === "bindIngress" && request.generation === 2)!;
     f.workers[1].emitRaw({ type: "operationError", requestId: binding.requestId, generation: binding.generation, message: "真实 ingress bind 故障" });
     const disposing = host.dispose();
+    const settled = disposing.then(() => ({ ok: true as const }), (error: unknown) => ({ ok: false as const, error }));
     await loadRejected;
-    const disposal = await disposing.then(() => ({ ok: true as const }), (error: unknown) => ({ ok: false as const, error }));
     await drain();
+    assert.equal(f.workers[0].terminations, 0, "真实 bind fatal 仍有有界诊断期");
+    f.clock.advance(2001);
+    await drain();
+    const disposal = await settled;
     assert.equal(disposal.ok, false, "真实 bind fatal 必须保留在 disposal 错误链中");
     if (disposal.ok) throw new Error("真实 bind fatal 未保留");
     const errorMessages = (error: unknown): string[] => {

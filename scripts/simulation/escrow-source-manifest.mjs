@@ -15,7 +15,7 @@ const INPUTS = [
   "apps/web/index.html", "apps/web/inspector.html", "apps/web/package.json", "apps/web/playwright.config.ts",
   "apps/web/public", "apps/web/src", "apps/web/tsconfig.app.json", "apps/web/tsconfig.inspector.json",
   "apps/web/tsconfig.json", "apps/web/tsconfig.node.json", "apps/web/vite.config.ts",
-  "docs", "packages/engine", "packages/engine-gpu", "scripts",
+  "docs", "packages/engine", "packages/engine-gpu", "packages/libos", "scripts",
 ];
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 

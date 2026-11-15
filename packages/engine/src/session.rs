@@ -1473,6 +1473,23 @@ fn deserialize_saved_setup<'de, D: serde::Deserializer<'de>>(
 // 默认 new 与经 new 构造的 restore 共用初始 NPC group 数；不控制显式 override。
 const DEFAULT_NEW_RUNTIME_GROUP_COUNT: usize = 1;
 
+/// 宿主执行拓扑，不是游戏设置或存档字段；只有验证入口显式选择双组。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HostRuntimeTopology {
+    #[default]
+    Standard,
+    TwoGroupParity,
+}
+
+impl HostRuntimeTopology {
+    pub const fn group_count(self) -> usize {
+        match self {
+            Self::Standard => DEFAULT_NEW_RUNTIME_GROUP_COUNT,
+            Self::TwoGroupParity => 2,
+        }
+    }
+}
+
 impl SessionSetup {
     /// 仅用于默认 new 的宿主装配；restore 与显式 runtime groups 不在此接口范围。
     pub fn default_new_runtime_topology(&self) -> Result<(usize, usize), SessionError> {
@@ -6068,7 +6085,7 @@ mod b2_bars_rollback_tests {
             "serial save 面同样零 ghost"
         );
 
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(all(test, not(target_arch = "wasm32")))]
         if crate::runtime::step_runtime_enabled() {
             let mut session = b2_session();
             execute_buy(&mut session);
@@ -7340,9 +7357,9 @@ mod npc_working_quote_tests {
     // 进入 runtime World，后继真实买单应能与它撮合；首步只出现受理事件
     // 不足以证明旧挂单已经成为 World 的撮合输入。
     // 此前首构造不迁入旧挂单：seed 只写 session 旧簿，runtime 世界不可见。
-    // 仅 runtime 模式有意义（native 缺省启用 runtime；`ENGINE_STEP_RUNTIME=0`
+    // 仅 runtime 模式有意义（native 缺省启用 runtime；`SMG_VERIFY_LEGACY_STEP=1`
     // 回旧管线时 seed 本就在旧簿生效）。
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     #[test]
     fn sol5_seed_before_first_step_reaches_runtime_world() {
         if !crate::runtime::step_runtime_enabled() {
@@ -8202,7 +8219,7 @@ mod committable_state_tests {
     /// 边界故未显红——shadow 边界的直接锚）。镜像缺席（瞬态缺席拍）
     /// 时游标缓存仍须跨 shadow/commit 保留。
     #[test]
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(all(test, not(target_family = "wasm")))]
     fn sol5r_commit_from_transfers_runtime_cache_domains() {
         let mut session = GameSession::new(npc_working_quote_tests::retail_quote_setup(), 4242)
             .expect("会话构造");
@@ -8315,7 +8332,7 @@ mod committable_state_tests {
     /// 不能证明执行线程在池外——池外专用线程路径由 deferred_drop 测试组的
     /// defer_runs_on_dedicated_thread_and_counts（真实 backend）覆盖。
     #[test]
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(all(test, not(target_family = "wasm")))]
     fn successful_step_transfers_one_complete_old_state_and_releases_it_once() {
         // D5 pin+登记（旧管线专有机制）：defer_swap/Job 计数=旧管线关键
         // 路径的旧状态转移机制（runtime 无对应面——std-thread 所有权
@@ -8408,7 +8425,7 @@ mod committable_state_tests {
     }
 
     #[test]
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(all(test, not(target_family = "wasm")))]
     fn failed_step_does_not_transfer_authority_to_drop_backend() {
         // D5 pin+登记（旧管线专有机制）：defer_swap/Job 计数=旧管线关键
         // 路径的旧状态转移机制（runtime 无对应面——std-thread 所有权
@@ -8452,7 +8469,7 @@ mod committable_state_tests {
     /// 覆盖局限（Astra 登记）：Job 在测试线程手动 drain，本测试自身不能证明执行
     /// 线程在池外——同上，由真实 backend 的专用线程测试覆盖。
     #[test]
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(all(test, not(target_family = "wasm")))]
     fn complete_state_backlog_is_bounded_and_full_queue_releases_inline() {
         use std::cell::RefCell;
         use std::rc::Rc;
@@ -8587,7 +8604,7 @@ mod committable_state_tests {
     /// 预期语义对全局台账落 sticky fault（code=5，加固冻结 limits 登记项），
     /// 同进程并发/先后运行都会使 snapshot 永久 Err，与本测试的正确性无关。
     #[test]
-    #[cfg(all(feature = "verification-harness", not(target_family = "wasm")))]
+    #[cfg(all(test, feature = "verification-harness", not(target_family = "wasm")))]
     fn verify_metrics_classifies_real_defer_swap_fields_as_commit_field() {
         let mut session =
             GameSession::new(npc_working_quote_tests::retail_quote_setup(), 723).unwrap();
@@ -8713,7 +8730,7 @@ mod committable_state_tests {
 
     /// 后台创建失败是性能退化，不是交易提交失败：真实 step 成功、authority 安装完整。
     #[test]
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(all(test, not(target_family = "wasm")))]
     fn real_step_commits_successfully_when_drop_thread_cannot_spawn() {
         let mut session =
             GameSession::new(npc_working_quote_tests::retail_quote_setup(), 720).unwrap();

@@ -1,7 +1,7 @@
 import test from "node:test";
 import { MessageChannel as LegacyChannel } from "node:worker_threads";
 import { setImmediate } from "node:timers/promises";
-import { CAPACITY, GEN_BITS, HEADER_WORDS, SLOT_STRIDE, JOIN_STRIDE } from "./facade-slot-protocol.ts";
+import { CAPACITY, FREE_HEAD, FREE_HEAD_EMPTY, GEN_BITS, HEADER_WORDS, SLOT_STRIDE, JOIN_STRIDE } from "./facade-slot-protocol.ts";
 import { createWorkerHost } from "./worker-host.ts";
 import { createEngineControlOwner } from "./engine-control-owner.ts";
 
@@ -54,10 +54,17 @@ export class LegacyWorker extends EventTarget {
       const memory = new WebAssembly.Memory({ initial: 1, maximum: 2, shared: true });
       const layout = { baseAddr: 0, headerWords: HEADER_WORDS, slotStride: SLOT_STRIDE, joinStride: JOIN_STRIDE, capacity: 4, genBits: 29 };
       const words = new Int32Array(memory.buffer);
-      words[CAPACITY] = 4; words[GEN_BITS] = 29;
+      words[CAPACITY] = layout.capacity; words[GEN_BITS] = layout.genBits; words[FREE_HEAD] = FREE_HEAD_EMPTY | 0;
+      const primary = { engine: { workerId: 0, address: 4200 }, ingress: { workerId: 0xffffffff, address: 4456 }, death: { address: 4100, bytes: 4 } };
       port.addEventListener("message", (event) => {
-        if ((event.data as { type?: string }).type === "facadeEngineMemoryRegistered") {
-          port.postMessage({ type: "facadeEngineConfiguration", allocationId: 1, module: new WebAssembly.Module(new Uint8Array([0,97,115,109,1,0,0,0])), layout, diagnostics: false, waitAbort: { address: 4096, bytes: 1 } });
+        const request = event.data as { type?: string };
+        if (request.type === "facadeEngineMemoryRegistered") {
+          port.postMessage({ type: "facadeEngineDeath", allocationId: 1, primary });
+        } else if (request.type === "facadeEngineDeathRegistered") {
+          port.postMessage({ type: "facadeEngineConfiguration", allocationId: 1, module: new WebAssembly.Module(new Uint8Array([0,97,115,109,1,0,0,0])), layout, diagnostics: false, waitAbort: { address: 4096, bytes: 1 }, waitDeath: primary.death });
+        } else if (request.type === "facadeEngineConfigured") {
+          this.dataPort?.postMessage({ type: "initializationProgress", phase: "engine" });
+          this.dataPort?.postMessage({ type: "ready" });
         }
       });
       port.postMessage({ type: "facadeEngineMemory", allocationId: 1, memory });

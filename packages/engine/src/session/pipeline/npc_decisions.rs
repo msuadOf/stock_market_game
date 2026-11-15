@@ -5,8 +5,8 @@ use super::{DecisionSnapshot, DecisionSnapshotError};
 use crate::account::StoredStrategy;
 use crate::strategy::{Intent, StrategyDecision, StrategyState, StrategyStateError};
 use crate::{AccountId, SplitMix64};
-use std::collections::BTreeSet;
-use std::sync::{mpsc, Arc};
+use std::collections::{BTreeSet, VecDeque};
+use std::sync::Arc;
 
 #[cfg(any(test, feature = "verification-harness"))]
 pub(in crate::session) type DecidePostSendHold = Arc<dyn Fn(AccountId) + Send + Sync>;
@@ -354,8 +354,8 @@ where
 /// `npc_decisions_quota_tests::r1c_decide_consumes_ready_result_before_dispatching_more`）。
 /// panic 终结协议（P-a/P-b/P-c，v4 处方固定）：spawned 任务 unwind 时 catch 仅
 /// 运输原 panic payload（不恢复不转换，ADR-0017:117 边界内），绑定释放后发送
-/// TaskDied；协调者收到即停止派发（pending 冻结）、排空其余在飞、最后重抛原
-/// payload。原始 sender 持有至排空完成（Disconnected 仅作冗余断言）。
+/// TaskDied；协调者收到即停止派发（pending 冻结）、排空已提交 FIFO、最后重抛原
+/// payload。借用任务同步完成，FIFO 排空不依赖其他线程或 sender 断连。
 #[cfg(test)]
 pub(super) fn stream_npc_decisions_with<E, B, R>(
     snapshot: Arc<DecisionSnapshot>,
@@ -416,16 +416,6 @@ where
     W: Fn(AccountId) -> Result<T, FE> + Sync + Send,
     M: FnMut(AccountId, Result<T, FE>, &mut Vec<(AccountId, NpcDecisionStreamError<E>)>) + Send,
 {
-    #[cfg(target_arch = "wasm32")]
-    {
-        let mut errors = Vec::new();
-        for account in due_accounts.iter().copied() {
-            before_task(account);
-            record_stream_error_generic(account, work(account), &mut merge, &mut errors);
-        }
-        return select_stream_error(errors);
-    }
-
     /// spawned decide 任务的消息：成功载荷，或 unwind 的原 panic payload（TaskDied）。
     enum DecideMessage<T, FE> {
         Payload(AccountId, Result<T, FE>),
@@ -464,36 +454,22 @@ where
         // 冻结等价：整 tick 失败）、消费错误冻结纪律逐账户判定。
         let chunk_size = crate::compute::parallel_grain(due_accounts.len(), compute.active_width());
         let due_len = due_accounts.len();
-        let pending: std::collections::VecDeque<std::ops::Range<usize>> = (0..due_len)
+        let mut pending: VecDeque<std::ops::Range<usize>> = (0..due_len)
             .step_by(chunk_size)
             .map(|start| start..(start + chunk_size).min(due_len))
             .collect();
-        let (sender, receiver) = mpsc::channel::<DecideMessage<T, FE>>();
-        // 原始 sender 以 Option 承载：TaskDied 排空路径需要在排空前提前 Drop
-        //（见下方排空块），正常路径在流末 Drop（P-c）。
-        let mut origin_sender = Some(sender);
-        let mut pending = pending;
-        let mut in_flight = 0usize;
+        // 借用任务在两端均内联完成；复用普通 FIFO 保留历史批次归并顺序。
+        let mut ready = VecDeque::<DecideMessage<T, FE>>::new();
         let mut errors = Vec::new();
         let mut task_died: Option<Box<dyn std::any::Any + Send>> = None;
         // 消费错误路径（设计 §3.1①）：merge 出错 → 停止派发（含 R1-a 内联）→
         // 排空在飞 → 聚合错误返回；与 panic 路径合流于 P-b。
         let mut consumer_failed = false;
         let mut merge = merge;
-        let _ = &merge;
 
         loop {
-            // (d0) R1-c 消费优先：先**非阻塞**收尽现成结果，再尽力派发。
-            // 现成=try_recv 立即可得（区别于 (d) 的合法阻塞等待 R1-b）；
-            // 处理纪律与 (d) 完全同一（payload→merge / TaskDied→冻结派发）。
-            // 断连（Disconnected）不在此时报告——留给 (d) 的阻塞路径按
-            // 「NPC worker 未交回结果」原语义显式失败。
-            while in_flight > 0 {
-                let message = match receiver.try_recv() {
-                    Ok(message) => message,
-                    Err(mpsc::TryRecvError::Empty) | Err(mpsc::TryRecvError::Disconnected) => break,
-                };
-                in_flight -= 1;
+            // (d0) R1-c 消费优先：按到达序归并所有已完成结果，再做下一波派发。
+            while let Some(message) = ready.pop_front() {
                 match message {
                     DecideMessage::Payload(account, result) => {
                         // 工作量探针：spawned 任务的载荷消息计 1（cfg(test)，按本上下文隔离）。
@@ -521,33 +497,11 @@ where
                     }
                 }
             }
-            if task_died.is_some() {
-                // P-b 排空（chunk 化口径修正）：in_flight 按账户消息预记，
-                // panic 中断的 chunk 余下账户不再发消息 ⇒ 计数上界不可靠，
-                // 不能作为排空完成判据。改为：先 Drop 协调者自己的原始
-                // sender（派发已冻结，不再需要），再阻塞收至 Disconnected
-                //——全部 spawned 任务终结（sender 克隆全 Drop）且缓冲消息
-                // 先于断连可见，即排空完成。payload 仍按到达序归并。
-                drop(origin_sender.take().expect("TaskDied 排空只发生一次"));
-                loop {
-                    match receiver.recv() {
-                        Ok(DecideMessage::Payload(account, result)) => {
-                            #[cfg(test)]
-                            compute
-                                .t1_probes
-                                .stream_payloads
-                                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                            record_stream_error_generic(account, result, &mut merge, &mut errors);
-                        }
-                        Ok(DecideMessage::TaskDied(_)) => {
-                            // 首例已登记；后续终结信号仅确认排空进度。
-                        }
-                        Err(mpsc::RecvError) => break,
-                    }
-                }
+            // 已派发的同步任务没有其他生产者；FIFO 见底就完成排空。
+            if task_died.is_some() || consumer_failed || pending.is_empty() {
                 break;
             }
-            if task_died.is_none() && !consumer_failed {
+            {
                 // (a) 尽力派发：reserve 成功才 spawn；失败留 pending 绝不 spawn。
                 // 派发门（测试探针）在 reserve 后、spawn 前调用（与股票派发同位）。
                 while let Some(range) = pending.front().cloned() {
@@ -557,20 +511,12 @@ where
                     pending.pop_front();
                     #[cfg(any(test, feature = "verification-harness"))]
                     compute.run_dispatch_gate();
-                    let sender = origin_sender
-                        .as_ref()
-                        .expect("派发阶段原始 sender 必须仍在")
-                        .clone();
                     let before_task = &before_task;
                     let work = &work;
                     let timing = crate::verification_evidence::current_phase_timing_binding();
                     #[cfg(any(test, feature = "verification-harness"))]
                     let executor = crate::session::pipeline::current_executor_binding();
-                    // in_flight 按**账户消息**计（每账户恰一条 Payload/TaskDied），
-                    // 不按 chunk 计——(d0)/(d) 的递减与终止判定都以消息为口径。
-                    let chunk_accounts = range.end - range.start;
-                    let due_accounts = due_accounts.clone();
-                    scope.spawn(move |_| {
+                    scope.run(|| {
                         // 工作量探针：spawned 任务（chunk）计 1（cfg(test)，按本
                         // 上下文隔离）——任务数=min(due,workers) 不随池宽放大。
                         #[cfg(test)]
@@ -632,8 +578,8 @@ where
                                 }));
                             match outcome {
                                 Ok((account, result)) => {
-                                    let _ = sender.send(DecideMessage::Payload(account, result));
-                                    // d2 钉住窗口：send 已发生、guard（容量）未归还。
+                                    ready.push_back(DecideMessage::Payload(account, result));
+                                    // d2 钉住窗口：结果已入队、guard（容量）未归还。
                                     #[cfg(any(test, feature = "verification-harness"))]
                                     if let Some(hold) = DECIDE_POST_SEND_HOLD
                                         .lock()
@@ -644,25 +590,24 @@ where
                                     }
                                 }
                                 Err(panic_payload) => {
-                                    let _ = sender.send(DecideMessage::TaskDied(panic_payload));
+                                    ready.push_back(DecideMessage::TaskDied(panic_payload));
                                     break;
                                 }
                             }
                         }
                         drop(guard);
                     });
-                    in_flight += chunk_accounts;
                 }
             }
-            // (b) 终止：pending 空 && 在飞 0（或 panic 排空完毕，pending 冻结）。
-            if in_flight == 0 && (pending.is_empty() || task_died.is_some() || consumer_failed) {
-                break;
+            // FIFO 中已有结果时，循环顶先消费，绝不插入额外派发。
+            if !ready.is_empty() {
+                continue;
             }
-            if in_flight == 0 {
+            if !pending.is_empty() {
                 // (c) R1-a 零在飞推进：绝不等待结果。
                 if pooled {
                     let range = pending.pop_front().expect("R1-a 内联项来自非空 pending");
-                    // 零在飞 ⇒ 通道内无未消费现成结果（(d0) 已收尽），整 chunk
+                    // FIFO 暂无未消费现成结果，整 chunk
                     // 内联不违背 R1-c 消费优先；逐账户判定冻结纪律。
                     for account in due_accounts[range].iter().copied() {
                         // 工作量探针：R1-a 内联执行逐账户计 1（cfg(test)，按本
@@ -695,54 +640,8 @@ where
                 } else {
                     compute.wait_for_spawn_capacity();
                 }
-                continue;
-            }
-            // (d) 在飞消费一个结果（R1-b：等待合法，不依赖容量恢复）。
-            let message = if compute.is_worker() {
-                loop {
-                    match receiver.try_recv() {
-                        Ok(message) => break message,
-                        Err(mpsc::TryRecvError::Empty) => crate::compute::yield_work(),
-                        Err(mpsc::TryRecvError::Disconnected) => {
-                            panic!("NPC worker 未交回结果")
-                        }
-                    }
-                }
-            } else {
-                receiver.recv().expect("所有 NPC worker 必须交回结果")
-            };
-            in_flight -= 1;
-            match message {
-                DecideMessage::Payload(account, result) => {
-                    // 工作量探针：spawned 任务的载荷消息计 1（cfg(test)，按本上下文隔离）。
-                    #[cfg(test)]
-                    compute
-                        .t1_probes
-                        .stream_payloads
-                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    let before = errors.len();
-                    record_stream_error_generic(account, result, &mut merge, &mut errors);
-                    if errors.len() > before
-                        && matches!(
-                            errors.last(),
-                            Some((_, NpcDecisionStreamError::Consumer(_)))
-                        )
-                    {
-                        consumer_failed = true;
-                    }
-                }
-                DecideMessage::TaskDied(payload) => {
-                    // P-b：立即停止派发（pending 冻结），排空其余在飞，最后重抛。
-                    if task_died.is_none() {
-                        task_died = Some(payload);
-                    }
-                }
             }
         }
-        // P-c：原始 sender 持有至排空完成再 Drop（TaskDied 路径已在排空前
-        // Drop——见上方排空块；正常路径在此 Drop）；此后 Disconnected 可作
-        // 冗余断言。
-        drop(origin_sender);
         if let Some(payload) = task_died {
             std::panic::resume_unwind(payload);
         }
@@ -772,6 +671,47 @@ fn select_stream_error<E>(
     match errors.into_iter().next() {
         Some((_, error)) => Err(error),
         None => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod common_account_stream_contract_tests {
+    use super::{stream_npc_account_tasks_with, AccountId, Arc, NpcDecisionStreamError};
+    use crate::compute::ComputeContext;
+    use std::sync::Mutex;
+
+    #[test]
+    fn inline_chunk_width_preserves_buffered_order_and_consumer_failure() {
+        // 大于一的分块宽度不代表后台线程；两种预算都调用真实账户流，并保留
+        // 已派发结果的接收纪律。旧 Browser 直调会把 merge 提前到下一个任务前。
+        for width in [1, 4] {
+            let compute = ComputeContext::with_workers(width).unwrap();
+            let ids = [30, 11, 17, 5, 99].map(|local| AccountId(1_000_000 + local));
+            let trace = Mutex::new(Vec::new());
+            let result = stream_npc_account_tasks_with(
+                Arc::new(ids.to_vec()),
+                &compute,
+                |id| trace.lock().unwrap().push(("before", id)),
+                |id| {
+                    trace.lock().unwrap().push(("work", id));
+                    Ok::<_, ()>(id)
+                },
+                |id, value, errors| {
+                    assert_eq!(value, Ok(id));
+                    trace.lock().unwrap().push(("merge", id));
+                    if id == ids[0] || id == ids[2] {
+                        errors.push((id, NpcDecisionStreamError::Consumer(id)));
+                    }
+                },
+            );
+            let expected: Vec<_> = ids
+                .into_iter()
+                .flat_map(|id| [("before", id), ("work", id)])
+                .chain(ids.map(|id| ("merge", id)))
+                .collect();
+            assert_eq!(trace.into_inner().unwrap(), expected);
+            assert!(matches!(result, Err(NpcDecisionStreamError::Consumer(id)) if id == ids[0]));
+        }
     }
 }
 

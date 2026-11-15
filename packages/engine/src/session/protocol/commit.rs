@@ -104,8 +104,8 @@ impl GameSession {
         Ok(frame)
     }
 
-    /// 同一次 CommitTick transaction 产出的 public-runtime frame 与 commit evidence。
-    /// Escrow verifier 使用该证据；会话不额外保留整局历史诊断状态。
+    /// Escrow 验证专用入口：同一旧管线 CommitTick 产出 frame 与证据。
+    /// 产品宿主不要调用；会话不额外保留整局历史诊断。
     pub fn step_frame_with_commit_evidence(
         &mut self,
     ) -> Result<(TickFrame, crate::session::pipeline::TickCommitEvidence), StepFatal> {
@@ -122,7 +122,7 @@ impl GameSession {
 
     /// 生产入口：基于同一版冻结 candidate 构造并验证 frame 后才安装权威状态。
     /// step_frame 接轨件 4：runtime 分叉（与 `step()` 的 failure.rs:892
-    /// 分叉同开关同语义——缺省 runtime、ENGINE_STEP_RUNTIME=0 回旧管线）。
+    /// 分叉保持同一执行模式；产品固定 World，旧管线仅用于具名验证）。
     /// **Escrow verifier 面（capture_commit_evidence=true）恒走旧管线**：
     /// TickCommitEvidence 的信封域证据（receipts/envelope chains）在
     /// runtime 无等价承载（D4 登记、交接 §3.2——批 9 旧管线退役时再

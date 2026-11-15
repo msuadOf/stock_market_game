@@ -1,68 +1,36 @@
-//! 专用析构线程：把 tick 提交时旧权威状态的析构移出 actor 关键路径。
-//!
-//! E7 教训：rayon::spawn(drop) 与下一 tick 的并行突发共用车道（4 worker 小池），
-//! 收益被竞争吃掉。本线程是池外专用 std::thread，不参与调度竞争。
-//! 旧值析构无副作用（E7 已核实），所有权整体移交，无数据竞争。
-//!
-//! WASM 宿主（wasm32-unknown-unknown）不支持 std::thread——`defer` 直接同步
-//! 析构。注意：不能按 `target_has_threads` 或 `target_feature = "atomics"` 判断
-//! （启用 atomics 的 wasm 上这些 cfg 存在但 std Thread 仍 unsupported），
-//! `cfg(target_family = "wasm")` 才是正确判断。WASM 路径只保证正确性，
-//! 不承诺池外析构的性能收益。
-//!
-//! 后端退化（线程创建失败/在途线程退出）不 panic、不改提交语义：值一律在
-//! 调用线程同步释放恰一次，退化以 Copy 结构化诊断暴露给宿主边界报告
-//! （见 [`DeferredDropDegradation`]）。队列满是正常背压，不算退化。
+//! tick 提交的旧状态析构移交；平台队列、线程与同步释放由 LibOS 实现。
+//! 字段分类、验收计数和受控 backend 仅留在 engine，生产不读取这些诊断作决策。
+//! 单次 commit_from 移交多个旧字段。队列限制的是等待 Job 数，不是保留字节；
+//! 旧权威字段和共享页的实际保留量须结合 pending、RSS 与 drain 观测。
 
-//! **等待点账（R4a 阶段 1，设计 §11.1 三元组 (o)(p)(q)）**：本通道为
-//! `sync_channel(64)`（mpmc **array flavor**）——提交面只 `try_send`
-//! （满=FullInline 背压不等待），可达等待点：(o) 槽 stamp 发布自旋
-//! （CAS 赢家未完成 write/read 的交错窗）、(p) 析构线程空队列阻塞
-//! `recv()`（park futex，唤醒=对端 write 或断连）、(q) 末 Receiver Drop
-//! 等在途 sender 发布。**阻塞 send（array.rs send :319-361）生产不可达**
-//! ——由 wait_ledger_tests 静态钉住（提交面出现非 try send 即红）。
-//! Backoff 无超时，失败逃逸=对端死亡⇒楔死⇒宿主 D3/D5→R2-3（§11.1
-//! 同构立场，不自救）。harness 面 drain_running（recv_timeout）为
-//! native-only，不入 wasm 生产账。
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-#[cfg(not(target_family = "wasm"))]
-use std::sync::mpsc::{self, SyncSender};
-#[cfg(not(target_family = "wasm"))]
-use std::sync::OnceLock;
+#[cfg(not(test))]
+use libos::deferred_drop::defer as dispatch_value;
+pub use libos::deferred_drop::DeferredDropDegradation;
+#[cfg(any(feature = "verification-harness", test))]
+use libos::deferred_drop::Job;
+use libos::deferred_drop::Submission;
+use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(any(feature = "verification-harness", test))]
+use std::sync::mpsc;
+#[cfg(feature = "verification-harness")]
+use std::sync::mpsc::SyncSender;
 
-/// 后台析构后端的退化诊断（Copy、数值化；字符串只允许在宿主边界生成）。
-///
-/// 只描述进程级后端状态，不含任何调用方信息；`FullInline`（队列满背压）
-/// 是正常行为，不出现在此诊断中。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DeferredDropDegradation {
-    /// 专用线程创建失败。`os_errno` 为 OS 错误码（如 ENOMEM/EAGAIN）；
-    /// 之后所有 `defer` 都同步释放，不再重试创建线程（无自动重试）。
-    SpawnFailed { os_errno: Option<i32> },
-    /// 专用线程曾在途但已退出（receiver 断开）；之后的 `defer` 转为同步释放。
-    UnexpectedDisconnected,
-}
-
-#[cfg(not(target_family = "wasm"))]
-pub(super) type Job = Box<dyn FnOnce() + Send>;
+static DEFERRED_COUNT: AtomicU64 = AtomicU64::new(0);
 
 /// 仅用于测试的实例级 backend：观察真实移交值，并把真实 Job 留在受控队列。
 /// 不新增生产开关，不读取全进程计数，也不替换提交或旧状态的 Drop。
-#[cfg(all(test, not(target_family = "wasm")))]
+#[cfg(test)]
 pub(super) mod controlled {
-    use super::{
-        backend_degradation, dispatch_on, Backend, DeferredDropDegradation, Job, RunningBackend,
-        Submission,
-    };
+    use super::{DeferredDropDegradation, Job, Submission};
+    use libos::deferred_drop::TestBackend;
     use std::any::Any;
     use std::cell::RefCell;
-    use std::sync::atomic::AtomicBool;
     use std::sync::mpsc::SyncSender;
 
     type AnyObserver = Box<dyn FnMut(&dyn Any)>;
 
     struct Installed {
-        backend: Backend,
+        backend: TestBackend,
         observe: Option<AnyObserver>,
     }
 
@@ -84,7 +52,7 @@ pub(super) mod controlled {
     pub(super) fn dispatch(job: Job) -> Result<Submission, Job> {
         BACKEND.with(|slot| match slot.borrow().as_ref() {
             None => Err(job),
-            Some(installed) => Ok(dispatch_on(&installed.backend, job)),
+            Some(installed) => Ok(installed.backend.dispatch(job)),
         })
     }
 
@@ -96,7 +64,7 @@ pub(super) mod controlled {
         }
     }
 
-    fn install(backend: Backend, observe: Option<AnyObserver>) -> Reset {
+    fn install(backend: TestBackend, observe: Option<AnyObserver>) -> Reset {
         BACKEND.with(|slot| {
             assert!(slot.borrow().is_none(), "controlled backend 不支持嵌套");
             *slot.borrow_mut() = Some(Installed { backend, observe });
@@ -118,18 +86,12 @@ pub(super) mod controlled {
         observe: impl FnMut(&dyn Any) + 'static,
         run: impl FnOnce() -> R,
     ) -> (R, Option<DeferredDropDegradation>) {
-        let _reset = install(
-            Backend::Running(RunningBackend {
-                sender,
-                disconnected: AtomicBool::new(false),
-            }),
-            Some(Box::new(observe)),
-        );
+        let _reset = install(TestBackend::running(sender), Some(Box::new(observe)));
         let output = run();
         let degradation = BACKEND.with(|slot| {
             slot.borrow()
                 .as_ref()
-                .map(|installed| backend_degradation(&installed.backend))
+                .map(|installed| installed.backend.degradation())
         });
         (output, degradation.flatten())
     }
@@ -140,114 +102,20 @@ pub(super) mod controlled {
         os_errno: Option<i32>,
         run: impl FnOnce() -> R,
     ) -> (R, Option<DeferredDropDegradation>) {
-        let _reset = install(Backend::SpawnFailed { os_errno }, None);
+        let _reset = install(TestBackend::failed(os_errno), None);
         let output = run();
         let degradation = BACKEND.with(|slot| {
             slot.borrow()
                 .as_ref()
-                .map(|installed| backend_degradation(&installed.backend))
+                .map(|installed| installed.backend.degradation())
         });
         (output, degradation.flatten())
     }
 }
 
-/// 有界队列容量。裁决 (d) 后每条 Job 是一个旧权威字段（账户页/账本/日历等
-/// 单字段值）；每次 commit_from 移交一个完整字段 Job 集（33 项），另有候选
-/// 丢弃等其他 defer 计为 Other。64 只限制等待 Job 数，不限制保留字节：
-/// 单字段 Job 仍可比原内联析构更大，共享页也会延后释放。保留量须结合
-/// pending、RSS 与 drain 实测；队列满时内联析构，不等待空位。
-const QUEUE_CAPACITY: usize = 64;
-
-#[cfg(not(target_family = "wasm"))]
-struct RunningBackend {
-    sender: SyncSender<Job>,
-    /// 首次 `DisconnectedInline` 后置位（幂等；此后在途线程已不可用）。
-    disconnected: AtomicBool,
-}
-
-/// 进程级后端状态：在途线程，或"创建失败"的持久退化（不重试）。
-#[cfg(not(target_family = "wasm"))]
-enum Backend {
-    Running(RunningBackend),
-    SpawnFailed { os_errno: Option<i32> },
-}
-
-#[cfg(not(target_family = "wasm"))]
-static BACKEND: OnceLock<Backend> = OnceLock::new();
-static DEFERRED_COUNT: AtomicU64 = AtomicU64::new(0);
-
-#[cfg(not(target_family = "wasm"))]
-fn backend() -> &'static Backend {
-    BACKEND.get_or_init(|| {
-        let (tx, rx) = mpsc::sync_channel::<Job>(QUEUE_CAPACITY);
-        // sync_channel 有界：满时 try_send 立即返回 Err（不阻塞调用方）。
-        // 创建失败不 panic：转入 SpawnFailed 持久退化（诊断可见，同步释放，不重试）。
-        let spawned = crate::thread_facade::Builder::new()
-            .name("engine-deferred-drop".to_owned())
-            .spawn(move || {
-                // 只消费并析构；任何 Drop panic 都会让线程退出，后续 defer 的
-                // try_send 返回 Disconnected，值随 Err 就地析构并置位诊断。
-                while let Ok(job) = rx.recv() {
-                    job();
-                }
-            });
-        backend_from_spawn(spawned, tx)
-    })
-}
-
-/// 由真实 spawn 结果构造后端状态（生产与负控共用；失败不 panic、不重试）。
-#[cfg(not(target_family = "wasm"))]
-fn backend_from_spawn(
-    result: std::io::Result<crate::thread_facade::JoinHandle<()>>,
-    sender: SyncSender<Job>,
-) -> Backend {
-    match result {
-        Ok(_handle) => Backend::Running(RunningBackend {
-            sender,
-            disconnected: AtomicBool::new(false),
-        }),
-        Err(error) => Backend::SpawnFailed {
-            os_errno: error.raw_os_error(),
-        },
-    }
-}
-
-/// 未入队的值在返回前同步释放；保留真实结果分类，不把内联完成算作 queued。
-#[cfg(not(target_family = "wasm"))]
-fn dispatch_on(backend: &Backend, job: Job) -> Submission {
-    match backend {
-        Backend::Running(running) => submit(running, job),
-        Backend::SpawnFailed { .. } => {
-            drop_synchronously(job);
-            Submission::SpawnFailedInline
-        }
-    }
-}
-
-#[cfg(not(target_family = "wasm"))]
-fn backend_degradation(backend: &Backend) -> Option<DeferredDropDegradation> {
-    match backend {
-        Backend::SpawnFailed { os_errno } => Some(DeferredDropDegradation::SpawnFailed {
-            os_errno: *os_errno,
-        }),
-        Backend::Running(running) => {
-            if running.disconnected.load(Ordering::Relaxed) {
-                Some(DeferredDropDegradation::UnexpectedDisconnected)
-            } else {
-                None
-            }
-        }
-    }
-}
-
 /// 把值的析构移交给专用线程。
 ///
-/// 原生宿主：`try_send` 到有界队列；队列满（正常背压）、线程退出或创建失败
-/// （退化）时闭包随 Err 一起 drop 或就地释放，值在调用线程析构恰一次
-/// （语义等价，只失去异步收益）。计数仅在成功入队后递增——退化路径不算
-/// "已移交"。
-///
-/// WASM 宿主：同步执行 `drop(value)`，不初始化线程/OnceLock。
+/// 两端使用同一 FIFO：满时就地释放；退化分类与队列满区分，计数只反映已接纳任务。
 pub fn defer<T: Send + 'static>(value: T) {
     #[cfg(feature = "verification-harness")]
     {
@@ -310,7 +178,7 @@ fn defer_value<T: Send + 'static>(
     value: T,
     #[cfg(feature = "verification-harness")] kind: crate::session::verify_metrics::JobKind,
 ) {
-    #[cfg(all(test, not(target_family = "wasm")))]
+    #[cfg(test)]
     controlled::observe(&value);
     #[cfg(feature = "verification-harness")]
     let (value, ticket) = crate::session::verify_metrics::Tracked::new(
@@ -318,66 +186,28 @@ fn defer_value<T: Send + 'static>(
         &crate::session::verify_metrics::METRICS,
         kind,
     );
-    #[cfg(not(target_family = "wasm"))]
-    {
-        let job: Job = Box::new(move || drop(value));
-        #[cfg(test)]
-        let outcome = match controlled::dispatch(job) {
-            Ok(outcome) => outcome,
-            Err(job) => dispatch_on(backend(), job),
-        };
-        #[cfg(not(test))]
-        let outcome = dispatch_on(backend(), job);
-        if outcome == Submission::Queued {
-            DEFERRED_COUNT.fetch_add(1, Ordering::Relaxed);
-        }
-        #[cfg(feature = "verification-harness")]
-        ticket.outcome(match outcome {
-            Submission::Queued => crate::session::verify_metrics::Outcome::Queued,
-            Submission::FullInline => crate::session::verify_metrics::Outcome::FullInline,
-            Submission::DisconnectedInline => {
-                crate::session::verify_metrics::Outcome::DisconnectedInline
-            }
-            Submission::SpawnFailedInline => {
-                crate::session::verify_metrics::Outcome::SpawnFailedInline
-            }
-        });
+    let outcome = dispatch_value(value);
+    if outcome == Submission::Queued {
+        DEFERRED_COUNT.fetch_add(1, Ordering::Relaxed);
     }
-    #[cfg(target_family = "wasm")]
-    {
-        drop_synchronously(value);
-        #[cfg(feature = "verification-harness")]
-        ticket.outcome(crate::session::verify_metrics::Outcome::FullInline);
-    }
-}
-
-fn drop_synchronously<T>(value: T) {
-    drop(value);
-}
-
-#[cfg(not(target_family = "wasm"))]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Submission {
-    Queued,
-    /// 队列满（正常背压）：不算退化，不置位诊断。
-    FullInline,
-    DisconnectedInline,
-    SpawnFailedInline,
-}
-
-#[cfg(not(target_family = "wasm"))]
-fn submit(running: &RunningBackend, job: Job) -> Submission {
-    match running.sender.try_send(job) {
-        Ok(()) => Submission::Queued,
-        Err(mpsc::TrySendError::Full(job)) => {
-            drop_synchronously(job);
-            Submission::FullInline
+    #[cfg(feature = "verification-harness")]
+    ticket.outcome(match outcome {
+        Submission::Queued => crate::session::verify_metrics::Outcome::Queued,
+        Submission::Inline | Submission::FullInline => {
+            crate::session::verify_metrics::Outcome::FullInline
         }
-        Err(mpsc::TrySendError::Disconnected(job)) => {
-            drop_synchronously(job);
-            running.disconnected.store(true, Ordering::Relaxed);
-            Submission::DisconnectedInline
+        Submission::DisconnectedInline => {
+            crate::session::verify_metrics::Outcome::DisconnectedInline
         }
+        Submission::SpawnFailedInline => crate::session::verify_metrics::Outcome::SpawnFailedInline,
+    });
+}
+
+#[cfg(test)]
+fn dispatch_value<T: Send + 'static>(value: T) -> Submission {
+    match controlled::dispatch(Box::new(move || drop(value))) {
+        Ok(outcome) => outcome,
+        Err(job) => libos::deferred_drop::defer_job(job),
     }
 }
 
@@ -390,8 +220,7 @@ pub(super) fn deferred_count() -> u64 {
 /// 宿主侧（server/desktop/wasm 测试）观测：累计移交的析构任务数。
 /// 仅用于生产形态断言（证明真实批路径确有移交），生产代码不得依赖。
 ///
-/// 注意：原生宿主上此计数只反映成功入队的任务（退化路径不增）；
-/// WASM 宿主上所有 defer 都同步执行，没有成功入队，计数恒为零。
+/// 两端只计成功入队（退化路径不增）。
 #[doc(hidden)]
 pub fn host_deferred_count() -> u64 {
     DEFERRED_COUNT.load(Ordering::Relaxed)
@@ -404,14 +233,7 @@ pub fn host_deferred_count() -> u64 {
 /// 但未接入退化诊断读取与告警，本轮未覆盖该宿主告警。
 #[doc(hidden)]
 pub fn host_deferred_degradation() -> Option<DeferredDropDegradation> {
-    #[cfg(target_family = "wasm")]
-    {
-        None
-    }
-    #[cfg(not(target_family = "wasm"))]
-    {
-        BACKEND.get().and_then(backend_degradation)
-    }
+    libos::deferred_drop::degradation()
 }
 
 /// 仅诊断用的尾部 drain 失败，不影响任何 tick 提交。
@@ -427,9 +249,9 @@ pub enum DrainFailure {
 
 /// Producer 已经退出后，由同一 FIFO 队列发 marker 并等待执行回执。
 /// 在 marker 前后登记数变化或仍有未完成 id，都拒绝称为完整 drain。
-#[cfg(all(feature = "verification-harness", not(target_family = "wasm")))]
+#[cfg(feature = "verification-harness")]
 fn drain_running(
-    running: &RunningBackend,
+    sender: &SyncSender<Job>,
     metrics: &super::verify_metrics::VerifyMetrics,
     timeout: std::time::Duration,
 ) -> Result<super::verify_metrics::VerifySnapshot, DrainFailure> {
@@ -449,21 +271,25 @@ fn drain_running(
         if crate::clock::Instant::now() >= deadline {
             return Err(DrainFailure::Timeout);
         }
-        match running.sender.try_send(marker) {
+        match sender.try_send(marker) {
             Ok(()) => break,
             Err(mpsc::TrySendError::Full(returned)) => {
                 marker = returned;
-                std::thread::yield_now();
+                std::hint::spin_loop();
             }
             Err(mpsc::TrySendError::Disconnected(_)) => {
                 return Err(DrainFailure::WorkerDisconnected)
             }
         }
     }
-    match ack_rx.recv_timeout(deadline.saturating_duration_since(crate::clock::Instant::now())) {
+    let remaining = deadline.saturating_duration_since(crate::clock::Instant::now());
+    match libos::wait::recv_deadline(&ack_rx, remaining, false) {
         Ok(()) => {}
-        Err(mpsc::RecvTimeoutError::Timeout) => return Err(DrainFailure::Timeout),
-        Err(mpsc::RecvTimeoutError::Disconnected) => return Err(DrainFailure::WorkerDisconnected),
+        Err(libos::wait::WaitFailure::Deadline { .. }) => return Err(DrainFailure::Timeout),
+        Err(libos::wait::WaitFailure::Disconnected | libos::wait::WaitFailure::HostAborted) => {
+            return Err(DrainFailure::WorkerDisconnected);
+        }
+        Err(_) => return Err(DrainFailure::InvalidAcknowledgement),
     }
     let after = metrics
         .snapshot()
@@ -480,18 +306,19 @@ fn drain_running(
 pub fn drain(
     timeout: std::time::Duration,
 ) -> Result<super::verify_metrics::VerifySnapshot, DrainFailure> {
-    #[cfg(not(target_family = "wasm"))]
-    if let Some(Backend::Running(running)) = BACKEND.get() {
-        return drain_running(running, &super::verify_metrics::METRICS, timeout);
-    }
-    let snap = super::verify_metrics::METRICS
-        .snapshot()
-        .map_err(|e| DrainFailure::LedgerInvalid(e.code))?;
-    if snap.actor_producers == 0 && snap.all_ids_paired {
-        Ok(snap)
-    } else {
-        Err(DrainFailure::ProducerStillActive)
-    }
+    libos::deferred_drop::with_verification_sender(|sender| {
+        if let Some(sender) = sender {
+            return drain_running(sender, &super::verify_metrics::METRICS, timeout);
+        }
+        let snap = super::verify_metrics::METRICS
+            .snapshot()
+            .map_err(|e| DrainFailure::LedgerInvalid(e.code))?;
+        if snap.actor_producers == 0 && snap.all_ids_paired {
+            Ok(snap)
+        } else {
+            Err(DrainFailure::ProducerStillActive)
+        }
+    })
 }
 
 // D5 wasm 方向 A：deferred_drop 测试面依赖专用线程 backend（wasm 宿主
@@ -499,33 +326,32 @@ pub fn drain(
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+    use libos::deferred_drop::{TestBackend, QUEUE_CAPACITY};
     use std::sync::atomic::AtomicUsize;
     use std::sync::Arc;
 
     #[test]
-    #[cfg(all(feature = "verification-harness", not(target_family = "wasm")))]
+    #[cfg(feature = "verification-harness")]
     fn fifo_barrier_acknowledges_an_actual_earlier_job() {
         let metrics = super::super::verify_metrics::VerifyMetrics::new();
         let (sender, receiver) = mpsc::sync_channel::<Job>(2);
         let dropped = Arc::new(AtomicUsize::new(0));
         let probe = CountingProbe(dropped.clone());
         sender.try_send(Box::new(move || drop(probe))).unwrap();
-        let backend = running(sender);
         std::thread::scope(|scope| {
             scope.spawn(move || {
                 for _ in 0..2 {
                     receiver.recv().unwrap()();
                 }
             });
-            let snap =
-                drain_running(&backend, &metrics, std::time::Duration::from_secs(1)).unwrap();
+            let snap = drain_running(&sender, &metrics, std::time::Duration::from_secs(1)).unwrap();
             assert!(snap.all_ids_paired);
             assert_eq!(dropped.load(Ordering::SeqCst), 1);
         });
     }
 
     #[test]
-    #[cfg(all(feature = "verification-harness", not(target_family = "wasm")))]
+    #[cfg(feature = "verification-harness")]
     fn fifo_barrier_rejects_a_late_registration_even_when_all_ids_completed() {
         use super::super::verify_metrics::{JobKind, Outcome, Tracked, VerifyMetrics};
         let metrics = Arc::new(VerifyMetrics::new());
@@ -538,7 +364,6 @@ mod tests {
                 ticket.outcome(Outcome::Queued);
             }))
             .unwrap();
-        let backend = running(sender);
         std::thread::scope(|scope| {
             scope.spawn(move || {
                 // 等待 marker 入队才执行前一个 Job，确保注册发生在 before-snapshot 后。
@@ -548,11 +373,7 @@ mod tests {
                 marker();
             });
             assert!(matches!(
-                drain_running(
-                    &backend,
-                    metrics.as_ref(),
-                    std::time::Duration::from_secs(1)
-                ),
+                drain_running(&sender, metrics.as_ref(), std::time::Duration::from_secs(1)),
                 Err(DrainFailure::ProducerStillActive)
             ));
         });
@@ -563,25 +384,24 @@ mod tests {
     }
 
     #[test]
-    #[cfg(all(feature = "verification-harness", not(target_family = "wasm")))]
+    #[cfg(feature = "verification-harness")]
     fn fifo_barrier_rejects_disconnected_worker_and_live_producer() {
         let metrics = super::super::verify_metrics::VerifyMetrics::new();
         let (sender, receiver) = mpsc::sync_channel::<Job>(1);
         drop(receiver);
-        let backend = running(sender);
         assert!(matches!(
-            drain_running(&backend, &metrics, std::time::Duration::from_millis(100)),
+            drain_running(&sender, &metrics, std::time::Duration::from_millis(100)),
             Err(DrainFailure::WorkerDisconnected)
         ));
         metrics.actor_producers.store(1, Ordering::Release);
         assert!(matches!(
-            drain_running(&backend, &metrics, std::time::Duration::from_millis(100)),
+            drain_running(&sender, &metrics, std::time::Duration::from_millis(100)),
             Err(DrainFailure::ProducerStillActive)
         ));
     }
 
     #[test]
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(all(test, not(target_family = "wasm")))]
     fn defer_runs_on_dedicated_thread_and_counts() {
         struct Probe {
             flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -611,27 +431,22 @@ mod tests {
         }
     }
 
-    fn running(sender: SyncSender<Job>) -> RunningBackend {
-        RunningBackend {
-            sender,
-            disconnected: AtomicBool::new(false),
-        }
-    }
-
     #[test]
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(all(test, not(target_family = "wasm")))]
     fn full_queue_distinguishes_attempts_from_queued_and_inline_release() {
         let dropped = Arc::new(AtomicUsize::new(0));
         let (sender, receiver) = mpsc::sync_channel(QUEUE_CAPACITY);
-        let backend = running(sender);
+        let backend = TestBackend::running(sender);
         let mut queued = 0;
         let mut synchronous = 0;
         for _ in 0..QUEUE_CAPACITY + 1 {
             let probe = CountingProbe(dropped.clone());
-            match submit(&backend, Box::new(move || drop(probe))) {
+            match backend.dispatch(Box::new(move || drop(probe))) {
                 Submission::Queued => queued += 1,
                 Submission::FullInline => synchronous += 1,
-                Submission::DisconnectedInline | Submission::SpawnFailedInline => {
+                Submission::Inline
+                | Submission::DisconnectedInline
+                | Submission::SpawnFailedInline => {
                     panic!("受控 receiver 不应退出或启动失败")
                 }
             }
@@ -639,7 +454,7 @@ mod tests {
         assert_eq!(queued, QUEUE_CAPACITY);
         assert_eq!(synchronous, 1);
         // 队列满是正常背压：不置位退化诊断。
-        assert_eq!(backend_degradation(&Backend::Running(backend)), None);
+        assert_eq!(backend.degradation(), None);
         assert_eq!(dropped.load(Ordering::SeqCst), 1);
         let jobs: Vec<_> = receiver.try_iter().collect();
         assert_eq!(jobs.len(), QUEUE_CAPACITY);
@@ -650,30 +465,23 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(all(test, not(target_family = "wasm")))]
     fn exited_worker_releases_the_value_synchronously_once() {
         let dropped = Arc::new(AtomicUsize::new(0));
         let (sender, receiver) = mpsc::sync_channel(QUEUE_CAPACITY);
         std::thread::spawn(move || drop(receiver)).join().unwrap();
-        let backend = running(sender);
+        let backend = TestBackend::running(sender);
         let probe = CountingProbe(dropped.clone());
         assert_eq!(
-            submit(&backend, Box::new(move || drop(probe))),
+            backend.dispatch(Box::new(move || drop(probe))),
             Submission::DisconnectedInline
         );
         assert_eq!(dropped.load(Ordering::SeqCst), 1);
         // 首次断连置位 UnexpectedDisconnected；幂等重复置位不改变诊断语义。
         assert_eq!(
-            backend_degradation(&Backend::Running(backend)),
+            backend.degradation(),
             Some(DeferredDropDegradation::UnexpectedDisconnected)
         );
-        assert_eq!(dropped.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
-    fn synchronous_backend_releases_the_value_once_before_return() {
-        let dropped = Arc::new(AtomicUsize::new(0));
-        drop_synchronously(CountingProbe(dropped.clone()));
         assert_eq!(dropped.load(Ordering::SeqCst), 1);
     }
 
@@ -681,7 +489,7 @@ mod tests {
     /// 语义结构性保证（闭包随 Err 一起 drop，值就地析构）。此测试验证
     /// 大量并发 defer 调用不会死锁或溢出。
     #[test]
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(all(test, not(target_family = "wasm")))]
     fn many_rapid_defers_do_not_block_or_panic() {
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
@@ -706,7 +514,7 @@ mod tests {
 
     /// usize::MAX 栈申请会被 OS 真实拒绝（非模拟错误）：负控的 errno 来自真实失败。
     #[test]
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(all(test, not(target_family = "wasm")))]
     fn impossible_stack_request_is_a_real_os_spawn_failure() {
         let error = std::thread::Builder::new()
             .name("probe-impossible-stack".to_owned())
@@ -722,7 +530,7 @@ mod tests {
     /// 真实 spawn 失败（生产同款 backend_from_spawn）→ 持久退化：
     /// 值同步释放恰一次、不计入队、诊断带真实 errno、后续 defer 不重试。
     #[test]
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(all(test, not(target_family = "wasm")))]
     fn spawn_failed_backend_releases_once_and_reports_errno_without_retry() {
         let real = std::thread::Builder::new()
             .name("probe-impossible-stack".to_owned())
@@ -731,14 +539,17 @@ mod tests {
             .expect_err("usize::MAX 栈申请必须被 OS 拒绝");
         let os_errno = real.raw_os_error();
         let (sender, receiver) = mpsc::sync_channel(QUEUE_CAPACITY);
-        let built = backend_from_spawn(Err(real), sender);
-        assert!(matches!(built, Backend::SpawnFailed { .. }));
+        let built = TestBackend::from_spawn_failure(real, sender);
+        assert_eq!(
+            built.degradation(),
+            Some(DeferredDropDegradation::SpawnFailed { os_errno })
+        );
         drop(receiver);
         let dropped = Arc::new(AtomicUsize::new(0));
         for _ in 0..2 {
             let probe = CountingProbe(dropped.clone());
             assert_eq!(
-                dispatch_on(&built, Box::new(move || drop(probe))),
+                built.dispatch(Box::new(move || drop(probe))),
                 Submission::SpawnFailedInline,
                 "创建失败的同一 backend 不能成功入队或自动重试"
             );
@@ -749,7 +560,7 @@ mod tests {
             "两个真实派发值都已同步释放"
         );
         assert_eq!(
-            backend_degradation(&built),
+            built.degradation(),
             Some(DeferredDropDegradation::SpawnFailed { os_errno })
         );
     }
@@ -757,7 +568,7 @@ mod tests {
     /// 在途线程退出（receiver 已 drop）→ 断连退化：恰一次释放 + 诊断可见；
     /// 后续同 backend 的 defer 仍是同步释放。
     #[test]
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(all(test, not(target_family = "wasm")))]
     fn disconnected_backend_releases_once_and_reports_unexpected_disconnected() {
         let dropped = Arc::new(AtomicUsize::new(0));
         let (sender, receiver) = mpsc::sync_channel(QUEUE_CAPACITY);
@@ -780,7 +591,7 @@ mod tests {
 
     /// 队列满（受控容量 1）→ 正常背压：不产生任何退化诊断。
     #[test]
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(all(test, not(target_family = "wasm")))]
     fn full_queue_backpressure_is_not_a_degradation() {
         let dropped = Arc::new(AtomicUsize::new(0));
         let (sender, receiver) = mpsc::sync_channel(1);

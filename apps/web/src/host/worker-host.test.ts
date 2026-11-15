@@ -719,43 +719,45 @@ test("Worker 真实 coordinator 拒绝批次中间提交后不消费尾部、不
 });
 
 
-test("Worker reportError 的 error 事件将完整错误交付用户回调并终止会话", async () => {
-  const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
-  class ReportingWorker extends LegacyWorker {
-    static current: ReportingWorker;
-    readonly sent: Record<string, unknown>[] = [];
-    terminated = false;
-    constructor() { super(); ReportingWorker.current = this; }
-    postMessage(value: Record<string, unknown>) { this.prepare(value); this.sent.push(value); }
-    terminate() { this.terminated = true; }
-    emit(value: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data: value })); }
-  }
-  Object.defineProperty(globalThis, "Worker", { configurable: true, value: ReportingWorker });
-  let host: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
+test("Worker reportError 的 error 事件交付完整主错，强制终止不冒充已释放", { timeout: 10000 }, async () => {
+  const f = fixtureW1();
+  const releases: unknown[] = [];
   try {
-    const creating = createLegacyHost({} as Parameters<typeof createWorkerHost>[0], 1n);
-    const worker = ReportingWorker.current;
-    await bootstrapLegacy(worker);
-    worker.emit({ ...catalogWorkerFixture(protocolSnapshot(0, 0)), type: "baseline", civilDate: "2030-01-02", generation: 1, snapshot: protocolSnapshot(0, 0) });
-    host = await creating;
+    f.launch({
+      onSpawnFailure() { throw new Error("本用例不应请求创建 child"); },
+      lifecycleObserver(event: { type: string }) {
+        if (event.type === "finalRelease" || event.type === "releaseUnknown") releases.push(event);
+      },
+    });
+    await drainW1();
+    f.ingress(); f.baseline(); await drainW1(); f.ack(f.workers[1], 1); await drainW1();
+    const outcome = f.readOutcome();
+    if (outcome.status !== "fulfilled") throw new Error("fixture 启动未成功");
+    const worker = f.workers[0];
     const failures: unknown[] = [];
-    const starting = host.start(() => true, (failure) => { failures.push(failure); });
-    await Promise.resolve();
+    const starting = outcome.host.start(() => true, (failure) => { failures.push(failure); });
+    const rejected = assert.rejects(starting, /STEP_FATAL.*原始故障.*port failure 1.*port failure 0/);
+    await drainW1();
     const detail = "STEP_FATAL：原始故障；首次发送：port failure 1；再次发送：port failure 0";
-    worker.dispatchEvent(Object.assign(new Event("error"), { message: detail }));
-    await assert.rejects(starting, /STEP_FATAL.*原始故障.*port failure 1.*port failure 0/);
+    worker.error(undefined, detail);
+    await drainW1();
+    assert.equal(worker.terminations, 0, "诊断期限前不得强制终止");
+    assert.deepEqual(releases, []);
+    f.clock.advance(2001);
+    await drainW1();
+    await rejected;
     assert.deepEqual(failures.map((value) => {
       const { code, where, message } = value as { code: string; where: string; message: string };
       return { code, where, message };
     }), [{ code: "WASM_WORKER_SCRIPT", where: "worker-host", message: `WASM Worker 脚本加载或执行失败：${detail}` }]);
     assert.equal((failures[0] as { cause: { message: string } }).cause.message, detail);
-    assert.equal(worker.terminated, true);
-  } finally {
-    await host?.dispose();
-    if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
-    else Object.defineProperty(globalThis, "Worker", original);
-  }
+    assert.equal(worker.terminations, 1);
+    assert.equal(releases.length, 1);
+    assert.match(String((releases[0] as { message: string }).message), /quiescence|停止 grow/);
+    assert.equal((releases[0] as { type: string }).type, "releaseUnknown");
+  } finally { await f.cleanup(); }
 });
+
 
 for (const shared of [true]) {
   test(`实际单股Worker ${shared ? "shared ingress" : "serial"}三variant与unknown零enqueue`, { timeout: 10000 }, async () => {

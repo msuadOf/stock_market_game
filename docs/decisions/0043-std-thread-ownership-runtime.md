@@ -1,7 +1,7 @@
 # ADR-0043: std::thread 所有权转移运行时（NPC 组线程 + 每股交易部线程）
 
-- **状态 (Status):** draft（实现已落地；native 与 Web 产品宿主缺省启用 runtime，
-  `ENGINE_STEP_RUNTIME=0` 仅作为 native 生产 `step` 的临时回退口；旧管线仍服务
+- **状态 (Status):** draft（实现已落地；Native 与 Web 产品宿主只使用 World，
+  旧管线仅服务
   Escrow evidence 等验证面。批 11 全量回归 + s5 正式基准 +
   独立复核通过后改 accepted，并如实更新「后果」第 6 条）
 - **日期 (Date):** 2026-10-17（决策链 2026-10-11 ~ 2026-10-16）
@@ -144,9 +144,9 @@ taskset affinity）。2026-10-15：确认最终形态为**资源实体所有权�
    （原型仅 Entity 聚合批）——962 t/s 只能作机制口径参考，正式基准批 11 重标。
 5. **同拍交付双写**引入投影与组权威两条写路径：由「下一拍整值回写」保证不双计，
    测试面已锚定（同拍全量投影/Abort 零泄漏）。
-6. **翻转现状**：native 的 `step_runtime_enabled()` 缺省启用 runtime，
-   `ENGINE_STEP_RUNTIME=0` 可临时切回旧管线，首次读取后本进程不可切换。终态为全局域
-   迁移完成、旧管线与开关退役。Web 默认显式启用 runtime，宿主等待
+6. **翻转现状**：产品固定使用 World；Native 正式宿主拒绝 `ENGINE_STEP_RUNTIME=0`。
+   旧管线保留于 Escrow 验证及显式启用 `SMG_VERIFY_LEGACY_STEP=1` 的隔离 engine 单测进程。
+   Web 使用 `world_runtime_abi_version` 识别产品制品，不再提供交易管线开关。宿主等待
    参数为 `spinUs=500`、`quietUs=50000`、`fineUs=500`、`coarseUs=500`（单位：微秒）；
    其中 `coarseUs` 的产品默认值依据普通 World/4 NPC 的真实浏览器 A/B：两臂连续
    交付 32 tick，暂停前均到第 33 tick、day 0，完整 start→query→dispose→join/final→

@@ -265,7 +265,7 @@ fn treasury_final_position_mismatch_is_explicit_and_candidate_failure_is_atomic(
 /// #119 的小活动覆盖：三组含非满尾组，真实 Drain 成交的最终 facts 与确认可勾稽。
 /// 这是当前机制验证，不声称复现旧 1200/1500 场景或证明其历史根因。
 #[test]
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 fn runtime_closing_final_facts_reconcile_with_tail_group_confirmations() {
     use crate::runtime::drive::RuntimeDriver;
     use crate::GameSession;

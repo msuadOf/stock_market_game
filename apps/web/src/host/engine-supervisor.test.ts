@@ -4,6 +4,7 @@ import { createEngineSupervisor, allocateFacadeWorkerId, FacadeSpawnError } from
 import { BUMP, CAPACITY, GEN_BITS, FREE_HEAD, FREE_HEAD_EMPTY, FREE_LEN, HEADER_WORDS, SLOT_STRIDE, JOIN_STRIDE, SLOT_JOIN_INDEX, SLOT_ANSWER_B, H1_LOCK, AnswerField, SlotState, JoinState, encodeW, encodeJoin, slotWordOffset, slotFieldOffset, joinWordOffset } from "./facade-slot-protocol.ts";
 import type { HostFailure } from "./host-update.ts";
 import { parseHostFailure } from "./protocol-failure.ts";
+import type { WasmLifecycleObservation } from "./wasm-lifecycle-observation.ts";
 
 class Port extends EventTarget {
   starts = 0;
@@ -52,6 +53,7 @@ function fixture(options: { deathAddress?: number; constructError?: unknown; pos
   const children: WorkerHandle[] = [], channels: { port1: Port; port2: Port }[] = [];
   const fatal: HostFailure[] = [], failures: HostFailure[] = [];
   const reporterErrors: Error[] = [];
+  const lifecycle: WasmLifecycleObservation[] = [];
   const supervisor = createEngineSupervisor({
     engine: engine as unknown as Worker,
     createChildWorker: () => {
@@ -70,6 +72,7 @@ function fixture(options: { deathAddress?: number; constructError?: unknown; pos
     onFailurePending: () => {},
     onFatalFailure: (failure) => { options.onFatal?.(); fatal.push(failure); if (options.fatalCallbackError !== undefined) throw options.fatalCallbackError; },
     onSpawnFailure: (failure) => { failures.push(failure); if (options.spawnCallbackError !== undefined) throw options.spawnCallbackError; },
+    onLifecycleObservation: (event) => { lifecycle.push(event); },
     ...(options.withoutReporter === true ? {} : { reportError: (error: Error) => { reporterErrors.push(error); } }),
     timers: { now: () => clock.now, setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout },
   });
@@ -88,7 +91,7 @@ function fixture(options: { deathAddress?: number; constructError?: unknown; pos
   function ready(index = 0, slot = 0, gen = 0) {
     channels[index + 1].port1.emit({ type: "facadeChildReady", workerId: index + 1, slot, gen });
   }
-  return { supervisor, memory, words, layout, engine, children, channels, clock, fatal, failures, reporterErrors, publish, spawn, ready };
+  return { supervisor, memory, words, layout, engine, children, channels, clock, fatal, failures, reporterErrors, lifecycle, publish, spawn, ready };
 }
 
 test("main 端监听与 start 先于 child bootstrap，真实句柄在 ready 前登记", { timeout: 10000 }, () => {
@@ -510,6 +513,115 @@ test("强制 dispose 清 manifest 不得把真实 drain waiter 改成成功", { 
   const pending = f.supervisor.waitForChildrenExit(1000);
   f.supervisor.dispose();
   await assert.rejects(pending, /dispose|废弃|终止/);
+});
+
+test("双 child 按相反顺序 join 与 exit，两个世代凭证齐全才可最终释放", { timeout: 10000 }, async () => {
+  const f = fixture();
+  try {
+    f.spawn(0, 1); f.ready(0, 0, 1);
+    f.spawn(1, 2); f.ready(1, 1, 2);
+    const drain = f.supervisor.waitForChildrenExit(1000);
+    let settled = false;
+    void drain.then(() => { settled = true; }, () => { settled = true; });
+    const publish = (slot: number, gen: number, state: number) =>
+      Atomics.store(f.words, joinWordOffset(slot, 4), encodeJoin(gen, state, 29) | 0);
+    publish(0, 1, JoinState.Consumed);
+    publish(1, 2, JoinState.Done);
+    f.channels[2].port1.emit({ type: "facadeWorkerExit", workerId: 2, slot: 1, gen: 2 });
+    f.supervisor.checkpoint();
+    await Promise.resolve();
+    assert.equal(settled, false, "不同槽的 join 与 exit 不可相互补证");
+    assert.equal(Atomics.load(f.words, FREE_LEN), 0);
+
+    f.channels[1].port1.emit({ type: "facadeWorkerExit", workerId: 1, slot: 0, gen: 1 });
+    assert.equal(Atomics.load(f.words, FREE_LEN), 1);
+    await Promise.resolve();
+    assert.equal(settled, false, "全部 child 已退出仍不代表全部槽已回收");
+    f.memory.grow(1);
+    f.supervisor.markQuiescent(f.engine as unknown as Worker);
+    publish(1, 2, JoinState.Consumed);
+    f.supervisor.checkpoint();
+    await drain;
+    assert.equal(Atomics.load(f.words, FREE_LEN), 2);
+    assert.deepEqual(f.lifecycle.filter(({ type }) => type === "childrenDrained"), [
+      { type: "childrenDrained", activeChildren: 0, manifestEntries: 0, pendingRecovery: 0 },
+    ]);
+    const released = f.supervisor.dispose();
+    assert.equal(f.supervisor.dispose(), released);
+    assert.deepEqual(released, { kind: "released", finalBytes: 131072, growthStopped: true, referencesDropped: true });
+    assert.deepEqual(f.lifecycle.filter(({ type }) => type === "finalRelease"), [
+      { type: "finalRelease", kind: "released", finalBytes: 131072 },
+    ]);
+    assert.deepEqual(f.children.map(({ terminations }) => terminations), [0, 0]);
+    assert.deepEqual(f.fatal, []);
+  } finally { f.supervisor.dispose(); }
+});
+
+test("未 join 的 owner 即使已收到 childExit，也不能证明槽或 Memory 回收", { timeout: 10000 }, async () => {
+  const f = fixture();
+  try {
+    f.spawn(); f.ready();
+    let settled = false;
+    const drain = f.supervisor.waitForChildrenExit(50);
+    void drain.then(() => { settled = true; }, () => { settled = true; });
+    f.supervisor.markQuiescent(f.engine as unknown as Worker);
+
+    const pair = joinWordOffset(0, 4);
+    const done = encodeJoin(0, JoinState.Done, 29);
+    Atomics.store(f.words, pair, done | 0);
+    f.channels[1].port1.emit({ type: "facadeWorkerExit", workerId: 1, slot: 0, gen: 0 });
+    f.clock.advance(49);
+    await Promise.resolve();
+    assert.equal(settled, false, "没有 owner 消费就不能把实退等同于实回收");
+    assert.equal(f.supervisor.snapshot().children, 0);
+    assert.equal(f.supervisor.snapshot().protocolEntries, 1);
+    assert.equal(Atomics.load(f.words, FREE_LEN), 0);
+    assert.equal(Atomics.load(f.words, pair) >>> 0, done);
+    assert.equal(f.children[0].terminations, 0, "对已经退出的 child 不伪造强制终止");
+
+    const rejected = assert.rejects(drain, /真实 child exit/);
+    f.clock.advance(1);
+    await rejected;
+    assert.deepEqual(f.fatal.map(({ code }) => code), ["WASM_SHUTDOWN_EXIT_TIMEOUT"]);
+    assert.equal(Atomics.load(f.words, FREE_LEN), 0);
+    assert.deepEqual(f.lifecycle.filter(({ type }) =>
+      ["childrenDrained", "finalRelease", "releaseUnknown"].includes(type)).map(({ type }) => type), ["releaseUnknown"]);
+    const unknown = f.supervisor.dispose();
+    assert.ok(unknown instanceof Error);
+    assert.equal(f.supervisor.dispose(), unknown, "已失败的最终释放只结算一次");
+  } finally { f.supervisor.dispose(); }
+});
+
+test("已 CONSUMED 的任务结果不能遮蔽 child destroy 失败，亦不能发成功回收回执", { timeout: 10000 }, async () => {
+  const f = fixture();
+  try {
+    f.spawn(); f.ready();
+    const drain = f.supervisor.waitForChildrenExit(1000);
+    const rejected = assert.rejects(drain, /真实 child exit/);
+    f.supervisor.markQuiescent(f.engine as unknown as Worker);
+    const pair = joinWordOffset(0, 4);
+    const consumed = encodeJoin(0, JoinState.Consumed, 29);
+    Atomics.store(f.words, pair, consumed | 0);
+    f.supervisor.checkpoint();
+
+    const failure = {
+      code: "CHILD_DESTROY_FAILED", where: "facade-child-bootstrap.cleanup",
+      message: "释放 child TLS 失败", cause: { detail: "原始 destroy 错误" },
+    };
+    f.channels[1].port1.emit({
+      type: "facadeBootstrapFailure", phase: "cleanup", workerId: 1, slot: 0, gen: 0, failure,
+    });
+    // 失败后到达的同代 exit 不能复活关闭协议。
+    f.channels[1].port1.emit({ type: "facadeWorkerExit", workerId: 1, slot: 0, gen: 0 });
+    await rejected;
+    assert.deepEqual(f.fatal, [{ ...failure, context: { last_committed_tick: "unknown" } }]);
+    assert.equal(Atomics.load(f.words, pair) >>> 0, consumed, "不能改写已消费的任务结果");
+    assert.equal(Atomics.load(f.words, FREE_LEN), 0);
+    assert.deepEqual(f.lifecycle.filter(({ type }) =>
+      ["childExit", "childrenDrained", "finalRelease", "releaseUnknown"].includes(type)).map(({ type }) => type), ["releaseUnknown"]);
+    assert.equal(f.children[0].terminations, 1);
+    assert.equal(f.engine.terminations, 1);
+  } finally { f.supervisor.dispose(); }
 });
 
 test("V2 child trap 报告本 worker 的已发布 tombstone", { timeout: 10000 }, () => {

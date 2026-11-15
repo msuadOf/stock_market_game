@@ -195,6 +195,7 @@ type WorkerHostOptions = {
   readonly lifecycleObserver?: (event: WasmLifecycleObservation) => void;
   readonly memoryAdmissionTicket?: WasmMemoryAdmissionTicket;
   readonly enableE2EStepping?: boolean;
+  readonly e2eRuntimeGroups?: 2;
   readonly onSpawnFailure: (failure: HostFailure) => void;
   readonly onInitializationProgress?: (message: string) => void;
   readonly initialArchive?: StrictSaveEnvelope | null;
@@ -212,6 +213,7 @@ export function createWorkerHost(
     let initialArchive: StrictSaveEnvelope | null = null;
     let restoreCapability: VerifiedWasmRestoreCapability | undefined;
     let runtimeOptions: WasmRuntimeOptions;
+    let e2eRuntimeGroups: 2 | undefined;
     try {
       const ticket = options !== null && typeof options === "object" ? options.memoryAdmissionTicket : undefined;
       memoryTicket = ticket;
@@ -221,6 +223,11 @@ export function createWorkerHost(
         ticket.registerRelease(release);
       }
       if (options === null || typeof options !== "object" || typeof options.onSpawnFailure !== "function") throw new Error("WorkerHost 必须提供 onSpawnFailure callback");
+      e2eRuntimeGroups = options.e2eRuntimeGroups;
+      if (e2eRuntimeGroups !== undefined) {
+        assertWorkerE2EStepAllowed(import.meta.env.MODE === "e2e", options.enableE2EStepping === true);
+        if (e2eRuntimeGroups !== 2) throw new Error("Worker E2E runtime 组数只能为 2");
+      }
       const override = options.runtimeOverride;
       if (override === false) throw new Error("WorkerHost 必须启用 runtime，不支持 runtimeOverride: false");
       const waitSettings = options.waitSettings;
@@ -527,6 +534,7 @@ export function createWorkerHost(
         ...(initialArchive === null ? { setup } : { initialArchive, restoreCapability }),
         ...(runtimeOptions.runtimeOverride === undefined ? {} : { runtimeOverride: runtimeOptions.runtimeOverride }),
         ...(runtimeOptions.waitSettings === undefined ? {} : { waitSettings: runtimeOptions.waitSettings }),
+        ...(e2eRuntimeGroups === undefined ? {} : { e2eRuntimeGroups }),
       });
     } catch (error) {
       notifyFailure({ code: "WASM_WORKER_TRANSPORT", where: "worker-host.initialize", message: error instanceof Error ? error.message : String(error) });

@@ -40,6 +40,7 @@ impl SessionRegistry {
                     stage: "registry_handle".to_owned(),
                     worker: None,
                     detail: format!("未知或已消费的 session handle：{handle}"),
+                    join_failure: None,
                 },
                 secondary: Vec::new(),
                 completion: None,
@@ -48,6 +49,7 @@ impl SessionRegistry {
             stage: "registry_ingress_revoke".to_owned(),
             worker: None,
             detail: error.to_string(),
+            join_failure: None,
         });
         let stopped = session.shutdown();
         match (revoke_failure, stopped) {
