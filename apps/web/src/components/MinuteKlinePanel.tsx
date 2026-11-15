@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { MarketHistoryPage, MarketHistoryRequest } from "../host/market-history.ts";
+import { useEffect, useMemo, useState } from "react";
 import type { CurrentMinuteHistoryResponse } from "../host/current-minute-history.ts";
-import { activeMinuteKlineBucketMinute, aggregateMinuteBars, aggregateMinuteKlines, minuteVolumeBarHeight, type MinuteKline, type MinuteKlinePeriod } from "./minute-kline.ts";
+import { activeMinuteKlineBucketMinute, aggregateMinuteBars, minuteVolumeBarHeight, type MinuteKline, type MinuteKlinePeriod } from "./minute-kline.ts";
 import { formatDecimalCentsAsYuan, yuan } from "../utils/format.ts";
 import { candleBodyPrices, candleWickPrices } from "../mobile/market-model.ts";
 import { KlineCoordinatePlot } from "./KlineCoordinatePlot.tsx";
@@ -9,7 +8,6 @@ import { coordinateTicks, formatCoordinateValue, type KlineTimeTick } from "./kl
 import "./MinuteKlinePanel.css";
 
 export interface MinuteKlinePanelProps {
-  readonly query: (request: MarketHistoryRequest) => Promise<MarketHistoryPage>;
   readonly scopeKey: string;
   readonly code: string;
   readonly currentDate: string | null;
@@ -25,13 +23,6 @@ export interface MinuteKlinePanelProps {
 const phases = { OpenAuction: "开盘集合竞价", Continuous: "连续竞价", ClosingAuction: "收盘集合竞价" };
 const currentPhases = { CallAuction: "开盘集合竞价", PreOpen: "开盘前", Continuous: "连续竞价", ClosingAuction: "收盘集合竞价", AfterClose: "收盘后", Closed: "休市" };
 const labels: Record<MinuteKlinePeriod, string> = { 120: "120分钟", 60: "60分钟", 30: "30分钟", 15: "15分钟", 5: "5分钟", 1: "1分钟" };
-function shiftDate(date: string, days: number): string {
-  const parsed = new Date(`${date}T00:00:00Z`);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) throw new Error(`自然日期无效：${date}`);
-  parsed.setUTCDate(parsed.getUTCDate() + days);
-  return parsed.toISOString().slice(0, 10);
-}
-
 export function MinuteKlineDay({ date, bars, period, activeMinute = null }: { date: string; bars: readonly MinuteKline[]; period: MinuteKlinePeriod; activeMinute?: number | null }) {
   const prices = bars.flatMap((bar) => [Number(BigInt(bar.low)) / 100, Number(BigInt(bar.high)) / 100]);
   const minimum = Math.min(...prices), maximum = Math.max(...prices);
@@ -76,102 +67,36 @@ export function MinuteKlineDay({ date, bars, period, activeMinute = null }: { da
   </section>;
 }
 
-export function MinuteKlinePanel({ query, scopeKey, code, currentDate, period, queryCurrentMinuteHistory, tickRefreshKey, currentMinuteOfDay = null }: MinuteKlinePanelProps) {
-  const initialFrom = currentDate === null ? "" : shiftDate(currentDate, -30);
-  const initialTo = currentDate === null ? "" : shiftDate(currentDate, -1);
-  const [from, setFrom] = useState(initialFrom);
-  const [to, setTo] = useState(initialTo);
-  const [pages, setPages] = useState<readonly MarketHistoryPage[]>([]);
-  const [index, setIndex] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [liveHistory, setLiveHistory] = useState<CurrentMinuteHistoryResponse | null>(null);
+export function MinuteKlinePanel({ scopeKey, code, currentDate, period, queryCurrentMinuteHistory, tickRefreshKey, currentMinuteOfDay = null }: MinuteKlinePanelProps) {
+  const [live, setLive] = useState<{ scopeKey: string; response: CurrentMinuteHistoryResponse } | null>(null);
   const [liveLoading, setLiveLoading] = useState(false);
   const [liveError, setLiveError] = useState<string | null>(null);
-  const owner = useRef({ alive: false, sequence: 0 });
-  const liveOwner = useRef({ alive: false, sequence: 0 });
   useEffect(() => {
-    const requestOwner = owner.current;
-    requestOwner.alive = true;
-    const liveRequestOwner = liveOwner.current;
-    liveRequestOwner.alive = true;
-    requestOwner.sequence += 1;
-    liveRequestOwner.sequence += 1;
-    setFrom(currentDate === null ? "" : shiftDate(currentDate, -30));
-    setTo(currentDate === null ? "" : shiftDate(currentDate, -1));
-    setPages([]); setIndex(0); setLoading(false); setError(null); setLiveHistory(null); setLiveLoading(false); setLiveError(null);
-    return () => { requestOwner.alive = false; requestOwner.sequence += 1; liveRequestOwner.alive = false; liveRequestOwner.sequence += 1; };
-  }, [scopeKey, code, query, currentDate]);
-  useEffect(() => {
-    const requestOwner = liveOwner.current;
-    const sequence = ++requestOwner.sequence;
-    if (queryCurrentMinuteHistory === undefined || currentDate === null) { setLiveHistory(null); setLiveLoading(false); setLiveError(null); return; }
+    if (queryCurrentMinuteHistory === undefined || currentDate === null) {
+      setLive(null); setLiveLoading(false); setLiveError(null);
+      return;
+    }
+    let active = true;
     setLiveLoading(true); setLiveError(null);
     void queryCurrentMinuteHistory({ code }).then((response) => {
-      if (!requestOwner.alive || requestOwner.sequence !== sequence) return;
+      if (!active) return;
       if (response.code !== code || response.live !== true || response.date !== currentDate) throw new Error("当前分钟响应证券、自然日错配或不是实时事实");
-      setLiveHistory(response);
+      setLive({ scopeKey, response });
     }).catch((failure: unknown) => {
-      if (requestOwner.alive && requestOwner.sequence === sequence) {
-        setLiveHistory((previous) => previous?.date === currentDate ? previous : null);
+      if (active) {
+        setLive((previous) => previous?.scopeKey === scopeKey && previous.response.code === code && previous.response.date === currentDate ? previous : null);
         setLiveError(`当前分钟查询失败：${failure instanceof Error ? failure.message : String(failure)}；请重试并反馈错误详情。`);
       }
-    }).finally(() => {
-      if (requestOwner.alive && requestOwner.sequence === sequence) setLiveLoading(false);
-    });
-    return () => { requestOwner.sequence += 1; };
+    }).finally(() => { if (active) setLiveLoading(false); });
+    return () => { active = false; };
   }, [scopeKey, code, currentDate, queryCurrentMinuteHistory, tickRefreshKey]);
-  const page = pages[index];
-  const bars = useMemo(() => page === undefined ? [] : aggregateMinuteKlines(page.entries, period), [page, period]);
-  const liveBars = useMemo(() => liveHistory === null ? [] : aggregateMinuteBars(liveHistory.date, liveHistory.bars, period), [liveHistory, period]);
-  const visibleLiveHistory = currentDate !== null && liveHistory?.date === currentDate ? liveHistory : null;
-  // B2 wire 不再随响应下发 observed_at 观察时刻——"形成中"桶由调用方以
-  // engine 同口径的墙钟分钟（MinuteBarFact.minute_of_day，570..690/780..900）
-  // 提供；缺省 null 表示不标记形成中桶（诚实降级，不从 bar 伪造观察时刻）。
+  const visibleLiveHistory = live?.scopeKey === scopeKey && live.response.code === code && live.response.date === currentDate ? live.response : null;
+  const liveBars = useMemo(() => visibleLiveHistory === null ? [] : aggregateMinuteBars(visibleLiveHistory.date, visibleLiveHistory.bars, period), [visibleLiveHistory, period]);
+  // 形成中的连续竞价桶以引擎墙钟为准，不从成交记录推测观察时刻。
   const liveActiveMinute = visibleLiveHistory?.phase === "Continuous" && currentMinuteOfDay !== null ? activeMinuteKlineBucketMinute(currentMinuteOfDay, period) : null;
-  const invalidate = () => { owner.current.sequence += 1; setPages([]); setIndex(0); setLoading(false); setError(null); };
-  const load = async (request: MarketHistoryRequest, previous: readonly MarketHistoryPage[]) => {
-    const sequence = ++owner.current.sequence;
-    setLoading(true); setError(null);
-    try {
-      const scopedQuery = async (input: MarketHistoryRequest) => {
-        if (!owner.current.alive || owner.current.sequence !== sequence) throw new Error("历史查询范围已切换");
-        const result = await query(input);
-        if (!owner.current.alive || owner.current.sequence !== sequence) throw new Error("历史响应属于已切换范围");
-        return result;
-      };
-      const result = await scopedQuery(request);
-      if (!owner.current.alive || owner.current.sequence !== sequence) return;
-      setPages([...previous, result]); setIndex(previous.length);
-    } catch (failure) {
-      if (owner.current.alive && owner.current.sequence === sequence) setError(`分钟K线查询失败：${failure instanceof Error ? failure.message : String(failure)}；请核对日期并重试。`);
-    } finally { if (owner.current.alive && owner.current.sequence === sequence) setLoading(false); }
-  };
-  const search = () => {
-    if (from === "" || to === "") { setError("请先选择完整的起止日期。"); return; }
-    if (from > to) { setError("起始日期不能晚于结束日期。"); return; }
-    invalidate();
-    void load({ code, date_from: from, date_to: to, after: null, page_size: 31 }, []);
-  };
-  const next = () => {
-    if (page === undefined || page.next_cursor === null) throw new Error("分钟K线没有下一页游标");
-    if (index + 1 < pages.length) { setIndex(index + 1); return; }
-    void load({ code, date_from: from, date_to: to, after: page.next_cursor, page_size: 31 }, pages.slice(0, index + 1));
-  };
-  const byDate = new Map<string, MinuteKline[]>();
-  for (const bar of bars) byDate.set(bar.date, [...(byDate.get(bar.date) ?? []), bar]);
-  return <section className="minute-kline" aria-label="分钟K线历史">
-    <h3>{labels[period]}历史K线</h3>
-    <p>仅显示已成功日结的真实成交；自然日和午间时段分别聚合，集合竞价单独成柱。无成交时段不补柱，金额按精确成交分累计。当前交易日不在此历史页内。</p>
-    <form onSubmit={(event) => { event.preventDefault(); search(); }}>
-      <label>起始日期<input aria-label="分钟K线起始日期" type="date" value={from} onChange={(event) => { setFrom(event.currentTarget.value); invalidate(); }} required /></label>
-      <label>结束日期<input aria-label="分钟K线结束日期" type="date" value={to} onChange={(event) => { setTo(event.currentTarget.value); invalidate(); }} required /></label>
-      <button type="submit" disabled={loading}>查询历史K线</button>
-    </form>
-    <div className="minute-kline-pagination"><button type="button" disabled={index === 0 || loading} onClick={() => setIndex(index - 1)}>上一页</button><span>第{index + 1}页，每页最多31个自然日</span><button type="button" disabled={page === undefined || page.next_cursor === null || loading} onClick={next}>下一页</button></div>
-    {loading && <p role="status">正在查询已结束日期…</p>}
-    {error !== null && <p role="alert">{error}</p>}
-    {page !== undefined && <><p>日终历史截止：{page.settled_through ?? "尚未首次日结"}；此页日期 {page.entries[0]?.date ?? "无"} 至 {page.entries.at(-1)?.date ?? "无"}。</p>{byDate.size === 0 ? <p>所选日期页没有已日结分钟成交。</p> : [...byDate].map(([date, values]) => <MinuteKlineDay key={date} date={date} bars={values} period={period} />)}</>}
+  return <section className="minute-kline" aria-label="当前交易日分钟K线">
+    <h3>{labels[period]}K线（当前交易日）</h3>
+    <p>分钟成交仅在当前交易日可用，日结后仅保留日K。午休前后分别聚合，集合竞价单独成柱，无成交不补柱。</p>
     <section className="minute-kline-current" aria-label="当前交易日实时分钟K">
       <h4>当前交易日实时分钟K</h4>
       {queryCurrentMinuteHistory === undefined && <p>当前分钟历史宿主暂不可用。</p>}

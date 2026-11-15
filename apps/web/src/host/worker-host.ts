@@ -1,3 +1,4 @@
+import { isNewObserverDelivery, observerOrdinal as publicationOrdinal, runObserverResync } from "./observer-resync.ts";
 import { checkRightsSubscriptionFailure, createRightsSubscription } from "./rights-subscription.ts";
 import type { CatalogResolver } from "./catalog-resolver.ts";
 import { createCompanyReadQueries } from "./company-read.ts";
@@ -69,6 +70,18 @@ function generation(value: unknown, where: string): number {
     throw new Error(`${where} 必须是正安全整数`);
   }
   return Number(value);
+}
+
+function publisherToken(value: unknown): number {
+  const token = generation(value, "Browser publisher token");
+  if (token > 0xffffffff) throw new Error("Browser publisher token 必须为正 u32");
+  return token;
+}
+
+function publisherControlAddress(value: unknown): number {
+  const address = generation(value, "Browser publisher controlAddress");
+  if (address > 0xffffffff || address % 4 !== 0) throw new Error("Browser publisher controlAddress 必须是对齐的 u32 地址");
+  return address;
 }
 
 export function parseWorkerFailure(value: unknown): HostFailure {
@@ -151,7 +164,7 @@ export async function restoreWorkerSlot(
   requestId: number,
   currentGeneration: number,
   onCommitted?: () => void,
-): Promise<Extract<HostUpdate, { type: "baseline" }> & { readonly nextGeneration: number }> {
+): Promise<Extract<HostUpdate, { type: "baseline" }> & { readonly nextGeneration: number; readonly publisherToken?: number; readonly controlAddress?: number; readonly publicationOrdinal?: string }> {
   const response = await requests.request({
     type: "restore",
     requestId,
@@ -164,14 +177,17 @@ export async function restoreWorkerSlot(
     throw new Error(`Worker restore generation 必须大于当前 generation ${currentGeneration}，实际收到 ${nextGeneration}`);
   }
   return {
-    ...prepareBaselineUpdate(String(nextGeneration), response.snapshot, response.stockCatalog, response.companyCatalog, { civilDate: parseIsoDate(response.civilDate, "Worker restored.civilDate"), revision: null }),
+    ...prepareBaselineUpdate(String(nextGeneration), response.snapshot, response.stockCatalog, response.companyCatalog, { civilDate: parseIsoDate(response.civilDate, "Worker restored.civilDate"), revision: null }, [], [], response.workingOrders, response.latestCheckpoint),
     nextGeneration,
+    ...(response.publisherToken === undefined ? {} : { publisherToken: publisherToken(response.publisherToken) }),
+    ...(response.controlAddress === undefined ? {} : { controlAddress: publisherControlAddress(response.controlAddress) }),
+    ...(response.publicationOrdinal === undefined ? {} : { publicationOrdinal: publicationOrdinal(response.publicationOrdinal) }),
   };
 }
 
 export async function refreshWorkerBaseline(requests: WorkerRequestScope, requestId: number, currentGeneration: number): Promise<Extract<HostUpdate, { type: "baseline" }>> {
   const response = await requests.request({ type: "refreshBaseline", requestId, generation: currentGeneration }, "refreshed");
-  return prepareBaselineUpdate(String(currentGeneration), response.snapshot, response.stockCatalog, response.companyCatalog, { civilDate: parseIsoDate(response.civilDate, "Worker refreshed.civilDate"), revision: null });
+  return prepareBaselineUpdate(String(currentGeneration), response.snapshot, response.stockCatalog, response.companyCatalog, { civilDate: parseIsoDate(response.civilDate, "Worker refreshed.civilDate"), revision: null }, [], [], response.workingOrders, response.latestCheckpoint);
 }
 
 export function workerPausePreferenceRequest(
@@ -252,6 +268,9 @@ export function createWorkerHost(
         onLifecycleObservation: options.lifecycleObserver,
         onSpawnFailure(failure) { options.onSpawnFailure(parseWorkerFailure(failure)); },
         onFailurePending(failure) { beginFailurePending(failure); },
+        onPublisherObserverFailure(generation, error) {
+          if (generation === currentGeneration && generation === publisherGeneration && callback !== null) reportPublicationFailure(error);
+        },
         onFailure(error) {
           const cause = error.cause;
           if (cause !== null && typeof cause === "object" && Object.hasOwn(cause, "code") && Object.hasOwn(cause, "where")) notifyFailure(parseWorkerFailure(cause), false, true);
@@ -260,7 +279,25 @@ export function createWorkerHost(
       });
     } catch (error) { resolveRelease?.({ kind: "not-allocated" }); reject(error); return; }
     const worker: EngineBusinessPort = controlClient.enginePort;
-    const requests = new WorkerRequestScope(worker);
+    const requests = new WorkerRequestScope({
+      addEventListener: (type, listener) => worker.addEventListener(type, listener),
+      removeEventListener: (type, listener) => worker.removeEventListener(type, listener),
+      postMessage(value) {
+        const request = message(value);
+        if (baselinePublisherToken === null
+          || !controlClient.markPending(generation(request.generation, "Browser control generation"))) {
+          // 开跑前还没有发布通道；此时引擎暂停，不存在需要优先抢占的 tick。
+          worker.postMessage(value);
+          return;
+        }
+        const markedGeneration = Number(request.generation);
+        try { worker.postMessage({ ...request, controlHandle: baselinePublisherToken }); }
+        catch (error) {
+          if (!controlClient.unmarkPending(markedGeneration)) throw new AggregateError([error], "Browser control 发送失败且无法撤下待处理信号");
+          throw error;
+        }
+      },
+    });
     let ingressWorker: EngineBusinessPort | null = null;
     let ingressRequests: WorkerRequestScope | null = null;
     let ingressReady: Promise<unknown> | null = null;
@@ -274,6 +311,17 @@ export function createWorkerHost(
     let callback: ((update: HostUpdate) => void | boolean) | null = null;
     let fatalCallback: ((failure: HostFailure) => void) | null = null;
     let cachedBaseline: Extract<HostUpdate, { type: "baseline" }> | null = null;
+    let baselinePublisherToken: number | null = null;
+    let baselineControlAddress: number | null = null;
+    let publisherPort: EngineBusinessPort | null = null;
+    let publisherTransport: Promise<EngineBusinessPort> | null = null;
+    let publisherShutdown: Promise<void> | null = null;
+    let publisherRequests: WorkerRequestScope | null = null;
+    let publisherGeneration = 0;
+    let publisherBinding: { generation: number; token: number; address: number; ready: Promise<void> } | null = null;
+    let publisherRecovering = false;
+    let publisherFailure: { generation: number; failure: HostFailure } | null = null;
+    let acceptedPublicationOrdinal: string | null = null;
     let baselineEpoch = 0;
     let deliveredGeneration: string | null = null;
     let initialized = false;
@@ -304,6 +352,7 @@ export function createWorkerHost(
         closingCancellation = error;
         requests.beginClosing("shutdown", error);
         ingressRequests?.beginClosing("quiesceIngress", error);
+        publisherRequests?.beginClosing("quiescePublisher", error);
       }
       controlClient.beginShutdown(until);
     };
@@ -340,6 +389,7 @@ export function createWorkerHost(
           }));
         } catch (shutdownError) { cleanupRequests.push(Promise.reject(shutdownError)); }
       }
+      cleanupRequests.push(quiescePublisher(pendingDeadline ?? performance.now() + 2000));
       deadline.dispose();
       try { controlClient.beginShutdown(pendingDeadline ?? performance.now() + 2000); }
       catch (error) { queueMicrotask(() => { throw new Error("请求 controlWorker 清理失败；release 保持 unknown", { cause: error }); }); }
@@ -348,6 +398,7 @@ export function createWorkerHost(
       const finishCleanup = () => {
         requests.close(error);
         closeIngress(error);
+        detachPublisher(error);
         worker.removeEventListener("message", onMessage);
       };
       void Promise.race([Promise.allSettled(cleanupRequests), ownerRejected]).then((results) => {
@@ -381,6 +432,192 @@ export function createWorkerHost(
       }
       deliveredGeneration = baseline.generation;
     };
+
+    function detachPublisher(error: Error): void {
+      publisherRequests?.close(error);
+      publisherPort?.removeEventListener("message", onPublisherMessage);
+      publisherPort = null;
+      publisherTransport = null;
+      publisherRequests = null;
+      publisherBinding = null;
+    }
+
+    function registerPublisherPort(port: EngineBusinessPort): WorkerRequestScope {
+      if (publisherPort === null) {
+        publisherPort = port;
+        publisherRequests = new WorkerRequestScope(port);
+        port.addEventListener("message", onPublisherMessage);
+      } else if (publisherPort !== port) throw new Error("Browser publisher 业务端口在实例内发生替换");
+      if (publisherRequests === null) throw new Error("Browser publisher 请求通道未就绪");
+      return publisherRequests;
+    }
+
+    function quiescePublisher(until: number): Promise<void> {
+      return publisherShutdown ??= (async () => {
+        const transport = publisherTransport;
+        if (transport === null) return;
+        // control owner 可已分配 Worker，但业务 bind 还没发送。必须拿到端口，
+        // 请求未绑定的 Worker 退出，而非静默把它当成不存在。
+        const scope = publisherRequests ?? registerPublisherPort(await transport);
+        const response = await scope.request({
+          type: "quiescePublisher", requestId: scope.nextRequestId(), generation: publisherGeneration,
+        }, "publisherQuiescent", Math.max(1, until - performance.now()));
+        if (Object.keys(response).sort().join(",") !== "generation,requestId,type") throw new Error("publisher quiescence ACK 字段无效");
+      })();
+    }
+
+    function armPublisher(nextGeneration: number): Promise<void> {
+      const token = baselinePublisherToken, address = baselineControlAddress;
+      if (token === null || address === null || currentGeneration !== nextGeneration || deliveredGeneration !== String(nextGeneration)) {
+        return Promise.reject(new Error("Browser publisher 只能在当前权威基线安装后绑定"));
+      }
+      if (publisherBinding?.generation === nextGeneration) {
+        if (publisherBinding.token !== token || publisherBinding.address !== address) return Promise.reject(new Error("当前 generation 的 publisher token 发生替换"));
+        return publisherBinding.ready;
+      }
+      publisherRecovering = false;
+      const transport = controlClient.bindPublisher(nextGeneration, token, address);
+      publisherTransport = transport;
+      const ready = (async () => {
+        const port = await transport;
+        if (disposed || closing || currentGeneration !== nextGeneration || publisherBinding?.generation !== nextGeneration) return;
+        const scope = registerPublisherPort(port);
+        publisherGeneration = nextGeneration;
+        await scope.request({ type: "bindPublisher", generation: nextGeneration, token, requestId: scope.nextRequestId() }, "publisherBound");
+      })();
+      publisherBinding = { generation: nextGeneration, token, address, ready };
+      return ready;
+    }
+
+    function reportPublicationFailure(error: unknown): void {
+      if (disposed || closing || publisherFailure?.generation === currentGeneration) return;
+      callback = null;
+      const failure: HostFailure = {
+        code: "WASM_WORKER_PUBLICATION",
+        where: "worker-host.publisher",
+        message: error instanceof Error ? error.message : String(error),
+      };
+      // 观察者出错不能向权威推进端请求暂停或关闭。
+      publisherFailure = { generation: currentGeneration, failure };
+      publisherRequests?.cancelGeneration(currentGeneration, new Error(failure.message));
+      const listener = fatalCallback;
+      fatalCallback = null;
+      if (listener !== null) listener(failure);
+    }
+
+    async function synchronizePublication(
+      nextGeneration: number,
+      operation: "recoverPublisher" | "refreshBaseline" | "flushRuntimeSync",
+      expectedResponse: "publisherRecovered" | "refreshed" | "runtimeSyncFlushed",
+    ): Promise<void> {
+      if (publisherRecovering) throw new Error("Browser publisher 基线刷新已在途");
+      const token = baselinePublisherToken;
+      if (token === null) throw new Error("Browser publisher 基线刷新通道无效");
+      publisherRecovering = true;
+      let scope: WorkerRequestScope | null = null;
+      const stillCurrent = () => !disposed && !closing && restoringGeneration === null
+        && currentGeneration === nextGeneration && publisherFailure?.generation !== nextGeneration
+        && (scope === null || publisherGeneration === nextGeneration)
+        && publisherRequests === scope && baselinePublisherToken === token;
+      try {
+        await publisherBinding?.ready;
+        scope = publisherRequests;
+        if (!stillCurrent()) throw new Error("Browser publisher 基线刷新请求属于已过期会话");
+        await runObserverResync({
+          assertCurrent() {
+            if (!stillCurrent()) throw new Error("Browser publisher 基线刷新响应属于已过期会话 generation");
+          },
+          async hold() {
+            // pause ACK switches to hold only after in-flight deliveries can be applied and ACKed.
+            await scope?.request({ type: "pausePublisher", requestId: scope.nextRequestId(), generation: nextGeneration }, "publisherPaused");
+          },
+          floor: () => acceptedPublicationOrdinal,
+          async capture(attempt) {
+            const request = attempt === 0 ? operation : "recoverPublisher";
+            const expected = attempt === 0 ? expectedResponse : "publisherRecovered";
+            const response = await requests.request({ type: request, requestId: requests.nextRequestId(), generation: nextGeneration }, expected);
+            const ordinal = publicationOrdinal(response.publicationOrdinal);
+            if (publisherToken(response.publisherToken) !== token || publisherControlAddress(response.controlAddress) !== baselineControlAddress) throw new Error("Browser publisher 刷新响应属于不同输出通道");
+            if (response.workingOrders === undefined) throw new Error("Browser publisher 刷新基线缺少同一游标的委托状态");
+            const value = prepareBaselineUpdate(String(nextGeneration), response.snapshot, response.stockCatalog, response.companyCatalog,
+              { civilDate: parseIsoDate(response.civilDate, `Worker ${expected}.civilDate`), revision: null },
+              [], [], response.workingOrders, response.latestCheckpoint);
+            return { ordinal, value };
+          },
+          async fence({ ordinal }) {
+            if (scope === null) return true;
+            const resumed = await scope.request({ type: "resumePublisher", requestId: scope.nextRequestId(), generation: nextGeneration, ordinal }, "publisherResumed");
+            if (typeof resumed.accepted !== "boolean") throw new Error("Browser publisher 恢复 ACK 字段无效");
+            return resumed.accepted;
+          },
+          install({ ordinal, value: baseline }) {
+            const continuation = operation === "flushRuntimeSync" && acceptedPublicationOrdinal === ordinal;
+            const update = continuation ? { ...baseline, continuation: true as const } : baseline;
+            if (callback !== null && callback(update) === false) throw new Error("Browser publisher 消费者拒绝刷新 baseline");
+            if (operation !== "flushRuntimeSync") baselineEpoch += 1;
+            cachedBaseline = baseline;
+            acceptedPublicationOrdinal = ordinal;
+            if (callback !== null) deliveredGeneration = baseline.generation;
+          },
+          async release() {
+            publisherRecovering = false;
+            await scope?.request({ type: "startPublisher", requestId: scope.nextRequestId(), generation: nextGeneration }, "publisherStarted");
+          },
+        });
+      } catch (error) {
+        if (stillCurrent()) {
+          publisherRecovering = false;
+          reportPublicationFailure(error);
+        }
+        throw error;
+      }
+    }
+
+    function onPublisherMessage(event: MessageEvent<unknown>): void {
+      if (disposed || closing) return;
+      try {
+        const incoming = message(event.data);
+        if (!["protocol", "barrierPaused", "publicationGap", "publicationFailure", "publisherObserverFailure"].includes(incoming.type)) return;
+        const nextGeneration = generation(incoming.generation, "Worker publisher generation");
+        if (nextGeneration !== currentGeneration || nextGeneration !== publisherGeneration || restoringGeneration !== null
+          || deliveredGeneration !== String(nextGeneration) || callback === null) return;
+        const port = publisherPort;
+        const acknowledge = (ordinal: string) => {
+          if (closing || disposed || nextGeneration !== currentGeneration || port !== publisherPort) return;
+          // 只释放观察者发送额度；权威推进端永远收不到 UI ACK。
+          acceptedPublicationOrdinal = ordinal;
+          port?.postMessage({ type: "ackPublisher", generation: nextGeneration, ordinal });
+        };
+        if (incoming.type === "publisherObserverFailure") {
+          if (typeof incoming.message !== "string") throw new Error("Browser publisher 观察端错误字段无效");
+          reportPublicationFailure(new Error(incoming.message));
+        } else if (incoming.type === "publicationFailure") {
+          const failure = parseWorkerFailure(incoming.failure);
+          if (failure.recoverable === true && (
+            (failure.code === "REPORT_CORRECTION_PREPARE_REJECTED" && failure.where === "web-wasm.market_runner.end_civil")
+            || (failure.code === "DAY_END_ARCHIVE_FAILED" && failure.where === "web-wasm.market_runner.checkpoint")
+          )) {
+            const ordinal = publicationOrdinal(incoming.publicationOrdinal);
+            if (!isNewObserverDelivery(ordinal, acceptedPublicationOrdinal)) return;
+            fatalCallback?.(failure);
+            acknowledge(ordinal);
+          } else notifyFailure(failure);
+        } else if (incoming.type === "publicationGap") {
+          publicationOrdinal(incoming.oldestAfter);
+          if (!publisherRecovering) void synchronizePublication(nextGeneration, "recoverPublisher", "publisherRecovered").catch(() => {
+            // 当前会话错误由 synchronizePublication 报告；旧代错误不影响新代。
+          });
+        } else if (incoming.type === "protocol") {
+          const ordinal = publicationOrdinal(incoming.publicationOrdinal);
+          if (!isNewObserverDelivery(ordinal, acceptedPublicationOrdinal)) return;
+          if (callback(createProtocolUpdate(String(nextGeneration), incoming.update, {
+            civilDate: typeof incoming.civilDate === "string" ? incoming.civilDate : null,
+            revision: typeof incoming.revision === "string" ? incoming.revision : null,
+          })) === false) reportPublicationFailure(new Error("Browser publisher 消费者拒绝协议更新"));
+          else acknowledge(ordinal);
+        }
+      } catch (error) { reportPublicationFailure(error); }
+    }
 
     function waitForInitialization(): void {
       const ready = ingressReady;
@@ -459,9 +696,13 @@ export function createWorkerHost(
           case "baseline": {
             const nextGeneration = generation(incoming.generation, "Worker baseline generation");
             if (nextGeneration < currentGeneration) return;
+            if (incoming.workingOrders === undefined) throw new Error("Worker 基线缺少同一游标的委托状态");
             const next = prepareBaselineUpdate(String(nextGeneration), incoming.snapshot, incoming.stockCatalog, incoming.companyCatalog, {
               civilDate: parseIsoDate(incoming.civilDate, "Worker baseline.civilDate"), revision: null,
-            });
+            }, [], [], incoming.workingOrders, incoming.latestCheckpoint);
+            const nextPublisherToken = publisherToken(incoming.publisherToken);
+            const nextControlAddress = publisherControlAddress(incoming.controlAddress);
+            const nextPublicationOrdinal = publicationOrdinal(incoming.publicationOrdinal);
             const previousGeneration = currentGeneration;
             const generationAdvanced = nextGeneration > previousGeneration;
             currentGeneration = nextGeneration;
@@ -471,42 +712,36 @@ export function createWorkerHost(
             }
             baselineEpoch += 1;
             cachedBaseline = next;
+            acceptedPublicationOrdinal = nextPublicationOrdinal;
+            baselinePublisherToken = nextPublisherToken;
+            baselineControlAddress = nextControlAddress;
             if (!initialized) waitForInitialization();
             if (callback !== null && deliveredGeneration !== next.generation) {
               deliverLiveBaseline(next);
+              await armPublisher(nextGeneration);
             }
             if (generationAdvanced) requests.cancelGeneration(previousGeneration, new Error("Worker 请求因 generation 前进已取消；请求属于已过期会话 generation（响应属于已过期 generation）"));
             return;
           }
           case "protocol":
-          case "protocolBatch": {
-            const updateGeneration = generation(incoming.generation, "Worker protocol generation");
-            if (updateGeneration !== currentGeneration || callback === null) return;
-            const deliveryId = generation(incoming.deliveryId, "Worker protocol deliveryId");
-            const updates = incoming.type === "protocol" ? [incoming.update] : incoming.updates;
-            if (!Array.isArray(updates) || updates.length < 1 || updates.length > 64) throw new Error("Worker protocolBatch 必须包含 1–64 个完整提交");
-            for (const update of updates) {
-              const accepted = callback(createProtocolUpdate(String(updateGeneration), update, {
-                civilDate: typeof incoming.civilDate === "string" ? incoming.civilDate : null,
-                revision: typeof incoming.revision === "string" ? incoming.revision : null,
-              }));
-              if (accepted === false) {
-                notifyFailure({ code: "WASM_WORKER_PROTOCOL_REJECTED", where: "worker-host.protocol", message: "Worker 消费者拒绝协议更新，会话已停止" });
-                return;
-              }
-            }
-            worker.postMessage({ type: "uiFrame", generation: updateGeneration, deliveryId });
-            return;
-          }
-          case "failure":
+          case "protocolBatch":
+            throw new Error("引擎控制端禁止投递发布消息，必须使用独立 publisher port");
+          case "failure": {
             if (Object.hasOwn(incoming, "engineQuiescent")) {
               if (initialized || !(incoming.engineQuiescent === "initialization-failed" && currentGeneration === 0 || incoming.engineQuiescent === "initial-session-failed" && initialArchive !== null)) throw new Error("engine initialization quiescence 阶段或字段无效");
               if (Object.hasOwn(incoming, "memoryAllocation")) {
                 if (incoming.engineQuiescent !== "initialization-failed" || incoming.memoryAllocation !== "not-allocated" || currentGeneration !== 0) throw new Error("pre-Memory 分配证明阶段或字段无效");
               }
             } else if (Object.hasOwn(incoming, "memoryAllocation")) throw new Error("未分配证明必须伴随实际初始化关闭证明");
-            notifyFailure(parseWorkerFailure(incoming));
+            const failure = parseWorkerFailure(incoming);
+            if (initialized && failure.recoverable === true && failure.code === "DAY_END_ARCHIVE_FAILED"
+              && failure.where === "wasm-worker.checkpoint") {
+              if (generation(incoming.generation, "Worker 归档错误世代") === currentGeneration) fatalCallback?.(failure);
+              return;
+            }
+            notifyFailure(failure);
             return;
+          }
           case "barrierPaused":
             generation(incoming.generation, "Worker barrier generation");
             return;
@@ -514,6 +749,7 @@ export function createWorkerHost(
             return;
         }
       } catch (error) {
+        if (error === closingCancellation) return;
         notifyFailure({
           code: "WASM_WORKER_TRANSPORT",
           where: "worker-host.message",
@@ -612,6 +848,7 @@ export function createWorkerHost(
         async start(onUpdate, onFatalError) {
           if (disposed || closing) throw new Error("WASM Worker 已被销毁或正在关闭");
           if (pendingFailure !== null) throw new Error(`${pendingFailure.code}: ${pendingFailure.message}`);
+          if (publisherFailure?.generation === currentGeneration) throw new Error(`${publisherFailure.failure.code}: ${publisherFailure.failure.message}`);
           callback = onUpdate;
           fatalCallback = onFatalError ?? null;
           if (cachedBaseline !== null && deliveredGeneration !== cachedBaseline.generation) {
@@ -621,6 +858,9 @@ export function createWorkerHost(
             }
             deliveredGeneration = cachedBaseline.generation;
           }
+          await armPublisher(currentGeneration);
+          if (disposed || closing) throw new Error("WASM publisher 在开跑前已关闭");
+          if (publisherFailure?.generation === currentGeneration) throw new Error(`${publisherFailure.failure.code}: ${publisherFailure.failure.message}`);
           await control("start", "started");
         },
         async stop() {
@@ -642,6 +882,7 @@ export function createWorkerHost(
           closingCancellation = cancellation;
           requests.beginClosing("shutdown", cancellation);
           ingressRequests?.beginClosing("quiesceIngress", cancellation);
+          publisherRequests?.beginClosing("quiescePublisher", cancellation);
           const until = performance.now() + 2000;
           disposal = (async () => {
             let observedReport: WasmSessionShutdown | undefined;
@@ -666,7 +907,7 @@ export function createWorkerHost(
               const releaseRejected = new Promise<never>((_resolve, reject) => {
                 void controlClient.release.then(undefined, reject);
               });
-              const [report] = await Promise.race([Promise.all([rustReply, ingressQuiescent]), releaseRejected]);
+              const [report] = await Promise.race([Promise.all([rustReply, ingressQuiescent, quiescePublisher(until)]), releaseRejected]);
               if (report.kind === "failure" && (report.completion === null || report.completion.joinedWorkers !== report.completion.ownedWorkers)) throw new Error(`Rust shutdown 失败：${report.primary.stage}: ${report.primary.detail}`, { cause: report });
               controlClient.completeShutdown();
               const remaining = Math.max(1, until - performance.now());
@@ -691,7 +932,7 @@ export function createWorkerHost(
               throw primary;
             } finally {
               disposed = true;
-              requests.close(cancellation); closeIngress(cancellation);
+              requests.close(cancellation); closeIngress(cancellation); detachPublisher(cancellation);
               cachedBaseline = null;
               deadline.dispose();
               worker.removeEventListener("message", onMessage);
@@ -706,10 +947,6 @@ export function createWorkerHost(
         },
         async setPausePreferences(preferences: PausePreferences) {
           await control("setPausePreferences", "pausePreferencesSet", { preferences });
-        },
-        setFrameRate(fps) {
-          if (closing || disposed) throw new Error("WASM Worker 已关闭，不能设置帧率");
-          worker.postMessage({ type: "setFrameRate", fps });
         },
         async readSpeedMetrics() {
           return currentResult(() => readWorkerSpeedMetrics(requests, requests.nextRequestId(), currentGeneration));
@@ -839,6 +1076,12 @@ export function createWorkerHost(
           await requests.request({ type: "endCivilDay", requestId: requests.nextRequestId(), generation: requestedGeneration }, "civilDayEnded");
           if (disposed || closing || currentGeneration !== requestedGeneration) throw new Error("Worker 响应属于已过期或已销毁 generation");
         },
+        async waitCheckpointIdle() {
+          const generation = currentGeneration;
+          if (disposed || closing || restoringGeneration !== null) throw new Error("快速槽围栏需要当前 Browser 会话");
+          await requests.request({ type: "archiveFence", requestId: requests.nextRequestId(), generation }, "archiveFenced", 60_000);
+          if (disposed || closing || currentGeneration !== generation) throw new Error("快速槽围栏属于已过期会话");
+        },
         async save(candidate?: { readonly seq: number; readonly settledDate: string }): Promise<unknown> {
           const queryGeneration = currentGeneration;
           // 默认大档浏览器日终候选实测需约 15 秒；仅保存使用独立的 60 秒上限。
@@ -850,21 +1093,11 @@ export function createWorkerHost(
         },
         async flushRuntimeSync() {
           if (disposed || closing || pendingFailure !== null || restoringGeneration !== null) throw new Error("Worker runtime 刷新需要健康的当前会话");
-          const requestedGeneration = currentGeneration, requestedEpoch = baselineEpoch;
-          const response = await requests.request({ type: "flushRuntimeSync", requestId: requests.nextRequestId(), generation: requestedGeneration }, "runtimeSyncFlushed");
-          if (disposed || closing || pendingFailure !== null || restoringGeneration !== null || currentGeneration !== requestedGeneration || baselineEpoch !== requestedEpoch) throw new Error("Worker runtime 刷新响应属于已过期会话 generation");
-          const baseline = prepareBaselineUpdate(String(requestedGeneration), response.snapshot, response.stockCatalog, response.companyCatalog, { civilDate: parseIsoDate(response.civilDate, "Worker runtimeSyncFlushed.civilDate"), revision: null });
-          cachedBaseline = baseline;
-          deliverLiveBaseline({ ...baseline, continuation: true });
+          await synchronizePublication(currentGeneration, "flushRuntimeSync", "runtimeSyncFlushed");
         },
         async refreshBaseline() {
-          const requestedGeneration = currentGeneration;
-          const response = await refreshWorkerBaseline(requests, requests.nextRequestId(), requestedGeneration);
-          if (disposed || closing || currentGeneration !== requestedGeneration) throw new Error("Worker 基线刷新响应属于已过期会话 generation");
-          const baseline = response;
-          baselineEpoch += 1;
-          cachedBaseline = baseline;
-          deliverLiveBaseline(baseline);
+          if (disposed || closing || restoringGeneration !== null) throw new Error("Worker 基线刷新需要当前会话");
+          await synchronizePublication(currentGeneration, "refreshBaseline", "refreshed");
         },
         async load(slot, onRestored) {
           if (closing || disposed) throw new Error("WASM Worker 正在关闭，拒绝 restore");
@@ -876,6 +1109,10 @@ export function createWorkerHost(
           let restored: Awaited<ReturnType<typeof restoreWorkerSlot>>;
           try {
             restored = await restoreWorkerSlot(requests, parsedSlot, requests.nextRequestId(), requestedGeneration, () => { restoreCommitted = true; });
+            publisherToken(restored.publisherToken);
+            publisherControlAddress(restored.controlAddress);
+            publicationOrdinal(restored.publicationOrdinal);
+            if (restored.workingOrders === undefined) throw new Error("Worker restore 基线缺少同一游标的委托状态");
           } catch (error) {
             // 成功响应或新 ingress 均已表明旧 authority 不再可用；保留可见缓存但关闭真实发送通道。
             if (error !== closingCancellation && (restoreCommitted || ingressGeneration > requestedGeneration)) {
@@ -891,8 +1128,12 @@ export function createWorkerHost(
           onRestored?.();
           baselineEpoch += 1;
           cachedBaseline = baseline;
+          acceptedPublicationOrdinal = publicationOrdinal(restored.publicationOrdinal);
+          baselinePublisherToken = publisherToken(restored.publisherToken);
+          baselineControlAddress = publisherControlAddress(restored.controlAddress);
           if (callback !== null && deliveredGeneration !== baseline.generation) {
             deliverLiveBaseline(baseline);
+            await armPublisher(restored.nextGeneration);
           }
           requests.cancelGeneration(requestedGeneration, new Error("Worker 请求因 generation 前进已取消；请求属于已过期会话 generation（响应属于已过期 generation）"));
         },

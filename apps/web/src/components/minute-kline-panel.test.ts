@@ -3,7 +3,7 @@ import { after, before, test } from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createServer, type ViteDevServer } from "vite";
-import type { MarketHistoryPage, MarketHistoryRequest } from "../host/market-history.ts";
+import type { CurrentMinuteHistoryResponse } from "../host/current-minute-history.ts";
 
 let vite: ViteDevServer;
 let Panel: typeof import("./MinuteKlinePanel.tsx").MinuteKlinePanel;
@@ -18,26 +18,20 @@ before(async () => {
 });
 after(async () => { await vite.close(); });
 
-test("分钟K面板展示历史区间与选择周期，不声称活动日已归档", { timeout: 10000 }, () => {
-  const query = async (_request: MarketHistoryRequest): Promise<MarketHistoryPage> => { throw new Error("SSR不发起宿主请求"); };
-  const html = renderToStaticMarkup(React.createElement(Panel, { query, scopeKey: "1:0", code: "600001", currentDate: "2030-01-10", period: 15 }));
-  assert.match(html, /15分钟历史K线/);
-  assert.match(html, /分钟K线起始日期/);
-  assert.match(html, /自然日和午间时段分别聚合/);
-  assert.match(html, /当前交易日不在此历史页内/);
-  assert.match(html, /2030-01-09/);
+test("分钟K面板只提供当天实时数据，不提供历史日期表单", { timeout: 10000 }, () => {
+  const html = renderToStaticMarkup(React.createElement(Panel, { scopeKey: "1:0", code: "600001", currentDate: "2030-01-10", period: 15 }));
+  assert.match(html, /15分钟K线（当前交易日）/);
+  assert.match(html, /日结后仅保留日K/);
+  assert.doesNotMatch(html, /<form|起始日期|查询历史K线|2030-01-09/);
 });
 
-test("自然日尚未同步时仍显示查询表单且不伪造日期默认值", { timeout: 10000 }, () => {
-  const query = async (_request: MarketHistoryRequest): Promise<MarketHistoryPage> => { throw new Error("SSR不发起宿主请求"); };
-  const html = renderToStaticMarkup(React.createElement(Panel, { query, scopeKey: "1:0", code: "600001", currentDate: null, period: 120 }));
-  assert.match(html, /120分钟历史K线/);
-  assert.match(html, /value=""/);
+test("自然日尚未同步时不查询、不伪造日期", { timeout: 10000 }, () => {
+  const html = renderToStaticMarkup(React.createElement(Panel, { scopeKey: "1:0", code: "600001", currentDate: null, period: 120 }));
+  assert.match(html, /当前自然日尚未同步/);
+  assert.doesNotMatch(html, /<form|type="date"/);
 });
 
-// B2 wire：trading 布尔（旧 status/observed_at 不再随响应下发——观察时刻
-// 由调用方经 currentMinute prop 提供）。
-type LiveResponse = { code: string; date: string; live: true; trading: boolean; phase: "CallAuction" | "PreOpen" | "Continuous" | "ClosingAuction" | "AfterClose" | "Closed"; bars: MarketHistoryPage["entries"][number]["bars"] };
+type LiveResponse = CurrentMinuteHistoryResponse;
 function liveResponse(date: string, bars: LiveResponse["bars"] = []): LiveResponse {
   return { code: "600001", date, live: true, trading: true, phase: "Continuous", bars };
 }
@@ -46,7 +40,6 @@ function mountLive(currentMinuteOfDay: number | null = null) {
   const effects: (() => void)[] = [];
   const cleanups = new Map<number, () => void>();
   const requests: { code: string; resolve: (value: LiveResponse) => void; reject: (error: Error) => void }[] = [];
-  const historyQuery = async (_request: MarketHistoryRequest): Promise<MarketHistoryPage> => { throw new Error("history query not expected"); };
   const queryCurrentMinuteHistory = ({ code }: { code: string }) => new Promise<LiveResponse>((resolve, reject) => requests.push({ code, resolve, reject }));
   let currentDate = "2030-01-02", tickRefreshKey = 1, cursor = 0, tree: React.ReactNode;
   const internal = (React as unknown as { __SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED: { ReactCurrentDispatcher: { current: unknown } } }).__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED;
@@ -59,7 +52,7 @@ function mountLive(currentMinuteOfDay: number | null = null) {
   function render() {
     const previous = internal.ReactCurrentDispatcher.current;
     cursor = 0; internal.ReactCurrentDispatcher.current = dispatcher;
-    try { tree = Panel({ query: historyQuery, queryCurrentMinuteHistory, tickRefreshKey, scopeKey: "market:1", code: "600001", currentDate, period: 5, currentMinuteOfDay }); } finally { internal.ReactCurrentDispatcher.current = previous; }
+    try { tree = Panel({ queryCurrentMinuteHistory, tickRefreshKey, scopeKey: "market:1", code: "600001", currentDate, period: 5, currentMinuteOfDay }); } finally { internal.ReactCurrentDispatcher.current = previous; }
     while (effects.length) effects.shift()!();
   }
   render(); render();

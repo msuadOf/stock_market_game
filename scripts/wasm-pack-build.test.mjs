@@ -25,7 +25,7 @@ const command = (root, outDir) => ({ command: "wasm-pack", args: ["build", "apps
 const api = () => import("./wasm-pack-build.mjs");
 
 function wasmPackageFixture(omit) {
-  const names = ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "world_runtime_abi_version", "init_wasm_wait", "wasm_wait_abort_layout", "shutdown_session", "start_wasm_reclaimer", "close_wasm_reclaimer", "wasm_tombstone_bind_ingress", "wasm_tombstone_init_primary", "wasm_wait_death_layout"].filter((name) => name !== omit);
+  const names = ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "world_runtime_abi_version", "init_wasm_wait", "wasm_wait_abort_layout", "shutdown_session", "start_wasm_reclaimer", "close_wasm_reclaimer", "wasm_tombstone_bind_ingress", "wasm_tombstone_bind_publisher", "market_publisher_signal", "market_publisher_take", "market_publisher_resume", "market_publisher_ack", "market_publisher_release", "market_runner_enable", "market_runner_set_running", "market_runner_set_speed", "market_runner_set_pause", "market_runner_turn", "market_runner_speed_metrics", "market_runner_step_once", "market_runner_end_civil", "market_runner_observer_baseline", "market_runner_control_signal", "market_runner_command_consumed", "wasm_tombstone_init_primary", "wasm_wait_death_layout"].filter((name) => name !== omit);
   const uleb = (value) => { const bytes = []; do { let byte = value & 0x7f; value >>>= 7; if (value !== 0) byte |= 0x80; bytes.push(byte); } while (value !== 0); return bytes; };
   const section = (id, payload) => [id, ...uleb(payload.length), ...payload];
   const type = section(1, [1, 0x60, 0, 0]);

@@ -38,9 +38,8 @@ mod archives;
 pub(crate) fn archive_router() -> axum::Router<AppState> {
     archives::router()
 }
-use crate::publisher::{ClientFrameBuffer, FrameBufferError, PublisherFrame};
-
-const CLIENT_PUSH_INTERVAL: Duration = Duration::from_millis(16);
+use crate::publisher::PublisherFrame;
+use engine::session::publication::{ObserverPump, PumpRead, Read as PublicationRead};
 // The JSON envelope wraps one engine save. Leave room for its session identity
 // while allowing every save accepted by the engine decoder through this route.
 pub const MAX_LOAD_BODY_BYTES: usize = engine::MAX_SAVE_DECODE_BYTES + 1024 * 1024;
@@ -864,6 +863,8 @@ pub struct WsQuery {
     pub session_id: String,
     #[serde(default)]
     pub delivery: DeliveryMode,
+    #[serde(default)]
+    pub observer_fencing: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
@@ -878,6 +879,15 @@ pub enum DeliveryMode {
 enum ClientCommand {
     GetFrame {},
     Resync {},
+    CaptureObserver {},
+    FenceObserver {
+        capture_id: String,
+        timeline_generation: String,
+        publication_ordinal: String,
+    },
+    ReleaseObserver {
+        capture_id: String,
+    },
     SubmitIntent {
         request_id: u64,
         generation: String,
@@ -1939,17 +1949,14 @@ pub async fn ws_handler(
     State(state): State<AppState>,
 ) -> Response {
     let token = websocket_token(&headers);
-    // 复核建议 3（登记为 W3 接线批范围）：ws 推送帧的 per-subject 账户
-    // 过滤（18725d07 run_ws 按 subject 过滤发布内容）随 W3 的 engine-host
-    // 视图类型族/发布协议接线一起做——本批 ws 已要求身份鉴权（非成员可
-    // 连接但无控制权/下单面），帧内成员账户可见性待 W3 收口（局域网+
-    // 登录门槛下低危，如实登记不静默）。
-    let (handles, _) = match authorized_market(&state, &q.session_id, token.as_deref()).await {
+    // 保留已认证主体用于附着和重同步；内容由权威生成的受限观察端投影。
+    let (handles, subject) = match authorized_market(&state, &q.session_id, token.as_deref()).await
+    {
         Ok(context) => context,
         Err(response) => return *response,
     };
     ws.protocols(["stock-game"])
-        .on_upgrade(move |socket| run_ws(socket, handles, q.delivery))
+        .on_upgrade(move |socket| run_ws(socket, handles, subject, q.delivery, q.observer_fencing))
 }
 
 #[derive(Default)]
@@ -2067,131 +2074,86 @@ mod heartbeat_tests {
     }
 }
 
-/// 每条 WS 连接独占的 publisher 协议状态；socket I/O 仍由 run_ws 执行。
+/// WebSocket 只驱动已注册的共享观察端，不缓存另一份行情队列。
 struct WsPublisherConnection {
     delivery: DeliveryMode,
-    baseline_seq: u64,
-    baseline_tick: u64,
     timeline_generation: u64,
-    publisher: ClientFrameBuffer,
+    pump: ObserverPump<crate::actor::ScopedEngineUpdate>,
+    initial_orders: Option<Vec<engine::session::protocol::PlayerWorkingOrder>>,
     awaiting_resync: bool,
     delivered_failure: Option<crate::actor::HostFailure>,
 }
 
-enum PublisherAction {
-    Buffered,
+enum FrameAction {
+    Frame {
+        ordinal: u64,
+        update: PublisherFrame,
+    },
+    Failure(crate::actor::HostFailure),
+    Resync(&'static str),
     Ignored,
-    HostFailure(Box<crate::actor::HostFailure>),
-    ResyncRequired {
-        reason: &'static str,
-        capacity: Option<usize>,
-    },
-    Flush {
-        update: Box<crate::actor::EngineUpdate>,
-        all: bool,
-    },
-    Rejected(FrameBufferError),
-}
-
-enum FrameRequest {
-    ResyncRequired,
-    WrongDeliveryMode,
-    Frame(Box<PublisherFrame>),
     Empty,
+    Closed,
 }
 
 impl WsPublisherConnection {
-    fn new(
+    fn attach(
         delivery: DeliveryMode,
-        cursor: (u64, u64, u64),
-        failure: Option<crate::actor::HostFailure>,
-        ticks_per_day: u64,
-        auction_ticks: u64,
-    ) -> Result<Self, FrameBufferError> {
-        Ok(Self {
+        attachment: crate::actor::ObservationAttachment,
+    ) -> (Self, crate::actor::PublicBaseline) {
+        let crate::actor::ObservationAttachment {
+            baseline,
+            observer,
+            initial_orders,
+        } = attachment;
+        let connection = Self {
             delivery,
-            baseline_seq: cursor.0,
-            baseline_tick: cursor.1,
-            timeline_generation: cursor.2,
-            publisher: ClientFrameBuffer::new(ticks_per_day, auction_ticks)?,
-            awaiting_resync: failure.is_some(),
-            delivered_failure: failure,
-        })
+            timeline_generation: baseline.timeline_generation,
+            pump: ObserverPump::new(
+                observer,
+                engine::session::publication::OBSERVER_IN_FLIGHT_LIMIT,
+            ),
+            initial_orders,
+            awaiting_resync: baseline.failure.is_some(),
+            delivered_failure: baseline.failure.clone(),
+        };
+        (connection, baseline)
     }
 
-    fn ingest(&mut self, update: crate::actor::EngineUpdate) -> PublisherAction {
-        if let Some(failure) = &update.failure {
+    fn poll(&mut self) -> FrameAction {
+        match self.pump.poll() {
+            PumpRead::Ready(PublicationRead::Item { ordinal, value }) => {
+                let update = value.into_projected(&mut self.initial_orders);
+                self.classify(ordinal, update)
+            }
+            PumpRead::Ready(PublicationRead::NeedsBaseline { .. }) => {
+                self.awaiting_resync = true;
+                FrameAction::Resync("event_stream_lagged")
+            }
+            PumpRead::Ready(PublicationRead::Empty) | PumpRead::CreditBlocked => FrameAction::Empty,
+            PumpRead::Ready(PublicationRead::Closed) => FrameAction::Closed,
+        }
+    }
+
+    fn classify(&mut self, ordinal: u64, update: PublisherFrame) -> FrameAction {
+        if let Some(failure) = update.failure.as_ref() {
             if self
                 .delivered_failure
                 .as_ref()
-                .is_some_and(|first| !first.recoverable)
+                .is_some_and(|first| !first.recoverable || first == failure)
             {
-                return PublisherAction::Ignored;
+                return FrameAction::Ignored;
             }
-            if self.delivered_failure.as_ref() == Some(failure) {
-                self.awaiting_resync =
-                    !failure.is_correction_prepare_rejected(self.timeline_generation);
-                return PublisherAction::Ignored;
-            }
-            return PublisherAction::HostFailure(Box::new(failure.clone()));
+            return FrameAction::Failure(failure.clone());
         }
         if update.timeline_generation != self.timeline_generation {
-            self.require_resync();
-            return PublisherAction::ResyncRequired {
-                reason: "timeline_changed",
-                capacity: None,
-            };
+            self.awaiting_resync = true;
+            return FrameAction::Resync("timeline_changed");
         }
-        if self.awaiting_resync {
-            return PublisherAction::Ignored;
+        if self.awaiting_resync || update.update.is_none() {
+            return FrameAction::Ignored;
         }
-        let Some(protocol) = &update.update else {
-            return PublisherAction::Ignored;
-        };
-        let covered = match protocol {
-            engine::session::protocol::EngineUpdate::TickBatch(batch) => {
-                batch.frames.last().is_some_and(|frame| {
-                    frame.tick <= self.baseline_tick && frame.seq_to <= self.baseline_seq
-                })
-            }
-            engine::session::protocol::EngineUpdate::CivilUpdate(civil) => {
-                civil.tick <= self.baseline_tick && civil.seq_to <= self.baseline_seq
-            }
-        };
-        if covered {
-            return PublisherAction::Ignored;
-        }
-        match self.publisher.push(update.clone()) {
-            Ok(()) => PublisherAction::Buffered,
-            Err(error) => self.buffer_error(update, error),
-        }
-    }
-
-    fn buffer_error(
-        &mut self,
-        update: crate::actor::EngineUpdate,
-        error: FrameBufferError,
-    ) -> PublisherAction {
-        match error {
-            FrameBufferError::MetadataTransition => PublisherAction::Flush {
-                update: Box::new(update),
-                all: false,
-            },
-            FrameBufferError::BufferCapacityExceeded { limit }
-                if self.delivery == DeliveryMode::Pull =>
-            {
-                self.require_resync();
-                PublisherAction::ResyncRequired {
-                    reason: "publisher_buffer_capacity",
-                    capacity: Some(limit),
-                }
-            }
-            FrameBufferError::BufferCapacityExceeded { .. } => PublisherAction::Flush {
-                update: Box::new(update),
-                all: true,
-            },
-            other => PublisherAction::Rejected(other),
-        }
+        FrameAction::Frame { ordinal, update }
     }
 
     fn failure_delivered(&mut self, failure: crate::actor::HostFailure) {
@@ -2206,76 +2168,136 @@ impl WsPublisherConnection {
         self.delivered_failure = Some(failure);
     }
 
-    fn require_resync(&mut self) {
-        self.publisher.clear();
-        self.awaiting_resync = true;
-    }
-
-    fn prepare_resync(&mut self) {
-        self.publisher.clear();
-    }
-
-    fn install_baseline_cursor(&mut self, baseline: &crate::actor::PublicBaseline) {
-        self.baseline_seq = baseline.snapshot.seq;
-        self.baseline_tick = baseline.snapshot.tick;
-        self.timeline_generation = baseline.timeline_generation;
-    }
-
-    fn baseline_delivered(&mut self, failure: Option<crate::actor::HostFailure>) {
-        self.awaiting_resync = failure.is_some();
-        self.delivered_failure = failure;
-    }
-
-    fn push_ready(&self) -> bool {
-        self.delivery == DeliveryMode::Push && !self.awaiting_resync
-    }
-
-    fn take_push_frame(&mut self) -> Option<PublisherFrame> {
-        if self.push_ready() {
-            self.publisher.take()
-        } else {
-            None
+    async fn wait_push_or_barrier(&mut self) -> FrameAction {
+        loop {
+            let epoch = self.pump.signal().load();
+            if self.pump.should_poll(self.delivery == DeliveryMode::Push) {
+                match self.poll() {
+                    FrameAction::Empty => {}
+                    FrameAction::Ignored => continue,
+                    action => return action,
+                }
+            }
+            self.pump.signal().wait_for_change(epoch).await;
         }
     }
 
-    fn take_flush_frame(&mut self) -> Option<PublisherFrame> {
-        self.publisher.take()
-    }
-
-    fn accept_after_flush(
-        &mut self,
-        update: crate::actor::EngineUpdate,
-    ) -> Result<(), FrameBufferError> {
-        self.publisher.push(update)
-    }
-
-    fn request_frame(&mut self) -> FrameRequest {
-        if self.awaiting_resync {
-            return FrameRequest::ResyncRequired;
-        }
-        if self.delivery != DeliveryMode::Pull {
-            return FrameRequest::WrongDeliveryMode;
-        }
-        match self.publisher.take() {
-            Some(frame) => FrameRequest::Frame(Box::new(frame)),
-            None => FrameRequest::Empty,
+    async fn deliver(&mut self, sender: &mut WsSender, action: FrameAction) -> bool {
+        match action {
+            FrameAction::Frame { ordinal, update } => {
+                if let Err(error) = self.pump.record_sent(ordinal) {
+                    warn!(?error, "ws: invalid shared publisher ordinal");
+                    return false;
+                }
+                if !send_publisher_frame(sender, &update).await {
+                    return false;
+                }
+                match self.pump.acknowledge(ordinal) {
+                    Ok(true) => true,
+                    result => {
+                        warn!(
+                            ?result,
+                            "ws: publisher transport did not confirm its ordinal"
+                        );
+                        false
+                    }
+                }
+            }
+            FrameAction::Failure(failure) => {
+                if !send_host_failure(sender, failure.clone()).await {
+                    return false;
+                }
+                self.failure_delivered(failure);
+                true
+            }
+            FrameAction::Resync(reason) => send_resync_required(sender, reason, None).await,
+            FrameAction::Ignored => true,
+            FrameAction::Closed => false,
+            FrameAction::Empty => sender
+                .send(axum::extract::ws::Message::Text(
+                    serde_json::json!({ "FrameEmpty": {} }).to_string(),
+                ))
+                .await
+                .is_ok(),
         }
     }
 }
 
-/// WS 连接主循环。
-///
-/// 1. 先经 actor 取完整 Snapshot，序列化 JSON 发给客户端（对齐基线）。
-/// 2. 订阅更新 broadcast，把 Event[] + 可选权威运行快照作为一个 JSON 帧推出。
-/// 3. 同时读客户端消息（仅作存活/pong 探测；当前不处理客户端业务消息）。
-/// 4. 30s 心跳：发 Ping。
+/// WS 切面是当前连接的租约；每条新观察流使用自己的 0 号基线。
+#[derive(Default)]
+struct ObserverCutState {
+    counter: u64,
+    held: Option<(u64, u64, bool)>,
+}
+
+impl ObserverCutState {
+    fn begin(&mut self, generation: u64) -> u64 {
+        self.counter = self.counter.checked_add(1).expect("观察切面序号溢出");
+        self.held = Some((self.counter, generation, false));
+        self.counter
+    }
+
+    fn matches(&self, id: u64, generation: u64, ordinal: u64) -> bool {
+        ordinal == 0
+            && self
+                .held
+                .is_some_and(|(current, expected, _)| (current, expected) == (id, generation))
+    }
+
+    fn accept(&mut self, id: u64, generation: u64, ordinal: u64, endpoint_accepted: bool) -> bool {
+        if !self.matches(id, generation, ordinal) || !endpoint_accepted {
+            return false;
+        }
+        self.held = Some((id, generation, true));
+        true
+    }
+
+    fn release(&mut self, id: u64) -> bool {
+        if !self
+            .held
+            .is_some_and(|(current, _, accepted)| current == id && accepted)
+        {
+            return false;
+        }
+        self.held = None;
+        true
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn observer_cut_requires_current_accepted_ticket_before_release() {
+    let mut cut = ObserverCutState::default();
+    let first = cut.begin(4);
+    let second = cut.begin(4);
+    assert!(!cut.accept(first, 4, 0, true), "旧切面不能覆盖当前围栏");
+    assert!(!cut.accept(second, 3, 0, true), "错误世代不能续接");
+    assert!(!cut.accept(second, 4, 1, true), "新观察流在 0 号基线取样");
+    assert!(!cut.accept(second, 4, 0, false), "溢出后必须重取切面");
+    assert!(!cut.release(second), "未确认的切面不能放行");
+    assert!(cut.accept(second, 4, 0, true));
+    assert!(!cut.release(first), "晚到释放不能越过新围栏");
+    assert!(cut.release(second));
+    assert!(!cut.release(second));
+}
+
+/// WS 本身由独立 I/O 任务执行；市场推进从不等待此 socket。
 async fn run_ws(
     socket: axum::extract::ws::WebSocket,
     handles: Arc<crate::actor::SessionHandles>,
+    subject: engine::session::OpaqueSubjectId,
     delivery: DeliveryMode,
+    advertising_observer_fence: bool,
 ) {
     let (deadline_sender, mut deadline_receiver) = tokio::sync::watch::channel(None);
-    let connection = run_ws_connection(socket, handles, delivery, deadline_sender);
+    let connection = run_ws_connection(
+        socket,
+        handles,
+        subject,
+        delivery,
+        advertising_observer_fence,
+        deadline_sender,
+    );
     supervise_ws_connection(connection, &mut deadline_receiver).await;
 }
 
@@ -2311,38 +2333,22 @@ async fn supervise_ws_connection(
 async fn run_ws_connection(
     socket: axum::extract::ws::WebSocket,
     handles: Arc<crate::actor::SessionHandles>,
+    subject: engine::session::OpaqueSubjectId,
     delivery: DeliveryMode,
+    advertising_observer_fence: bool,
     deadline_sender: tokio::sync::watch::Sender<Option<tokio::time::Instant>>,
 ) {
     let (mut sender, mut receiver) = socket.split();
 
-    // 先订阅再取基线，消除 snapshot 与 subscribe 之间丢事件的竞态；基线 seq 之前的
-    // 缓冲事件在后续读取时跳过。
-    let mut rx = handles.subscribe_events();
-    let initial_baseline;
-
-    // 1. 对齐基线：发完整 Snapshot JSON。
-    match handles.public_baseline().await {
-        Ok(baseline) => {
-            if baseline.failure.is_some() {
-                let _ = send_baseline(&mut sender, baseline).await;
+    let mut connection = match handles.observe_for(subject.clone()).await {
+        Ok(attachment) => {
+            let (connection, baseline) = WsPublisherConnection::attach(delivery, attachment);
+            let failed = baseline.failure.is_some();
+            if !send_ws_baseline(&mut sender, baseline, advertising_observer_fence).await || failed
+            {
                 return;
             }
-            initial_baseline = (
-                (
-                    baseline.snapshot.seq,
-                    baseline.snapshot.tick,
-                    baseline.timeline_generation,
-                ),
-                baseline.failure.clone(),
-            );
-            match send_baseline(&mut sender, baseline).await {
-                true => {}
-                false => {
-                    warn!("ws: failed to send baseline snapshot; closing");
-                    return;
-                }
-            }
+            connection
         }
         Err(crate::actor::PublicBaselineError::Catalog(error)) => {
             let failure = crate::actor::HostFailure::catalog(
@@ -2354,105 +2360,20 @@ async fn run_ws_connection(
             return;
         }
         Err(crate::actor::PublicBaselineError::Command(error)) => {
-            warn!(%error, "ws: public baseline command failed");
+            warn!(%error, "ws: scoped observation attachment failed");
             return;
         }
-    }
-
-    // 3/4. 心跳 interval + 事件/消息 select。
+    };
+    let mut observer_cut = ObserverCutState::default();
     let mut heartbeat = tokio::time::interval(Duration::from_secs(30));
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let _ = heartbeat.tick().await; // 跳过首个立即到期。
     let mut heartbeat_state = WsHeartbeat::default();
-    let mut connection = match WsPublisherConnection::new(
-        delivery,
-        initial_baseline.0,
-        initial_baseline.1,
-        handles.ticks_per_day,
-        handles.auction_ticks,
-    ) {
-        Ok(buffer) => buffer,
-        Err(error) => {
-            error!(%error, "ws: invalid publisher configuration");
-            return;
-        }
-    };
-    let mut push_clock = tokio::time::interval(CLIENT_PUSH_INTERVAL);
-    push_clock.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let _ = push_clock.tick().await;
 
     loop {
         tokio::select! {
-            // 事件到达 → 推 JSON。
-            ev = rx.recv() => {
-                match ev {
-                    Ok(update) => {
-                        match connection.ingest(update) {
-                            PublisherAction::Buffered | PublisherAction::Ignored => {}
-                            PublisherAction::HostFailure(failure) => {
-                                let mut delivered = true;
-                                while let Some(frame) = connection.take_flush_frame() {
-                                    if !send_publisher_frame(&mut sender, frame).await {
-                                        delivered = false;
-                                        break;
-                                    }
-                                }
-                                if !delivered { break; }
-                                if !send_host_failure(&mut sender, (*failure).clone()).await { break; }
-                                connection.failure_delivered(*failure);
-                            }
-                            PublisherAction::ResyncRequired { reason, capacity } => {
-                                if let Some(limit) = capacity {
-                                    warn!(limit, "ws: pull publisher buffer full; client must re-sync");
-                                }
-                                if !send_resync_required(&mut sender, reason, None).await { break; }
-                            }
-                            PublisherAction::Flush { update, all } => {
-                                let mut delivered = true;
-                                while let Some(frame) = connection.take_flush_frame() {
-                                    if !send_publisher_frame(&mut sender, frame).await {
-                                        delivered = false;
-                                        break;
-                                    }
-                                    if !all { break; }
-                                }
-                                if !delivered { break; }
-                                if let Err(error) = connection.accept_after_flush(*update) {
-                                    if all {
-                                        error!(%error, "ws: publisher rejected update after flushing backlog");
-                                    } else {
-                                        error!(%error, "ws: publisher rejected metadata segment");
-                                    }
-                                    break;
-                                }
-                            }
-                            PublisherAction::Rejected(error) => {
-                                error!(%error, "ws: publisher rejected engine update");
-                                if !send_gateway_error(&mut sender, None, "PUBLISHER_SEQUENCE_ERROR", error.to_string()).await { break; }
-                                break;
-                            }
-                        }
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                        // 慢消费者必须立即重新拉快照；显式协议消息避免客户端只看到 seq 缺口。
-                        warn!(missed = n, "ws: lagged, client should re-sync via snapshot");
-                        connection.require_resync();
-                        if !send_resync_required(&mut sender, "event_stream_lagged", Some(n)).await {
-                            break;
-                        }
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                        info!("ws: event stream closed (actor exited)");
-                        break;
-                    }
-                }
-            }
-            _ = push_clock.tick(), if connection.push_ready() => {
-                if let Some(frame) = connection.take_push_frame() {
-                    if !send_publisher_frame(&mut sender, frame).await {
-                        break;
-                    }
-                }
+            action = connection.wait_push_or_barrier(), if !connection.awaiting_resync && observer_cut.held.is_none() => {
+                if !connection.deliver(&mut sender, action).await { break; }
             }
             // 心跳：30s 发 Ping（防中间设备杀空闲连接）。
             _ = heartbeat.tick() => {
@@ -2490,16 +2411,12 @@ async fn run_ws_connection(
                             };
                             match command {
                                 ClientCommand::Resync {} => {
-                                    rx = handles.subscribe_events();
-                                    connection.prepare_resync();
-                                    match handles.public_baseline().await {
-                                        Ok(baseline) => {
-                                            if baseline.failure.is_none() {
-                                                connection.install_baseline_cursor(&baseline);
-                                            }
-                                            let latched_failure = baseline.failure.clone();
+                                    match handles.observe_for(subject.clone()).await {
+                                        Ok(attachment) => {
+                                            let (replacement, baseline) = WsPublisherConnection::attach(delivery, attachment);
                                             if !send_baseline(&mut sender, baseline).await { break; }
-                                            connection.baseline_delivered(latched_failure);
+                                            connection = replacement;
+                                            observer_cut.held = None;
                                         }
                                         Err(crate::actor::PublicBaselineError::Catalog(error)) => {
                                             let failure = crate::actor::HostFailure::catalog(&error, "public_baseline", "server.actor.public_baseline");
@@ -2511,21 +2428,61 @@ async fn run_ws_connection(
                                         }
                                     }
                                 }
+                                ClientCommand::CaptureObserver {} => {
+                                    match handles.observe_for(subject.clone()).await {
+                                        Ok(attachment) => {
+                                            let (replacement, baseline) = WsPublisherConnection::attach(delivery, attachment);
+                                            if baseline.failure.is_some() {
+                                                let _ = send_baseline(&mut sender, baseline).await;
+                                                break;
+                                            }
+                                            let id = observer_cut.begin(baseline.timeline_generation);
+                                            connection = replacement;
+                                            if !send_observer_cut(&mut sender, &baseline, id).await { break; }
+                                        }
+                                        Err(crate::actor::PublicBaselineError::Catalog(error)) => {
+                                            let failure = crate::actor::HostFailure::catalog(&error, "public_baseline", "server.actor.public_baseline");
+                                            let _ = send_host_failure(&mut sender, failure).await;
+                                            break;
+                                        }
+                                        Err(crate::actor::PublicBaselineError::Command(error)) => {
+                                            if !send_gateway_error(&mut sender, None, "RESYNC_FAILED", error.to_string()).await { break; }
+                                        }
+                                    }
+                                }
+                                ClientCommand::FenceObserver { capture_id, timeline_generation, publication_ordinal } => {
+                                    let accepted = match (
+                                        parse_host_parity_generation(&capture_id),
+                                        parse_host_parity_generation(&timeline_generation),
+                                        parse_host_parity_generation(&publication_ordinal),
+                                    ) {
+                                        (Ok(id), Ok(generation), Ok(ordinal)) if observer_cut.matches(id, generation, ordinal) => {
+                                            let ready = !connection.pump.signal().is_closed() && connection.pump.resume_after(ordinal).is_ok();
+                                            observer_cut.accept(id, generation, ordinal, ready)
+                                        }
+                                        _ => false,
+                                    };
+                                    let response = serde_json::json!({ "ObserverFenced": { "capture_id": capture_id, "accepted": accepted } });
+                                    if sender.send(axum::extract::ws::Message::Text(response.to_string())).await.is_err() { break; }
+                                }
+                                ClientCommand::ReleaseObserver { capture_id } => {
+                                    let released = parse_host_parity_generation(&capture_id)
+                                        .is_ok_and(|id| observer_cut.release(id));
+                                    if !released && !send_gateway_error(&mut sender, None, "OBSERVER_CUT_STALE", "无已接受的同代观察切面").await { break; }
+                                }
                                 ClientCommand::GetFrame {} => {
-                                    match connection.request_frame() {
-                                        FrameRequest::ResyncRequired => {
-                                            if !send_gateway_error(&mut sender, None, "RESYNC_REQUIRED", "send Resync before requesting frames").await { break; }
-                                        }
-                                        FrameRequest::WrongDeliveryMode => {
-                                            if !send_gateway_error(&mut sender, None, "WRONG_DELIVERY_MODE", "GetFrame 只允许用于 pull 模式").await { break; }
-                                        }
-                                        FrameRequest::Frame(frame) => {
-                                            if !send_publisher_frame(&mut sender, *frame).await { break; }
-                                        }
-                                        FrameRequest::Empty => {
-                                            let empty = serde_json::json!({ "FrameEmpty": {} }).to_string();
-                                            if sender.send(axum::extract::ws::Message::Text(empty)).await.is_err() { break; }
-                                        }
+                                    if observer_cut.held.is_some() || connection.awaiting_resync {
+                                        if !send_gateway_error(&mut sender, None, "RESYNC_REQUIRED", "send Resync before requesting frames").await { break; }
+                                    } else if delivery != DeliveryMode::Pull {
+                                        if !send_gateway_error(&mut sender, None, "WRONG_DELIVERY_MODE", "GetFrame 只允许用于 pull 模式").await { break; }
+                                    } else {
+                                        let action = loop {
+                                            match connection.poll() {
+                                                FrameAction::Ignored => continue,
+                                                action => break action,
+                                            }
+                                        };
+                                        if !connection.deliver(&mut sender, action).await { break; }
                                     }
                                 }
                                 ClientCommand::SubmitIntent { request_id, generation, intent } => {
@@ -2568,20 +2525,54 @@ async fn run_ws_connection(
     debug!("ws run loop exited");
 }
 
-async fn send_publisher_frame(
-    sender: &mut futures_util::stream::SplitSink<
-        axum::extract::ws::WebSocket,
-        axum::extract::ws::Message,
-    >,
-    frame: PublisherFrame,
-) -> bool {
-    match serde_json::to_string(&serde_json::json!({ "PublisherFrame": frame })) {
+type WsSender =
+    futures_util::stream::SplitSink<axum::extract::ws::WebSocket, axum::extract::ws::Message>;
+
+async fn send_publisher_frame(sender: &mut WsSender, frame: &PublisherFrame) -> bool {
+    #[derive(Serialize)]
+    enum Wire<'a> {
+        PublisherFrame(&'a PublisherFrame),
+    }
+    match serde_json::to_string(&Wire::PublisherFrame(frame)) {
         Ok(json) => sender
             .send(axum::extract::ws::Message::Text(json))
             .await
             .is_ok(),
         Err(error) => {
             error!(%error, "ws: serialize publisher frame failed");
+            false
+        }
+    }
+}
+
+async fn send_observer_cut(
+    sender: &mut WsSender,
+    baseline: &crate::actor::PublicBaseline,
+    capture_id: u64,
+) -> bool {
+    #[derive(Serialize)]
+    struct Cut<'a> {
+        #[serde(flatten)]
+        baseline: &'a crate::actor::PublicBaseline,
+        publication_ordinal: &'static str,
+        capture_id: String,
+    }
+    #[derive(Serialize)]
+    enum Wire<'a> {
+        ObserverCut(Cut<'a>),
+    }
+    let response = Wire::ObserverCut(Cut {
+        baseline,
+        publication_ordinal: "0",
+        capture_id: capture_id.to_string(),
+    });
+    match serde_json::to_string(&response) {
+        Ok(json) => sender
+            .send(axum::extract::ws::Message::Text(json))
+            .await
+            .is_ok(),
+        Err(error) => {
+            error!(%error, "ws: serialize observer cut failed");
             false
         }
     }
@@ -2594,7 +2585,15 @@ async fn send_baseline(
     >,
     baseline: crate::actor::PublicBaseline,
 ) -> bool {
-    match baseline_wire_messages(baseline) {
+    send_ws_baseline(sender, baseline, false).await
+}
+
+async fn send_ws_baseline(
+    sender: &mut WsSender,
+    baseline: crate::actor::PublicBaseline,
+    observer_fencing: bool,
+) -> bool {
+    match baseline_wire_messages_inner(baseline, observer_fencing) {
         Ok(messages) => {
             for message in messages {
                 if sender
@@ -2614,13 +2613,39 @@ async fn send_baseline(
     }
 }
 
+#[cfg(test)]
 fn baseline_wire_messages(
     baseline: crate::actor::PublicBaseline,
+) -> Result<Vec<String>, serde_json::Error> {
+    baseline_wire_messages_inner(baseline, false)
+}
+
+fn baseline_wire_messages_inner(
+    baseline: crate::actor::PublicBaseline,
+    observer_fencing: bool,
 ) -> Result<Vec<String>, serde_json::Error> {
     if let Some(failure) = &baseline.failure {
         return Ok(vec![serde_json::to_string(
             &serde_json::json!({ "HostFailure": failure }),
         )?]);
+    }
+    if observer_fencing {
+        #[derive(Serialize)]
+        struct BaselineWithCapability {
+            #[serde(flatten)]
+            baseline: crate::actor::PublicBaseline,
+            observer_fencing: bool,
+        }
+        #[derive(Serialize)]
+        enum Wire {
+            Baseline(BaselineWithCapability),
+        }
+        return Ok(vec![serde_json::to_string(&Wire::Baseline(
+            BaselineWithCapability {
+                baseline,
+                observer_fencing,
+            },
+        ))?]);
     }
     Ok(vec![serde_json::to_string(
         &serde_json::json!({ "Baseline": baseline }),
@@ -2746,53 +2771,20 @@ async fn send_resync_required(
 #[cfg(test)]
 mod publisher_connection_tests {
     use super::*;
-    use crate::actor::{EngineUpdate, HostFailure, PublicBaseline, PublicBaselineSnapshot};
-
-    fn baseline(failure: Option<HostFailure>) -> PublicBaseline {
-        PublicBaseline {
-            stock_catalog: Vec::new(),
-            company_catalog: Vec::new(),
-            timeline_generation: 7,
-            snapshot: PublicBaselineSnapshot {
-                seq: 4,
-                tick: 5,
-                day: 1,
-                phase: engine::TradingPhase::Continuous,
-                mirror_origin: engine::RuntimeMirrorOrigin {
-                    authority_epoch: 1,
-                    install_sequence: 4,
-                    source_tick: 5,
-                    source_generation: 0,
-                    day_end_stage: engine::RuntimeMirrorDayEndStage::Tick,
-                    non_tick_revision: 0,
-                    mirror_phase: engine::TradingPhase::Continuous,
-                },
-                markets: Default::default(),
-                accounts: Default::default(),
-                daily_candles: Default::default(),
-                active_daily_candles: Default::default(),
-            },
-            civil_date: "2030-01-02".into(),
-            public_revision: 6,
-            public_report_ids: Vec::new(),
-            failure,
-        }
-    }
+    use crate::actor::{EngineUpdate, HostFailure};
+    use engine::session::publication::channel;
+    use std::num::NonZeroUsize;
 
     fn connection(delivery: DeliveryMode) -> WsPublisherConnection {
-        let baseline = baseline(None);
-        WsPublisherConnection::new(
+        let (_, observer) = channel(NonZeroUsize::MIN);
+        WsPublisherConnection {
             delivery,
-            (
-                baseline.snapshot.seq,
-                baseline.snapshot.tick,
-                baseline.timeline_generation,
-            ),
-            baseline.failure,
-            120,
-            0,
-        )
-        .unwrap()
+            timeline_generation: 7,
+            pump: ObserverPump::new(observer, NonZeroUsize::MIN),
+            initial_orders: Some(Vec::new()),
+            awaiting_resync: false,
+            delivered_failure: None,
+        }
     }
 
     fn failure() -> HostFailure {
@@ -2802,7 +2794,7 @@ mod publisher_connection_tests {
         })
     }
 
-    fn update(tick: u64, seq: u64) -> EngineUpdate {
+    fn update(tick: u64) -> EngineUpdate {
         use engine::session::protocol::{TickBatch, TickFrame};
         EngineUpdate {
             timeline_generation: 7,
@@ -2810,8 +2802,8 @@ mod publisher_connection_tests {
                 Box::new(TickBatch {
                     frames: vec![TickFrame {
                         tick,
-                        seq_from: seq,
-                        seq_to: seq,
+                        seq_from: 4,
+                        seq_to: 4,
                         facts: Vec::new(),
                         timeseries_payload: Default::default(),
                     }],
@@ -2825,207 +2817,71 @@ mod publisher_connection_tests {
         }
     }
 
-    fn frame_tick(frame: PublisherFrame) -> u64 {
-        let Some(engine::session::protocol::EngineUpdate::TickBatch(batch)) = frame.update else {
-            panic!("fixture 应为 TickBatch")
-        };
-        batch.frames[0].tick
+    #[test]
+    fn same_fact_cursor_can_have_two_distinct_observation_ordinals() {
+        let mut connection = connection(DeliveryMode::Push);
+        assert!(matches!(
+            connection.classify(1, update(6)),
+            FrameAction::Frame { ordinal: 1, .. }
+        ));
+        assert!(matches!(
+            connection.classify(2, update(6)),
+            FrameAction::Frame { ordinal: 2, .. }
+        ));
     }
 
     #[test]
-    fn failure_precedes_generation_and_resync_and_latches_after_delivery() {
+    fn changed_timeline_gates_later_frames_until_fresh_attach() {
         let mut connection = connection(DeliveryMode::Pull);
-        connection.require_resync();
-        let mut failed = update(6, 4);
-        failed.timeline_generation = 6;
-        failed.failure = Some(failure());
-        let PublisherAction::HostFailure(delivered) = connection.ingest(failed.clone()) else {
-            panic!("故障必须先于旧 timeline 和 resync barrier")
-        };
-        assert!(connection.delivered_failure.is_none());
-        connection.failure_delivered(*delivered);
-        assert!(matches!(
-            connection.ingest(failed),
-            PublisherAction::Ignored
-        ));
-        assert!(matches!(
-            connection.request_frame(),
-            FrameRequest::ResyncRequired
-        ));
-    }
-
-    #[test]
-    fn prepare_rejection_after_flushing_keeps_the_current_publisher_ready() {
-        for delivery in [DeliveryMode::Push, DeliveryMode::Pull] {
-            let mut connection = connection(delivery);
-            assert!(matches!(
-                connection.ingest(update(6, 4)),
-                PublisherAction::Buffered
-            ));
-            let rejected = HostFailure::correction_prepare_rejection_fixture();
-            let mut failed = update(6, 4);
-            failed.update = None;
-            failed.failure = Some(rejected);
-            let PublisherAction::HostFailure(rejected) = connection.ingest(failed) else {
-                panic!("必须先交付显式更正拒绝")
-            };
-            assert_eq!(
-                frame_tick(connection.take_flush_frame().unwrap()),
-                6,
-                "已接受末拍仍在 FIFO"
-            );
-            assert!(connection.take_flush_frame().is_none());
-            connection.failure_delivered(*rejected);
-            assert!(
-                !connection.awaiting_resync,
-                "严格 F2 不能把同连接 civil-only retry 永久锁死"
-            );
-            assert!(matches!(
-                connection.ingest(update(7, 4)),
-                PublisherAction::Buffered
-            ));
-        }
-    }
-
-    #[test]
-    fn first_fatal_cannot_be_replaced_by_a_late_prepare_rejection() {
-        let mut connection = connection(DeliveryMode::Pull);
-        let first = failure();
-        connection.failure_delivered(first.clone());
-        let rejected = HostFailure::correction_prepare_rejection_fixture();
-        let mut message = update(6, 4);
-        message.update = None;
-        message.failure = Some(rejected.clone());
-        assert!(
-            matches!(connection.ingest(message), PublisherAction::Ignored),
-            "首 fatal 之后迟到的 F2 不能再次交付并开门"
-        );
-        connection.failure_delivered(rejected);
-        assert!(connection.awaiting_resync);
-        assert_eq!(connection.delivered_failure, Some(first));
-    }
-
-    #[test]
-    fn covered_updates_timeline_changes_and_lag_keep_frame_barrier() {
-        let mut connection = connection(DeliveryMode::Pull);
-        assert!(matches!(
-            connection.ingest(update(5, 4)),
-            PublisherAction::Ignored
-        ));
-        assert!(matches!(connection.request_frame(), FrameRequest::Empty));
-        assert!(matches!(
-            connection.ingest(update(6, 4)),
-            PublisherAction::Buffered
-        ));
-        let mut replacement = update(7, 4);
+        let mut replacement = update(6);
         replacement.timeline_generation = 8;
         assert!(matches!(
-            connection.ingest(replacement),
-            PublisherAction::ResyncRequired {
-                reason: "timeline_changed",
-                ..
-            }
+            connection.classify(1, replacement),
+            FrameAction::Resync("timeline_changed")
         ));
-        assert!(connection.take_push_frame().is_none());
-        assert!(matches!(
-            connection.request_frame(),
-            FrameRequest::ResyncRequired
-        ));
-        connection.baseline_delivered(None);
-        connection.require_resync();
-        assert!(matches!(
-            connection.request_frame(),
-            FrameRequest::ResyncRequired
-        ));
-    }
-
-    #[test]
-    fn resync_preparation_clears_buffer_without_mutating_failed_baseline_state() {
-        let mut connection = connection(DeliveryMode::Pull);
-        assert!(matches!(
-            connection.ingest(update(6, 4)),
-            PublisherAction::Buffered
-        ));
-        connection.failure_delivered(failure());
-        let before = (
-            connection.baseline_seq,
-            connection.baseline_tick,
-            connection.timeline_generation,
-            connection.awaiting_resync,
-            connection.delivered_failure.clone(),
-        );
-        connection.prepare_resync();
-        assert!(connection.take_flush_frame().is_none());
-        assert_eq!(
-            (
-                connection.baseline_seq,
-                connection.baseline_tick,
-                connection.timeline_generation,
-                connection.awaiting_resync,
-                connection.delivered_failure.clone()
-            ),
-            before
-        );
-        let mut fresh = baseline(None);
-        fresh.timeline_generation += 1;
-        connection.install_baseline_cursor(&fresh);
         assert!(connection.awaiting_resync);
-        connection.baseline_delivered(None);
-        assert!(!connection.awaiting_resync);
+        assert!(matches!(
+            connection.classify(2, update(6)),
+            FrameAction::Ignored
+        ));
+    }
+
+    #[test]
+    fn failure_precedes_generation_checks_and_latches_after_delivery() {
+        let mut connection = connection(DeliveryMode::Pull);
+        connection.awaiting_resync = true;
+        let mut failed = update(6);
+        failed.timeline_generation = 6;
+        failed.failure = Some(failure());
+        let FrameAction::Failure(delivered) = connection.classify(1, failed.clone()) else {
+            panic!("首个故障必须先于旧 timeline 检查");
+        };
         assert!(connection.delivered_failure.is_none());
+        connection.failure_delivered(delivered);
+        assert!(matches!(
+            connection.classify(2, failed),
+            FrameAction::Ignored
+        ));
+        assert!(connection.awaiting_resync);
     }
 
     #[test]
-    fn flush_actions_leave_incoming_update_unaccepted_until_send_succeeds() {
-        for (error, expected_all) in [
-            (FrameBufferError::MetadataTransition, false),
-            (FrameBufferError::BufferCapacityExceeded { limit: 1 }, true),
-        ] {
-            let mut connection = connection(DeliveryMode::Push);
-            connection.ingest(update(6, 4));
-            let PublisherAction::Flush {
-                update: incoming,
-                all,
-            } = connection.buffer_error(update(7, 4), error)
-            else {
-                panic!("Push 应返回待发送动作")
-            };
-            assert_eq!(
-                all, expected_all,
-                "MetadataTransition 应仅 flush 一帧，Push capacity 应 flush 全部 backlog"
-            );
-            let frame = connection.take_flush_frame().unwrap();
-            assert_eq!(frame_tick(frame), 6);
-            assert!(
-                connection.take_flush_frame().is_none(),
-                "发送失败前不得接受后继 update"
-            );
-            connection.accept_after_flush(*incoming).unwrap();
-            assert_eq!(frame_tick(connection.take_push_frame().unwrap()), 7);
+    fn prepare_rejection_preserves_current_timeline_unless_a_fatal_was_delivered() {
+        for delivery in [DeliveryMode::Push, DeliveryMode::Pull] {
+            let mut connection = connection(delivery);
+            let rejected = HostFailure::correction_prepare_rejection_fixture();
+            connection.failure_delivered(rejected.clone());
+            assert!(!connection.awaiting_resync);
+            assert!(matches!(
+                connection.classify(2, update(7)),
+                FrameAction::Frame { ordinal: 2, .. }
+            ));
+            let fatal = failure();
+            connection.failure_delivered(fatal.clone());
+            connection.failure_delivered(rejected);
+            assert!(connection.awaiting_resync);
+            assert_eq!(connection.delivered_failure, Some(fatal));
         }
-    }
-
-    #[test]
-    fn pull_capacity_clears_backlog_and_get_frame_rejects_push_mode() {
-        let mut pull = connection(DeliveryMode::Pull);
-        pull.ingest(update(6, 4));
-        assert!(matches!(
-            pull.buffer_error(
-                update(7, 4),
-                FrameBufferError::BufferCapacityExceeded { limit: 1 }
-            ),
-            PublisherAction::ResyncRequired {
-                reason: "publisher_buffer_capacity",
-                ..
-            }
-        ));
-        assert!(pull.take_flush_frame().is_none());
-        assert!(matches!(pull.request_frame(), FrameRequest::ResyncRequired));
-        let mut push = connection(DeliveryMode::Push);
-        assert!(matches!(
-            push.request_frame(),
-            FrameRequest::WrongDeliveryMode
-        ));
     }
 }
 

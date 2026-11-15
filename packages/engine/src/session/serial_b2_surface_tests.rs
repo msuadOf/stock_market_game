@@ -133,8 +133,7 @@ fn serial_four_surfaces_probe() {
     }
     session.end_civil_day().unwrap();
 
-    // 面板四：保留历史（G8）——交易日冻结 Traded + bars 非空 + 日 K
-    // stats 与分钟桶互检逐字段一致。
+    // 面板四：保留历史（G8）——交易日只保留 Traded 和真实日 K。
     let page = session
         .market_history_page(&crate::session::MarketHistoryRequest {
             stock: code,
@@ -151,20 +150,12 @@ fn serial_four_surfaces_probe() {
         crate::session::MarketHistoryAvailability::Traded,
         "已结算开市日=Traded"
     );
-    assert!(!entry.bars.is_empty(), "保留链冻结真实分钟 bars");
-    assert_eq!(entry.bars[0].volume_shares, 100);
+    assert!(entry.bars.is_empty(), "已结算日未保留分钟桶");
     let candle = entry.daily_candle.as_ref().expect("日 K 在档");
-    let volume: u64 = entry.bars.iter().map(|bar| bar.volume_shares).sum();
-    let turnover: u128 = entry.bars.iter().map(|bar| bar.turnover_cents).sum();
-    let count: u64 = entry.bars.iter().map(|bar| bar.trade_count).sum();
-    assert_eq!(candle.volume, volume, "串行日 K 量==分钟桶累计");
+    assert_eq!(candle.volume, 100, "串行日 K 保留真实成交量");
     let stats = candle.trade_stats.as_ref().expect("日 K stats 在档");
-    assert_eq!(
-        u128::from(stats.turnover_cents),
-        turnover,
-        "日 K 额==分钟桶累计"
-    );
-    assert_eq!(stats.trade_count, count, "日 K 笔数==分钟桶累计");
+    assert_eq!(stats.turnover_cents, 100_000, "串行日 K 保留真实成交额");
+    assert_eq!(stats.trade_count, 1, "串行日 K 保留真实成交笔数");
 }
 
 /// 串行路径休市日保留条目（end_civil_day 串行分支）。

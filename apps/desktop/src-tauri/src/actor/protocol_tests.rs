@@ -128,6 +128,7 @@ async fn shared_ingress_receives_player_without_actor_command_polling() {
     let mut game = ProtocolSession::new(setup, 7).unwrap();
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
     let handles = SessionHandles {
+        ack_route: AckRoute::default(),
         cmd_tx,
         ingress: Arc::new(RwLock::new((1, game.shared_ingress()))),
     };
@@ -180,6 +181,7 @@ async fn restore_rebinds_host_ingress_and_closes_previous_generation() {
         "restore-timeline",
     );
     let handles = SessionHandles {
+        ack_route: AckRoute::default(),
         cmd_tx: harness.cmd_tx.clone(),
         ingress: Arc::clone(&harness.actor.ingress),
     };
@@ -190,7 +192,7 @@ async fn restore_rebinds_host_ingress_and_closes_previous_generation() {
         price: engine::LimitPrice::Fixed(engine::Money::from_cents(900)),
         qty: 100,
     };
-    let restored = harness.actor.restore(1, Box::new(slot)).unwrap();
+    let restored = harness.actor.restore(1, Box::new(slot)).await.unwrap();
     assert_eq!(restored.generation, "2");
     assert!(previous
         .enqueue_player_intent(AccountId(0), intent.clone())
@@ -245,7 +247,7 @@ async fn baseline_and_restore_include_authoritative_civil_date() {
         }
     }
     let slot = actor.game.save().unwrap();
-    let restored = serde_json::to_value(actor.restore(1, Box::new(slot)).unwrap()).unwrap();
+    let restored = serde_json::to_value(actor.restore(1, Box::new(slot)).await.unwrap()).unwrap();
     assert_eq!(restored["civil_date"], "2030-01-02");
     assert_eq!(restored["generation"], "2");
 }
@@ -394,8 +396,8 @@ fn baseline_catalogs_match_actual_desktop_session() {
     );
 }
 
-#[test]
-fn committed_restore_catalog_failure_keeps_generation_and_closes_desktop_actor() {
+#[tokio::test]
+async fn committed_restore_catalog_failure_keeps_generation_and_closes_desktop_actor() {
     let mut setup = super::tests::diagnostic_setup();
     setup.npcs.inst_count = 0;
     setup.history_len = 1;
@@ -410,7 +412,7 @@ fn committed_restore_catalog_failure_keeps_generation_and_closes_desktop_actor()
         "catalog",
         "one",
     );
-    harness.actor.restore(1, Box::new(saved)).unwrap();
+    harness.actor.restore(1, Box::new(saved)).await.unwrap();
     let new_timeline = harness.actor.timeline_id.clone();
     let ingress = harness.actor.game.shared_ingress();
     let error = engine::session::CompanyCatalogViewError::UnknownListedStock {

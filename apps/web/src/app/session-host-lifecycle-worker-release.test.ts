@@ -33,9 +33,9 @@ test("真实WorkerHost关闭时drain在途TickBatch且内部ACK最终baseline，
       if (reply === undefined) return;
       order.push(String(value.type));
       queueMicrotask(() => {
-        if (value.type === "stop") engine.emit({ type: "protocol", generation: 1, deliveryId: 2, update: tickBatch([frame(2, 0, [0])], snapshot(2, 2)) });
+        if (value.type === "stop") f.publisherWorker!.emit({ type: "protocol", generation: 1, publicationOrdinal: "2", update: tickBatch([frame(2, 0, [0])], snapshot(2, 2)) });
         engine.emit({ type: reply, generation: 1, requestId: value.requestId,
-          ...(value.type === "refreshBaseline" ? { ...catalogWorkerFixture(snapshot(2, 2)), snapshot: snapshot(2, 2), civilDate: "2030-01-02" } : {}) });
+          ...(value.type === "refreshBaseline" ? { ...catalogWorkerFixture(snapshot(2, 2)), snapshot: snapshot(2, 2), civilDate: "2030-01-02", publicationOrdinal: "2" } : {}) });
       });
     };
     const owner = new WasmDocumentMemoryOwner({ maximumBytes: memory.options.maximumBytes, reclaimBytes: memory.options.reclaimBytes,
@@ -55,13 +55,13 @@ test("真实WorkerHost关闭时drain在途TickBatch且内部ACK最终baseline，
         ticket!.registerRelease(Promise.resolve({ kind: "released", finalBytes: 64 * MiB, growthStopped: true, referencesDropped: true }));
         return { ...host, initialAllocation: async () => ({ stocks: [] }) };
       }, onSpawnFailure: no, createSeed: () => 42n, checkWasmEnvironment: no, isDocumentHidden: () => false,
-      getBrowserSaveRepository: () => ({ load: async () => null }), setActiveSetup: no, configureMarketTiming: no, setStartDateDraft: no,
+      getQuickArchive: () => ({ load: async () => null }), setActiveSetup: no, configureMarketTiming: no, setStartDateDraft: no,
       setPriceCageEnabledDraft: no, setFloatAllocationDraft: no, setInitialAllocation: no, setDeliveryModes: no, setDeliveryModeState: no,
       setNotice: no, setReady: no, setError: no, onRunning: no, onAutoTriggered: no,
     };
     lifecycle = createSessionHostLifecycle(ports); await lifecycle.start();
     assert.deepEqual(delivered.map(update => update.type), ["baseline"], "启动应向UI交付缓存baseline");
-    engine.emit({ type: "protocol", generation: 1, deliveryId: 1, update: tickBatch([frame(1, 0, [0])], snapshot(1, 1)) });
+    f.publisherWorker!.emit({ type: "protocol", generation: 1, publicationOrdinal: "1", update: tickBatch([frame(1, 0, [0])], snapshot(1, 1)) });
     await drain();
     assert.deepEqual(delivered.map(update => update.type), ["baseline", "protocol"]);
     assert.equal(host.tick(), 0, "运行protocol不会更新baseline缓存，不能直接当最终位置");

@@ -6,6 +6,7 @@ import {
   civilUpdate,
   frame,
   isJsonRecord,
+  mirrorOrigin,
   recordArray,
   snapshot,
   tickBatch,
@@ -40,6 +41,27 @@ test("Given CivilUpdate refresh history, when reduced, then it does not replay h
 
   assert.equal(barrier.kind, "applied");
   assert.deepEqual(barrier.effects.map((effect) => effect.kind), ["civil-barrier", "civil-barrier"]);
+  assert.deepEqual(barrier.state.intraday, []);
+  assert.equal(barrier.state.accepted.size, 1, "日界只保留本次屏障，而非昨日的交易帧");
+  assert.match([...barrier.state.accepted.values()].join(""), /^[0-9a-f]{64}$/, "日界仅保留重放摘要");
+});
+
+test("日界清理旧帧以后，同游标的日界包仍可严格判重", () => {
+  const raw = civilUpdate();
+  const barrier = reduceEngineUpdate(stateAfterTick(), "generation-1", raw);
+  assert.equal(reduceEngineUpdate(barrier.state, "generation-1", raw).kind, "exact-retry");
+  const civil = raw["CivilUpdate"];
+  if (!isJsonRecord(civil)) throw new Error("test fixture invalid");
+  const refresh = civil["refresh"];
+  if (!isJsonRecord(refresh)) throw new Error("test fixture invalid");
+  const original = refresh["snapshot"];
+  if (!isJsonRecord(original)) throw new Error("test fixture invalid");
+  const divergent = { CivilUpdate: {
+    ...civil, refresh: { ...refresh, snapshot: {
+      ...original, mirror_origin: mirrorOrigin(1, 0, 1, 8),
+    } },
+  } };
+  assert.throws(() => reduceEngineUpdate(barrier.state, "generation-1", divergent), {code: "PROTOCOL_REPLAY"});
 });
 
 test("Given two CivilDateAdvanced facts in one barrier, when reduced, then it rejects the ambiguous barrier atomically", () => {

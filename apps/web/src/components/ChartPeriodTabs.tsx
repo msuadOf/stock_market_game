@@ -2,7 +2,7 @@ import { useId, type KeyboardEvent } from "react";
 import type { MobileChartPeriod } from "../mobile/mobile-ui-state.ts";
 import { KlinePeriodSelector } from "./KlinePeriodSelector.tsx";
 
-const periods: readonly MobileChartPeriod[] = ["分时", "日K", "周K", "月K", "五日"];
+const periods: readonly MobileChartPeriod[] = ["分时", "日K", "周K", "月K"];
 
 /** 两端周期入口共用自动激活的键盘行为，图表组合与信息标签独立。 */
 export function ChartPeriodTabs({ period, onChange, panelId, variant }: {

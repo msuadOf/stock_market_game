@@ -16,7 +16,7 @@ test("engine bind→实例化→Rust setup arena/clock→layout→main配置确�
       getArenaView: () => ({ words: new Int32Array(memory.buffer), capacity: 8, genBits: 29 }),
     },
     load: async () => { calls.push("load"); return { module, diagnostics: false, glue: {
-      wasm_tombstone_init_primary: () => ({ engine: { workerId: 0, address: 60000 }, ingress: { workerId: 0xffffffff, address: 60256 }, death: { address: 65004, bytes: 4 } }),
+      wasm_tombstone_init_primary: () => ({ engine: { workerId: 0, address: 60000 }, ingress: { workerId: 0xffffffff, address: 60256 }, publisher: { workerId: 0xfffffffe, address: 60512 }, death: { address: 65004, bytes: 4 } }),
       initSync: (input) => { calls.push("instantiate"); assert.equal(input.memory, memory); return { memory, __wbindgen_thread_destroy() {} }; },
       facade_slot_init_for_setup: (input) => { calls.push("clock+arena"); assert.deepEqual(input, setup); },
       facade_slot_layout: () => { calls.push("layout"); return layout; },
@@ -90,7 +90,7 @@ test("engine 在 DEAD 登记 ACK 前不执行 setup，重复 ACK 显式失败", 
   const channel = new MessageChannel();
   const memory = new WebAssembly.Memory({ initial: 1, maximum: 2, shared: true });
   const module = new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]));
-  const primary = { engine: { workerId: 0, address: 60000 }, ingress: { workerId: 0xffffffff, address: 60256 }, death: { address: 65004, bytes: 4 } };
+  const primary = { engine: { workerId: 0, address: 60000 }, ingress: { workerId: 0xffffffff, address: 60256 }, publisher: { workerId: 0xfffffffe, address: 60512 }, death: { address: 65004, bytes: 4 } };
   let setup = false, failure: unknown;
   const initializer = createFacadeEngineInitializer({ isolated: () => true, createMemory: () => memory,
     environment: { bindFacadeThreadEnvironment() {}, installFacadeSlotLayout() {}, getArenaView: () => ({ words: new Int32Array(memory.buffer), capacity: 8, genBits: 29 }) },

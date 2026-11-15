@@ -43,7 +43,8 @@ test("单股baseline→下一tick→CivilUpdate refresh与日内历史始终同�
   assert.equal(civil.update.kind, "civil-update");
   assert.deepEqual(Object.keys(civil.state.snapshot.markets), ["600101"]);
   assert.equal(civil.state.securities[0].code, "600101");
-  assert.deepEqual(Object.keys(civil.state.intraday[0].markets), ["600101"]);
+  assert.deepEqual(Object.keys(civil.update.update.refresh.intraday[0].timeseries_payload.markets), ["600101"]);
+  assert.deepEqual(civil.state.intraday, [], "已日结交易日的分钟帧不能留在实时状态");
   assert.throws(() => reduceEngineUpdate(civil.state, "0", wire), /代际/);
   assert.equal(civil.state.catalogResolver, identity);
 });

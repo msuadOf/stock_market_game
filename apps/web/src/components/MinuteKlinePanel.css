@@ -1,7 +1,4 @@
 .minute-kline { padding: 12px; color: var(--text-primary, #243447); background: var(--surface, #fff); }
-.minute-kline form, .minute-kline-pagination { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; }
-.minute-kline form label { display: flex; flex-direction: column; }
-.minute-kline-pagination { justify-content: space-between; margin: 8px 0; }
 .minute-kline-day { border-top: 1px solid var(--border, #d5dce5); margin-top: 8px; }
 .minute-kline-current { border-top: 2px solid var(--border, #d5dce5); margin-top: 12px; padding-top: 8px; }
 .minute-kline-day svg { width: 100%; max-height: 240px; }

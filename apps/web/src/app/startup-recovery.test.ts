@@ -4,6 +4,7 @@ import * as React from "react";
 import type { ReactElement } from "react";
 import { createServer, type ViteDevServer } from "vite";
 import { DayEndPersistence } from "../save/day-end-persistence.ts";
+import type { RemoteMarketContext } from "../host/remote-market-context.ts";
 import type { SessionSetup } from "../types/engine.ts";
 
 let vite: ViteDevServer;
@@ -62,7 +63,22 @@ function memoryApp() {
       if (original === undefined) Reflect.deleteProperty(globalThis, "window");
       else Object.defineProperty(globalThis, "window", original);
     }
-    return render();
+    const login = render();
+    assert.equal(typeof login.props.onConnected, "function", "选择远程后须先完成远程登录，不能把登录页当作游戏 Shell");
+    const context: RemoteMarketContext = {
+      session_id: "recovery-fixture",
+      setup: login.props.setup,
+      seed: login.props.seed,
+      resumed: false,
+      generation: "1",
+      member: { account_id: "1", admission_funding: { external_cash: "0" } },
+      can_control: true,
+      needs_rejoin: false,
+    };
+    login.props.onConnected("recovery-fixture-token", context, false);
+    const shell = render();
+    assert.deepEqual(shell.props.startupTarget.market, { token: "recovery-fixture-token", context, created: false });
+    return shell;
   }
   return { render, startRemote, report: () => root };
 }

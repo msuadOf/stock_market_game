@@ -1,14 +1,8 @@
-//! actor-per-session（ADR-0005 §5）：每 session 一个 tokio task 独占 `GameSession`。
-//!
-//! 设计要点（市场状态独占、契合 engine `Send`）：
-//! - `GameSession` 由 actor task 独占；Player 与 NPC 共用每会话 ingress，短生命周期锁不覆盖 step。
-//! - Player 在鉴权与 generation 检查后直接登记 ingress；控制命令（快照 / 改速 / restore）走 mpsc。
-//! - **更新广播**（`tokio::sync::broadcast`）：actor 每轮把 `Event[]` 与必要的权威运行快照
-//!   作为一个原子批次 broadcast；WS 只是传输适配器，与 Worker/Tauri 的应用层语义一致。
-//! - **步进节拍**：`interval = base_ms / speed`；`select!` 同时等命令与 interval tick。
-//!
-//! 当前单玩家模式：意图固定路由给玩家 `AccountId(0)`（见 `enqueue`）。
+//! 每会话只有一个市场权威；推进、批次与日界由共享 runner 决定。
+//! Player 与 NPC 共享 ingress，控制指令走邮箱；Native 等待由 LibOS 提供。
+//! 对外兼容层只包装已验证的协议批次及带会话元数据的控制响应。
 
+use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -17,42 +11,26 @@ use dashmap::DashMap;
 #[cfg(feature = "host-parity")]
 use engine::session::protocol::CivilUpdate;
 use engine::session::protocol::{
-    EngineUpdate as ProtocolUpdate, PausePreferences, ProtocolSession,
+    EngineUpdate as ProtocolUpdate, PausePreferences, PlayerWorkingOrder, ProtocolSession,
+};
+use engine::session::publication::{self, Observer, Producer, Push};
+#[cfg(test)]
+use engine::session::runner::fixed_tick_duration;
+#[cfg(test)]
+use engine::session::runner::MAX_BATCH_BUDGET;
+use engine::session::runner::{
+    apply_authority_failure, apply_cycle_pacing, run_cycle, validate_speed, CycleError, DrivePort,
+    Pacing as ServerPacing, Permit, WakePlan,
+};
+pub use engine::session::runner::{
+    RequestedSpeed, SpeedMetrics, BASE_TICK_MS, MAX_SPEED_MULTIPLIER,
 };
 use engine::session::{HostRuntimeTopology, MarketMembership, OpaqueSubjectId};
 use engine::{AccountId, Intent, SaveSlot, SessionError, SessionSetup, Snapshot};
+use libos::native_async::{self, WaitPlan, Wake};
+use libos::native_async::{broadcast, mpsc, oneshot};
 use serde::Serialize;
-use tokio::sync::{broadcast, mpsc, oneshot};
 use tracing::{debug, info, warn};
-
-/// 倍速基准：1x 时一个 tick 的间隔毫秒数（与前端 RemoteHost 对齐的「真实时间」尺度）。
-/// 取 1000ms（1 秒一 tick）作为可感知默认；speed=N → interval = BASE_TICK_MS / N。
-pub const BASE_TICK_MS: u64 = 1000;
-pub const MAX_SPEED_MULTIPLIER: f64 = BASE_TICK_MS as f64;
-const FASTEST_BATCH_BUDGET: Duration = Duration::from_millis(14);
-const FASTEST_BATCH_MAX_STEPS: usize = 100_000;
-const SPEED_SAMPLE_MIN_DURATION: Duration = Duration::from_millis(500);
-
-fn fixed_tick_duration(base_ms: u64, speed: f64) -> Duration {
-    debug_assert!(speed.is_finite() && speed > 0.0);
-    Duration::from_secs_f64((base_ms as f64 / 1_000.0) / speed).max(Duration::from_millis(1))
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq)]
-#[serde(tag = "mode", rename_all = "snake_case")]
-pub enum RequestedSpeed {
-    Fixed { multiplier: f64 },
-    Fastest,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct SpeedMetrics {
-    pub requested: RequestedSpeed,
-    pub actual_multiplier: Option<f64>,
-    pub sample_duration_ms: u64,
-    pub sample_ticks: u64,
-    pub running: bool,
-}
 
 /// 三种部署共用的应用层更新单元。远程 WS 只负责把它序列化传输。
 #[derive(Debug, Clone, Serialize)]
@@ -63,6 +41,47 @@ pub struct EngineUpdate {
     pub public_revision: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failure: Option<HostFailure>,
+}
+
+/// 观察通道只可提取属于授权主体的快照和增量；原始 Arc 不暴露给发送端。
+pub struct ScopedEngineUpdate {
+    update: Arc<EngineUpdate>,
+    account: Option<AccountId>,
+}
+
+impl ScopedEngineUpdate {
+    pub fn into_projected(
+        self,
+        initial_orders: &mut Option<Vec<PlayerWorkingOrder>>,
+    ) -> EngineUpdate {
+        let mut update = Arc::unwrap_or_clone(self.update);
+        if let Some(protocol) = &mut update.update {
+            publication::scope_observer_update(protocol, self.account);
+            publication::seed_observer_orders(protocol, initial_orders);
+        }
+        update
+    }
+}
+
+/// 快照和新通道在同一权威循环轮内捕获，通道的初始发布游标为 0。
+pub struct ObservationAttachment {
+    pub baseline: PublicBaseline,
+    pub observer: Observer<ScopedEngineUpdate>,
+    pub initial_orders: Option<Vec<PlayerWorkingOrder>>,
+}
+
+impl std::fmt::Debug for ObservationAttachment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ObservationAttachment")
+            .field("generation", &self.baseline.timeline_generation)
+            .field("seq", &self.baseline.snapshot.seq)
+            .finish_non_exhaustive()
+    }
+}
+
+struct ScopedObserver {
+    account: Option<AccountId>,
+    producer: Producer<ScopedEngineUpdate>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -361,11 +380,13 @@ pub struct PublicBaselineSnapshot {
 
 impl From<Snapshot> for PublicBaselineSnapshot {
     fn from(snapshot: Snapshot) -> Self {
-        let player_account = snapshot
-            .accounts
-            .into_iter()
-            .filter(|(account_id, _)| *account_id == AccountId(0))
-            .collect();
+        Self::scoped(snapshot, Some(AccountId(0)))
+    }
+}
+
+impl PublicBaselineSnapshot {
+    fn scoped(mut snapshot: Snapshot, account: Option<AccountId>) -> Self {
+        publication::scope_observer_snapshot(&mut snapshot, account);
         Self {
             seq: snapshot.seq,
             tick: snapshot.tick,
@@ -373,151 +394,10 @@ impl From<Snapshot> for PublicBaselineSnapshot {
             phase: snapshot.phase,
             mirror_origin: snapshot.mirror_origin,
             markets: snapshot.markets,
-            accounts: player_account,
+            accounts: snapshot.accounts,
             daily_candles: snapshot.daily_candles,
             active_daily_candles: snapshot.active_daily_candles,
         }
-    }
-}
-
-struct SpeedMeter {
-    started_at: std::time::Instant,
-    started_tick: u64,
-    actual_multiplier: Option<f64>,
-    sample_duration_ms: u64,
-    sample_ticks: u64,
-}
-
-impl SpeedMeter {
-    fn new(tick: u64) -> Self {
-        Self {
-            started_at: std::time::Instant::now(),
-            started_tick: tick,
-            actual_multiplier: None,
-            sample_duration_ms: 0,
-            sample_ticks: 0,
-        }
-    }
-
-    fn reset(&mut self, tick: u64) {
-        self.started_at = std::time::Instant::now();
-        self.started_tick = tick;
-        self.actual_multiplier = None;
-        self.sample_duration_ms = 0;
-        self.sample_ticks = 0;
-    }
-
-    fn mark_paused(&mut self, tick: u64) {
-        self.reset(tick);
-        self.actual_multiplier = Some(0.0);
-    }
-
-    fn refresh(&mut self, tick: u64) {
-        let now = std::time::Instant::now();
-        let elapsed = now.duration_since(self.started_at);
-        if elapsed < SPEED_SAMPLE_MIN_DURATION {
-            return;
-        }
-        let ticks = tick.saturating_sub(self.started_tick);
-        self.actual_multiplier = Some(ticks as f64 / elapsed.as_secs_f64());
-        self.sample_duration_ms = elapsed.as_millis().min(u128::from(u64::MAX)) as u64;
-        self.sample_ticks = ticks;
-        self.started_at = now;
-        self.started_tick = tick;
-    }
-}
-
-/// actor 独占的宿主节奏状态；引擎事务与调度资源仍归 SessionActor。
-struct ServerPacing {
-    running: bool,
-    fastest: bool,
-    requested_speed: RequestedSpeed,
-    tick_interval: Duration,
-    base_ms: u64,
-    speed_meter: SpeedMeter,
-}
-
-impl ServerPacing {
-    fn new(base_ms: u64, tick: u64) -> Self {
-        let mut speed_meter = SpeedMeter::new(tick);
-        speed_meter.mark_paused(tick);
-        Self {
-            running: false,
-            fastest: false,
-            requested_speed: RequestedSpeed::Fixed { multiplier: 1.0 },
-            tick_interval: Duration::from_millis(base_ms),
-            base_ms,
-            speed_meter,
-        }
-    }
-
-    fn apply_speed(&mut self, speed: f64, tick: u64) {
-        if speed == f64::INFINITY {
-            self.fastest = true;
-            self.requested_speed = RequestedSpeed::Fastest;
-            self.reset_speed_meter(tick);
-            return;
-        }
-        debug_assert!(speed.is_finite() && speed > 0.0 && speed <= MAX_SPEED_MULTIPLIER);
-        self.fastest = false;
-        self.requested_speed = RequestedSpeed::Fixed { multiplier: speed };
-        self.reset_speed_meter(tick);
-        self.tick_interval = fixed_tick_duration(self.base_ms, speed);
-    }
-
-    fn set_running(&mut self, running: bool, tick: u64) {
-        if self.running != running {
-            self.running = running;
-            self.reset_speed_meter(tick);
-        }
-    }
-
-    fn pause_at_civil_boundary(&mut self, tick: u64) {
-        self.running = false;
-        self.reset_speed_meter(tick);
-    }
-
-    // fatal 停止保留已有采样，避免改变原先只写 running 的故障语义。
-    fn stop_after_failure(&mut self) {
-        self.running = false;
-    }
-
-    fn reset_after_restore(&mut self, tick: u64) {
-        self.reset_speed_meter(tick);
-    }
-
-    fn reset_speed_meter(&mut self, tick: u64) {
-        if self.running {
-            self.speed_meter.reset(tick);
-        } else {
-            self.speed_meter.mark_paused(tick);
-        }
-    }
-
-    fn refresh_metrics(&mut self, tick: u64) -> SpeedMetrics {
-        // 暂停和故障停止不是运行采样窗；保留对应状态的既有读数。
-        if self.running {
-            self.speed_meter.refresh(tick);
-        }
-        SpeedMetrics {
-            requested: self.requested_speed.clone(),
-            actual_multiplier: self.speed_meter.actual_multiplier,
-            sample_duration_ms: self.speed_meter.sample_duration_ms,
-            sample_ticks: self.speed_meter.sample_ticks,
-            running: self.running,
-        }
-    }
-
-    fn is_running(&self) -> bool {
-        self.running
-    }
-
-    fn is_fastest(&self) -> bool {
-        self.fastest
-    }
-
-    fn tick_interval(&self) -> Duration {
-        self.tick_interval
     }
 }
 
@@ -557,6 +437,11 @@ pub enum SessionCommand {
     },
     PublicBaseline {
         reply: oneshot::Sender<Result<PublicBaseline, engine::session::CompanyCatalogViewError>>,
+    },
+    /// 原子建立只读观察流，不改变任一活跃观察者的增量基线。
+    ObserveFor {
+        subject: OpaqueSubjectId,
+        reply: oneshot::Sender<Result<ObservationAttachment, PublicBaselineError>>,
     },
     SpeedMetrics {
         reply: oneshot::Sender<SpeedMetrics>,
@@ -615,6 +500,11 @@ pub enum SessionCommand {
         subject: OpaqueSubjectId,
         request: MemberRequest,
         reply: oneshot::Sender<Result<MemberResponse, SendCommandError>>,
+    },
+    /// 日终 I/O 完成不代表此代 writer 仍拥有会话。
+    ArchiveWriteCompleted {
+        key: CheckpointKey,
+        result: Result<(), String>,
     },
     /// B3 远程登录：归档槽元数据变更（重命名/复制——控制权）。
     ArchiveMetadata {
@@ -808,6 +698,11 @@ pub struct MarketContext {
 #[path = "../../../packages/engine/tests/publications/session_fixture.rs"]
 mod session_fixture;
 
+use engine::session::checkpoint::{
+    CapturedCheckpoint, CheckpointKey, CheckpointOrder, ReceiptDisposition,
+};
+use native_store::archive_lane::ArchiveLane;
+
 #[cfg(test)]
 mod fatal_tests;
 
@@ -816,7 +711,7 @@ mod correction_recovery_tests;
 
 #[cfg(test)]
 mod interval_tests {
-    use super::{fixed_tick_duration, gate_deferred_drop_report, SpeedMeter, FASTEST_BATCH_BUDGET};
+    use super::{fixed_tick_duration, gate_deferred_drop_report, MAX_BATCH_BUDGET};
     use std::time::Duration;
 
     #[test]
@@ -874,98 +769,7 @@ mod interval_tests {
 
     #[test]
     fn fastest_batch_uses_the_cross_host_fourteen_millisecond_response_budget() {
-        assert_eq!(FASTEST_BATCH_BUDGET, Duration::from_millis(14));
-    }
-
-    #[test]
-    fn pacing_keeps_speed_mode_interval_and_pause_metrics_consistent() {
-        let mut pacing = super::ServerPacing::new(1_000, 10);
-        assert!(!pacing.is_running());
-        assert_eq!(pacing.refresh_metrics(10).actual_multiplier, Some(0.0));
-
-        pacing.set_running(true, 10);
-        pacing.apply_speed(60.0, 10);
-        let fixed_interval = pacing.tick_interval();
-        assert!(!pacing.is_fastest());
-        assert_eq!(
-            pacing.refresh_metrics(10).requested,
-            super::RequestedSpeed::Fixed { multiplier: 60.0 }
-        );
-        pacing.apply_speed(f64::INFINITY, 11);
-        assert!(pacing.is_fastest());
-        assert_eq!(pacing.tick_interval(), fixed_interval);
-        assert_eq!(
-            pacing.refresh_metrics(11).requested,
-            super::RequestedSpeed::Fastest
-        );
-        pacing.apply_speed(2.0, 12);
-        assert!(!pacing.is_fastest());
-        assert_eq!(pacing.tick_interval(), Duration::from_millis(500));
-
-        pacing.speed_meter.started_at -= Duration::from_secs(2);
-        let sampled = pacing.refresh_metrics(16);
-        assert_eq!(sampled.sample_ticks, 4);
-        pacing.set_running(true, 16);
-        assert_eq!(pacing.refresh_metrics(16), sampled);
-        pacing.set_running(false, 16);
-        let paused = pacing.refresh_metrics(16);
-        assert!(!paused.running);
-        assert_eq!(paused.actual_multiplier, Some(0.0));
-        assert_eq!(paused.sample_ticks, 0);
-        pacing.set_running(true, 16);
-        assert_eq!(pacing.refresh_metrics(16).actual_multiplier, None);
-
-        let mut minimal = super::ServerPacing::new(1, 0);
-        minimal.apply_speed(super::MAX_SPEED_MULTIPLIER, 0);
-        assert_eq!(minimal.tick_interval(), Duration::from_millis(1));
-    }
-
-    #[test]
-    fn paused_speed_telemetry_does_not_open_sampling_windows() {
-        let mut pacing = super::ServerPacing::new(1_000, 10);
-        pacing.speed_meter.started_at -= Duration::from_secs(2);
-        let paused = pacing.refresh_metrics(10);
-        assert!(!paused.running);
-        assert_eq!(paused.actual_multiplier, Some(0.0));
-        assert_eq!(paused.sample_duration_ms, 0);
-        assert_eq!(paused.sample_ticks, 0);
-    }
-
-    #[test]
-    fn pacing_restore_resets_sampling_but_fatal_stop_preserves_it() {
-        let mut pacing = super::ServerPacing::new(1_000, 10);
-        pacing.set_running(true, 10);
-        pacing.speed_meter.started_at -= Duration::from_secs(2);
-        let sampled = pacing.refresh_metrics(14);
-        pacing.stop_after_failure();
-        let stopped = pacing.refresh_metrics(14);
-        assert!(!stopped.running);
-        assert_eq!(stopped.actual_multiplier, sampled.actual_multiplier);
-        assert_eq!(stopped.sample_ticks, sampled.sample_ticks);
-        pacing.reset_after_restore(3);
-        let restored = pacing.refresh_metrics(3);
-        assert_eq!(restored.actual_multiplier, Some(0.0));
-        assert_eq!(restored.sample_ticks, 0);
-        pacing.set_running(true, 3);
-        pacing.reset_after_restore(1);
-        assert_eq!(pacing.refresh_metrics(1).actual_multiplier, None);
-        assert_eq!(pacing.speed_meter.started_tick, 1);
-    }
-
-    #[test]
-    fn speed_meter_reports_authoritative_ticks_per_real_second() {
-        let mut meter = SpeedMeter::new(10);
-        meter.started_at -= Duration::from_secs(2);
-
-        meter.refresh(12);
-
-        assert_eq!(meter.sample_ticks, 2);
-        assert!(meter.sample_duration_ms >= 2_000);
-        let actual = meter.actual_multiplier.expect("两秒窗口应产生实际倍率");
-        assert!(
-            (actual - 1.0).abs() < 0.01,
-            "实际倍率应约为 1x，收到 {actual}"
-        );
+        assert_eq!(MAX_BATCH_BUDGET, Duration::from_millis(14));
     }
 }
 
@@ -1155,6 +959,18 @@ impl SessionHandles {
         }
     }
 
+    /// 产品 WS 使用主体绑定的新观察通道，避免基线和订阅之间出现空窗。
+    pub async fn observe_for(
+        &self,
+        subject: OpaqueSubjectId,
+    ) -> Result<ObservationAttachment, PublicBaselineError> {
+        let (reply, receive) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::ObserveFor { subject, reply })
+            .map_err(|_| SendCommandError::ActorGone)?;
+        receive.await.map_err(|_| SendCommandError::ActorGone)?
+    }
+
     /// 解析成员关系（非成员报需确认重加入）。
     pub async fn resolve_member(
         &self,
@@ -1283,11 +1099,8 @@ impl SessionHandles {
         subject: OpaqueSubjectId,
         speed: f64,
     ) -> Result<(), SendCommandError> {
-        if !(speed.is_finite() && speed > 0.0 && speed <= MAX_SPEED_MULTIPLIER
-            || speed == f64::INFINITY)
-        {
-            return Err(SendCommandError::Rejected("市场倍速无效".into()));
-        }
+        validate_speed(BASE_TICK_MS, speed, native_async::now())
+            .map_err(|error| SendCommandError::Rejected(error.to_string()))?;
         match self
             .member_request(subject, MemberRequest::SetSpeed { generation, speed })
             .await?
@@ -1640,11 +1453,8 @@ impl SessionHandles {
 
     /// 改变倍速，按命令投递顺序处理并等待 actor 确认；关闭时返回 `ActorGone`。
     pub async fn set_speed(&self, speed: f64) -> Result<(), SendCommandError> {
-        if speed != f64::INFINITY
-            && (!speed.is_finite() || speed <= 0.0 || speed > MAX_SPEED_MULTIPLIER)
-        {
-            return Err(SendCommandError::InvalidSpeed(speed));
-        }
+        validate_speed(BASE_TICK_MS, speed, native_async::now())
+            .map_err(|_| SendCommandError::InvalidSpeed(speed))?;
         let (tx, rx) = oneshot::channel();
         self.cmd_tx
             .send(SessionCommand::SetSpeed { speed, reply: tx })
@@ -1944,6 +1754,15 @@ impl SessionManager {
 
         // 命令按提交顺序入队；不以固定条数暂停投递，调用方仍等待逐条处理回执。
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
+        let completion = cmd_tx.downgrade();
+        let archive_lane = ArchiveLane::spawn(move |key, result| {
+            if let Err(error) = &result {
+                tracing::warn!(generation = key.generation, seq = key.seq, %error, "异步日终归档失败");
+            }
+            if let Some(sender) = completion.upgrade() {
+                let _ = sender.send(SessionCommand::ArchiveWriteCompleted { key, result });
+            }
+        });
         let (event_tx, _event_rx) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
         let ingress = Arc::new(RwLock::new((1, game.shared_ingress())));
         let members = Arc::new(RwLock::new(game.trading_subject_accounts()));
@@ -1968,13 +1787,17 @@ impl SessionManager {
             members,
             controllers,
             archive,
+            archive_lane: Some(archive_lane),
+            archive_epoch: 1,
+            archive_order: CheckpointOrder::new(1, 1),
             #[cfg(test)]
             injected_step_failure: None,
-            pacing: ServerPacing::new(self.base_ms, game.tick()),
+            pacing: ServerPacing::new(self.base_ms, game.tick(), native_async::now()),
             game,
             runtime_topology: self.runtime_topology,
             cmd_rx,
             event_tx: handles.event_tx.clone(),
+            observers: Vec::new(),
             session_id: session_id.clone(),
             public_revision: 0,
             timeline_generation: 1,
@@ -1988,7 +1811,7 @@ impl SessionManager {
         // `new_session` 返回但 future 未 poll 时 actor_producers 仍为 0，drain 可在
         // 空账本上伪成功。普通构建 guard 为空操作。
         let producer = engine::session::verification_actor_guard();
-        tokio::spawn(async move {
+        native_async::spawn(async move {
             let _producer = producer;
             actor.run().await;
         });
@@ -2062,6 +1885,9 @@ struct SessionActor {
     /// B3 远程登录：日终归档 writer（None=无归档面——纯内存会话或 writer
     /// 失效后的降级；日终档不再写）。
     archive: Option<native_store::ArchiveWriter>,
+    archive_lane: Option<ArchiveLane>,
+    archive_epoch: u64,
+    archive_order: CheckpointOrder,
     #[cfg(test)]
     injected_step_failure: Option<(
         usize,
@@ -2073,6 +1899,7 @@ struct SessionActor {
     runtime_topology: HostRuntimeTopology,
     cmd_rx: mpsc::UnboundedReceiver<SessionCommand>,
     event_tx: broadcast::Sender<EngineUpdate>,
+    observers: Vec<ScopedObserver>,
     session_id: String,
     public_revision: u64,
     timeline_generation: u64,
@@ -2121,176 +1948,90 @@ impl SessionActor {
         }
         result
     }
-    /// 主循环：`select!` 同时等命令与 interval tick。
-    ///
-    /// - 命令到达 → 处理（Enqueue→入队、Snapshot→回快照、SetSpeed→改 interval）。
-    /// - interval 到 → `step()` → 原子 `broadcast` 一个 EngineUpdate 批次。
-    /// - `cmd_rx` 关闭（所有句柄 drop）→ 退出，task 结束。
-    ///
-    /// 倍速变更后下一轮重建 interval（`tokio::time::Interval` 不支持改周期，只能重建）。
+    /// LibOS 只负责唤醒命令或到期；可推进的时间与批大小来自同一 runner。
     async fn run(mut self) {
-        info!(session = %self.session_id, interval = ?self.pacing.tick_interval(), "session actor started");
-
-        // 初次 interval：MissedTickBehavior::Skip，提速追赶不补发积压 tick（避免 burst）。
-        let mut interval = self.fresh_interval();
-        // 跳过首个「立即到期」tick：开局不立刻 step，留给客户端连 WS 对齐基线。
-        // 事件本身带 seq，断线重连靠 snapshot+seq 续传，不依赖开局时序。
-        let _ = interval.tick().await;
-
+        info!(session = %self.session_id, "session actor started");
         loop {
-            tokio::select! {
-                biased;
-
-                cmd = self.cmd_rx.recv() => {
-                    match cmd {
-                        Some(c) => {
-                            let speed_changed = matches!(c, SessionCommand::SetSpeed { .. });
-                            let shutting_down = matches!(c, SessionCommand::Shutdown { .. });
-                            self.handle_command(c).await;
-                            self.report_deferred_drop_degradation();
-                            if shutting_down {
-                                break;
-                            }
-                            if speed_changed {
-                                // 重建 interval 使新周期立即生效。
-                                interval = self.fresh_interval();
-                            }
-                        }
-                        None => {
-                            info!(session = %self.session_id, "all handles dropped; actor exiting");
-                            break;
-                        }
+            let wait_plan = match self.pacing.cadence.wake_plan() {
+                WakePlan::Idle => WaitPlan::Idle,
+                WakePlan::At(deadline) => WaitPlan::At(deadline),
+                WakePlan::Immediate => WaitPlan::Yield,
+            };
+            match native_async::wait(&mut self.cmd_rx, wait_plan).await {
+                Some(Wake::Command(command)) => {
+                    let shutting_down = matches!(command, SessionCommand::Shutdown { .. });
+                    self.handle_command(command).await;
+                    self.report_deferred_drop_degradation();
+                    if shutting_down {
+                        break;
                     }
                 }
-                _ = interval.tick(), if !self.pacing.is_fastest() && self.pacing.is_running() => {
-                    self.tick_and_broadcast().await;
+                Some(Wake::Deadline) => {
+                    if let Some(permit) = self.pacing.cadence.begin_turn(native_async::now()) {
+                        self.drive_cycle(permit);
+                    }
                 }
-                _ = std::future::ready(()), if self.pacing.is_fastest() && self.pacing.is_running() => {
-                    self.run_fastest_batch();
-                    tokio::task::yield_now().await;
-                }
+                None => break,
+            }
+        }
+        if let Some(lane) = self.archive_lane.take() {
+            if let Err(error) = lane.finish().await {
+                tracing::error!(%error, "归档任务退出失败");
             }
         }
     }
 
-    /// 构造一个按当前 tick 周期计时的新 `tokio::time::Interval`（Skip 积压补发）。
-    fn fresh_interval(&self) -> tokio::time::Interval {
-        let mut i = tokio::time::interval(self.tick_duration());
-        i.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        i
-    }
-
-    /// 推进一个 tick 并把产出的事件广播出去。
-    async fn tick_and_broadcast(&mut self) {
-        self.run_protocol_batch(1);
-    }
-
-    /// “最快”不使用固定 interval；每轮尽可能推进一个受控 CPU 时间片，随后由
-    /// `yield_now()` 把执行权交还 Tokio，使暂停、调速、下单和快照命令不会饿死。
-    /// 单个不可分割的 pipeline tick 可能耗尽整个 14ms 时间片，因此这里不承诺每轮
-    /// 至少完成多个 tick；与 desktop/Worker 一致，强合同是按预算 yield 并响应控制命令。
-    fn run_fastest_batch(&mut self) {
-        self.run_protocol_batch(FASTEST_BATCH_MAX_STEPS);
-    }
-
-    fn run_protocol_batch(&mut self, limit: usize) {
+    fn drive_cycle(&mut self, permit: Permit) {
         if self.fatal_failure.is_some() {
             return;
         }
-        if let Err(error) = self.game.require_healthy() {
-            self.stop_with_failure(HostFailure::step(&error));
-            return;
-        }
-        let started = std::time::Instant::now();
-        let mut frames = Vec::new();
-        for _ in 0..limit {
-            // A request delivered during tick n must be enqueued before tick n+1.
-            // Return to the biased command branch at the first tick boundary.
-            if limit > 1 && !self.cmd_rx.is_empty() {
-                break;
-            }
-            match self.game.civil_day_ready() {
-                Ok(true) => break,
-                Ok(false) => {}
-                Err(error) => {
-                    self.stop_cycle_with_unpublished_frames(frames, error);
-                    return;
+        let preferences = self.pause_preferences;
+        let result = run_cycle(self, permit, preferences);
+        match apply_cycle_pacing(
+            &mut self.pacing,
+            self.game.tick(),
+            native_async::now(),
+            result,
+        ) {
+            Ok(()) => self.report_deferred_drop_degradation(),
+            Err(CycleError::Advance {
+                source,
+                unpublished,
+            }) => {
+                let mut failure = HostFailure::civil(&source);
+                if let Some(range) = unpublished {
+                    range.describe(&mut failure.message);
                 }
+                self.stop_with_failure(failure);
             }
-            let frame = match self.step_game() {
-                Ok(frame) => frame,
-                Err(error) => {
-                    self.stop_cycle_with_unpublished_frames(frames, error.into());
-                    return;
-                }
-            };
-            frames.push(frame);
-            #[cfg(test)]
-            let injecting = self.injected_step_failure.is_some();
-            #[cfg(not(test))]
-            let injecting = false;
-            if !injecting && started.elapsed() >= FASTEST_BATCH_BUDGET {
-                break;
+            Err(CycleError::Batch {
+                source,
+                unpublished,
+            }) => {
+                let mut failure = HostFailure::step(&source);
+                unpublished.describe(&mut failure.message);
+                self.stop_with_failure(failure);
             }
-        }
-        if !frames.is_empty() {
-            let range = frames
-                .first()
-                .zip(frames.last())
-                .map(|(first, last)| (first.tick, last.tick, first.seq_from, last.seq_to));
-            match self.game.tick_batch(frames) {
-                Ok(batch) => self.broadcast_at(
-                    ProtocolUpdate::TickBatch(Box::new(batch)),
-                    self.game.civil_date().to_iso(),
-                ),
-                Err(error) => {
-                    let mut failure = HostFailure::step(&error);
-                    Self::describe_unpublished_frames(&mut failure, range);
-                    self.stop_with_failure(failure);
-                    return;
-                }
+            Err(CycleError::Civil { source, retryable }) => {
+                let error = source.into_error();
+                self.stop_with_failure(if retryable {
+                    HostFailure::correction_prepare_rejected(&error)
+                } else {
+                    HostFailure::civil(&error)
+                });
             }
-        }
-        if let Err(failure) = self.prepare_civil_updates() {
-            self.stop_with_failure(*failure);
-            return;
-        }
-        self.pacing.refresh_metrics(self.game.tick());
-        self.report_deferred_drop_degradation();
-    }
-
-    fn describe_unpublished_frames(failure: &mut HostFailure, range: Option<(u64, u64, u64, u64)>) {
-        if let Some((tick_from, tick_to, seq_from, seq_to)) = range {
-            failure.message.push_str(&format!("；本批已提交但尚未交付的成功前缀：tick_from={tick_from}, tick_to={tick_to}, seq_from={seq_from}, seq_to={seq_to}；内存事实仍保留供诊断，请重新打开有效日终档或新局"));
+            Err(CycleError::Stage(failure)) => self.stop_with_failure(failure),
         }
     }
 
-    fn stop_cycle_with_unpublished_frames(
-        &mut self,
-        frames: Vec<engine::session::protocol::TickFrame>,
-        error: SessionError,
-    ) {
-        let mut failure = HostFailure::civil(&error);
-        if !frames.is_empty() {
-            let range = frames
-                .first()
-                .zip(frames.last())
-                .map(|(first, last)| (first.tick, last.tick, first.seq_from, last.seq_to));
-            match self.game.tick_batch(frames) {
-                Ok(batch) => self.broadcast_at(
-                    ProtocolUpdate::TickBatch(Box::new(batch)),
-                    self.game.civil_date().to_iso(),
-                ),
-                Err(publication_error) => {
-                    warn!(
-                        ?publication_error,
-                        "fatal 后成功前缀无法通过健康门，保留原首错和未交付范围"
-                    );
-                    Self::describe_unpublished_frames(&mut failure, range);
-                }
-            }
-        }
-        self.stop_with_failure(failure);
+    #[cfg(test)]
+    fn run_protocol_batch(&mut self, limit: usize) {
+        self.drive_cycle(Permit::for_explicit_limit(limit));
+    }
+
+    #[cfg(test)]
+    fn run_fastest_batch(&mut self) {
+        self.run_protocol_batch(engine::session::runner::MAX_BATCH_TICKS);
     }
 
     /// 析构后端退化是性能告警，不是交易失败：不 stop pacing、不关闭 ingress、
@@ -2310,71 +2051,165 @@ impl SessionActor {
         }
     }
 
-    fn publish_civil_update(&mut self, update: engine::session::protocol::CivilUpdate) {
-        self.persist_day_end(&update);
-        let pause = self.pause_preferences.pauses(&update);
+    fn publish_civil_update(
+        &mut self,
+        update: engine::session::protocol::CivilUpdate,
+    ) -> Result<(), HostFailure> {
+        let archive = self.stage_day_end(&update);
         self.public_revision = self.public_revision.saturating_add(1);
         let date = update.civil_date.clone();
         self.broadcast_at(ProtocolUpdate::CivilUpdate(Box::new(update)), date);
-        if pause {
-            self.pacing.pause_at_civil_boundary(self.game.tick());
-        }
+        // 日界已提交，不能因档案队列满而撤销；首个交接错误中断本轮后续日界。
+        archive
     }
 
-    fn prepare_civil_updates(&mut self) -> Result<(), Box<HostFailure>> {
-        while self
-            .game
-            .civil_day_ready()
-            .map_err(|error| Box::new(HostFailure::civil(&error)))?
-        {
-            let date = self.game.civil_date();
-            let update = match self.game.end_civil_day_update_classified() {
-                Ok(update) => update,
-                Err(failure) => {
-                    let prepare_rejected = failure.recovery()
-                        == engine::session::protocol::CivilRecovery::CorrectionPrepareRejected
-                        && self.fatal_failure.is_none()
-                        && self.game.require_healthy().is_ok()
-                        && self.game.civil_date() == date
-                        && self.game.civil_day_ready().is_ok_and(|ready| ready);
-                    let error = failure.into_error();
-                    return Err(Box::new(if prepare_rejected {
-                        HostFailure::correction_prepare_rejected(&error)
-                    } else {
-                        HostFailure::civil(&error)
-                    }));
-                }
-            };
-            let pause = self.pause_preferences.pauses(&update);
-            // 趁本日候选仍通过健康门时捕获并交付，下一自然日失败不能抹掉成功前缀。
-            self.publish_civil_update(update);
-            if pause {
-                break;
+    fn finish_archive_write(&mut self, key: CheckpointKey, result: Result<(), String>) {
+        if self.archive_order.accept_receipt(key) != ReceiptDisposition::Accepted {
+            return;
+        }
+        let Err(error) = result else { return };
+        let mut failure = HostFailure::archive(&error);
+        failure.context.tick = Some(key.tick);
+        failure.context.seq = Some(key.seq);
+        failure.context.day = Some(key.day);
+        failure.context.generation = Some(key.generation.to_string());
+        if self.fatal_failure.is_none() {
+            self.pacing.stop_after_failure(native_async::now());
+        }
+        self.broadcast_failure(failure);
+    }
+
+    fn stage_day_end(
+        &mut self,
+        update: &engine::session::protocol::CivilUpdate,
+    ) -> Result<(), HostFailure> {
+        let Some(writer) = self.archive.clone() else {
+            self.game.discard_pending_save_candidates();
+            return Ok(());
+        };
+        self.archive_order
+            .install(self.timeline_generation, self.archive_epoch);
+        let storage_error =
+            |error: native_store::StoreError| HostFailure::archive(&error.to_string());
+        let captured = CapturedCheckpoint::take(
+            &self.game,
+            update,
+            self.timeline_generation,
+            self.archive_epoch,
+        )
+        .map_err(native_store::StoreError::from)
+        .map_err(storage_error)?;
+        let key = captured.key;
+        self.archive_order
+            .can_stage(key)
+            .map_err(|error| HostFailure::archive(&error.to_string()))?;
+        match &self.archive_lane {
+            Some(lane) => {
+                lane.stage(writer, captured).map_err(storage_error)?;
+                self.archive_order
+                    .staged(key)
+                    .map_err(|error| HostFailure::archive(&error.to_string()))?;
             }
+            // 只为直接调用 actor 的夹具保留同步存储；真实会话始终有独立 lane。
+            #[cfg(test)]
+            None => {
+                let candidate = native_store::DayEndCandidate::from_captured(captured.slot)
+                    .map_err(storage_error)?;
+                writer.save_day_end(&candidate).map_err(storage_error)?;
+                self.archive_order
+                    .staged(key)
+                    .map_err(|error| HostFailure::archive(&error.to_string()))?;
+                self.finish_archive_write(key, Ok(()));
+            }
+            #[cfg(not(test))]
+            None => return Err(HostFailure::archive("会话没有初始化存档任务")),
         }
         Ok(())
     }
 
-    /// 日终档持久化（B3 远程登录）：写失败为可恢复失败——交易提交有效、
-    /// 上一份有效日终档保留，仅广播 HostFailure::archive 提示人工反馈。
-    fn persist_day_end(&mut self, update: &engine::session::protocol::CivilUpdate) {
-        let Some(writer) = &self.archive else {
-            return;
-        };
-        let key = engine::session::protocol::SaveCandidateKey {
-            seq: update.seq_to,
-            settled_date: update.boundary.settled_date,
-        };
-        let saved = native_store::DayEndCandidate::capture(&self.game, &key)
-            .map_err(|error| error.to_string())
-            .and_then(|slot| {
-                writer
-                    .save_day_end(&slot)
-                    .map_err(|error| error.to_string())
-            });
-        if let Err(error) = saved {
-            self.stop_with_failure(HostFailure::archive(&error));
+    async fn archive_io<T>(
+        &mut self,
+        action: impl FnOnce() -> Result<T, native_store::StoreError> + Send + 'static,
+    ) -> Result<T, native_store::StoreError>
+    where
+        T: Send + 'static,
+    {
+        match &self.archive_lane {
+            Some(lane) => lane.execute(action).await,
+            #[cfg(test)]
+            None => action(),
+            #[cfg(not(test))]
+            None => Err(native_store::StoreError::Invalid(
+                "会话没有初始化存档任务".into(),
+            )),
         }
+    }
+
+    fn install_archive_writer(&mut self, writer: Option<native_store::ArchiveWriter>) {
+        let same_lease = match (&self.archive, &writer) {
+            (Some(before), Some(after)) => before.same_lease(after),
+            (None, None) => true,
+            _ => false,
+        };
+        if !same_lease {
+            self.archive_epoch = self
+                .archive_epoch
+                .checked_add(1)
+                .expect("会话 writer epoch 已耗尽");
+            self.archive_order
+                .install(self.timeline_generation, self.archive_epoch);
+        }
+        self.archive = writer;
+    }
+
+    async fn activate_replacement_timeline(
+        &mut self,
+        generation: u64,
+        replacement_ingress: engine::SharedSessionIngress,
+        replacement_members: std::collections::BTreeMap<OpaqueSubjectId, AccountId>,
+    ) -> Result<(), native_store::StoreError> {
+        let ingress = Arc::clone(&self.ingress);
+        let members = Arc::clone(&self.members);
+        let install = move || -> Result<(), native_store::StoreError> {
+            // 锁序与 enqueue_for 一致。全部锁取得且旧入口关闭后才提交两份替换。
+            let poisoned =
+                || SessionError::ResourceLimit(engine::error::ValidationFault::bare(1293));
+            let mut ingress = ingress.write().map_err(|_| poisoned())?;
+            let mut members = members.write().map_err(|_| poisoned())?;
+            ingress.1.close()?;
+            *ingress = (generation, replacement_ingress);
+            *members = replacement_members;
+            Ok(())
+        };
+        let renewed = match self.archive.clone() {
+            Some(writer) => Some(
+                self.archive_io(move || writer.renew_after(None, install))
+                    .await?,
+            ),
+            None => {
+                install()?;
+                None
+            }
+        };
+        self.install_archive_writer(renewed);
+        Ok(())
+    }
+
+    fn authorize_archive_command(
+        &self,
+        generation: u64,
+        subject: &OpaqueSubjectId,
+    ) -> Result<native_store::ArchiveWriter, SendCommandError> {
+        if generation != self.timeline_generation {
+            return Err(SendCommandError::Rejected(
+                "STALE_SESSION_GENERATION".into(),
+            ));
+        }
+        self.require_market_control(subject)?;
+        self.archive
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| SendCommandError::Rejected("Native 存档目标未初始化".into()))
     }
 
     /// 控制权门禁：subject 必须在 controllers 集内。
@@ -2407,7 +2242,7 @@ impl SessionActor {
     }
 
     /// 成员请求处理（B3 子集——鉴权后的成员/控制面统一入口）。
-    fn handle_member_request(
+    async fn handle_member_request(
         &mut self,
         subject: OpaqueSubjectId,
         request: MemberRequest,
@@ -2578,58 +2413,27 @@ impl SessionActor {
                     .timeline_generation
                     .checked_add(1)
                     .ok_or(SendCommandError::Rejected("世代计数耗尽".into()))?;
-                let replacement_ingress = self
-                    .ingress
-                    .write()
-                    .map_err(|error| {
-                        SendCommandError::Rejected(format!(
-                            "session ingress lifecycle lock poisoned: {error}"
-                        ))
-                    })
-                    .and_then(|mut ingress| {
-                        ingress
-                            .1
-                            .close()
-                            .map_err(|error| SendCommandError::Rejected(error.to_string()))?;
-                        *ingress = (next_generation, replacement.shared_ingress());
-                        let mut members = self.members.write().map_err(|error| {
-                            SendCommandError::Rejected(format!("成员名册锁损坏：{error}"))
-                        })?;
-                        *members = replacement.trading_subject_accounts();
-                        Ok(())
-                    });
-                replacement_ingress?;
-                let renewed_archive = match &self.archive {
-                    Some(writer) => writer
-                        .renew(None)
-                        .map(Some)
-                        .map_err(|error| SendCommandError::Rejected(error.to_string())),
-                    None => Ok(None),
-                };
-                match renewed_archive {
-                    Ok(archive) => self.archive = archive,
-                    Err(error) => return Err(error),
-                }
+                self.activate_replacement_timeline(
+                    next_generation,
+                    replacement.shared_ingress(),
+                    replacement.trading_subject_accounts(),
+                )
+                .await
+                .map_err(|error| SendCommandError::Rejected(error.to_string()))?;
                 self.game = replacement;
                 self.timeline_generation = next_generation;
                 self.public_revision = self.public_revision.saturating_add(1);
-                self.pacing.reset_after_restore(self.game.tick());
+                self.pacing
+                    .reset_after_restore(self.game.tick(), native_async::now());
                 self.broadcast_timeline_reset();
                 Ok(MemberResponse::Snapshot(self.game.snapshot()))
             }
             MemberRequest::Baseline => {
-                let account = match self.game.market_membership(&subject) {
-                    Ok(member) => Some(member.account_id),
-                    Err(engine::session::MembershipError::RejoinConfirmationRequired) => None,
-                    Err(error) => return Err(reject(error)),
-                };
-                let baseline = self.public_baseline_candidate().map(|mut baseline| {
-                    baseline
-                        .snapshot
-                        .accounts
-                        .retain(|id, _| Some(*id) == account);
-                    baseline
-                });
+                let account = self.observer_account(&subject)?;
+                let catalog = self.game.company_catalog_view();
+                let baseline = self
+                    .finish_observer_baseline(catalog, account)
+                    .map(|(baseline, _)| baseline);
                 Ok(MemberResponse::Baseline(baseline))
             }
             MemberRequest::Context => {
@@ -2705,7 +2509,8 @@ impl SessionActor {
                 if let Some(error) = self.fatal_rejection() {
                     return Err(SendCommandError::Rejected(error.to_string()));
                 }
-                self.pacing.apply_speed(speed, self.game.tick());
+                self.apply_speed(speed)
+                    .map_err(|error| SendCommandError::Rejected(error.to_string()))?;
                 Ok(MemberResponse::Control)
             }
             MemberRequest::SetRunning { running, .. } => {
@@ -2713,7 +2518,8 @@ impl SessionActor {
                 if let Some(error) = self.fatal_rejection() {
                     return Err(SendCommandError::Rejected(error.to_string()));
                 }
-                self.pacing.set_running(running, self.game.tick());
+                self.pacing
+                    .set_running(running, self.game.tick(), native_async::now());
                 Ok(MemberResponse::Control)
             }
             MemberRequest::SetPausePreferences {
@@ -2879,6 +2685,37 @@ impl SessionActor {
         self.finish_public_baseline(catalog)
     }
 
+    fn observer_account(
+        &self,
+        subject: &OpaqueSubjectId,
+    ) -> Result<Option<AccountId>, SendCommandError> {
+        match self.game.market_membership(subject) {
+            Ok(member) => Ok(Some(member.account_id)),
+            Err(engine::session::MembershipError::RejoinConfirmationRequired) => Ok(None),
+            Err(error) => Err(SendCommandError::Rejected(error.to_string())),
+        }
+    }
+
+    fn attach_observer(
+        &mut self,
+        subject: OpaqueSubjectId,
+    ) -> Result<ObservationAttachment, PublicBaselineError> {
+        let account = self.observer_account(&subject)?;
+        let catalog = self.game.company_catalog_view();
+        let (baseline, initial_orders) = self.finish_observer_baseline(catalog, account)?;
+        self.observers
+            .retain(|entry| !entry.producer.is_observer_closed());
+        let (producer, observer) = publication::channel(publication::OBSERVER_PACKET_LIMIT);
+        if baseline.failure.is_none() {
+            self.observers.push(ScopedObserver { account, producer });
+        }
+        Ok(ObservationAttachment {
+            baseline,
+            observer,
+            initial_orders: Some(initial_orders),
+        })
+    }
+
     fn finish_public_baseline(
         &mut self,
         catalog: Result<
@@ -2886,6 +2723,19 @@ impl SessionActor {
             engine::session::CompanyCatalogViewError,
         >,
     ) -> Result<PublicBaseline, engine::session::CompanyCatalogViewError> {
+        self.finish_observer_baseline(catalog, Some(AccountId(0)))
+            .map(|(baseline, _)| baseline)
+    }
+
+    fn finish_observer_baseline(
+        &mut self,
+        catalog: Result<
+            Vec<engine::session::CompanyCatalogEntry>,
+            engine::session::CompanyCatalogViewError,
+        >,
+        account: Option<AccountId>,
+    ) -> Result<(PublicBaseline, Vec<PlayerWorkingOrder>), engine::session::CompanyCatalogViewError>
+    {
         let company_catalog = match catalog {
             Ok(catalog) => catalog,
             Err(error) => {
@@ -2900,41 +2750,40 @@ impl SessionActor {
         if let Err(fatal) = self.game.require_healthy() {
             self.stop_with_failure(HostFailure::step(&fatal));
         }
-        if self.fatal_failure.is_none() {
-            self.game.prepare_public_baseline();
-        }
-        Ok(PublicBaseline {
-            timeline_generation: self.timeline_generation,
-            snapshot: self.game.snapshot().into(),
-            stock_catalog: self.game.stock_catalog_view(),
-            company_catalog,
-            civil_date: self.game.civil_date().to_iso(),
-            public_revision: self.public_revision,
-            public_report_ids: self
-                .game
-                .publication_ids()
-                .into_iter()
-                .map(|id| id.value().to_string())
-                .collect(),
-            failure: self.fatal_failure.clone(),
-        })
+        // 旧委托投影只覆盖 0 号账户；其余成员不读取或借用该账户的订单。
+        let (snapshot, initial_orders) =
+            if account == Some(AccountId(0)) && self.fatal_failure.is_none() {
+                self.game.observer_baseline()
+            } else {
+                (self.game.snapshot(), Vec::new())
+            };
+        Ok((
+            PublicBaseline {
+                timeline_generation: self.timeline_generation,
+                snapshot: PublicBaselineSnapshot::scoped(snapshot, account),
+                stock_catalog: self.game.stock_catalog_view(),
+                company_catalog,
+                civil_date: self.game.civil_date().to_iso(),
+                public_revision: self.public_revision,
+                public_report_ids: self
+                    .game
+                    .publication_ids()
+                    .into_iter()
+                    .map(|id| id.value().to_string())
+                    .collect(),
+                failure: self.fatal_failure.clone(),
+            },
+            initial_orders,
+        ))
     }
 
     fn stop_with_failure(&mut self, mut failure: HostFailure) {
-        // B3：可恢复失败（如日终存档写失败）不关 ingress、不停机——交易
-        // 提交有效，恢复推进后自动重试（18725d07 persist_day_end 语义）。
-        if !failure.recoverable {
-            if let Err(error) = self.game.shared_ingress().close() {
-                failure
-                    .message
-                    .push_str(&format!("；关闭 ingress 失败：{error}"));
-            }
-        }
+        apply_authority_failure(&self.game, failure.recoverable, &mut failure.message);
         failure.context.tick = Some(self.game.tick());
         failure.context.seq = Some(self.game.seq());
         failure.context.day = Some(self.game.day());
         failure.context.generation = Some(self.timeline_generation.to_string());
-        self.pacing.stop_after_failure();
+        self.pacing.stop_after_failure(native_async::now());
         if failure.recoverable {
             self.broadcast_failure(failure);
             return;
@@ -2946,52 +2795,79 @@ impl SessionActor {
     }
 
     #[cfg(feature = "host-parity")]
-    fn broadcast_update(&self, protocol: ProtocolUpdate) {
+    fn broadcast_update(&mut self, protocol: ProtocolUpdate) {
         self.broadcast_at(protocol, self.game.civil_date().to_iso());
     }
 
-    fn broadcast_at(&self, protocol: ProtocolUpdate, civil_date: String) {
-        if self.event_tx.receiver_count() == 0
-            && matches!(&protocol, ProtocolUpdate::CivilUpdate(_))
-        {
-            self.game.discard_pending_save_candidates();
-        }
-        let update = EngineUpdate {
-            timeline_generation: self.timeline_generation,
-            update: Some(protocol),
-            civil_date,
-            public_revision: self.public_revision,
-            failure: None,
-        };
-        // 一个 CPU 时间片只占广播通道的一个槽位，避免 Fastest 按事件数量击穿缓冲。
-        if self.event_tx.send(update).is_err() {
-            debug!(session = %self.session_id, "no subscribers for engine update (dropped)");
-        }
-        debug!(session = %self.session_id, tick = self.game.tick(), "broadcast engine update");
+    fn broadcast_at(&mut self, protocol: ProtocolUpdate, civil_date: String) {
+        self.publish_observation(
+            EngineUpdate {
+                timeline_generation: self.timeline_generation,
+                update: Some(protocol),
+                civil_date,
+                public_revision: self.public_revision,
+                failure: None,
+            },
+            false,
+        );
     }
 
-    fn broadcast_failure(&self, failure: HostFailure) {
-        let update = EngineUpdate {
-            timeline_generation: self.timeline_generation,
-            update: None,
-            civil_date: self.game.civil_date().to_iso(),
-            public_revision: self.public_revision,
-            failure: Some(failure),
-        };
-        if self.event_tx.send(update).is_err() {
-            debug!(session = %self.session_id, "no subscribers for fatal host failure");
-        }
+    fn broadcast_failure(&mut self, failure: HostFailure) {
+        self.publish_observation(
+            EngineUpdate {
+                timeline_generation: self.timeline_generation,
+                update: None,
+                civil_date: self.game.civil_date().to_iso(),
+                public_revision: self.public_revision,
+                failure: Some(failure),
+            },
+            true,
+        );
     }
 
-    fn broadcast_timeline_reset(&self) {
-        let update = EngineUpdate {
-            timeline_generation: self.timeline_generation,
-            update: None,
-            civil_date: self.game.civil_date().to_iso(),
-            public_revision: self.public_revision,
-            failure: None,
-        };
-        let _ = self.event_tx.send(update);
+    fn broadcast_timeline_reset(&mut self) {
+        self.publish_observation(
+            EngineUpdate {
+                timeline_generation: self.timeline_generation,
+                update: None,
+                civil_date: self.game.civil_date().to_iso(),
+                public_revision: self.public_revision,
+                failure: None,
+            },
+            true,
+        );
+        // 旧租约收到有序重置通知或显式缺口，绝不转到新一代私有账户。
+        self.observers.clear();
+    }
+
+    fn publish_observation(&mut self, update: EngineUpdate, urgent: bool) {
+        if self.observers.is_empty() {
+            // 旧入口仅作为诊断/兼容订阅；产品传输无需这个 broadcast。
+            if self.event_tx.receiver_count() != 0 {
+                let _ = self.event_tx.send(update);
+            }
+            return;
+        }
+        let weight = update
+            .update
+            .as_ref()
+            .map_or(NonZeroUsize::MIN, publication::protocol_weight);
+        let update = Arc::new(update);
+        self.observers.retain_mut(|entry| {
+            let scoped = ScopedEngineUpdate {
+                update: Arc::clone(&update),
+                account: entry.account,
+            };
+            let result = if urgent {
+                entry.producer.publish_weighted_urgent(scoped, weight)
+            } else {
+                entry.producer.publish_weighted(scoped, weight)
+            };
+            !matches!(result, Push::ObserverClosed { .. })
+        });
+        if self.event_tx.receiver_count() != 0 {
+            let _ = self.event_tx.send(Arc::unwrap_or_clone(update));
+        }
     }
 
     /// 处理单条命令。
@@ -3077,8 +2953,17 @@ impl SessionActor {
                 let baseline = self.public_baseline_candidate();
                 let _ = reply.send(baseline);
             }
+            SessionCommand::ObserveFor { subject, reply } => {
+                let attachment = self.attach_observer(subject);
+                if reply.send(attachment).is_err() {
+                    self.observers
+                        .retain(|entry| !entry.producer.is_observer_closed());
+                }
+            }
             SessionCommand::SpeedMetrics { reply } => {
-                let metrics = self.pacing.refresh_metrics(self.game.tick());
+                let metrics = self
+                    .pacing
+                    .refresh_metrics(self.game.tick(), native_async::now());
                 let _ = reply.send(metrics);
             }
             SessionCommand::Save {
@@ -3118,43 +3003,26 @@ impl SessionActor {
                             return;
                         }
                     };
-                    let new_ingress = restored.shared_ingress();
-                    let new_members = restored.trading_subject_accounts();
-                    let install = || -> Result<(), native_store::StoreError> {
-                        // 锁序与 enqueue_for 一致；两把锁都取得后才关闭原入口。
-                        let mut ingress = self.ingress.write().map_err(|_| {
-                            // 1293：ingress 生命周期锁或成员名册锁中毒。
-                            SessionError::ResourceLimit(engine::error::ValidationFault::bare(1293))
-                        })?;
-                        let mut members = self.members.write().map_err(|_| {
-                            SessionError::ResourceLimit(engine::error::ValidationFault::bare(1293))
-                        })?;
-                        ingress.1.close()?;
-                        *ingress = (next_generation, new_ingress);
-                        *members = new_members;
-                        Ok(())
-                    };
-                    // 存档续写必须和 ingress 一起换世代；旧轨迹较高的 seq 不得拒绝新轨迹重放。
-                    // renew_after 先校验 writer，只有入口替换成功才会更新其写入栅栏。
-                    let archive = match &self.archive {
-                        Some(writer) => writer.renew_after(None, install).map(Some),
-                        None => install().map(|()| None),
-                    };
-                    self.archive = match archive {
-                        Ok(archive) => archive,
-                        Err(error) => {
-                            let error = match error {
-                                native_store::StoreError::Session(error) => error.into(),
-                                error => RestoreSessionError::Archive(error),
-                            };
-                            let _ = reply.send(Err(error));
-                            return;
-                        }
-                    };
+                    let activation = self
+                        .activate_replacement_timeline(
+                            next_generation,
+                            restored.shared_ingress(),
+                            restored.trading_subject_accounts(),
+                        )
+                        .await;
+                    if let Err(error) = activation {
+                        let error = match error {
+                            native_store::StoreError::Session(error) => error.into(),
+                            error => RestoreSessionError::Archive(error),
+                        };
+                        let _ = reply.send(Err(error));
+                        return;
+                    }
                     self.game = restored;
                     self.timeline_generation = next_generation;
                     self.public_revision = self.public_revision.saturating_add(1);
-                    self.pacing.reset_after_restore(self.game.tick());
+                    self.pacing
+                        .reset_after_restore(self.game.tick(), native_async::now());
                     self.broadcast_timeline_reset();
                     let _ = reply.send(Ok(self.game.snapshot()));
                 }
@@ -3164,14 +3032,11 @@ impl SessionActor {
             },
             #[cfg(feature = "host-parity")]
             SessionCommand::AdvanceCivilDay { generation, reply } => {
-                let result = if let Some(failure) = &self.fatal_failure {
-                    // 1291：宿主致命失败后停机（同 fatal_rejection）。
-                    Err(SessionError::InvalidSave(
-                        engine::error::ValidationFault::bare(1291),
-                    ))
-                } else if generation == self.timeline_generation {
-                    self.game.end_civil_day_update()
-                } else {
+                use engine::session::runner::manual::{manual_civil, ManualCivilError};
+
+                let result = if let Some(error) = self.fatal_rejection() {
+                    Err(error)
+                } else if generation != self.timeline_generation {
                     // 1290：世代过期；ctx[0]=请求世代，ctx[1]=当前世代。
                     Err(SessionError::InvalidSave(
                         engine::error::ValidationFault::new(
@@ -3179,48 +3044,41 @@ impl SessionActor {
                             vec![generation, self.timeline_generation],
                         ),
                     ))
-                };
-                if let Ok(report) = &result {
-                    // B3 远程登录：日终档随广播前持久化（与 tick 循环同点——
-                    // 写失败为可恢复失败，上一份有效档保留）。
-                    self.persist_day_end(report);
-                    self.public_revision = self.public_revision.saturating_add(1);
-                    self.broadcast_update(ProtocolUpdate::CivilUpdate(Box::new(report.clone())));
-                    if self.pause_preferences.pauses(report) {
-                        self.pacing.pause_at_civil_boundary(self.game.tick());
+                } else {
+                    match manual_civil(&mut self.game, self.pause_preferences) {
+                        Ok((update, paused)) => {
+                            // 日界已提交；归档及发包使用与自动推进相同的非阻塞交接。
+                            if paused {
+                                self.pacing
+                                    .pause_at_civil_boundary(self.game.tick(), native_async::now());
+                            }
+                            if let Err(failure) = self.publish_civil_update(update.clone()) {
+                                self.stop_with_failure(failure);
+                            }
+                            Ok(update)
+                        }
+                        Err(ManualCivilError::Rejected(error)) => Err(error),
+                        Err(ManualCivilError::Retryable(error)) => {
+                            self.stop_with_failure(HostFailure::correction_prepare_rejected(
+                                &error,
+                            ));
+                            Err(error)
+                        }
+                        Err(ManualCivilError::Fatal(error)) => {
+                            self.stop_with_failure(HostFailure::civil(&error));
+                            Err(error)
+                        }
                     }
-                }
-                if let Err(SessionError::Step(fatal)) = &result {
-                    self.stop_with_failure(HostFailure::step(fatal));
-                }
+                };
                 let _ = reply.send(result);
             }
             #[cfg(feature = "host-parity")]
             SessionCommand::Step { generation, reply } => {
-                let result = if let Some(failure) = &self.fatal_failure {
-                    // 1291：宿主致命失败后停机（同 fatal_rejection）。
-                    Err(SessionError::InvalidSave(
-                        engine::error::ValidationFault::bare(1291),
-                    ))
-                } else if generation == self.timeline_generation {
-                    self.game.civil_day_ready().and_then(|ready| {
-                        if ready {
-                            // 1294：日结静点未发布前不允许 host-parity 单步
-                            //（main 既有缺陷修复：原 `.into()` 到
-                            // ValidationFault 编译失败——fault 码化时漏改，
-                            // host-parity feature 自此才可编译；码取 129x 段
-                            // 下一个空闲位）。
-                            return Err(SessionError::InvalidSave(
-                                engine::error::ValidationFault::bare(1294),
-                            ));
-                        }
-                        self.game
-                            .step_frame()
-                            .and_then(|frame| self.game.tick_batch(vec![frame]))
-                            .map(|batch| ProtocolUpdate::TickBatch(Box::new(batch)))
-                            .map_err(SessionError::from)
-                    })
-                } else {
+                use engine::session::runner::manual::{manual_tick, ManualStepError};
+
+                let result = if let Some(error) = self.fatal_rejection() {
+                    Err(error)
+                } else if generation != self.timeline_generation {
                     // 1290：世代过期；ctx[0]=请求世代，ctx[1]=当前世代。
                     Err(SessionError::InvalidSave(
                         engine::error::ValidationFault::new(
@@ -3228,9 +3086,13 @@ impl SessionActor {
                             vec![generation, self.timeline_generation],
                         ),
                     ))
+                } else {
+                    manual_tick(&mut self.game, self.pacing.is_running())
+                        .map(|batch| ProtocolUpdate::TickBatch(Box::new(batch)))
+                        .map_err(ManualStepError::into_session_error)
                 };
-                if let Ok(events) = &result {
-                    self.broadcast_update(events.clone());
+                if let Ok(update) = &result {
+                    self.broadcast_update(update.clone());
                 }
                 if let Err(SessionError::Step(fatal)) = &result {
                     self.stop_with_failure(HostFailure::step(fatal));
@@ -3265,8 +3127,7 @@ impl SessionActor {
                 let result = if let Some(error) = self.fatal_rejection() {
                     Err(error)
                 } else {
-                    self.apply_speed(speed);
-                    Ok(())
+                    self.apply_speed(speed)
                 };
                 let _ = reply.send(result);
             }
@@ -3274,7 +3135,8 @@ impl SessionActor {
                 let result = if let Some(error) = self.fatal_rejection() {
                     Err(error)
                 } else {
-                    self.pacing.set_running(running, self.game.tick());
+                    self.pacing
+                        .set_running(running, self.game.tick(), native_async::now());
                     Ok(())
                 };
                 let _ = reply.send(result);
@@ -3300,6 +3162,11 @@ impl SessionActor {
                 if let Err(error) = self.game.shared_ingress().close() {
                     self.stop_with_failure(HostFailure::civil(&error));
                 }
+                if let Some(lane) = self.archive_lane.take() {
+                    if let Err(error) = lane.finish().await {
+                        tracing::error!(%error, "归档任务退出失败");
+                    }
+                }
                 let _ = reply.send(());
             }
             SessionCommand::Member {
@@ -3320,9 +3187,12 @@ impl SessionActor {
                     Some(error) if !fatal_probe => {
                         Err(SendCommandError::Rejected(error.to_string()))
                     }
-                    _ => self.handle_member_request(subject, request),
+                    _ => self.handle_member_request(subject, request).await,
                 };
                 let _ = reply.send(result);
+            }
+            SessionCommand::ArchiveWriteCompleted { key, result } => {
+                self.finish_archive_write(key, result);
             }
             SessionCommand::ArchiveMetadata {
                 subject,
@@ -3332,27 +3202,20 @@ impl SessionActor {
                 copy,
                 reply,
             } => {
-                let result = if generation != self.timeline_generation {
-                    Err(SendCommandError::Rejected(
-                        "STALE_SESSION_GENERATION".into(),
-                    ))
-                } else {
-                    self.require_market_control(&subject).and_then(|()| {
-                        let writer = self.archive.as_ref().ok_or_else(|| {
-                            SendCommandError::Rejected("Native 存档目标未初始化".into())
-                        })?;
-                        if copy {
-                            writer
-                                .copy_slot(&slot_id, &uuid::Uuid::new_v4().to_string(), &name)
-                                .map(Some)
-                                .map_err(|error| SendCommandError::Rejected(error.to_string()))
-                        } else {
-                            writer
-                                .rename_slot(&slot_id, &name)
-                                .map(|()| None)
-                                .map_err(|error| SendCommandError::Rejected(error.to_string()))
-                        }
-                    })
+                let result = match self.authorize_archive_command(generation, &subject) {
+                    Ok(writer) => self
+                        .archive_io(move || {
+                            if copy {
+                                writer
+                                    .copy_slot(&slot_id, &uuid::Uuid::new_v4().to_string(), &name)
+                                    .map(Some)
+                            } else {
+                                writer.rename_slot(&slot_id, &name).map(|()| None)
+                            }
+                        })
+                        .await
+                        .map_err(|error| SendCommandError::Rejected(error.to_string())),
+                    Err(error) => Err(error),
                 };
                 let _ = reply.send(result);
             }
@@ -3362,21 +3225,15 @@ impl SessionActor {
                 slot_id,
                 reply,
             } => {
-                let result = if generation != self.timeline_generation {
-                    Err(SendCommandError::Rejected(
-                        "STALE_SESSION_GENERATION".into(),
-                    ))
-                } else {
-                    self.require_market_control(&subject).and_then(|()| {
-                        let writer = self.archive.as_ref().ok_or_else(|| {
-                            SendCommandError::Rejected("Native 存档目标未初始化".into())
-                        })?;
-                        let next = writer
-                            .delete_slot(&slot_id, &uuid::Uuid::new_v4().to_string())
-                            .map_err(|error| SendCommandError::Rejected(error.to_string()))?;
-                        self.archive = Some(next);
-                        Ok(())
-                    })
+                let result = match self.authorize_archive_command(generation, &subject) {
+                    Ok(writer) => self
+                        .archive_io(move || {
+                            writer.delete_slot(&slot_id, &uuid::Uuid::new_v4().to_string())
+                        })
+                        .await
+                        .map(|next| self.install_archive_writer(Some(next)))
+                        .map_err(|error| SendCommandError::Rejected(error.to_string())),
+                    Err(error) => Err(error),
                 };
                 let _ = reply.send(result);
             }
@@ -3386,42 +3243,83 @@ impl SessionActor {
                 slot_id,
                 reply,
             } => {
-                let result = if generation != self.timeline_generation {
-                    Err(SendCommandError::Rejected(
-                        "STALE_SESSION_GENERATION".into(),
-                    ))
-                } else {
-                    self.require_market_control(&subject).and_then(|()| {
-                        self.archive
-                            .as_ref()
-                            .ok_or_else(|| {
-                                SendCommandError::Rejected("Native 存档目标未初始化".into())
-                            })?
-                            .select(&slot_id)
-                            .map(|()| true)
-                            .map_err(|error| SendCommandError::Rejected(error.to_string()))
-                    })
+                let result = match self.authorize_archive_command(generation, &subject) {
+                    Ok(writer) => self
+                        .archive_io(move || writer.select(&slot_id))
+                        .await
+                        .map(|()| true)
+                        .map_err(|error| SendCommandError::Rejected(error.to_string())),
+                    Err(error) => Err(error),
                 };
                 let _ = reply.send(result);
             }
         }
     }
 
-    /// 应用新倍速：重算 tick 周期。`run()` 在处理完 `SetSpeed` 后会重建 tokio interval。
-    fn apply_speed(&mut self, speed: f64) {
+    /// 将既有对外倍速值应用到共享 Cadence，再报告调速。
+    fn apply_speed(&mut self, speed: f64) -> Result<(), SessionError> {
         let old_interval = self.pacing.tick_interval();
-        self.pacing.apply_speed(speed, self.game.tick());
+        self.pacing
+            .apply_speed(speed, self.game.tick(), native_async::now())
+            .map_err(|_| {
+                SessionError::InvalidSave(engine::error::ValidationFault::new(
+                    1311,
+                    vec![speed.to_bits()],
+                ))
+            })?;
         if self.pacing.is_fastest() {
             debug!(session = %self.session_id, "speed changed to fastest");
         } else {
             let new_interval = self.pacing.tick_interval();
             debug!(session = %self.session_id, ?old_interval, ?new_interval, speed, "speed changed");
         }
+        Ok(())
+    }
+}
+
+impl DrivePort for SessionActor {
+    type Error = HostFailure;
+
+    fn session(&self) -> &ProtocolSession {
+        &self.game
     }
 
-    /// 当前 interval 对应的 `Duration`（至少 1ms）。
-    fn tick_duration(&self) -> Duration {
-        self.pacing.tick_interval()
+    fn session_mut(&mut self) -> &mut ProtocolSession {
+        &mut self.game
+    }
+
+    fn command_pending(&self) -> bool {
+        !self.cmd_rx.is_empty()
+    }
+
+    fn step_frame(
+        &mut self,
+    ) -> Result<engine::session::protocol::TickFrame, engine::session::StepFatal> {
+        self.step_game()
+    }
+
+    fn stage_tick_batch(
+        &mut self,
+        batch: engine::session::protocol::TickBatch,
+    ) -> Result<(), Self::Error> {
+        self.broadcast_at(
+            ProtocolUpdate::TickBatch(Box::new(batch)),
+            self.game.civil_date().to_iso(),
+        );
+        Ok(())
+    }
+
+    fn stage_civil(
+        &mut self,
+        update: engine::session::protocol::CivilUpdate,
+        _barrier_paused: bool,
+    ) -> Result<(), Self::Error> {
+        self.publish_civil_update(update)
+    }
+
+    #[cfg(test)]
+    fn enforce_budget(&self) -> bool {
+        self.injected_step_failure.is_none()
     }
 }
 
@@ -3429,6 +3327,61 @@ impl SessionActor {
 mod catalog_boundary_tests {
     use super::*;
     use std::error::Error;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn observation_attaches_at_frozen_baseline_with_nonzero_member_scope() {
+        let manager = SessionManager::with_base_ms(10);
+        let setup =
+            session_fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
+        let id = manager.new_session(setup, 7).unwrap();
+        let handles = manager.lookup(&id).unwrap();
+        let subject = OpaqueSubjectId::new("observation-member".into()).unwrap();
+        let member = handles.join_member(subject.clone(), true).await.unwrap();
+        assert_ne!(member.account_id, AccountId(0));
+        let mut attached = handles.observe_for(subject).await.unwrap();
+        assert_eq!(
+            attached
+                .baseline
+                .snapshot
+                .accounts
+                .keys()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![member.account_id]
+        );
+        assert_eq!(attached.initial_orders, Some(Vec::new()));
+        assert!(matches!(attached.observer.poll(), publication::Read::Empty));
+
+        handles.set_running(true).await.unwrap();
+        let wire = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let signal = Arc::clone(attached.observer.signal());
+                let before = signal.load();
+                match attached.observer.poll() {
+                    publication::Read::Item { ordinal: 1, value } => {
+                        return value.into_projected(&mut attached.initial_orders);
+                    }
+                    publication::Read::Empty => {
+                        signal.wait_for_change(before).await;
+                    }
+                    _ => panic!("首个观察批必须紧接原子建立的基线"),
+                }
+            }
+        })
+        .await
+        .unwrap();
+        let Some(ProtocolUpdate::TickBatch(batch)) = wire.update else {
+            panic!("新观察者应收到首个有效 tick 批")
+        };
+        assert_eq!(batch.frames[0].seq_from, attached.baseline.snapshot.seq);
+        let delta = batch.runtime_delta.as_ref().unwrap();
+        assert!(delta.accounts.keys().all(|id| *id == member.account_id));
+        assert!(delta.working_orders.reset);
+        assert!(delta.working_orders.removed.is_empty());
+        assert!(delta.working_orders.upserts.is_empty());
+        handles.shutdown().await.unwrap();
+    }
+
     #[test]
     fn catalog_error_keeps_leaf_and_numeric_fault() {
         let error = PublicBaselineError::Catalog(

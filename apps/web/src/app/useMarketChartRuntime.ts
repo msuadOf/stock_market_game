@@ -68,7 +68,7 @@ export function useMarketChartRuntime({ autoOrderManagerRef, setNotice, hostRef 
   const acceptReduction = useCallback((reduction: Extract<ProtocolReduction, { kind: "applied" }>) => {
     const update: NormalizedEngineUpdate = reduction.update;
     if (update.kind === "civil-update") {
-      projection.rebuildHistory(update.update.kinds.includes("BeforeOpen") ? [] : update.intraday);
+      projection.rebuildHistory(reduction.state.intraday);
       replaceSnapshot(reduction.state.snapshot);
     } else {
       projection.upsertFrames(update.frames);

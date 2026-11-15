@@ -65,7 +65,7 @@ test("dispose 后旧端 substrate 零共享写且无确认", { timeout: 10000 },
 test("Memory 后登记 primary 并确认，配置前已有 DEAD 仍报告记录", { timeout: 10000 }, async () => {
   const f = fixture();
   f.channels[0].port1.emit({ type: "facadeEngineMemory", allocationId: 1, memory: f.memory });
-  const primary = { engine: { workerId: 0, address: 8192 }, ingress: { workerId: 0xffffffff, address: 8704 }, death: { address: 16384, bytes: 4 } };
+  const primary = { engine: { workerId: 0, address: 8192 }, ingress: { workerId: 0xffffffff, address: 8704 }, publisher: { workerId: 0xfffffffe, address: 8960 }, death: { address: 16384, bytes: 4 } };
   f.channels[0].port1.emit({ type: "facadeEngineDeath", allocationId: 1, primary });
   assert.deepEqual(f.channels[0].port1.sent.at(-1), { type: "facadeEngineDeathRegistered", allocationId: 1 });
   const death = new Int32Array(f.memory.buffer, 16384, 1); Atomics.store(death, 0, 1); Atomics.notify(death, 0);

@@ -20,7 +20,7 @@ test("真实控制端先交 Memory 再执行可能失败的 wait 初始化，cre
   const initializer = createFacadeEngineInitializer({ isolated: () => true, createMemory: () => memory,
     environment: { bindFacadeThreadEnvironment() {}, installFacadeSlotLayout() {}, getArenaView() { throw new Error("失败前不能装入 arena"); } },
     load: async () => ({ module, diagnostics: false, glue: {
-      wasm_tombstone_init_primary: () => ({ engine: { workerId: 0, address: 60000 }, ingress: { workerId: 0xffffffff, address: 60256 }, death: { address: 65004, bytes: 4 } }),
+      wasm_tombstone_init_primary: () => ({ engine: { workerId: 0, address: 60000 }, ingress: { workerId: 0xffffffff, address: 60256 }, publisher: { workerId: 0xfffffffe, address: 60512 }, death: { address: 65004, bytes: 4 } }),
       initSync: () => ({ memory, __wbindgen_thread_destroy() {} }), world_runtime_abi_version() { return 1; },
       init_wasm_wait() { memory.grow(1); throw expected; }, wasm_wait_abort_layout: () => ({ address: 100, bytes: 1 }), wasm_wait_death_layout: () => ({ address: 104, bytes: 4 }),
       facade_slot_init_for_setup() { throw new Error("失败前不能创建 slot"); },

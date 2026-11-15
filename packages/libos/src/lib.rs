@@ -7,8 +7,12 @@ pub mod allocator;
 pub mod clock;
 pub mod deferred_drop;
 pub mod lifecycle;
+#[cfg(all(not(target_family = "wasm"), feature = "native-async"))]
+pub mod native_async;
+pub mod observer_mailbox;
 pub mod thread_facade;
 pub mod wait;
+pub mod wake_epoch;
 
 // Native 产品使用 std 线程，不把浏览器槽协议编入 Native 生产代码。
 #[cfg(any(target_family = "wasm", test))]

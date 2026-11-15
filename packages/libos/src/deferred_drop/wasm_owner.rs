@@ -1,6 +1,6 @@
 //! 共享 Memory 的 engine Worker 独占析构队列 owner；同 Memory 换代不得销毁它。
 
-use super::{DeferredDropDegradation, Submission, backend};
+use super::{backend, DeferredDropDegradation, Submission};
 use crate::thread_facade::{JoinFailure, WorkerHandle};
 use std::{cell::RefCell, fmt, io};
 
@@ -109,15 +109,14 @@ fn close_with_probe(after_disabling_submit: impl FnOnce()) -> Result<bool, Close
 }
 
 #[cfg(feature = "verification-harness")]
-pub fn verify_close_wasm_reclaimer(after_disabling_submit: impl FnOnce()) -> Result<bool, CloseError> {
+pub fn verify_close_wasm_reclaimer(
+    after_disabling_submit: impl FnOnce(),
+) -> Result<bool, CloseError> {
     close_with_probe(after_disabling_submit)
 }
 
 #[inline]
-fn with_running<T, J>(
-    value: T,
-    into_job: J,
-) -> Result<Submission, (RejectReason, T)>
+fn with_running<T, J>(value: T, into_job: J) -> Result<Submission, (RejectReason, T)>
 where
     J: FnOnce(T) -> backend::Job,
 {
@@ -153,11 +152,12 @@ pub fn defer_job(job: backend::Job) -> Submission {
 pub fn degradation() -> Option<DeferredDropDegradation> {
     OWNER.with(|owner| match &*owner.borrow() {
         State::Running(running, _) => backend::running_degradation(running),
-        State::Failed(os_errno) => Some(DeferredDropDegradation::SpawnFailed { os_errno: *os_errno }),
+        State::Failed(os_errno) => Some(DeferredDropDegradation::SpawnFailed {
+            os_errno: *os_errno,
+        }),
         State::Missing | State::Closed => None,
     })
 }
-
 
 #[cfg(feature = "verification-harness")]
 pub fn with_verification_sender<R>(

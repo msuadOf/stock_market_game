@@ -11,8 +11,9 @@
  *
  * 校验语义对照旧基线逐条保留：分钟 OHLCV/量额笔互检、证券最小变动单位、
  * 竞价配置相位时刻、保留链日期连续覆盖 settled_through、休市日零 bar、
- * 分钟累计与真实日K统计逐位一致、receipt 行的证券/日期归属。
+ * 已结算历史只保留日K，旧档存在分钟时额外检查累计与日K一致；receipt 行校验证券/日期归属。
  */
+import { assertSettledDailyCandle } from "../../utils/archive-daily-candle.ts"
 import { parseTurnoverCents } from "../../utils/turnover.ts"
 import { u32 } from "./personal/common.ts"
 import type { DailyCandle } from "../../types/generated/DailyCandle.ts"
@@ -109,7 +110,7 @@ export function parseRetainedHistory(value: unknown, context: HistoryContext): S
   return result
 }
 
-/** 分钟累计量价与真实日K统计逐位一致（开市日必有带 trade_stats 的日K）。 */
+/** 开市日必有真实日K；只在兼容读取非空旧分钟记录时互证日K。 */
 export function validateRetainedHistoryCandles(days: readonly SavedRetainedDay[], candles: Readonly<Record<string, readonly DailyCandle[]>>): void {
   for (const day of days) for (const [id, session] of Object.entries(day.securities)) {
     const path = `retained_market_days.${day.date}.${id}`
@@ -120,10 +121,18 @@ export function validateRetainedHistoryCandles(days: readonly SavedRetainedDay[]
       continue
     }
     if (candle === undefined || candle.trade_stats === undefined || candle.trade_stats === null) throw new SaveSchemaError(path, "开市历史缺少真实日K成交统计")
-    const totals = session.bars.reduce((sum, bar) => ({ volume: sum.volume + BigInt(bar.volume_shares), turnover: sum.turnover + BigInt(bar.turnover_cents), count: sum.count + BigInt(bar.trade_count) }), { volume: 0n, turnover: 0n, count: 0n })
-    if (totals.volume !== BigInt(candle.volume) || totals.turnover !== BigInt(candle.trade_stats.turnover_cents) || totals.count !== BigInt(candle.trade_stats.trade_count)) throw new SaveSchemaError(path, "分钟累计量价与真实日K不一致")
-    const first = session.bars[0], last = session.bars.at(-1)
-    if (first !== undefined && last !== undefined && (first.open !== candle.open || last.close !== candle.close || session.bars.some((bar) => BigInt(bar.high) > BigInt(candle.high) || BigInt(bar.low) < BigInt(candle.low)) || !session.bars.some((bar) => bar.high === candle.high) || !session.bars.some((bar) => bar.low === candle.low))) throw new SaveSchemaError(path, "分钟OHLC与真实日K不一致")
+    if (session.bars.length !== 0) {
+      const totals = session.bars.reduce((sum, bar) => ({ volume: sum.volume + BigInt(bar.volume_shares), turnover: sum.turnover + BigInt(bar.turnover_cents), count: sum.count + BigInt(bar.trade_count) }), { volume: 0n, turnover: 0n, count: 0n })
+      if (totals.volume !== BigInt(candle.volume) || totals.turnover !== BigInt(candle.trade_stats.turnover_cents) || totals.count !== BigInt(candle.trade_stats.trade_count)) throw new SaveSchemaError(path, "旧存档分钟累计量价与真实日K不一致")
+      const first = session.bars[0]!, last = session.bars.at(-1)!
+      if (first.open !== candle.open || last.close !== candle.close || session.bars.some((bar) => BigInt(bar.high) > BigInt(candle.high) || BigInt(bar.low) < BigInt(candle.low)) || !session.bars.some((bar) => bar.high === candle.high) || !session.bars.some((bar) => bar.low === candle.low)) throw new SaveSchemaError(path, "旧存档分钟OHLC与真实日K不一致")
+    }
+    // 当前格式的空数组不能作为零成交证据，成交状态只由日K统计给出。
+    try {
+      assertSettledDailyCandle(candle, path)
+    } catch (error) {
+      throw new SaveSchemaError(path, error instanceof Error ? error.message : String(error))
+    }
   }
 }
 

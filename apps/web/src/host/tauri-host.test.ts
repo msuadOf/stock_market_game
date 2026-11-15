@@ -276,19 +276,169 @@ test("Tauri cached baseline 消费者拒绝时 start 不得恢复 actor 或标�
   });
 });
 
-test("Tauri refresh baseline 被拒绝时暂停 actor，并在重启时重新交付", { timeout: 10000 }, async () => {
+test("Tauri refresh baseline 被观察者拒绝并不暂停 actor，重订阅时重新交付", { timeout: 10000 }, async () => {
   await withTauriHost(async (host, calls) => {
     let accept = true;
     await host.start(() => accept);
     accept = false;
     calls.length = 0;
     await assert.rejects(host.refreshBaseline(), /消费者拒绝.*baseline/);
-    assert.deepEqual(calls, ["engine_baseline", "pause_session"]);
+    assert.deepEqual(calls, ["engine_baseline"]);
     const updates: unknown[] = [];
     await host.start((update) => { updates.push(update); return true; });
     assert.equal(updates.length, 1);
     assert.equal(calls.filter((command) => command === "resume_session").length, 1);
   });
+});
+
+test("Tauri 普通刷新使用同一观察围栏，不应用在途旧流也不安装被拒切面", { timeout: 10000 }, async () => {
+  let fetches = 0;
+  let finishStale!: (value: unknown) => void;
+  const response = (ordinal: string) => ({
+    ...catalogWireFixture(snapshot), snapshot, generation: "1", timeline_id: "timeline-1",
+    civil_date: "2030-01-01", working_orders: [], publication_ordinal: ordinal,
+    latest_checkpoint: { seq: 40 + Number(ordinal), settledDate: "2029-12-31" },
+  });
+  await withTauriHost(async host => {
+    const seen: string[] = [];
+    const checkpoints: unknown[] = [];
+    await host.start(update => {
+      seen.push(update.type);
+      if (update.type === "baseline") checkpoints.push(update.latestCheckpoint);
+      return true;
+    });
+    const refresh = host.refreshBaseline();
+    await setImmediate();
+    await emit("engine-event", { session_id: "session-1", timeline_id: "timeline-1", publication_ordinal: "2", update: {} });
+    finishStale(response("1"));
+    await refresh;
+    assert.equal(fetches, 3, "发送端拒绝的切面必须重取");
+    assert.deepEqual(checkpoints, [{ seq: 40, settledDate: "2029-12-31" }, { seq: 42, settledDate: "2029-12-31" }]);
+    assert.deepEqual(seen, ["baseline", "baseline"], "旧基线不能交付");
+    await emit("engine-event", { session_id: "session-1", timeline_id: "timeline-1", publication_ordinal: "2", update: {} });
+    assert.deepEqual(seen, ["baseline", "baseline"], "已被基线覆盖的晚到增量不重放");
+  }, (command, args) => {
+    if (command === "engine_resume_observer" && (args as { ordinal: string }).ordinal === "1") return Promise.reject(new Error("OBSERVER_BASELINE_STALE: 2"));
+    if (command !== "engine_baseline") return undefined;
+    fetches += 1;
+    if (fetches === 1) return response("0");
+    if (fetches === 2) return new Promise(resolve => { finishStale = resolve; });
+    return response("2");
+  });
+});
+
+test("Tauri 派发后按观察序号提交独立 ACK，旧时间线不确认", { timeout: 10000 }, async () => {
+  const acknowledgements: unknown[] = [];
+  let release!: () => void;
+  await withTauriHost(async (host, calls) => {
+    await host.start((update) => { if (update.type === "protocol") calls.push("delta"); return true; });
+    calls.length = 0;
+    const emitDelta = (timeline_id: string, publication_ordinal: string) => emit("engine-event", { session_id: "session-1", timeline_id, publication_ordinal, update: {} });
+    await emitDelta("old-timeline", "1");
+    await emitDelta("timeline-1", "1");
+    await emitDelta("timeline-1", "2");
+    await setImmediate();
+    assert.equal(calls.filter((call) => call === "delta").length, 2);
+    assert.equal(calls.filter((call) => call === "engine_ack_observer").length, 1);
+    release();
+    await setImmediate();
+    assert.deepEqual(acknowledgements, [
+      { sessionId: "session-1", generation: "1", ordinal: "1" },
+      { sessionId: "session-1", generation: "1", ordinal: "2" },
+    ]);
+    assert.ok(!calls.includes("pause_session"));
+  }, (command, args) => {
+    if (command !== "engine_ack_observer") return undefined;
+    acknowledgements.push(args);
+    if (acknowledgements.length === 1) return new Promise<void>((resolve) => { release = resolve; });
+    return null;
+  });
+});
+
+test("Tauri ACK 失败在未等到市场缺口前修复观察窗口，不操作市场", { timeout: 10000 }, async () => {
+  let initial = true;
+  await withTauriHost(async (host, calls) => {
+    const failures: unknown[] = [];
+    await host.start(() => true, failure => { failures.push(failure); });
+    calls.length = 0;
+    await emit("engine-event", { session_id: "session-1", timeline_id: "timeline-1", publication_ordinal: "1", update: {} });
+    await setImmediate();
+    assert.deepEqual(failures, []);
+    assert.deepEqual(calls, ["engine_ack_observer", "engine_hold_observer", "engine_baseline", "engine_resume_observer", "engine_hold_observer"]);
+  }, command => {
+    if (command === "engine_ack_observer") return Promise.reject(new Error("temporary ACK IPC failure"));
+    if (command !== "engine_baseline") return undefined;
+    if (initial) { initial = false; return undefined; }
+    return { ...catalogWireFixture(snapshot), snapshot, generation: "1", timeline_id: "timeline-1", civil_date: "2030-01-01", working_orders: [], publication_ordinal: "1" };
+  });
+});
+
+test("Tauri 观察者拒绝增量时可以就地重订阅，无须再次推进市场", { timeout: 10000 }, async () => {
+  let initial = true;
+  await withTauriHost(async (host, calls) => {
+    const failures: string[] = [];
+    await host.start(update => update.type !== "protocol", failure => { failures.push(failure.code); });
+    calls.length = 0;
+    await emit("engine-event", { session_id: "session-1", timeline_id: "timeline-1", publication_ordinal: "1", update: {} });
+    assert.deepEqual(failures, ["OBSERVER_DELIVERY_REJECTED"]);
+    assert.deepEqual(calls, []);
+    await host.start(() => true);
+    assert.deepEqual(calls, ["engine_hold_observer", "engine_baseline", "engine_resume_observer", "engine_hold_observer"]);
+  }, command => {
+    if (command !== "engine_baseline") return undefined;
+    if (initial) { initial = false; return undefined; }
+    return { ...catalogWireFixture(snapshot), snapshot, generation: "1", timeline_id: "timeline-1", civil_date: "2030-01-01", working_orders: [], publication_ordinal: "1" };
+  });
+});
+
+test("Tauri 观察流缺口使用准确基线恢复，不暂停或恢复权威市场", { timeout: 10000 }, async () => {
+  const fences: unknown[] = [];
+  const checkpoints: unknown[] = [];
+  let initial = true;
+  await withTauriHost(async (host, calls) => {
+    const failures: unknown[] = [];
+    await host.start((update) => { if (update.type === "baseline") { calls.push("baseline-delivered"); checkpoints.push(update.latestCheckpoint); } return true; }, (failure) => { failures.push(failure); });
+    calls.length = 0;
+    await emit("engine-event", { session_id: "session-1", timeline_id: "old-timeline", gap: { through: "6" } });
+    assert.deepEqual(calls, []);
+    await emit("engine-event", { session_id: "session-1", timeline_id: "timeline-1", gap: { through: "7" } });
+    await setImmediate();
+    assert.deepEqual(failures, []);
+    assert.deepEqual(checkpoints, [undefined, { seq: 41, settledDate: "2029-12-31" }]);
+    assert.deepEqual(calls, ["engine_hold_observer", "engine_baseline", "engine_resume_observer", "baseline-delivered", "engine_hold_observer"]);
+    assert.deepEqual(fences, [{ sessionId: "session-1", generation: "1", ordinal: "8" }]);
+  }, (command, args) => {
+    if (command === "engine_baseline") {
+      if (initial) { initial = false; return undefined; }
+      return { ...catalogWireFixture(snapshot), snapshot, generation: "1", timeline_id: "timeline-1", civil_date: "2030-01-01", working_orders: [], publication_ordinal: "8", latest_checkpoint: { seq: 41, settledDate: "2029-12-31" } };
+    }
+    if (command === "engine_resume_observer") { fences.push(args); return null; }
+    return undefined;
+  });
+});
+
+test("Tauri 基线覆盖旧更正拒绝，但不吞独立归档失败", { timeout: 10000 }, async () => {
+  const seen: string[] = [];
+  const envelope = { session_id: "session-1", timeline_id: "timeline-1", events: [], publication_ordinal: "2" };
+  await withTauriHost(async host => {
+    await host.start(() => true, failure => { seen.push(failure.code); });
+    await host.refreshBaseline();
+    await emit("engine-failure", {
+      ...envelope, code: "REPORT_CORRECTION_PREPARE_REJECTED", where: "desktop.actor.prepare_civil_updates",
+      message: "过期更正", recoverable: true,
+      context: { operation: "endCivilDay", generation: "1", tick: 0, seq: 42, day: 1 },
+      cause: { code: "REPORT_CORRECTION_REJECTED", message: "旧请求", cause: null },
+    });
+    assert.deepEqual(seen, []);
+    await emit("engine-failure", {
+      ...envelope, code: "DAY_END_ARCHIVE_FAILED", where: "desktop.actor.save_day_end",
+      message: "归档失败", recoverable: true,
+    });
+    assert.deepEqual(seen, ["DAY_END_ARCHIVE_FAILED"]);
+  }, command => command === "engine_baseline" ? {
+    ...catalogWireFixture(snapshot), snapshot, generation: "1", timeline_id: "timeline-1",
+    civil_date: "2030-01-01", working_orders: [], publication_ordinal: "3",
+  } : undefined);
 });
 
 test("Tauri restore baseline 被拒绝时不恢复 actor，并在重启时重新交付", { timeout: 10000 }, async () => {

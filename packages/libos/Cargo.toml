@@ -8,6 +8,13 @@ publish.workspace = true
 
 [features]
 verification-harness = []
+native-async = ["dep:tokio"]
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 tikv-jemallocator = "0.6"
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+tokio = { version = "1.52.3", features = ["sync", "time", "rt", "macros"], optional = true }
+
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+tokio = { version = "1.52.3", features = ["test-util"] }

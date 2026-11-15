@@ -4,7 +4,8 @@ import { prepareBaselineUpdate } from "./host-update.ts";
 import { parseSaveSlot } from "../save/save-schema.ts";
 import { normalizePublicReportById, normalizePublicReportPage, normalizeSerdeMaps } from "./serde-normalize.ts";
 import { WASM_CREATE_ONCE_ERROR, WasmSessionSlot } from "./wasm-session-slot.ts";
-import { WasmTickLoop } from "./wasm-tick-loop.ts";
+import { WasmAuthorityRuntime, type MarketBindings } from "./wasm-authority-runtime.ts";
+import { WasmCheckpointClient } from "./wasm-checkpoint-client.ts";
 import { WorkerTaskScheduler } from "./worker-task-scheduler.ts";
 import { classifyWasmFailure, describeWasmFailure, describeReadFailureFields, type WasmFailureClassification } from "./wasm-failure.ts";
 import { parseHostFailure } from "./protocol-failure.ts";
@@ -91,14 +92,66 @@ let wasmModule: typeof import("../../wasm-pkg/web_wasm.js") | null = null;
 // shutdown export 是可选扩展；保留其余真实 generated 签名，运行期由 consuming slot 探测。
 const slot = new WasmSessionSlot(() => wasmModule as (typeof import("../../wasm-pkg/web_wasm.js") & Pick<WasmTransportExtensions, "shutdown_session">) | null);
 const taskScheduler = new WorkerTaskScheduler();
-const loop = new WasmTickLoop({
-  slot,
-  now: () => performance.now(),
-  schedule: (callback, delay) => taskScheduler.schedule(callback, delay),
-  cancel: (timer) => taskScheduler.cancel(timer),
-  post: (message) => ctx.postMessage(message),
-  failure: postFailure,
-});
+const loop = new WasmAuthorityRuntime(taskScheduler, postFailure);
+const checkpoint = new WasmCheckpointClient();
+
+function marketBindings(wasm: typeof import("../../wasm-pkg/web_wasm.js")): MarketBindings {
+  const checked = wasm as unknown as Partial<MarketBindings>;
+  for (const name of [
+    "market_runner_enable", "market_runner_set_running", "market_runner_set_speed",
+    "market_runner_set_pause", "market_runner_speed_metrics", "market_runner_turn", "market_runner_step_once",
+    "market_runner_end_civil", "market_runner_observer_baseline",
+    "market_runner_control_signal", "market_runner_command_consumed",
+  ] as const) if (typeof checked[name] !== "function") throw new Error(`WASM 缺少市场调度 ABI ${name}`);
+  return checked as MarketBindings;
+}
+
+function attachMarketRuntime(): Promise<void> | undefined {
+  const [handle, wasm] = slot.requireHandle();
+  loop.bind(handle, marketBindings(wasm));
+  return attachCheckpoint();
+}
+
+function attachCheckpoint(): Promise<void> | undefined {
+  const [handle, wasm] = slot.requireHandle();
+  const generation = slot.readGeneration();
+  return checkpoint.attach(handle, wasm, generation, engineInitializer.requireConfigured().substrate, (error, scope) => {
+    if (closingSession || generation !== slot.readGeneration()) return;
+    loop.stop();
+    postFailureDetails("wasm-worker.checkpoint", {
+      code: "DAY_END_ARCHIVE_FAILED",
+      where: "wasm-worker.checkpoint",
+      message: error.message,
+      context: { operation: "day_end_archive", generation: String(generation) },
+      recoverable: true,
+      recoveryActions: [scope === "item"
+        ? "检查浏览器存储空间和权限后恢复市场，下一次日结会重新存档"
+        : "检查浏览器存储空间和权限后重新打开会话", "保留上一份有效存档"],
+    });
+  });
+}
+
+function marketBaseline(snapshotOverride?: unknown) {
+  const [handle, wasm] = slot.requireHandle();
+  const bindings = marketBindings(wasm);
+  const value = requireRecord(bindings.market_runner_observer_baseline(handle), "Rust 市场观察基线");
+  if (typeof value.publicationOrdinal !== "string" || !/^(0|[1-9][0-9]*)$/.test(value.publicationOrdinal)) {
+    throw new Error("观察基线发布序号无效");
+  }
+  const controlAddress = bindings.market_runner_control_signal(handle);
+  if (!Number.isInteger(controlAddress) || controlAddress <= 0 || controlAddress % 4 !== 0) {
+    throw new Error("共享控制通知地址无效");
+  }
+  return {
+    publisherToken: handle, publicationOrdinal: value.publicationOrdinal, controlAddress,
+    snapshot: snapshotOverride === undefined ? value.snapshot : snapshotOverride,
+    workingOrders: value.workingOrders,
+    ...(Object.hasOwn(value, "latestCheckpoint") ? { latestCheckpoint: value.latestCheckpoint } : {}),
+    stockCatalog: wasm.stock_catalog_view(handle),
+    companyCatalog: wasm.company_catalog_view(handle),
+    civilDate: wasm.civil_date(handle),
+  };
+}
 const engineInitializer = createFacadeEngineInitializer({
   ownsIncomingArchive: true,
   allowE2ERuntimeTopology: E2E_STEP_ENABLED,
@@ -229,16 +282,7 @@ let fatalSession = false;
 let closingSession = false;
 
 function postBaseline(): void {
-  const [session, wasm] = slot.requireHandle();
-  slot.prepareBaseline();
-  ctx.postMessage({
-    type: "baseline",
-    generation: slot.readGeneration(),
-    snapshot: wasm.snapshot(session),
-    stockCatalog: wasm.stock_catalog_view(session),
-    companyCatalog: wasm.company_catalog_view(session),
-    civilDate: wasm.civil_date(session),
-  });
+  ctx.postMessage({ type: "baseline", generation: slot.readGeneration(), ...marketBaseline() });
 }
 
 function postIngressBridge(): void {
@@ -397,11 +441,24 @@ function shutdownSessionAndReclaimer() {
 }
 
 function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
-  const message = event.data;
+  let message = event.data;
+  let controlForActiveHandle: number | undefined;
   void (async () => {
     let initialCreateAttempt = false;
     let restoreAttempt: { handle: number; generation: number; token: number; restartWanted: boolean } | null = null;
     try {
+      // 普通请求保留原对象；只在受保护的入口移除传输层的控制标记。
+      if (Object.hasOwn(message, "controlHandle")) {
+        const { controlHandle, ...request } = message;
+        message = request;
+        if (controlHandle !== undefined) {
+          const [active] = slot.requireHandle();
+          if (typeof controlHandle !== "number" || controlHandle !== active) {
+            throw new Error("收到来自过期 generation 的市场控制标记");
+          }
+          controlForActiveHandle = controlHandle;
+        }
+      }
       // 真正的首次 create 失败已退休 owner；协议拒绝仍保持 create-once 与 stale-generation 语义。
       if (closedAfterCreateFailure) {
         if (message.type === "create") {
@@ -438,6 +495,8 @@ function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
           const configured = engineInitializer.requireConfigured();
           if (configured.initialArchive === null) throw new Error("restoreInitial 需要唯一完整初始档");
           slot.restoreInitial();
+          const archiveReady = attachMarketRuntime();
+          if (archiveReady !== undefined) await archiveReady;
           const [, wasm] = slot.requireHandle();
           const capabilities = readWasmCapabilities(wasm);
           postIngressBridge();
@@ -454,6 +513,8 @@ function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
           exact({ ...message }, ["type", "seed"], "Worker create");
           // 只在通过 JS 校验并锁存创建权后、实际进入 Rust FFI 时标记退休责任。
           slot.create(configured.setup, message.seed, () => { initialCreateAttempt = true; });
+          const archiveReady = attachMarketRuntime();
+          if (archiveReady !== undefined) await archiveReady;
           initialCreateAttempt = false;
           const [, wasm] = slot.requireHandle();
           const capabilities = readWasmCapabilities(wasm);
@@ -477,15 +538,10 @@ function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
           ctx.postMessage({ type: "stopped", requestId: message.requestId, generation: requestedGeneration });
           return;
         }
-        case "uiFrame":
-          if (!Number.isSafeInteger(message.deliveryId) || Number(message.deliveryId) <= 0) throw new Error("Worker uiFrame deliveryId 无效");
-          loop.acknowledge(Number(message.generation), Number(message.deliveryId));
-          return;
         case "stepOnce": {
           if (!E2E_STEP_ENABLED) throw new Error("Worker 受控单步只允许在 E2E 构建中调用");
           const requestedGeneration = slot.requireGeneration(message.generation);
-          if (loop.isRunning()) throw new Error("Worker 受控单步只允许在暂停状态执行");
-          if (!loop.stepOnce()) throw new Error("Worker 受控单步失败");
+          loop.stepOnce();
           const [session, wasm] = slot.requireHandle();
           const committedTick = wasm.tick(session);
           if (committedTick > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("Worker 单步 tick 超出安全整数范围");
@@ -498,9 +554,6 @@ function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
           ctx.postMessage({ type: "speedSet", requestId: message.requestId, generation: requestedGeneration });
           return;
         }
-        case "setFrameRate":
-          loop.setFrameRate(message.fps);
-          return;
         case "setPausePreferences": {
           const requestedGeneration = slot.requireGeneration(message.generation);
           const preferences = requireRecord(message.preferences, "暂停偏好");
@@ -526,6 +579,20 @@ function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
           ctx.postMessage({ type: "enqueued", requestId: message.requestId, generation: requestedGeneration });
           return;
         }
+        case "archiveFence": {
+          const requestedGeneration = slot.requireGeneration(message.generation);
+          const [handle, wasm] = slot.requireHandle();
+          // 本轮已读取归档水位；持久化收据是异步读围栏，不应占住市场控制字。
+          if (controlForActiveHandle !== undefined) {
+            const control = controlForActiveHandle;
+            controlForActiveHandle = undefined;
+            loop.confirmControl(control);
+          }
+          await checkpoint.waitIdle(handle, wasm);
+          slot.requireGeneration(requestedGeneration);
+          ctx.postMessage({ type: "archiveFenced", requestId: message.requestId, generation: requestedGeneration });
+          return;
+        }
         case "save": {
           const requestedGeneration = slot.requireGeneration(message.generation);
           const [session, wasm] = slot.requireHandle();
@@ -545,28 +612,19 @@ function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
           const requestedGeneration = slot.requireGeneration(message.generation);
           if (!Number.isSafeInteger(message.requestId) || Number(message.requestId) < 1) throw new Error("Worker runtime 刷新 requestId 必须是正安全整数");
           exact({ ...message }, ["type", "requestId", "generation"], "Worker runtime 刷新");
-          loop.flushForControl();
           const [session, wasm] = slot.requireHandle();
           const flush = transportExtensions(wasm).flush_runtime_sync;
           if (typeof flush !== "function") throw new Error("WASM 缺少 flush_runtime_sync，请重新构建 bindings");
           const snapshot = flush(session);
-          ctx.postMessage({ type: "runtimeSyncFlushed", requestId: message.requestId, generation: requestedGeneration, snapshot,
-            stockCatalog: wasm.stock_catalog_view(session), companyCatalog: wasm.company_catalog_view(session), civilDate: wasm.civil_date(session) });
+          ctx.postMessage({ type: "runtimeSyncFlushed", requestId: message.requestId, generation: requestedGeneration, ...marketBaseline(snapshot) });
           return;
         }
+        case "recoverPublisher":
         case "refreshBaseline": {
           const requestedGeneration = slot.requireGeneration(message.generation);
-          loop.flushForControl();
-          const [session, wasm] = slot.requireHandle();
-          slot.prepareBaseline();
           ctx.postMessage({
-            type: "refreshed",
-            requestId: message.requestId,
-            generation: requestedGeneration,
-            snapshot: wasm.snapshot(session),
-    stockCatalog: wasm.stock_catalog_view(session),
-    companyCatalog: wasm.company_catalog_view(session),
-            civilDate: wasm.civil_date(session),
+            type: message.type === "recoverPublisher" ? "publisherRecovered" : "refreshed",
+            requestId: message.requestId, generation: requestedGeneration, ...marketBaseline(),
           });
           return;
         }
@@ -575,18 +633,31 @@ function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
           const parsed = parseSaveSlot(message.slot);
           const restartToken = restoreRestart.begin();
           restoreAttempt = { handle: slot.requireHandle()[0], generation: slot.readGeneration(), token: restartToken, restartWanted: false };
-          const restoredSnapshot = slot.restore(parsed, {
-            wasRunning: loop.isRunning(), stop: () => loop.stop(), restart: () => { if (restoreAttempt !== null) restoreAttempt.restartWanted = true; },
-          });
-          const [session, wasm] = slot.requireHandle();
-          const civilDate = wasm.civil_date(session);
-          const stockCatalog = wasm.stock_catalog_view(session);
-          const companyCatalog = wasm.company_catalog_view(session);
+          const wasRunning = loop.isRunning();
+          loop.stop();
+          const archived = checkpoint.close();
+          if (archived !== undefined) await archived;
+          let restoredSnapshot: unknown;
+          try {
+            restoredSnapshot = slot.restore(parsed, {
+              wasRunning, stop: () => loop.stop(), restart: () => { if (restoreAttempt !== null) restoreAttempt.restartWanted = true; },
+            });
+          } catch (error) {
+            if (slot.readGeneration() === restoreAttempt.generation && slot.requireHandle()[0] === restoreAttempt.handle) {
+              const reopened = attachCheckpoint();
+              if (reopened !== undefined) await reopened;
+            }
+            throw error;
+          }
+          const archiveReady = attachMarketRuntime();
+          if (archiveReady !== undefined) await archiveReady;
+          const [session] = slot.requireHandle();
           const restoredGeneration = slot.readGeneration();
-          prepareBaselineUpdate(String(restoredGeneration), restoredSnapshot, stockCatalog, companyCatalog, { civilDate, revision: null });
+          const baseline = marketBaseline(restoredSnapshot);
+          prepareBaselineUpdate(String(restoredGeneration), baseline.snapshot, baseline.stockCatalog, baseline.companyCatalog, { civilDate: baseline.civilDate, revision: null });
           postIngressBridge();
           ctx.postMessage({ type: "restored", requestId: message.requestId, generation: requestedGeneration,
-            nextGeneration: restoredGeneration, snapshot: restoredSnapshot, stockCatalog, companyCatalog, civilDate });
+            nextGeneration: restoredGeneration, ...baseline });
           if (restoreAttempt.restartWanted) restoreRestart.schedule(restartToken,
             () => slot.readGeneration() === restoredGeneration && slot.requireHandle()[0] === session,
             () => loop.start());
@@ -600,9 +671,7 @@ function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
         }
         case "endCivilDay": {
           const requestedGeneration = slot.requireGeneration(message.generation);
-          loop.requireDeliveryCapacity();
-          const [session, wasm] = slot.requireHandle();
-          loop.publish(wasm.end_civil_day(session));
+          loop.endCivil();
           ctx.postMessage({ type: "civilDayEnded", requestId: message.requestId, generation: requestedGeneration });
           return;
         }
@@ -802,6 +871,9 @@ function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
           closingSession = true;
           restoreRestart.invalidate();
           loop.stop();
+          // 已入队日终先提交存储；观察者和 ingress 的关闭不承担这个围栏。
+          const archived = checkpoint.close();
+          if (archived !== undefined) await archived;
           const report = shutdownSessionAndReclaimer();
           ctx.postMessage({ type: "shutdownCompleted", requestId: message.requestId, generation: requestedGeneration, report });
           reportEngineQuiescence();
@@ -811,6 +883,8 @@ function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
           restoreRestart.invalidate();
           loop.stop();
           closingSession = true;
+          const archived = checkpoint.close();
+          if (archived !== undefined) await archived;
           dropSessionAndReclaimer();
           return;
         }
@@ -825,6 +899,8 @@ function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
         closingSession = true;
         restoreRestart.invalidate(); loop.stop();
         try {
+          const archived = checkpoint.close();
+          if (archived !== undefined) await archived;
           let dropped: { error: unknown } | undefined;
           try { slot.drop(); } catch (error) { dropped = { error }; }
           try { closeReclaimer(); }
@@ -858,7 +934,11 @@ function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
           : structuredHostFailure(failureError, `wasm-worker.${message.type}`, classified);
         // drop_session 同时撤销 SessionRegistry 的 ingress token，阻止独立 intake 继续入队。
         if (closeAuthority) {
-          try { slot.drop(); }
+          try {
+            const archived = checkpoint.close();
+            if (archived !== undefined) await archived;
+            slot.drop();
+          }
           catch (cleanupError) { failure = { ...failure, cause: { primary: failure.cause, cleanup: describeWasmFailure(cleanupError) } }; }
           try { closeReclaimer(); }
           catch (cleanupError) { failure = { ...failure, cause: { primary: failure.cause, reclaimer: describeWasmFailure(cleanupError) } }; }
@@ -869,6 +949,13 @@ function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
       else {
         postFailureDetails("wasm-worker.message", unstructuredFailureDetails(classified.description, "wasm-worker.message", classified.cause), initializationClosed ? message.type === "restoreInitial" ? "initial-session-failed" : "initialization-failed" : false, initializationClosed && message.type === "init" && !memoryInitializationStarted);
         if (initializationClosed) reportEngineQuiescence(message.type === "init" && !memoryInitializationStarted ? "unallocated" : "quiescent");
+      }
+    } finally {
+      // 只有真正属于该 owner 的标记才在消费后推进；restore 已废弃旧 owner。
+      if (controlForActiveHandle !== undefined && !closingSession && !fatalSession &&
+          (restoreAttempt === null || slot.readGeneration() === restoreAttempt.generation)) {
+        try { loop.confirmControl(controlForActiveHandle); }
+        catch (error) { postFailure("wasm-worker.control-fence", error); }
       }
     }
   })();

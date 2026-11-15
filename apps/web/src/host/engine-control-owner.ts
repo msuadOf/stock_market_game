@@ -1,3 +1,4 @@
+import { sharedControlWord } from "../../../../packages/libos/browser/shared-substrate-publisher.ts";
 import { createEngineSupervisor } from "./engine-supervisor.ts";
 import type { WasmLifecycleObservation } from "./wasm-lifecycle-observation.ts";
 import type { WasmFinalRelease } from "./wasm-document-memory-owner.ts";
@@ -5,6 +6,7 @@ import type { WasmFinalRelease } from "./wasm-document-memory-owner.ts";
 export interface EngineControlOwnerDependencies {
   readonly createEngineWorker: (name: string) => Worker;
   readonly createChildWorker: (name: string) => Worker;
+  readonly createPublisherWorker?: (name: string) => Worker;
   readonly createIngressWorker: (name: string) => Worker;
   readonly createChannel: () => MessageChannel;
   readonly postMessage: (value: Readonly<Record<string, unknown>>, transfer?: Transferable[]) => void;
@@ -19,6 +21,10 @@ type ActiveOwner = {
   engine: Worker | null;
   engineCreated: boolean;
   ingress: Worker | null;
+  publisher: Worker | null;
+  publisherGeneration: number;
+  readonly publisherBindings: Map<number, number>;
+  publisherQuiescent: boolean;
   ingressPort: MessagePort | null;
   ingressPortSent: boolean;
   ingressGeneration: number;
@@ -66,6 +72,8 @@ function dropReferences(active: ActiveOwner): void {
   for (const port of active.ports) { try { port.close(); } catch (error) { errors.push(error); } }
   active.ports.clear();
   active.ingressConfigurations.clear();
+  active.publisherBindings.clear();
+  active.publisher = null;
   active.ingressPort = null;
   active.supervisor = null;
   active.engine = null;
@@ -82,7 +90,7 @@ function serializeFailure(error: unknown, fallbackWhere: string): Readonly<Recor
   const detail = error instanceof Error ? error : new Error("controlWorker 发生非 Error 故障", { cause: error });
   return { code: "WASM_CONTROL_WORKER_FAILURE", where: fallbackWhere, message: detail.message, cause: detail };
 }
-function workerEventFailure(event: Event, role: "engine" | "ingress", kind: "error" | "messageerror"): Readonly<Record<string, unknown>> {
+function workerEventFailure(event: Event, role: "engine" | "ingress" | "publisher", kind: "error" | "messageerror"): Readonly<Record<string, unknown>> {
   const error = event as ErrorEvent;
   const message = typeof error.message === "string" && error.message.length > 0 ? error.message : `${role} Worker ${kind} 事件`;
   return { code: "WASM_WORKER_EVENT", where: `engine-control-worker.${role}.${kind}`, message,
@@ -116,7 +124,7 @@ function sendFailure(active: ActiveOwner, error: unknown, supervisorDisposed = f
   catch (reportError) { dependencies.reportError(new AggregateError([detail, reportError], "controlWorker 错误无法投递")); }
   // supervisor 尚未接管的构造中资源同样必须尝试终止；收据始终保留 unknown。
   if (active.supervisor === null) {
-    try { active.engine?.terminate(); active.ingress?.terminate(); }
+    try { active.engine?.terminate(); active.ingress?.terminate(); active.publisher?.terminate(); }
     catch (releaseError) { dependencies.reportError(new AggregateError([detail, releaseError], "未登记 Worker 清理失败")); }
   }
   try { dropReferences(active); }
@@ -138,7 +146,7 @@ function lifecycle(active: ActiveOwner, event: WasmLifecycleObservation): void {
   post({ type: "lifecycle", instanceId: active.instanceId, event });
 }
 function finalize(active: ActiveOwner): void {
-  if (active.terminal || active.finalizing || active.failurePending || !active.engineQuiescent || !active.ingressQuiescent || !active.childrenDrained) return;
+  if (active.terminal || active.finalizing || active.failurePending || !active.engineQuiescent || !active.ingressQuiescent || !active.publisherQuiescent || !active.childrenDrained) return;
   active.finalizing = true;
   try {
     const supervisor = active.supervisor;
@@ -161,7 +169,7 @@ function initialize(value: unknown): ActiveOwner {
   const instanceId = safe(request.instanceId, "controlWorker instanceId");
   if (request.type !== "start" || typeof request.runtimeOverride !== "boolean" || !(request.dataPort instanceof MessagePort)) throw new Error("controlWorker start 内容无效");
   const active: ActiveOwner = { instanceId, supervisor: null, engine: null, engineCreated: false, ingress: null, ingressPort: null,
-    ingressPortSent: false, ingressGeneration: 0, ingressConfigurations: new Map(), listeners: [], ports: new Set([request.dataPort as MessagePort]), engineQuiescent: false, ingressQuiescent: false, childrenDrained: false, shutdownDeadline: Infinity, finalizing: false, terminal: false, failing: false, failurePending: false, configured: false };
+    ingressPortSent: false, ingressGeneration: 0, ingressConfigurations: new Map(), publisher: null, publisherGeneration: 0, publisherBindings: new Map(), publisherQuiescent: false, listeners: [], ports: new Set([request.dataPort as MessagePort]), engineQuiescent: false, ingressQuiescent: false, childrenDrained: false, shutdownDeadline: Infinity, finalizing: false, terminal: false, failing: false, failurePending: false, configured: false };
   owner = active;
   const engine = dependencies.createEngineWorker(`stock-game:${instanceId}:engine`);
   active.engineCreated = true;
@@ -269,6 +277,76 @@ function bindIngress(active: ActiveOwner, request: ControlRequest): void {
   } else post({ type: "ingressBound", instanceId: active.instanceId, requestId });
 }
 
+function postPublisherObserverFailure(active: ActiveOwner, generation: number, message: string): void {
+  if (active.terminal || active.failing || generation < active.publisherGeneration) return;
+  if (generation !== active.publisherGeneration || !message.trim()) throw new Error("发布观察者故障身份或诊断无效");
+  post({ type: "publisherObserverFailure", instanceId: active.instanceId, generation, message });
+}
+
+function bindPublisher(active: ActiveOwner, request: ControlRequest): void {
+  exact(request, ["type", "instanceId", "requestId", "generation", "token", "controlAddress"], "bindPublisher");
+  const requestId = safe(request.requestId, "bindPublisher requestId");
+  const generation = safe(request.generation, "bindPublisher generation");
+  const token = safe(request.token, "bindPublisher token");
+  if (token > 0xffffffff || active.shutdownDeadline !== Infinity || generation <= active.publisherGeneration) throw new Error("bindPublisher 阶段、token 或 generation 无效");
+  const supervisor = active.supervisor;
+  if (supervisor === null) throw new Error("controlWorker 缺少已配置的 supervisor");
+  const substrate = supervisor.getSubstrate();
+  const controlAddress = safe(request.controlAddress, "bindPublisher controlAddress");
+  const controlSignal = sharedControlWord(substrate.memory, controlAddress);
+  active.publisherGeneration = generation;
+  active.publisherBindings.set(generation, token);
+  if (active.publisher !== null) {
+    post({ type: "publisherBound", instanceId: active.instanceId, requestId, controlSignal });
+    return;
+  }
+  if (dependencies.createPublisherWorker === undefined) throw new Error("controlWorker 缺少独立发布 Worker 工厂");
+  if (substrate.primary === undefined) throw new Error("发布 Worker 缺少预登记的独立 tombstone");
+  const publisher = dependencies.createPublisherWorker(`stock-game:${active.instanceId}:publisher`);
+  active.publisher = publisher;
+  supervisor.attachPublisher(publisher);
+  const channel = dependencies.createChannel();
+  active.ports.add(channel.port1); active.ports.add(channel.port2);
+  listen(active, publisher, "message", (event) => {
+    try {
+      const raw: unknown = (event as MessageEvent<unknown>).data;
+      if (raw === null || typeof raw !== "object" || Array.isArray(raw)) throw new Error("发布 Worker 全局消息必须是控制对象");
+      const message = raw as Record<string, unknown>;
+      if (message.type !== "publisherLifecycle" || message.instanceId !== active.instanceId) throw new Error("发布 Worker lifecycle 身份或类型无效");
+      if (message.state === "configured") {
+        exact(message, ["type", "state", "instanceId", "generation", "token"], "publisherLifecycle configured");
+        const configured = safe(message.generation, "发布 Worker configured generation");
+        const configuredToken = safe(message.token, "发布 Worker configured token");
+        if (active.publisherBindings.get(configured) !== configuredToken) throw new Error("发布 Worker configured 没有匹配的在途 generation/token");
+        active.publisherBindings.delete(configured);
+        supervisor.observePublisherConfigured(publisher);
+      } else if (message.state === "observerFailure") {
+        exact(message, ["type", "state", "instanceId", "generation", "message"], "publisherLifecycle observerFailure");
+        if (typeof message.message !== "string") throw new Error("发布观察者错误缺少诊断");
+        const generation = message.generation === 0 ? active.publisherGeneration : safe(message.generation, "发布观察者错误 generation");
+        postPublisherObserverFailure(active, generation, message.message);
+      } else if (message.state === "quiescent") {
+        exact(message, ["type", "state", "instanceId"], "publisherLifecycle quiescent");
+        if (active.publisherQuiescent) throw new Error("发布 Worker quiescent 重复");
+        active.publisherQuiescent = true;
+        supervisor.markQuiescent(publisher);
+        finalize(active);
+      } else throw new Error("发布 Worker lifecycle 阶段无效");
+    } catch (error) { sendFailure(active, error); }
+  });
+  listen(active, publisher, "error", (event) => sendFailure(active, workerEventFailure(event, "publisher", "error")));
+  listen(active, publisher, "messageerror", () => {
+    // JS 解码错误不能证明共享 Memory 被破坏；保留 owner 并等待真实关闭收据。
+    try { postPublisherObserverFailure(active, active.publisherGeneration, "发布 Worker 控制消息无法解码"); }
+    catch (error) { sendFailure(active, error); }
+  });
+  publisher.postMessage({ type: "bindPublisherTransport", instanceId: active.instanceId, dataPort: channel.port2,
+    module: substrate.module, memory: substrate.memory, layout: substrate.layout, diagnostics: substrate.diagnostics, primary: substrate.primary.publisher }, [channel.port2]);
+  active.ports.delete(channel.port2);
+  post({ type: "publisherBound", instanceId: active.instanceId, requestId, controlSignal, port: channel.port1 }, [channel.port1]);
+  active.ports.delete(channel.port1);
+}
+
 dependencies.addMessageListener((event: MessageEvent<unknown>) => {
   try {
     if (owner === undefined) { owner = initialize(event.data); return; }
@@ -287,6 +365,7 @@ dependencies.addMessageListener((event: MessageEvent<unknown>) => {
       return;
     }
     if (request.type === "bindIngress") { bindIngress(owner, request); return; }
+    if (request.type === "bindPublisher") { bindPublisher(owner, request); return; }
     if (request.type === "beginShutdown") {
       const active = owner;
       exact(request, ["type", "instanceId", "deadline"], "beginShutdown");
@@ -294,11 +373,12 @@ dependencies.addMessageListener((event: MessageEvent<unknown>) => {
       const remaining = Math.max(0, request.deadline - performance.timeOrigin - performance.now());
       owner.shutdownDeadline = Math.min(owner.shutdownDeadline, performance.now() + remaining);
       if (owner.ingress === null) owner.ingressQuiescent = true;
+      if (owner.publisher === null) owner.publisherQuiescent = true;
       owner.supervisor!.beginShutdown(owner.shutdownDeadline);
       if (owner.shutdownTimer !== undefined) clearTimeout(owner.shutdownTimer);
       owner.shutdownTimer = setTimeout(() => {
-        if (!active.terminal && (!active.engineQuiescent || !active.ingressQuiescent || !active.childrenDrained)) {
-          const error = new Error("共享关停期限届满，缺少真实 engine/ingress quiescence 或 child drain 收据");
+        if (!active.terminal && (!active.engineQuiescent || !active.ingressQuiescent || !active.publisherQuiescent || !active.childrenDrained)) {
+          const error = new Error("共享关停期限届满，缺少真实 engine/ingress/publisher quiescence 或 child drain 收据");
           sendFailure(active, error);
         }
       }, Math.max(0, owner.shutdownDeadline - performance.now()));

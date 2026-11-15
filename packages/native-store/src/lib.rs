@@ -1,3 +1,4 @@
+pub mod archive_lane;
 pub mod identities;
 mod writer_lock;
 
@@ -63,10 +64,8 @@ pub struct ArchiveWriter {
     generation: u64,
 }
 
-#[derive(Serialize)]
-#[serde(transparent)]
 pub struct DayEndCandidate {
-    slot: SaveSlot,
+    slot: Arc<SaveSlot>,
 }
 
 impl DayEndCandidate {
@@ -74,13 +73,23 @@ impl DayEndCandidate {
         game: &ProtocolSession,
         key: &engine::session::protocol::SaveCandidateKey,
     ) -> Result<Self, StoreError> {
-        let slot = game.save_candidate(key)?;
+        Self::from_captured(game.take_save_candidate(key)?)
+    }
+
+    /// 候选由已提交的日界交接；采用既有恢复校验，不复制冻结快照。
+    pub fn from_captured(slot: Arc<SaveSlot>) -> Result<Self, StoreError> {
         ProtocolSession::restore(&slot)?;
         Ok(Self { slot })
     }
 
     pub fn as_slot(&self) -> &SaveSlot {
         &self.slot
+    }
+}
+
+impl Serialize for DayEndCandidate {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.slot.as_ref().serialize(serializer)
     }
 }
 
@@ -385,6 +394,13 @@ impl NativeDatabase {
 }
 
 impl ArchiveWriter {
+    /// 租约未更换的元数据操作不应使此前完成的同一 writer 回执失效。
+    pub fn same_lease(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.database.generations, &other.database.generations)
+            && self.slot_id == other.slot_id
+            && self.generation == other.generation
+    }
+
     pub fn rename_slot(&self, slot_id: &str, name: &str) -> Result<(), StoreError> {
         let generations = self
             .database
@@ -614,8 +630,8 @@ impl ArchiveWriter {
     }
 
     pub fn save_day_end(&self, candidate: &DayEndCandidate) -> Result<(), StoreError> {
+        // DayEndCandidate 仅可由已通过恢复校验的不可变 Arc 构造。
         let slot = candidate.as_slot();
-        ProtocolSession::restore(slot)?;
         let civil_date = settled_date(slot)?;
         let payload = serde_json::to_string(slot)?;
         let mut generations = self

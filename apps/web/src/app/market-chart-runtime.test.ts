@@ -178,7 +178,7 @@ test("历史查询错误通过 notice 明确呈现", { timeout: 10000 }, async (
   assert.match(notice ?? "", /读取 600101 历史日 K 失败.*history transport unavailable/);
 });
 
-test("production AfterClose-only 进入非交易日时保留真实收盘分时", { timeout: 10000 }, () => {
+test("production AfterClose-only 进入休市日时清空分时并保留已完成日 K", { timeout: 10000 }, () => {
   const initial = createBaselineUpdate("1", parseProtocolSnapshot(snapshot(1, 1), "test.fixture", defaultCatalogFixture), catalogFixtureForSnapshot(parseProtocolSnapshot(snapshot(1, 1), "test.fixture", defaultCatalogFixture)));
   const parsed = parseEngineUpdate(civilUpdate());
   if (!("CivilUpdate" in parsed)) throw new Error("CivilUpdate fixture 类型错误");
@@ -188,10 +188,16 @@ test("production AfterClose-only 进入非交易日时保留真实收盘分时",
   const civil = createProtocolUpdate("1", { CivilUpdate: { ...parsed.CivilUpdate,
     kinds: ["AfterClose"], boundary: { ...parsed.CivilUpdate.boundary, next_status: { Closed: "Weekend" } },
     facts: [{ ...parsed.CivilUpdate.facts[0], event }],
+    refresh: { ...parsed.CivilUpdate.refresh, snapshot: {
+      ...parsed.CivilUpdate.refresh.snapshot,
+      daily_candles: { "0": [{ ...dailyCandle(), time: 1893283200 }] },
+      active_daily_candles: {},
+    } },
   } });
   const after = render([civil], { baseline: initial, afterUpdates: (runtime) => runtime.selectChart("000812") }).after;
-  assert.equal(after.prices.length, 1);
-  assert.equal(after.prices[0].volume, 1);
-  assert.equal(after.prices[0].value, 10);
+  assert.deepEqual(after.history, {});
+  assert.deepEqual(after.prices, []);
+  assert.deepEqual(after.auctions, []);
   assert.equal(after.daily.length, 1);
+  assert.equal(after.daily[0]!.time, 1893283200);
 });

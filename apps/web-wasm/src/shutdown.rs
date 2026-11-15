@@ -45,6 +45,7 @@ impl SessionRegistry {
                 secondary: Vec::new(),
                 completion: None,
             })?;
+        super::market_runner::drop_drive(handle);
         let revoke_failure = revoke(handle).err().map(|error| ShutdownIssue {
             stage: "registry_ingress_revoke".to_owned(),
             worker: None,

@@ -7,10 +7,11 @@ import { normalizeMarketHistoryPage, normalizeMarketHistoryRequest, wireMarketHi
 const request = { code: "600101", date_from: "2026-10-01", date_to: "2026-10-03", after: null, page_size: 2 };
 const wireRequest = { stock: 3, date_from: "2026-10-01", date_to: "2026-10-03", after: null, page_size: 2 };
 const bar = { minute_of_day: 565, phase: "OpenAuction", open: "100", high: "110", low: "90", close: "105", volume_shares: "18446744073709551615", trade_count: "2", turnover_cents: "1844674407370955161500" };
-const wirePage = { stock: 3, entries: [{ date: "2026-10-01", availability: "Traded", bars: [bar], daily_candle: null }, { date: "2026-10-02", availability: "Closed", bars: [], daily_candle: null }], next_cursor: "2026-10-02", settled_through: "2026-10-02" };
+const candle = { time: Date.parse("2026-10-01T00:00:00Z") / 1000, open: "100", high: "110", low: "90", close: "105", volume: 20, trade_stats: { turnover_cents: "2100", trade_count: 2 } };
+const wirePage = { stock: 3, entries: [{ date: "2026-10-01", availability: "Traded", bars: [], daily_candle: candle }, { date: "2026-10-02", availability: "Closed", bars: [], daily_candle: null }], next_cursor: "2026-10-02", settled_through: "2026-10-02" };
 const page = { code: "600101", entries: wirePage.entries, next_cursor: "2026-10-02", settled_through: "2026-10-02" };
 
-test("永久分钟历史保留fullu64股数与u128金额，不转换为Number", { timeout: 10000 }, () => {
+test("分页历史保留日K成交统计，但不返回已结束日分钟数据", { timeout: 10000 }, () => {
   assert.deepEqual(normalizeMarketHistoryRequest(request), request);
   assert.deepEqual(wireMarketHistoryRequest(request, defaultCatalogFixture), wireRequest);
   assert.deepEqual(normalizeMarketHistoryPage(wirePage, request, defaultCatalogFixture), page);
@@ -22,8 +23,11 @@ test("公开历史拒绝账户注入、缺字段、坏日期与游标", { timeou
   for (const item of [{ ...request, account: "1" }, { ...request, after: undefined }, { ...request, date_from: "2026-02-30" }, { ...request, after: "2026-09-30" }, { ...request, page_size: 0 }]) assert.throws(() => normalizeMarketHistoryRequest(item));
 });
 
-test("分钟历史拒绝假成交、数值金额、非规范数量和分页错配", { timeout: 10000 }, () => {
-  for (const invalidBar of [{ ...bar, open: 100 }, { ...bar, volume_shares: "01" }, { ...bar, trade_count: "0" }, { ...bar, turnover_cents: "340282366920938463463374607431768211456" }, { ...bar, phase: "ClosingAuction", minute_of_day: 899 }]) assert.throws(() => normalizeMarketHistoryPage({ ...wirePage, entries: [{ ...wirePage.entries[0], bars: [invalidBar] }] }, request, defaultCatalogFixture));
+test("历史接口拒绝泄露分钟数据、伪造成交状态或分页错配", { timeout: 10000 }, () => {
+  const first = wirePage.entries[0];
+  for (const changed of [{ ...first, bars: [bar] }, { ...first, daily_candle: null }, { ...first, availability: "NoTrades" }, { ...first, availability: "Closed" }, { ...first, daily_candle: { ...candle, trade_stats: { turnover_cents: "0", trade_count: 0 } } }]) {
+    assert.throws(() => normalizeMarketHistoryPage({ ...wirePage, entries: [changed, wirePage.entries[1]] }, request, defaultCatalogFixture));
+  }
   assert.throws(() => normalizeMarketHistoryPage({ ...wirePage, stock: 4 }, request, defaultCatalogFixture), /证券与请求不同/);
   assert.throws(() => normalizeMarketHistoryPage({ ...wirePage, stock: 99 }, request, defaultCatalogFixture), /未知股票/);
   assert.throws(() => normalizeMarketHistoryPage({ ...wirePage, code: "600101" }, request, defaultCatalogFixture), /字段不符合协议契约/);
@@ -31,4 +35,14 @@ test("分钟历史拒绝假成交、数值金额、非规范数量和分页错�
   assert.throws(() => normalizeMarketHistoryPage({ ...wirePage, entries: [...wirePage.entries].reverse() }, request, defaultCatalogFixture));
   assert.throws(() => normalizeMarketHistoryPage({ ...wirePage, entries: [] }, request, defaultCatalogFixture));
   assert.throws(() => normalizeMarketHistoryPage({ ...wirePage, next_cursor: null }, request, defaultCatalogFixture));
+});
+
+test("零成交与休市及虚拟前史按各自状态校验，不生成分钟数据", { timeout: 10000 }, () => {
+  const empty = { ...candle, volume: 0, trade_stats: { turnover_cents: "0", trade_count: 0 } };
+  const noTrades = { ...wirePage.entries[0], availability: "NoTrades", daily_candle: empty };
+  const pageWith = (entry: unknown) => ({ ...wirePage, entries: [entry, wirePage.entries[1]] });
+  assert.deepEqual(normalizeMarketHistoryPage(pageWith(noTrades), request, defaultCatalogFixture).entries[0], noTrades);
+  const beforeStart = { ...wirePage.entries[0], availability: "BeforeStart", daily_candle: { ...candle, trade_stats: null } };
+  assert.deepEqual(normalizeMarketHistoryPage(pageWith(beforeStart), request, defaultCatalogFixture).entries[0], beforeStart);
+  assert.throws(() => normalizeMarketHistoryPage(pageWith({ ...noTrades, daily_candle: null }), request, defaultCatalogFixture), /日K/);
 });

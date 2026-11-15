@@ -26,7 +26,9 @@ pub fn verification_libos_boundary_timer_resolution() -> f64 {
     let mut minimum = u64::MAX;
     for _ in 0..100_000 {
         let cursor = Instant::now();
-        let delta = cursor.checked_duration_since(previous).expect("实测 Worker 时钟倒退");
+        let delta = cursor
+            .checked_duration_since(previous)
+            .expect("实测 Worker 时钟倒退");
         if !delta.is_zero() {
             minimum = minimum.min(u64::try_from(delta.as_nanos()).expect("定时器一次跳变溢出"));
         }
@@ -46,9 +48,12 @@ fn spawn_join(wrapped: bool) -> u64 {
             .join()
             .expect("门面未取得 worker 结果")
     } else {
-        Builder::new().name(JOIN_NAME.to_owned())
-            .spawn(task).expect("直连未启动真实 worker")
-            .join().expect("直连未取得 worker 结果")
+        Builder::new()
+            .name(JOIN_NAME.to_owned())
+            .spawn(task)
+            .expect("直连未启动真实 worker")
+            .join()
+            .expect("直连未取得 worker 结果")
     };
     let elapsed = clock_ns(start);
     assert_eq!(value, 0x594);
@@ -69,18 +74,24 @@ fn direct_recv(rx: &Receiver<u32>, stop: &AtomicBool, abort: &AtomicBool) -> Opt
     let observed = Instant::now();
     assert!(observed.checked_duration_since(start).is_some());
     assert!(!abort.load(Ordering::SeqCst));
-    if stop.load(Ordering::SeqCst) { return None; }
+    if stop.load(Ordering::SeqCst) {
+        return None;
+    }
     let message = match rx.try_recv() {
         Ok(item) => Some(item),
         Err(mpsc::TryRecvError::Empty) => {
             let spin_end = Instant::now();
             assert!(spin_end.checked_duration_since(observed).is_some());
             assert!(!abort.load(Ordering::SeqCst));
-            if stop.load(Ordering::SeqCst) { return None; }
+            if stop.load(Ordering::SeqCst) {
+                return None;
+            }
             let quiet_end = Instant::now();
             assert!(quiet_end.checked_duration_since(spin_end).is_some());
             assert!(!abort.load(Ordering::SeqCst));
-            if stop.load(Ordering::SeqCst) { return None; }
+            if stop.load(Ordering::SeqCst) {
+                return None;
+            }
             rx.recv().ok()
         }
         Err(mpsc::TryRecvError::Disconnected) => return None,
@@ -96,7 +107,11 @@ fn facade_recv(rx: &Receiver<u32>, stop: &AtomicBool) -> Option<u32> {
 fn handoff(wrapped: bool, operations: u32) -> u64 {
     let abort = host_stop_word();
     let receive = move |rx: &Receiver<u32>, stop: &AtomicBool| {
-        if wrapped { facade_recv(rx, stop) } else { direct_recv(rx, stop, abort) }
+        if wrapped {
+            facade_recv(rx, stop)
+        } else {
+            direct_recv(rx, stop, abort)
+        }
     };
     let (tx, rx) = mpsc::channel();
     let (ready_tx, ready_rx) = mpsc::channel();
@@ -105,10 +120,13 @@ fn handoff(wrapped: bool, operations: u32) -> u64 {
         let stop = AtomicBool::new(false);
         ready_tx.send(()).expect("报告接收线程就绪");
         for _ in 0..operations {
-            out_tx.send(receive(&rx, &stop).expect("消息必须完整交付")).expect("交付回执");
+            out_tx
+                .send(receive(&rx, &stop).expect("消息必须完整交付"))
+                .expect("交付回执");
         }
         assert_eq!(receive(&rx, &stop), None, "普通断连后必须退出");
-    }).expect("必须启动真实 Worker");
+    })
+    .expect("必须启动真实 Worker");
     ready_rx.recv().expect("接收线程未就绪");
     let start = Instant::now();
     for item in 1..=operations {
@@ -129,7 +147,11 @@ enum StopDelivery {
 fn shutdown_wake(wrapped: bool) -> u64 {
     let abort = host_stop_word();
     let receive = move |rx: &Receiver<u32>, stop: &AtomicBool| {
-        if wrapped { facade_recv(rx, stop) } else { direct_recv(rx, stop, abort) }
+        if wrapped {
+            facade_recv(rx, stop)
+        } else {
+            direct_recv(rx, stop, abort)
+        }
     };
     let (tx_a, rx_a) = mpsc::channel();
     let (tx_b, rx_b) = mpsc::channel();
@@ -149,15 +171,21 @@ fn shutdown_wake(wrapped: bool) -> u64 {
             ready.send(()).expect("报告 worker 就绪");
             assert_eq!(receive(&rx, &stop), None, "哨兵不能作为业务值交付");
             done.send(rx).expect("报告硬停止完成");
-        }).expect("必须启动真实 Worker")
+        })
+        .expect("必须启动真实 Worker")
     });
-    for _ in 0..2 { ready_rx.recv().expect("未取得双 worker 就绪"); }
+    for _ in 0..2 {
+        ready_rx.recv().expect("未取得双 worker 就绪");
+    }
     let start = Instant::now();
     match &mut delivery {
         StopDelivery::Facade(wake) => wake.sever(&stop, &mut a, &mut b),
         StopDelivery::Direct(first, second) => {
             stop.store(true, Ordering::SeqCst);
-            for tx in std::mem::take(first).into_iter().chain(std::mem::take(second)) {
+            for tx in std::mem::take(first)
+                .into_iter()
+                .chain(std::mem::take(second))
+            {
                 tx.send(STOP).expect("哨兵必须发送给保持连接的通道");
             }
             a.clear();
@@ -168,11 +196,16 @@ fn shutdown_wake(wrapped: bool) -> u64 {
     let elapsed = clock_ns(start);
     assert!(stop.load(Ordering::SeqCst) && a.is_empty() && b.is_empty());
     for rx in stopped {
-        assert!(matches!(rx.try_recv(), Ok(STOP) | Err(mpsc::TryRecvError::Empty)));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(STOP) | Err(mpsc::TryRecvError::Empty)
+        ));
         assert_eq!(rx.try_recv(), Err(mpsc::TryRecvError::Empty), "重复哨兵");
     }
     drop(keepalive);
-    for handle in handles { handle.join().expect("必须消费停止结果"); }
+    for handle in handles {
+        handle.join().expect("必须消费停止结果");
+    }
     elapsed
 }
 
@@ -180,23 +213,36 @@ struct Probe(Arc<AtomicU32>, u32);
 impl Drop for Probe {
     fn drop(&mut self) {
         let expected = self.1;
-        assert_eq!(self.0.fetch_add(1, Ordering::SeqCst), expected, "析构必须保持 FIFO 且恰好一次");
+        assert_eq!(
+            self.0.fetch_add(1, Ordering::SeqCst),
+            expected,
+            "析构必须保持 FIFO 且恰好一次"
+        );
     }
 }
 
 fn deferred(wrapped: bool, operations: u32) -> Result<(u64, u64), JsValue> {
     type Job = Box<dyn FnOnce() + Send>;
     // 只比较同样的 Box / 有界 try_send / 独立 Worker 与正常排队路径，不测满队列分支。
-    let direct = if wrapped { None } else {
+    let direct = if wrapped {
+        None
+    } else {
         let (tx, rx) = mpsc::sync_channel::<Job>(64);
-        let handle = Builder::new().name(DROP_NAME.to_owned()).spawn(move || {
-            while let Ok(job) = rx.recv() { job(); }
-        }).expect("直连必须创建真实后台 Worker");
+        let handle = Builder::new()
+            .name(DROP_NAME.to_owned())
+            .spawn(move || {
+                while let Ok(job) = rx.recv() {
+                    job();
+                }
+            })
+            .expect("直连必须创建真实后台 Worker");
         Some((tx, handle))
     };
     let count = Arc::new(AtomicU32::new(0));
     let (ack_tx, ack_rx) = mpsc::channel();
-    let probes: Vec<_> = (0..operations).map(|i| Probe(Arc::clone(&count), i)).collect();
+    let probes: Vec<_> = (0..operations)
+        .map(|i| Probe(Arc::clone(&count), i))
+        .collect();
     let start = Instant::now();
     for probe in probes {
         let probe = black_box(probe);
@@ -204,14 +250,18 @@ fn deferred(wrapped: bool, operations: u32) -> Result<(u64, u64), JsValue> {
             tx.try_send(Box::new(move || drop(probe)))
                 .unwrap_or_else(|_| panic!("直连后端必须排队"));
         } else if deferred_drop::defer(probe) != Submission::Queued {
-            return Err(JsValue::from_str("未提供同语义 WASM 后台排队；禁止同步析构对照"));
+            return Err(JsValue::from_str(
+                "未提供同语义 WASM 后台排队；禁止同步析构对照",
+            ));
         }
     }
     let submitted = clock_ns(start);
     // 独立标记排在动作后：不能用最后一个被测 Drop 内发出的回执证明同一 Drop 已返回。
     struct Completion(mpsc::Sender<()>);
     impl Drop for Completion {
-        fn drop(&mut self) { self.0.send(()).expect("报告独立 FIFO 完成标记"); }
+        fn drop(&mut self) {
+            self.0.send(()).expect("报告独立 FIFO 完成标记");
+        }
     }
     let marker = Completion(ack_tx);
     if let Some((tx, _handle)) = &direct {
@@ -231,10 +281,16 @@ fn deferred(wrapped: bool, operations: u32) -> Result<(u64, u64), JsValue> {
 }
 
 #[wasm_bindgen]
-pub fn verification_libos_boundary_cost(case_name: &str, wrapped: bool, operations: u32) -> Result<String, JsValue> {
+pub fn verification_libos_boundary_cost(
+    case_name: &str,
+    wrapped: bool,
+    operations: u32,
+) -> Result<String, JsValue> {
     let (elapsed_ns, completed_ns) = match case_name {
         "spawn-join" if operations == 1 => (spawn_join(wrapped), None),
-        "message-handoff" if (1..=2048).contains(&operations) => (handoff(wrapped, operations), None),
+        "message-handoff" if (1..=2048).contains(&operations) => {
+            (handoff(wrapped, operations), None)
+        }
         "shutdown-wake" if operations == 1 => (shutdown_wake(wrapped), None),
         "deferred" if (1..=63).contains(&operations) => {
             let (submitted, completed) = deferred(wrapped, operations)?;

@@ -20,6 +20,15 @@ test.after(() => {
   if (legacyWindow === undefined) Reflect.deleteProperty(globalThis, "window");
   else Object.defineProperty(globalThis, "window", legacyWindow);
 });
+export function withFixturePublicationFence(value: unknown): unknown {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+  const input = value as Record<string, unknown>;
+  if (!["baseline", "restored", "refreshed", "runtimeSyncFlushed", "publisherRecovered"].includes(String(input.type))) return value;
+  return {
+    publisherToken: Number(input.nextGeneration ?? input.generation), controlAddress: 5000,
+    publicationOrdinal: "0", workingOrders: [], ...input,
+  };
+}
 let manualLegacyIngress = false;
 export class LegacyWorker extends EventTarget {
   configured?: Promise<void>;
@@ -42,7 +51,7 @@ export class LegacyWorker extends EventTarget {
       this.dataPort.addEventListener("message", (event) => this.postMessage(event.data as Record<string, unknown>));
       this.dataPort.start();
     }
-    if (value.type === "bindIngressTransport") {
+    if (value.type === "bindIngressTransport" || value.type === "bindPublisherTransport") {
       this.dataPort = value.dataPort as MessagePort;
       this.instanceId = Number(value.instanceId);
       this.dataPort.addEventListener("message", (event) => this.postMessage(event.data as Record<string, unknown>));
@@ -55,7 +64,7 @@ export class LegacyWorker extends EventTarget {
       const layout = { baseAddr: 0, headerWords: HEADER_WORDS, slotStride: SLOT_STRIDE, joinStride: JOIN_STRIDE, capacity: 4, genBits: 29 };
       const words = new Int32Array(memory.buffer);
       words[CAPACITY] = layout.capacity; words[GEN_BITS] = layout.genBits; words[FREE_HEAD] = FREE_HEAD_EMPTY | 0;
-      const primary = { engine: { workerId: 0, address: 4200 }, ingress: { workerId: 0xffffffff, address: 4456 }, death: { address: 4100, bytes: 4 } };
+      const primary = { engine: { workerId: 0, address: 4200 }, ingress: { workerId: 0xffffffff, address: 4456 }, publisher: { workerId: 0xfffffffe, address: 4712 }, death: { address: 4100, bytes: 4 } };
       port.addEventListener("message", (event) => {
         const request = event.data as { type?: string };
         if (request.type === "facadeEngineMemoryRegistered") {
@@ -74,6 +83,20 @@ export class LegacyWorker extends EventTarget {
       this.dispatchEvent(new MessageEvent("message", { data: { type: "ingressLifecycle", instanceId: this.instanceId, state: "configured", generation: value.generation, token: value.token } }));
       if (!manualLegacyIngress) queueMicrotask(() => this.dataPort?.postMessage({ type: "ingressBound", generation: value.generation, requestId: value.requestId }));
     }
+    if (value.type === "bindPublisher") queueMicrotask(() => {
+      this.dataPort?.postMessage({ type: "publisherBound", generation: value.generation, requestId: value.requestId });
+      this.dispatchEvent(new MessageEvent("message", { data: { type: "publisherLifecycle", instanceId: this.instanceId, state: "configured", generation: value.generation, token: value.token } }));
+    });
+    if (value.type === "pausePublisher" || value.type === "startPublisher") queueMicrotask(() => this.dataPort?.postMessage({
+      type: value.type === "pausePublisher" ? "publisherPaused" : "publisherStarted", generation: value.generation, requestId: value.requestId,
+    }));
+    if (value.type === "resumePublisher") queueMicrotask(() => this.dataPort?.postMessage({
+      type: "publisherResumed", generation: value.generation, requestId: value.requestId, accepted: true,
+    }));
+    if (value.type === "quiescePublisher") queueMicrotask(() => {
+      this.dataPort?.postMessage({ type: "publisherQuiescent", requestId: value.requestId, generation: value.generation });
+      this.dispatchEvent(new MessageEvent("message", { data: { type: "publisherLifecycle", instanceId: this.instanceId, state: "quiescent" } }));
+    });
     // 仅模拟无 World/child 的 cooperative fixture 协议响应，不冒充真实 Rust join。
     if (value.type === "shutdown") queueMicrotask(() => {
       this.dataPort?.postMessage({
@@ -100,7 +123,7 @@ export class LegacyWorker extends EventTarget {
   }
   emitRaw(value: unknown): void {
     if (this.receiverPort === undefined) throw new Error("legacy raw response 缺少真实 business port 对端");
-    this.receiverPort.dispatchEvent(new MessageEvent("message", { data: value }));
+    this.receiverPort.dispatchEvent(new MessageEvent("message", { data: withFixturePublicationFence(value) }));
   }
   bindReceiver(port: MessagePort): void {
     const receiver = legacyPeers.get(port);
@@ -130,7 +153,12 @@ export function createLegacyHost(setup: Parameters<typeof createWorkerHost>[0], 
   Object.defineProperty(globalThis, "MessageChannel", { configurable: true, writable: true, value: TrackedLegacyChannel });
   const LegacyWorkerConstructor = globalThis.Worker;
   if (typeof LegacyWorkerConstructor !== "function") throw new Error("legacy fixture 缺少测试 Worker 构造器");
+  class PublisherFixture extends LegacyWorker {
+    terminate(): void { this.dataPort?.close(); }
+  }
   class LegacyController extends EventTarget {
+    private publisher: LegacyWorker | null = null;
+    private ordinal = 0;
     private ownerListener: ((event: MessageEvent<unknown>) => void) | undefined;
     private terminated = false;
     constructor() {
@@ -138,6 +166,11 @@ export function createLegacyHost(setup: Parameters<typeof createWorkerHost>[0], 
       createEngineControlOwner({
         createEngineWorker: () => this.createLegacyWorker(new URL("./wasm-worker.ts", import.meta.url)),
         createIngressWorker: () => this.createLegacyWorker(new URL("./wasm-ingress-worker.ts", import.meta.url)),
+        createPublisherWorker: () => {
+          const worker = new PublisherFixture();
+          this.publisher = worker;
+          return worker as unknown as Worker;
+        },
         createChildWorker: () => this.createLegacyWorker(new URL("./facade-child-worker.ts", import.meta.url)),
         createChannel: () => {
           const channel = new TrackedLegacyChannel();
@@ -148,6 +181,24 @@ export function createLegacyHost(setup: Parameters<typeof createWorkerHost>[0], 
         addMessageListener: (listener) => { this.ownerListener = listener; },
         reportError: (error) => { throw error; },
       });
+    }
+    private emitBusiness(worker: LegacyWorker, value: unknown): boolean {
+      if (worker.dataPort === undefined || value === null || typeof value !== "object" || Array.isArray(value)) return false;
+      const input = value as Record<string, unknown>;
+      if (typeof input.type !== "string" || ["engineLifecycle", "ingressLifecycle", "publisherLifecycle"].includes(input.type)) return false;
+      if (input.type === "protocol" || input.type === "protocolBatch" || input.type === "publicationGap") {
+        const publisher = this.publisher?.dataPort;
+        if (publisher !== undefined) {
+          if (input.type === "protocolBatch" && Array.isArray(input.updates)) {
+            for (const update of input.updates) publisher.postMessage({ type: "protocol", generation: input.generation, publicationOrdinal: String(++this.ordinal), update });
+          } else if (input.type === "protocol") {
+            publisher.postMessage({ publicationOrdinal: String(++this.ordinal), ...input });
+          } else publisher.postMessage(value);
+        }
+        return true;
+      }
+      worker.dataPort.postMessage(withFixturePublicationFence(value));
+      return true;
     }
     private createLegacyWorker(url: URL): Worker {
       const worker = new (LegacyWorkerConstructor as unknown as new (...args: never[]) => LegacyWorker)(url as never);
@@ -170,19 +221,10 @@ export function createLegacyHost(setup: Parameters<typeof createWorkerHost>[0], 
         else originalPostMessage(value);
       };
       worker.emit = (value: unknown) => {
-        const type = value !== null && typeof value === "object" ? (value as { type?: unknown }).type : undefined;
-        if (worker.dataPort !== undefined && typeof type === "string" && type !== "engineLifecycle" && type !== "ingressLifecycle") worker.dataPort.postMessage(value);
-        else originalEmit(value);
+        if (!this.emitBusiness(worker, value)) originalEmit(value);
       };
       worker.dispatchEvent = (event: Event) => {
-        if (event.type === "message" && worker.dataPort !== undefined) {
-          const value = (event as MessageEvent<unknown>).data;
-          const type = value !== null && typeof value === "object" ? (value as { type?: unknown }).type : undefined;
-          if (typeof type === "string" && type !== "engineLifecycle" && type !== "ingressLifecycle") {
-            worker.dataPort.postMessage(value);
-            return true;
-          }
-        }
+        if (event.type === "message" && this.emitBusiness(worker, (event as MessageEvent<unknown>).data)) return true;
         return originalDispatchEvent(event);
       };
       return worker as unknown as Worker;

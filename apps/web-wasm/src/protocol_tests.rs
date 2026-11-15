@@ -738,7 +738,7 @@ fn w3_query_surfaces_return_real_traded_data() {
         serde_json::to_string(&history).unwrap()
     );
 
-    // 日结后面板四：保留历史（G8）——冻结日 Traded + bars 非空。
+    // 日结后面板四：保留历史（G8）——已结束日 Traded + 日 K。
     for _ in 0..130 {
         if let EngineUpdate::CivilUpdate(_) = step_update(handle).unwrap() {
             break;
@@ -768,7 +768,8 @@ fn w3_query_surfaces_return_real_traded_data() {
         engine::session::MarketHistoryAvailability::Traded,
         "已结算开市日=Traded"
     );
-    assert!(!page.entries[0].bars.is_empty(), "保留链冻结真实分钟 bars");
+    assert!(page.entries[0].bars.is_empty(), "已结束日不保留分钟桶");
+    assert!(page.entries[0].daily_candle.as_ref().unwrap().volume > 0);
     println!(
         "w3 market_history wire: {}",
         serde_json::to_string(&page).unwrap()

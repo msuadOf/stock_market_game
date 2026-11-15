@@ -6,6 +6,9 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+/// 仅为显式读档提供少量历史候选；持久化使用独立、有界的归档队列。
+const LEGACY_SAVE_CANDIDATE_WINDOW: usize = 4;
+
 /// 一个未发布宿主批次的共同回滚集合；GameSession 保留自身 tick authority。
 struct ProtocolState {
     game: GameSession,
@@ -415,6 +418,16 @@ impl ProtocolSession {
         Ok(snapshot)
     }
 
+    /// 从同一已冻结存档配对序列号和已结算自然日；不读取正在推进的状态，
+    /// 不复制存档，也不消费 pending 候选。
+    pub fn latest_day_end_key(&self) -> Option<super::super::SaveCandidateKey> {
+        let slot = self.state.day_end_save.as_ref()?;
+        Some(super::super::SaveCandidateKey {
+            seq: slot.snapshot.seq,
+            settled_date: slot.civil_clock.settled_through?,
+        })
+    }
+
     /// 只读选择指定自然日已经成功生成的日终候选。
     pub fn save_current_day(
         &self,
@@ -433,10 +446,36 @@ impl ProtocolSession {
             })
     }
 
+    /// 只供旧客户端读取最新档或最近未消费候选。归档 durability 不依赖此缓存。
     pub fn save_candidate(
         &self,
         key: &super::super::SaveCandidateKey,
     ) -> Result<crate::SaveSlot, SessionError> {
+        self.take_save_candidate(key)
+            .map(|slot| slot.as_ref().clone())
+    }
+
+    /// 在后续日界或恢复前移出已冻结的候选，不在权威循环中深拷贝或写盘。
+    pub fn take_save_candidate(
+        &self,
+        key: &super::super::SaveCandidateKey,
+    ) -> Result<std::sync::Arc<crate::SaveSlot>, SessionError> {
+        self.take_save_candidate_from_window(key, true)
+    }
+
+    /// 只有归档交接消费新候选；显式读取最新档仍可复用不可变 Arc。
+    pub(crate) fn take_unstaged_save_candidate(
+        &self,
+        key: &super::super::SaveCandidateKey,
+    ) -> Result<std::sync::Arc<crate::SaveSlot>, SessionError> {
+        self.take_save_candidate_from_window(key, false)
+    }
+
+    fn take_save_candidate_from_window(
+        &self,
+        key: &super::super::SaveCandidateKey,
+        allow_latest: bool,
+    ) -> Result<std::sync::Arc<crate::SaveSlot>, SessionError> {
         self.state.game.require_healthy()?;
         let mut pending = self.state.pending_save_candidates.borrow_mut();
         let candidate = pending
@@ -445,7 +484,7 @@ impl ProtocolSession {
                 self.state
                     .day_end_save
                     .as_ref()
-                    .filter(|slot| slot.snapshot.seq == key.seq)
+                    .filter(|slot| allow_latest && slot.snapshot.seq == key.seq)
             })
             .ok_or_else(|| {
                 // fault3016: 日终候选已失效或不存在；ctx[0]=请求的自然日 yyyymmdd，ctx[1]=请求的 seq
@@ -460,13 +499,18 @@ impl ProtocolSession {
             // fault3017: 日终候选自然日与请求不一致（候选档 settled_through ≠ SaveCandidateKey.settled_date）。
             return Err(SessionError::InvalidSave(ValidationFault::bare(3017)));
         }
-        let captured = candidate.as_ref().clone();
+        let captured = std::sync::Arc::clone(candidate);
         pending.remove(&key.seq);
         Ok(captured)
     }
 
     pub fn discard_pending_save_candidates(&self) {
         self.state.pending_save_candidates.borrow_mut().clear();
+    }
+
+    /// 在同一 authority turn 收集观察者基线，而不清理权威存档候选或影响别人的增量。
+    pub fn observer_baseline(&self) -> (crate::Snapshot, Vec<super::super::PlayerWorkingOrder>) {
+        (self.snapshot(), self.player_working_orders())
     }
 
     pub fn prepare_public_baseline(&self) {
@@ -612,18 +656,30 @@ impl ProtocolSession {
         self.state.fact_cursor = cursor;
         self.state.intraday = AppendOnlyHistory::default();
         self.state.committed_runtime = None;
-        self.state
-            .pending_save_candidates
-            .borrow_mut()
-            .insert(save.snapshot.seq, Arc::clone(&save));
+        {
+            let mut pending = self.state.pending_save_candidates.borrow_mut();
+            pending.insert(save.snapshot.seq, Arc::clone(&save));
+            if pending.len() > LEGACY_SAVE_CANDIDATE_WINDOW {
+                let _ = pending.pop_first();
+            }
+        }
         self.state.day_end_save = Some(save);
         *self.state.published_runtime.borrow_mut() = None;
         Ok(update)
     }
 
     pub fn tick_batch(&self, frames: Vec<TickFrame>) -> Result<TickBatch, StepFatal> {
-        let mut previous = self.state.published_runtime.borrow_mut();
         self.state.game.require_healthy()?;
+        self.freeze_committed_frames(frames)
+    }
+
+    /// 只能整理本轮已经提交且验证过的成功前缀。即使本轮后续 step 已 poison，
+    /// 也不读取 live game、不合成新状态，只复用最近一次已冻结的 runtime 和帧。
+    pub(in crate::session) fn freeze_committed_frames(
+        &self,
+        frames: Vec<TickFrame>,
+    ) -> Result<TickBatch, StepFatal> {
+        let mut previous = self.state.published_runtime.borrow_mut();
         let current = self
             .state
             .committed_runtime
@@ -1361,6 +1417,37 @@ mod rollback_tests {
     }
 
     #[test]
+    fn legacy_unconsumed_save_candidates_remain_bounded_across_trading_dates() {
+        let mut setup = crate::session::protocol::civil::publication_tests::setup();
+        setup.start_date = crate::CivilDate::from_iso("2030-01-05").unwrap();
+        let mut session = ProtocolSession::new(setup, 77).unwrap();
+        let first = session.end_civil_day_update().unwrap();
+        for _ in 0..LEGACY_SAVE_CANDIDATE_WINDOW {
+            while !session.civil_day_ready().unwrap() {
+                session.step_frame().unwrap();
+            }
+            session.end_civil_day_update().unwrap();
+        }
+        let first_key = super::super::super::SaveCandidateKey {
+            seq: first.seq_to,
+            settled_date: first.boundary.settled_date,
+        };
+        assert!(
+            session.save_candidate(&first_key).is_err(),
+            "已离开兼容窗口"
+        );
+        assert_eq!(
+            session.state.pending_save_candidates.borrow().len(),
+            LEGACY_SAVE_CANDIDATE_WINDOW
+        );
+        let latest = session.latest_day_end_key().unwrap();
+        assert_eq!(
+            session.save_candidate(&latest).unwrap().snapshot.seq,
+            latest.seq
+        );
+    }
+
+    #[test]
     fn day_end_save_candidate_keeps_two_completed_days_until_capture() {
         let mut setup = crate::session::protocol::civil::publication_tests::setup();
         setup.start_date = crate::CivilDate::from_iso("2030-01-05").unwrap();
@@ -1463,6 +1550,7 @@ mod rollback_tests {
         let setup = crate::session::protocol::civil::publication_tests::setup();
         let session = ProtocolSession::new(setup, 72).unwrap();
         assert!(session.save().is_err());
+        assert!(session.latest_day_end_key().is_none());
     }
 
     #[test]
@@ -1480,7 +1568,14 @@ mod rollback_tests {
             session.step_frame().unwrap();
         }
         session.end_civil_day_update().unwrap();
-        let saved = serde_json::to_value(session.save().unwrap()).unwrap();
+        let slot = session.save().unwrap();
+        let latest_key = session.latest_day_end_key().unwrap();
+        assert_eq!(latest_key.seq, slot.snapshot.seq);
+        assert_eq!(
+            Some(latest_key.settled_date),
+            slot.civil_clock.settled_through
+        );
+        let saved = serde_json::to_value(slot).unwrap();
         for _ in 0..steps {
             session.step_frame().unwrap();
         }
@@ -1488,6 +1583,9 @@ mod rollback_tests {
             serde_json::to_value(session.save().unwrap()).unwrap(),
             saved
         );
+        let later_key = session.latest_day_end_key().unwrap();
+        assert_eq!(later_key.seq, latest_key.seq);
+        assert_eq!(later_key.settled_date, latest_key.settled_date);
         #[cfg(all(test, not(target_family = "wasm")))]
         let native_baseline = crate::runtime::step_runtime_enabled()
             .then(|| NativePublicationBaseline::capture(&session));

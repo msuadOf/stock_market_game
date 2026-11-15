@@ -270,14 +270,27 @@ mod wasm_impl {
         })
     }
 
-    /// 初始化 engine/ingress 记录，engine TLS 在返回前完成绑定。
-    pub fn init_tombstone_primary() -> Result<(u32, u32, u32), &'static str> {
+    /// 初始化 engine/ingress/publisher 记录，engine TLS 在返回前完成绑定。
+    pub fn init_tombstone_primary() -> Result<(u32, u32, u32, u32), &'static str> {
         crate::wasm_tombstone::init_primary()
     }
 
     /// 在 ingress 首次业务调用前验证并绑定预登记记录。
     pub fn bind_tombstone_ingress(address: u32, worker_id: u32) -> Result<(), &'static str> {
         crate::wasm_tombstone::bind_ingress(address, worker_id)
+    }
+
+    /// 在 publisher 首次发送前验证并绑定预登记记录及保留身份。
+    pub fn bind_tombstone_publisher(address: u32, worker_id: u32) -> Result<(), &'static str> {
+        crate::wasm_tombstone::bind_publisher(address, worker_id)
+    }
+
+    pub fn auxiliary_tombstone() -> Result<u32, &'static str> {
+        crate::wasm_tombstone::auxiliary_address()
+    }
+
+    pub fn bind_auxiliary_tombstone(address: u32) -> Result<(), &'static str> {
+        crate::wasm_tombstone::bind_auxiliary(address)
     }
 
     /// 子 trampoline 导出入口（子 Worker bootstrap 调）：返回 0=Ran、
@@ -409,8 +422,9 @@ mod wasm_impl {
 
 #[cfg(target_family = "wasm")]
 pub use wasm_impl::{
-    available_parallelism, bind_tombstone_ingress, child_trampoline, facade_layout,
-    init_tombstone_primary, init_wasm_facade, Builder, JoinHandle,
+    auxiliary_tombstone, available_parallelism, bind_auxiliary_tombstone, bind_tombstone_ingress,
+    bind_tombstone_publisher, child_trampoline, facade_layout, init_tombstone_primary,
+    init_wasm_facade, Builder, JoinHandle,
 };
 
 #[cfg(test)]

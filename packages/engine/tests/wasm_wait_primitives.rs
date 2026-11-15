@@ -258,7 +258,10 @@ fn coordinator_delivers_message_observable_at_deadline_decision() {
             after_sleep: RefCell::new(Some(Box::new(move || tx.send(45).unwrap()))),
             ..FakeRuntime::default()
         };
-        assert_eq!(recv_coordinator(&rx, us(1), &config(), false, &runtime), Ok(45));
+        assert_eq!(
+            recv_coordinator(&rx, us(1), &config(), false, &runtime),
+            Ok(45)
+        );
         assert!(rx.try_recv().is_err(), "同一个值只能交付一次");
     }
 }
@@ -267,10 +270,13 @@ fn coordinator_delivers_message_observable_at_deadline_decision() {
 fn coordinator_delivers_when_receiver_resumes_after_predeadline_publication() {
     let (tx, rx) = channel();
     let runtime = FakeRuntime {
-        during_sleep: RefCell::new(Some((us(3), Box::new(move |at| {
-            assert_eq!(at, us(3));
-            tx.send(48).unwrap();
-        })))),
+        during_sleep: RefCell::new(Some((
+            us(3),
+            Box::new(move |at| {
+                assert_eq!(at, us(3));
+                tx.send(48).unwrap();
+            }),
+        ))),
         overshoot: us(2),
         ..FakeRuntime::default()
     };
@@ -303,7 +309,10 @@ fn coordinator_timeout_does_not_consume_a_message_published_after_decision() {
         Err(WaitFailure::Deadline { waited: us(1) })
     );
     tx.send(46).unwrap();
-    assert_eq!(recv_coordinator(&rx, us(0), &config(), false, &runtime), Ok(46));
+    assert_eq!(
+        recv_coordinator(&rx, us(0), &config(), false, &runtime),
+        Ok(46)
+    );
 }
 
 #[test]

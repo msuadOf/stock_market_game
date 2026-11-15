@@ -392,3 +392,50 @@ test("remote disposal authenticates the owning session before deletion", async (
   assert.ok(deletion);
   assert.equal(new Headers(deletion.headers).get("authorization"), "Bearer owner-token");
 });
+
+test("negotiated remote resync rejects stale or unfenced cuts and releases only after UI installation", { timeout: 10_000 }, async () => {
+  const { setImmediate } = await import("node:timers/promises");
+  const calls: string[] = [];
+  let socket: WebSocket | null = null;
+  const wire = (tick: number) => {
+    const next = { ...snapshot, tick, seq: tick, mirror_origin: mirrorOrigin(tick) };
+    return { ...catalogWireFixture(next), timeline_generation: 2, snapshot: next, civil_date: "2030-01-02", public_revision: tick, public_report_ids: [] };
+  };
+  const message = (value: unknown) => socket!.onmessage!({ data: JSON.stringify(value) } as MessageEvent);
+  const host = await createRemoteHost({} as SessionSetup, 1n, {
+    baseUrl: "http://127.0.0.1:3000",
+    fetchFn: (async (input: string | URL | Request) => new Response(JSON.stringify(String(input).endsWith("/api/new")
+      ? { session_id: "session-1", session_token: "token-1" } : { npcDecisionDiagnostics: false }))) as typeof fetch,
+    webSocketFactory: (url) => {
+      assert.equal(new URL(url).searchParams.get("observer_fencing"), "true");
+      socket = { readyState: 1, close() {}, send(raw: string) {
+        const outgoing = JSON.parse(raw);
+        calls.push(Object.keys(outgoing)[0] + (outgoing.FenceObserver ? "#" + outgoing.FenceObserver.capture_id : ""));
+      }, onmessage: null, onerror: null, onclose: null } as unknown as WebSocket;
+      return socket;
+    },
+  });
+  try {
+    await host.start(update => {
+      calls.push(update.type === "baseline" ? "install " + update.snapshot.tick : "delta");
+    });
+    message({ Baseline: { ...wire(8), observer_fencing: true } });
+    calls.length = 0;
+    const refreshed = host.refreshBaseline();
+    await setImmediate();
+    message({ PublisherFrame: { timeline_generation: 2, civil_date: "2030-01-02", public_revision: 8, update: { TickBatch: {} } } });
+    message({ ObserverCut: { ...wire(7), capture_id: "1", publication_ordinal: "0" } });
+    await setImmediate();
+    message({ ObserverCut: { ...wire(9), capture_id: "2", publication_ordinal: "0" } });
+    await setImmediate();
+    message({ ObserverFenced: { capture_id: "2", accepted: false } });
+    await setImmediate();
+    message({ ObserverCut: { ...wire(10), capture_id: "3", publication_ordinal: "0" } });
+    await setImmediate();
+    message({ ObserverFenced: { capture_id: "3", accepted: true } });
+    await refreshed;
+    assert.deepEqual(calls, ["CaptureObserver", "CaptureObserver", "FenceObserver#2", "CaptureObserver", "FenceObserver#3", "install 10", "ReleaseObserver"]);
+  } finally {
+    await host.dispose();
+  }
+});

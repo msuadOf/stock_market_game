@@ -14,6 +14,7 @@
     "build:target": "node scripts/build-targets.mjs",
     "test": "node scripts/run-full-regression.mjs",
     "test:scripts": "node scripts/run-script-tests.mjs",
+    "test:stalled-observer-day": "node scripts/run-long-validation.mjs 90000 -- node scripts/stalled-observer-day.mjs",
     "test:e2e": "corepack pnpm --filter web test:e2e",
     "types:generate": "cargo test -p engine export_bindings",
     "types:check": "corepack pnpm types:generate && node scripts/check-generated-types.mjs",

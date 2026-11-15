@@ -21,7 +21,10 @@ fn 未移交所有权时区分未启动和仍有清理义务() {
 #[test]
 fn 部分启动的真线程观察先发布停止再送哨兵() {
     use libos::{lifecycle::ShutdownWake, thread_facade::WorkerHandle};
-    use std::sync::{Arc, atomic::{AtomicBool, Ordering}, mpsc};
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc,
+    };
     use std::time::Duration;
 
     let budget = Duration::from_secs(1);
@@ -33,8 +36,10 @@ fn 部分启动的真线程观察先发布停止再送哨兵() {
     drop(unused_rx);
     let worker = WorkerHandle::spawn("libos-cleanup-fixture".into(), move || {
         start.send(()).unwrap();
-        rx.recv_timeout(budget).map(|value| (value, worker_flag.load(Ordering::SeqCst)))
-    }).unwrap();
+        rx.recv_timeout(budget)
+            .map(|value| (value, worker_flag.load(Ordering::SeqCst)))
+    })
+    .unwrap();
     started.recv_timeout(budget).unwrap();
     let mut group = vec![tx];
     let mut desk = vec![unused];
@@ -61,10 +66,12 @@ fn native清理诊断不覆盖原panic对象() {
     }
     impl Drop for Owner {
         fn drop(&mut self) {
-            self.wake.drop_untransferred(&self.shutdown, true)
+            self.wake
+                .drop_untransferred(&self.shutdown, true)
                 .expect("存在构造回收义务")
                 .report(0, &["secondary-join-error".to_owned()]);
-            self.observed.store(true, std::sync::atomic::Ordering::SeqCst);
+            self.observed
+                .store(true, std::sync::atomic::Ordering::SeqCst);
         }
     }
     let (tx, rx) = mpsc::channel();
@@ -77,7 +84,8 @@ fn native清理诊断不覆盖原panic对象() {
             observed: proof,
         };
         std::panic::panic_any(Primary(71));
-    }).expect_err("测试必须传播最初的 panic");
+    })
+    .expect_err("测试必须传播最初的 panic");
     assert_eq!(error.downcast_ref::<Primary>(), Some(&Primary(71)));
     assert!(observed.load(std::sync::atomic::Ordering::SeqCst));
     assert_eq!(rx.try_recv(), Ok(37));

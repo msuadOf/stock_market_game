@@ -106,12 +106,12 @@ test("无共享市场控制权时桌面／移动倍速及暂停按钮禁用，�
   assert.match(mobileConnection, /<MobileStockDetail[\s\S]+marketControlsDisabled=\{props.marketControlsDisabled\}/);
 });
 
-test("共享市场不使用本地重开流程，只有控制者可读取日终档", () => {
+test("共享市场不显示本地快速槽，只有控制者可显式导入档案文件", () => {
   assert.match(source, /startupTarget.kind === "remote" \? <section [^>]+aria-label="共享市场管理"/);
-  assert.match(source, /if \(canControlMarket\) void handleLoad\(\)/);
+  assert.match(source, /onLoad=\{startupTarget.kind === "remote" \? undefined : \(\) => void handleLoad\(\)\}/);
   assert.match(source, /if \(canControlMarket\) void handleLoadFile\(\)/);
   assert.match(source, /loadDisabled=\{!canControlMarket\}/);
   const panel = readFileSync(new URL("./LocalRefreshViews.tsx", import.meta.url), "utf8");
-  assert.match(panel, /disabled=\{props.loadDisabled\} onClick=\{props.onLoad\}/);
+  assert.match(panel, /props.onLoad !== undefined \? <button [^>]+onClick=\{props.onLoad\}/);
   assert.match(panel, /disabled=\{props.loadDisabled\} onClick=\{props.onLoadFile\}/);
 });

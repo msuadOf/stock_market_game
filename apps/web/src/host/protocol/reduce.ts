@@ -1,3 +1,5 @@
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
 import { effectsFromFacts, civilBarrierEffects } from "./effects.ts";
 import { normalizeEngineUpdate } from "./normalize.ts";
 import { parseEngineUpdate } from "./parse.ts";
@@ -72,10 +74,11 @@ function expectedCursor(state: ProtocolState, range: ReturnType<typeof updateRan
 
 function appliedState(state: ProtocolState, generation: string, update: WireEngineUpdate, canonical: string): ProtocolState {
   const range = updateRange(update);
-  const accepted = new Map(state.accepted);
-  accepted.set(`${range.tick}\u0000${range.to}`, canonical);
+  const replayKey = `${range.tick}\u0000${range.to}`;
   if ("TickBatch" in update) {
     const batch = update.TickBatch;
+    const accepted = new Map(state.accepted);
+    accepted.set(replayKey, canonical);
     // 数值 wire 在通过校验后整体翻译为代码串形态，再进入归一化与状态应用。
     const coded = translateEngineUpdate(update, "EngineUpdate", state.catalogResolver);
     const normalized = normalizeEngineUpdate(coded);
@@ -111,8 +114,9 @@ function appliedState(state: ProtocolState, generation: string, update: WireEngi
     snapshot: normalized.update.refresh.snapshot,
     securities: civil.refresh.securities,
     publicPublicationIds: civil.refresh.public_publication_ids,
-    intraday: normalized.intraday,
-    accepted,
+    // 日界只留下本次屏障的摘要用于重传验真，旧分时和重放正文一并释放。
+    intraday: [],
+    accepted: new Map([[replayKey, canonical]]),
     playerWorkingOrders: {},
     playerOrdersReady: false,
   };
@@ -129,15 +133,16 @@ export function reduceEngineUpdate(
   validateEngineUpdate(update, state.catalogResolver);
   const range = updateRange(update);
   const canonical = canonicalEngineUpdate(update);
+  const replayValue = range.civil ? bytesToHex(sha256(new TextEncoder().encode(canonical))) : canonical;
   const normalizedUpdate = normalizeEngineUpdate(translateEngineUpdate(update, "EngineUpdate", state.catalogResolver));
-  if (exactRetry(state, range, canonical)) {
+  if (exactRetry(state, range, replayValue)) {
     return { kind: "exact-retry", state, update: normalizedUpdate, effects: [] };
   }
   validateMirrorOriginTransition(state, update);
   expectedCursor(state, range);
   return {
     kind: "applied",
-    state: appliedState(state, generation, update, canonical),
+    state: appliedState(state, generation, update, replayValue),
     update: normalizedUpdate,
     effects: updateEffects(normalizedUpdate),
   };

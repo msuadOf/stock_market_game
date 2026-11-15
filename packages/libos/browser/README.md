@@ -4,6 +4,7 @@
 
 | 接口 | 职责 |
 | --- | --- |
+| `browser-transport.ts` | 构造普通 Worker、可转交 MessageChannel、WebSocket，管理端口引用与定时器。入口代码和 wire 状态机仍由调用方选择。 |
 | `engine-clock-env.ts` | 每 Worker 唯一的 `env` import 绑定，提供时钟、futex、spawn 与 exit。 |
 | `facade-wasm-module.ts` | 由调用者提供内存页数与隔离状态，创建共享 Memory；验证用同一份 Memory 实例化与提供清理导出。 |
 | `engine-supervisor.ts` | 由调用者提供 Worker 工厂与结构化错误解析，管理同一实例的 Worker、槽代际、退出回执和排空。 |

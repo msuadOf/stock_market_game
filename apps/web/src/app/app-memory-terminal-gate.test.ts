@@ -18,7 +18,7 @@ before(async () => {
 after(async () => { if (vite) await vite.close(); });
 
 // 执行 AppShell 真实 early-return AST，避免为了错误页启动完整行情与宿主副作用。
-function renderError(error: HostFailure | string, returningToStartup = false, memoryHandoverPanel: unknown = null): string {
+function renderError(error: HostFailure | string, returningToStartup = false, memoryHandoverPanel: unknown = null, startupTarget: {kind: "wasm" | "remote"} = {kind: "wasm"}): string {
   const file = ts.createSourceFile("App.tsx", readFileSync(new URL("../App.tsx", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const shell = file.statements.find((node): node is ts.FunctionDeclaration => ts.isFunctionDeclaration(node) && node.name?.text === "AppShell");
   assert.ok(shell?.body);
@@ -32,7 +32,7 @@ function renderError(error: HostFailure | string, returningToStartup = false, me
   const environment = {
     React, ...terminal, FatalHostError: host.FatalHostError,
     Button: ({ children, onClick }: { children: React.ReactNode; onClick: () => void }) => React.createElement("button", { onClick }, children),
-    error, returningToStartup, startupReturnError: null, notice: null,
+    error, returningToStartup, startupTarget, startupReturnError: null, notice: null,
     memoryHandoverPanel, MemoryHandoverPanel: () => React.createElement("div", null, "不应显示交接面板"),
     ready: false, hostBaselineReady: false, hasSnapshot: false,
     selectHost: forbidden, handleNewGame: forbidden, recoverFromFile: forbidden,
@@ -76,4 +76,10 @@ test("其他结构化或字符串错误保留既有明确恢复入口", () => {
     assert.match(html, /创建新游戏/); assert.match(html, /选择其他日终存档/);
     assert.equal((html.match(/<button\b/g) || []).length, 5);
   }
+});
+
+test("共享市场的启动失败也不会显示本地存档恢复入口", () => {
+  const html = renderError("远端初始化失败", false, null, {kind: "remote"});
+  assert.match(html, /返回启动选择/);
+  assert.doesNotMatch(html, /选择其他日终存档|创建新游戏/);
 });

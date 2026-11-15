@@ -51,12 +51,12 @@ const snapshotSlice = createSlice({
       state.snapshot = action.payload;
       state.lastSeq = action.payload.seq;
     },
-    installProtocolSnapshotBaseline(state, action: PayloadAction<{ readonly snapshot: CodedSnapshot; readonly generation: string }>) {
+    installProtocolSnapshotBaseline(state, action: PayloadAction<{ readonly snapshot: CodedSnapshot; readonly generation: string; readonly playerWorkingOrders?: Record<number, PlayerWorkingOrder> }>) {
       state.snapshot = action.payload.snapshot;
       state.lastSeq = action.payload.snapshot.seq;
       state.generation = action.payload.generation;
-      state.playerWorkingOrders = {};
-      state.playerOrdersReady = false;
+      state.playerWorkingOrders = action.payload.playerWorkingOrders ?? {};
+      state.playerOrdersReady = action.payload.playerWorkingOrders !== undefined;
     },
     installProtocolWorkingOrdersBaseline(state, action: PayloadAction<{
       readonly generation: string; readonly tick: number; readonly seq: number;
@@ -105,7 +105,9 @@ const snapshotSlice = createSlice({
   extraReducers(builder) {
     builder.addCase(installHostBaseline, (state, { payload }) => {
       state.snapshot = payload.snapshot; state.lastSeq = payload.snapshot.seq;
-      state.generation = payload.generation; state.playerWorkingOrders = {}; state.playerOrdersReady = false;
+      state.generation = payload.generation;
+      state.playerWorkingOrders = payload.playerWorkingOrders ?? {};
+      state.playerOrdersReady = payload.playerWorkingOrders !== undefined;
     });
   },
 });

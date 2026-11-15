@@ -15,10 +15,10 @@ import type { WasmFinalRelease } from "./wasm-final-release.ts";
 /** 只分配宿主错误载荷，不改变 Rust 的 WorkerFailed 判定。 */
 export const FacadeSpawnError = Object.freeze({ WORKER_CONSTRUCT: 1, SCRIPT_LOAD: 2, INSTANTIATE: 3, SUPERVISOR_SHUTDOWN: 4, BOOTSTRAP_FAILURE: 5 });
 export function allocateFacadeWorkerId(next: number): { workerId: number; next: number } {
-  if (!Number.isInteger(next) || next < 1 || next > 0xfffffffe) throw new Error("facade Worker id 已耗尽或非法，禁止回绕");
+  if (!Number.isInteger(next) || next < 1 || next > 0xfffffffd) throw new Error("facade Worker id 已耗尽或非法，禁止回绕");
   return { workerId: next, next: next + 1 };
 }
-export interface FacadePrimaryLayout { readonly engine: { readonly workerId: 0; readonly address: number }; readonly ingress: { readonly workerId: 4294967295; readonly address: number }; readonly death: WasmWaitDeathLayout }
+export interface FacadePrimaryLayout { readonly engine: { readonly workerId: 0; readonly address: number }; readonly ingress: { readonly workerId: 4294967295; readonly address: number }; readonly publisher: { readonly workerId: 4294967294; readonly address: number }; readonly death: WasmWaitDeathLayout }
 export interface FacadeSubstrate {
   readonly module: WebAssembly.Module;
   readonly memory: WebAssembly.Memory;
@@ -52,7 +52,7 @@ export interface EngineSupervisorOptions {
 }
 interface Resource {
   readonly worker: Worker;
-  readonly role: "engine" | "child" | "ingress";
+  readonly role: "engine" | "child" | "ingress" | "publisher";
   readonly identity?: Readonly<FacadeThreadIdentity>;
   readonly recordAddr?: number;
   readonly port?: MessagePort;
@@ -67,17 +67,20 @@ interface Resource {
 function parsePrimary(value: unknown, memory: WebAssembly.Memory): FacadePrimaryLayout {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("primary 布局必须为对象");
   const source = value as Record<string, unknown>;
-  if (Object.keys(source).sort().join(",") !== "death,engine,ingress") throw new Error("primary 布局字段非法");
+  if (Object.keys(source).sort().join(",") !== "death,engine,ingress,publisher") throw new Error("primary 布局字段非法");
   function record(value: unknown, expected: number): { workerId: number; address: number } {
     if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("primary 记录非法");
     const item = value as Record<string, unknown>;
     if (Object.keys(item).sort().join(",") !== "address,workerId" || item.workerId !== expected || typeof item.address !== "number" || !Number.isInteger(item.address) || item.address <= 0 || item.address % 4 !== 0 || item.address + 256 > memory.buffer.byteLength) throw new Error("primary 记录身份或地址非法");
     return { workerId: expected, address: item.address };
   }
-  const engine = record(source.engine, 0), ingress = record(source.ingress, 0xffffffff);
+  const engine = record(source.engine, 0), ingress = record(source.ingress, 0xffffffff), publisher = record(source.publisher, 0xfffffffe);
   const death = parseWasmWaitDeathLayout(source.death, memory);
-  if (engine.address < ingress.address + 256 && ingress.address < engine.address + 256 || [engine.address, ingress.address].some((address) => death.address < address + 256 && address < death.address + 4)) throw new Error("primary 记录与 DEAD 重叠");
-  return Object.freeze({ engine: Object.freeze({ ...engine, workerId: 0 as const }), ingress: Object.freeze({ ...ingress, workerId: 0xffffffff as const }), death });
+  const addresses = [engine.address, ingress.address, publisher.address];
+  if (addresses.some((address, index) => addresses.slice(index + 1).some((other) => address < other + 256 && other < address + 256)
+    || death.address < address + 256 && address < death.address + 4)) throw new Error("primary 记录或 DEAD 范围重叠");
+  return Object.freeze({ engine: Object.freeze({ ...engine, workerId: 0 as const }), ingress: Object.freeze({ ...ingress, workerId: 0xffffffff as const }),
+    publisher: Object.freeze({ ...publisher, workerId: 0xfffffffe as const }), death });
 }
 
 /** supervisor 所在的 control owner 持全部真实资源；manifest 只保存 W0 的 slot/gen 事实。 */
@@ -263,6 +266,7 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
       const allRecords = [...(primary === undefined ? [] : [
         { address: primary.engine.address, identity: { workerId: 0, role: "engine" } },
         { address: primary.ingress.address, identity: { workerId: 0xffffffff, role: "ingress" } },
+        { address: primary.publisher.address, identity: { workerId: 0xfffffffe, role: "publisher" } },
       ]), ...records];
       const snapshots = allRecords.map(({ address, identity }) => {
         try {
@@ -342,7 +346,7 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
     const resource: Resource = { worker, role, identity: identity === undefined ? undefined : Object.freeze({ ...identity }), listeners: [], ready: role !== "child" };
     resources.set(worker, resource);
     try {
-      if (role !== "ingress") {
+      if (role === "engine" || role === "child") {
         const channel = createChannel();
         Object.assign(resource, { port: channel.port1, localPort: channel.port2 });
         addListener(resource, channel.port1, "message", (event) => consume(resource, (event as MessageEvent).data, false));
@@ -352,7 +356,8 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
         channel.port1.start();
       }
       addListener(resource, worker, "error", (event) => workerError(resource, event));
-      addListener(resource, worker, "messageerror", (event) => workerError(resource, event));
+      // Publisher 的解码失败由独立 owner 通道报告给观察者；未知 error/trap 仍走共享 Memory fail-stop。
+      if (role !== "publisher") addListener(resource, worker, "messageerror", (event) => workerError(resource, event));
       if (role === "child") addListener(resource, worker, "message", (event) => consume(resource, (event as MessageEvent).data, true));
       return resource;
     } catch (error) { cleanup(resource, true); throw error; }
@@ -380,7 +385,7 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
       const arenaEnd = layout.baseAddr + (layout.headerWords + layout.capacity * (layout.slotStride + layout.joinStride)) * 4;
       if (recordAddr === 0 || recordAddr % 4 !== 0 || recordAddr + 256 > memory.buffer.byteLength ||
           (recordAddr < arenaEnd && recordAddr + 256 > layout.baseAddr) ||
-          (primary !== undefined && [primary.engine.address, primary.ingress.address].some((address) => recordAddr < address + 256 && address < recordAddr + 256)) ||
+          (primary !== undefined && [primary.engine.address, primary.ingress.address, primary.publisher.address].some((address) => recordAddr < address + 256 && address < recordAddr + 256)) ||
           (substrate.waitDeath !== undefined && recordAddr < substrate.waitDeath.address + 4 && substrate.waitDeath.address < recordAddr + 256) ||
           (substrate.waitAbort !== undefined && recordAddr <= substrate.waitAbort.address && substrate.waitAbort.address < recordAddr + 256) ||
           records.some(({ address }) => recordAddr < address + 256 && address < recordAddr + 256)) {
@@ -481,7 +486,7 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
       }
       return;
     }
-    if (resource.role === "ingress") throw new Error("ingress 禁止 facade 控制消息");
+    if (resource.role === "ingress" || resource.role === "publisher") throw new Error("独立传输 Worker 禁止 facade 控制消息");
     if (resource.role === "child" && !resource.ready && message.type !== "facadeChildReady") throw new Error("child ready 前不能发运行控制消息");
     switch (message.type) {
       case "facadeSpawn": checkpoint(); if (!disposed) spawn(message.slot, message.gen, message.name); return;
@@ -637,8 +642,8 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
     }
     substrate = Object.freeze({ module, memory, layout: Object.freeze({ ...layout }), diagnostics, ...(waitAbort === undefined ? {} : { waitAbort }), ...(waitDeath === undefined ? {} : { waitDeath }) });
     if (primary !== undefined && (waitDeath === undefined || waitDeath.address !== primary.death.address)) throw new Error("配置 DEAD 地址与提前登记不一致");
-    if (primary !== undefined && (primary.engine.address < layout.baseAddr + length * 4 && layout.baseAddr < primary.engine.address + 256 || primary.ingress.address < layout.baseAddr + length * 4 && layout.baseAddr < primary.ingress.address + 256)) throw new Error("primary 记录与 arena 重叠");
-    if (primary !== undefined && waitAbort !== undefined && [primary.engine.address, primary.ingress.address].some((address) => address <= waitAbort.address && waitAbort.address < address + 256)) throw new Error("primary 记录与 abort 重叠");
+    if (primary !== undefined && [primary.engine.address, primary.ingress.address, primary.publisher.address].some((address) => address < layout.baseAddr + length * 4 && layout.baseAddr < address + 256)) throw new Error("primary 记录与 arena 重叠");
+    if (primary !== undefined && waitAbort !== undefined && [primary.engine.address, primary.ingress.address, primary.publisher.address].some((address) => address <= waitAbort.address && waitAbort.address < address + 256)) throw new Error("primary 记录与 abort 重叠");
     if (primary !== undefined) substrate = Object.freeze({ ...substrate, primary });
     if (waitDeath !== undefined && primary === undefined) cancelDeathWatch = watchWasmDeath(memory, waitDeath, () => {
       if (!disposed) fatal({ code: "WASM_WORKER_DEATH", where: "engine-supervisor.death", message: "WASM Worker 报告死亡；诊断记录可能尚未发布", recoverable: false, recoveryActions: ["请保留错误详情并反馈"] });
@@ -689,6 +694,12 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
       if (substrate === undefined) throw new Error("EngineSupervisor substrate 尚未 configured");
       return substrate;
     },
+    attachPublisher(worker: Worker): void { assertConfigured(); attach(worker, "publisher"); },
+    observePublisherConfigured(worker: Worker): void {
+      const resource = resources.get(worker);
+      if (disposed || resource === undefined || resource.role !== "publisher") throw new Error("publisher configured 观察必须属于本人活跃 publisher");
+      if (allocatedMemory !== undefined) options.onLifecycleObservation?.({ type: "allocationConfigured", allocationId: 1, role: "publisher", workerId: null, slot: null, gen: null });
+    },
     attachIngress(worker: Worker): void { assertConfigured(); attach(worker, "ingress"); },
     observeIngressConfigured(worker: Worker): void {
       const resource = resources.get(worker);
@@ -730,7 +741,7 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
     },
     markQuiescent(worker: Worker): void {
       const resource = resources.get(worker);
-      if (disposed || resource === undefined || resource.role === "child" || resource.quiescent === true) throw new Error("quiescence 必须来自活跃 engine/ingress 的一次真实回复");
+      if (disposed || resource === undefined || resource.role === "child" || resource.quiescent === true) throw new Error("quiescence 必须来自活跃 engine/ingress/publisher 的一次真实回复");
       resource.quiescent = true;
       options.onLifecycleObservation?.({ type: "quiescent", role: resource.role, ...lifecycleCounts() });
     },

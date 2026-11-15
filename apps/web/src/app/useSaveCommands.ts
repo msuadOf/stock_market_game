@@ -35,7 +35,7 @@ export interface SaveCommandPorts {
   floatAllocationDraft: FloatAllocation;
   loadFromFile(beforeRead?: () => Promise<void>): Promise<StrictSaveEnvelope | null>;
   selectDayEndFileTarget(): Promise<DayEndFileTarget | null>;
-  getBrowserSaveRepository(): { load(): Promise<StrictSaveEnvelope | null> };
+  getQuickArchive(): { load(): Promise<StrictSaveEnvelope | null> };
   resetMarketHistory(snapshot: Snapshot): void;
   configureMarketTiming(setup: SessionSetup): void;
   refreshPlayerOrders(): Promise<void>;
@@ -61,7 +61,7 @@ export function createSaveCommands(ports: SaveCommandPorts) {
     hostRef, initialSaveSourceRef, dayEndPersistenceRef, autoOrderMgrRef, sessionReplacementGateRef,
     saveSelectionGenerationRef, dayEndFileTargetRef, playerOrderRefreshGateRef, speedMetricsLoadInProgressRef,
     speedMetricsRequestGateRef, fatalHostErrorRef, activeSetup, startDateDraft, priceCageEnabledDraft, floatAllocationDraft,
-    loadFromFile, selectDayEndFileTarget, getBrowserSaveRepository, resetMarketHistory, configureMarketTiming, refreshPlayerOrders,
+    loadFromFile, selectDayEndFileTarget, getQuickArchive, resetMarketHistory, configureMarketTiming, refreshPlayerOrders,
     clearPlayerOrders, setNotice, setError, setReady, setSessionSetup, setActiveSetup, setStartDateDraft,
     setPriceCageEnabledDraft, setFloatAllocationDraft, setInitialAllocation, setStartDateError, setSpeedMetricsPollingGeneration, setSpeedMetrics,
     setSpeedMetricsError,
@@ -115,6 +115,10 @@ export function createSaveCommands(ports: SaveCommandPorts) {
     setNotice("已启用日终自动存档；日内不写档，首次完整自然日日结前没有可用日终存档。");
   }
   async function handleLoad() {
+    if (ports.startupTarget.kind === "remote") {
+      setNotice("共享市场不会读取浏览器快速槽；请通过 Server 日终档案接口管理归档，或明确选择日终档案文件导入。");
+      return;
+    }
     const host = hostRef.current;
     if (host === null) return;
     const loadGeneration = sessionReplacementGateRef.current.begin();
@@ -123,9 +127,7 @@ export function createSaveCommands(ports: SaveCommandPorts) {
     const isCurrent = () => host === hostRef.current && sessionReplacementGateRef.current.isCurrent(loadGeneration);
     try {
       setNotice("正在读取日终快速存档，等待已提交的写入完成…");
-      await dayEndPersistenceRef.current.beforeRead();
-      if (!isCurrent()) return;
-      const slot = await getBrowserSaveRepository().load();
+      const slot = await getQuickArchive().load();
       if (!isCurrent()) return;
       if (!slot) { setNotice("无存档"); return; }
       validateDayEndArchive(slot);

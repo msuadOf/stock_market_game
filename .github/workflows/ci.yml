@@ -212,7 +212,7 @@ jobs:
         run: node scripts/run-with-deadline.mjs 10000 -- node --test --test-timeout=10000 --test-isolation=none scripts/wasm-build-dependencies.test.mjs
 
       - name: Check LibOS target dependency boundary
-        run: node scripts/run-with-deadline.mjs 10000 -- node --test --test-timeout=10000 --test-isolation=none scripts/libos-build-dependencies.test.mjs
+        run: node scripts/run-with-deadline.mjs 10000 -- node --test --test-timeout=10000 --test-isolation=none scripts/libos-build-dependencies.test.mjs scripts/shared-market-runner-boundary.test.mjs
 
       # ts-rs exports during Rust tests; checking a clean checkout before those
       # tests cannot detect committed but stale TypeScript bindings.
@@ -259,3 +259,8 @@ jobs:
       - name: Compare Native Server and Browser product facts (Linux only)
         if: runner.os == 'Linux'
         run: node scripts/run-long-validation.mjs 300000 -- node scripts/libos-product-parity.mjs --server-bin "$PWD/.tmp/libos-product-parity-target/release/server" --output "$RUNNER_TEMP/libos-product-parity.json"
+
+
+      - name: Advance across trading days with a stalled Browser observer (Linux only)
+        if: runner.os == 'Linux'
+        run: node scripts/run-long-validation.mjs 90000 -- node scripts/stalled-observer-day.mjs

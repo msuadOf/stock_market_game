@@ -162,7 +162,7 @@ export function parseStrictSaveEnvelope(value: unknown): StrictSaveEnvelope {
   }
   exact(root.history_reads as Record<string, unknown>, Object.keys(snapshot.accounts), "history_reads (snapshot.accounts)")
   // B2 保存域（W3 接入）：StockId→tick 目录（id=setup 代码升序下标，ADR 0041）；
-  // 保留链日期连续覆盖 settled_through；分钟累计对真实日K逐位；receipt 归属
+  // 保留链日期连续覆盖 settled_through；已结算日K独立校验，旧档非空分钟累计仍逐位核对；receipt 归属
   // 与水位单调。缺任一字段的 JSON 不是当前 schema 合法存档（exact 已拒）。
   const stocksById: StockTickById = expectedStockIdKeys.map((id, index) => {
     const stock = [...setup.stocks].sort((left, right) => left.code.localeCompare(right.code))[index]!

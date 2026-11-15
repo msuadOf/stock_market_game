@@ -1,16 +1,17 @@
+import { browserWorkerEntry, cancelTimeout, isMessagePort, ownMessagePort, scheduleTimeout, sharedTimeAt, spawnModuleWorker, transferMessageChannel, type OwnedMessagePort, type TimeoutHandle } from "../../../../packages/libos/browser/browser-transport.ts";
+import { markSharedControl, requireSharedControlWord, retractSharedControl } from "../../../../packages/libos/browser/shared-substrate-publisher.ts";
 import type { WasmLifecycleObservation } from "./wasm-lifecycle-observation.ts";
 import type { WasmFinalRelease } from "./wasm-document-memory-owner.ts";
 import type { HostFailure } from "./host-update.ts";
 import { parseHostFailure } from "./protocol-failure.ts";
 import { parseWasmSessionShutdown } from "./wasm-shutdown-report.ts";
 
-export interface EngineBusinessPort {
-  addEventListener(type: "message", listener: (event: MessageEvent) => void): void;
-  removeEventListener(type: "message", listener: (event: MessageEvent) => void): void;
-  postMessage(message: unknown): void;
-  start(): void;
-  close(): void;
-}
+export type EngineBusinessPort = OwnedMessagePort;
+
+// 静态声明打包入口，未打包的 Node 验证仍使用原入口并安装 Worker fixture。
+const workerAssets = import.meta.env === undefined ? undefined : import.meta.glob<string>(
+  "./engine-control-worker.ts", { eager: true, import: "default", query: "?worker&url" },
+);
 
 type OwnerMessage = Readonly<Record<string, unknown>>;
 let nextInstanceId = 1;
@@ -38,7 +39,7 @@ function lifecycleEvent(value: unknown): WasmLifecycleObservation {
     if (event.allocationId !== 1 || event.role !== "engine") throw new Error("memoryRegistered 身份无效");
   } else if (event.type === "allocationConfigured") {
     exact(event, ["type", "allocationId", "role", "workerId", "slot", "gen"], "allocationConfigured");
-    if (event.allocationId !== 1 || !["engine", "ingress", "child"].includes(String(event.role))) throw new Error("allocationConfigured 身份无效");
+    if (event.allocationId !== 1 || !["engine", "ingress", "publisher", "child"].includes(String(event.role))) throw new Error("allocationConfigured 身份无效");
     if (event.role === "child") for (const key of identity) identityField(key);
     else if (event.workerId !== null || event.slot !== null || event.gen !== null) throw new Error("allocationConfigured 非 child 身份字段必须为 null");
   } else if (event.type === "childSpawn") {
@@ -52,7 +53,7 @@ function lifecycleEvent(value: unknown): WasmLifecycleObservation {
     for (const key of counts) if (!Number.isSafeInteger(event[key]) || Number(event[key]) < 0) throw new Error(`childExit.${key} 无效`);
   } else if (event.type === "quiescent") {
     exact(event, ["type", "role", ...counts], "quiescent");
-    if (event.role !== "engine" && event.role !== "ingress") throw new Error("quiescent.role 无效");
+    if (event.role !== "engine" && event.role !== "ingress" && event.role !== "publisher") throw new Error("quiescent.role 无效");
     for (const key of counts) if (!Number.isSafeInteger(event[key]) || Number(event[key]) < 0) throw new Error(`quiescent.${key} 无效`);
   } else if (event.type === "childrenDrained") {
     exact(event, ["type", ...counts], "childrenDrained");
@@ -72,38 +73,12 @@ function lifecycleEvent(value: unknown): WasmLifecycleObservation {
   return event as unknown as WasmLifecycleObservation;
 }
 
-/** Host 持有的轻量句柄不保留已关闭的实际 MessagePort 或 listener。 */
-function businessPortHandle(port: MessagePort | null): EngineBusinessPort {
-  let current: MessagePort | null = port;
-  port = null;
-  const listeners = new Set<(event: MessageEvent) => void>();
-  function requirePort(): MessagePort {
-    if (current === null) throw new Error("controlWorker business port 已关闭");
-    return current;
-  }
-  return {
-    addEventListener(type, listener) { requirePort().addEventListener(type, listener); listeners.add(listener); },
-    removeEventListener(type, listener) { current?.removeEventListener(type, listener); listeners.delete(listener); },
-    postMessage(message) { requirePort().postMessage(message); },
-    start() { requirePort().start(); },
-    close() {
-      const closing = current;
-      current = null;
-      if (closing === null) return;
-      const errors: unknown[] = [];
-      for (const listener of listeners) { try { closing.removeEventListener("message", listener); } catch (error) { errors.push(error); } }
-      listeners.clear();
-      try { closing.close(); } catch (error) { errors.push(error); }
-      if (errors.length > 0) throw new AggregateError(errors, "business port 清理失败");
-    },
-  };
-}
-
 /** 主线程只保留业务端口，并通过小控制信封请求 owner 变更生命周期。 */
 export function createEngineControlClient(options: {
   readonly runtimeOverride: boolean;
   readonly onLifecycleObservation?: (event: WasmLifecycleObservation) => void;
   readonly onFailure: (error: Error) => void;
+  readonly onPublisherObserverFailure?: (generation: number, error: Error) => void;
   readonly onFailurePending?: (failure: HostFailure) => void;
   readonly onSpawnFailure: (failure: unknown) => void;
 }): {
@@ -114,17 +89,20 @@ export function createEngineControlClient(options: {
   start(): void;
   sendInitialization(message: Readonly<Record<string, unknown>>): void;
   bindIngress(generation: number, token: number): Promise<EngineBusinessPort>;
+  bindPublisher(generation: number, token: number, controlAddress: number): Promise<EngineBusinessPort>;
+  markPending(generation: number): boolean;
+  unmarkPending(generation: number): boolean;
   beginShutdown(until: number): void;
   completeShutdown(): void;
   abortShutdown(error: Error): void;
   terminateAfterRelease(): void;
 } {
   const instanceId = positiveSafeInteger(nextInstanceId++, "controlWorker instanceId");
-  let engineChannel: MessageChannel | null = new MessageChannel();
+  let engineChannel: MessageChannel | null = transferMessageChannel();
   let controlWorker: Worker | null;
-  try { controlWorker = new Worker(new URL("./engine-control-worker.ts", import.meta.url), { type: "module", name: `stock-game:control:${instanceId}` }); }
+  try { controlWorker = spawnModuleWorker(browserWorkerEntry("./engine-control-worker.ts", import.meta.url, workerAssets), `stock-game:control:${instanceId}`); }
   catch (error) { engineChannel.port1.close(); engineChannel.port2.close(); throw error; }
-  const enginePort = businessPortHandle(engineChannel.port1);
+  const enginePort = ownMessagePort(engineChannel.port1);
   let requestId = 0;
   let failed = false;
   let failureError: Error | undefined;
@@ -135,7 +113,10 @@ export function createEngineControlClient(options: {
   let wasConfigured = false;
   let started = false;
   let ingressPort: EngineBusinessPort | null = null;
-  let failureCleanupTimer: ReturnType<typeof setTimeout> | undefined;
+  let publisherPort: EngineBusinessPort | null = null;
+  let controlSignal: { readonly generation: number; readonly word: Int32Array } | null = null;
+  let publisherClosing = false;
+  let failureCleanupTimer: TimeoutHandle | undefined;
   let finalObservation: WasmLifecycleObservation | undefined;
   let configuredResolve!: () => void;
   let configuredReject!: (error: Error) => void;
@@ -146,7 +127,8 @@ export function createEngineControlClient(options: {
   // 拒绝仍由公开 Promise 与 onFailure 交付；此观察者防止调用方尚未 await 时产生 unhandled rejection。
   void configured.then(undefined, () => undefined);
   void release.then(undefined, () => undefined);
-  const ingressWaiters = new Map<number, { resolve: (port: EngineBusinessPort) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>();
+  const ingressWaiters = new Map<number, { resolve: (port: EngineBusinessPort) => void; reject: (error: Error) => void; timer: TimeoutHandle }>();
+  const publisherWaiters = new Map<number, { generation: number; resolve: (port: EngineBusinessPort) => void; reject: (error: Error) => void; timer: TimeoutHandle }>();
   const onWorkerError = (event: Event) => fail(new Error(`controlWorker 执行失败：${(event as ErrorEvent).message}`, { cause: event }));
   const onWorkerMessageError = (event: Event) => fail(new Error("controlWorker 收到无法解码的消息", { cause: event }));
 
@@ -155,12 +137,18 @@ export function createEngineControlClient(options: {
     try { enginePort.close(); } catch (cleanupError) { errors.push(cleanupError); }
     const closingIngress = ingressPort; ingressPort = null;
     try { closingIngress?.close(); } catch (cleanupError) { errors.push(cleanupError); }
-    for (const waiter of ingressWaiters.values()) { clearTimeout(waiter.timer); waiter.reject(error); }
+    for (const waiter of ingressWaiters.values()) { cancelTimeout(waiter.timer); waiter.reject(error); }
     ingressWaiters.clear();
+    const closingPublisher = publisherPort; publisherPort = null;
+    controlSignal = null;
+    publisherClosing = true;
+    try { closingPublisher?.close(); } catch (cleanupError) { errors.push(cleanupError); }
+    for (const waiter of publisherWaiters.values()) { cancelTimeout(waiter.timer); waiter.reject(error); }
+    publisherWaiters.clear();
     if (errors.length > 0) throw new AggregateError(errors, "controlWorker 业务端清理失败");
   }
   function cleanup(): void {
-    if (failureCleanupTimer !== undefined) clearTimeout(failureCleanupTimer);
+    if (failureCleanupTimer !== undefined) cancelTimeout(failureCleanupTimer);
     failureCleanupTimer = undefined;
     const errors: unknown[] = [];
     try { closeBusinessPorts(new Error("controlWorker 已关闭")); } catch (error) { errors.push(error); }
@@ -184,7 +172,7 @@ export function createEngineControlClient(options: {
     failureError = error;
     if (terminalReceipt !== undefined) { finishTerminal(); options.onFailure(error); return; }
     // 先让 owner 清理 nested Worker；硬故障无收据时只保留 unknown，并在同一 2s 内撤下本地引用。
-    if (!cleanupAtDeadline) failureCleanupTimer = setTimeout(() => { cleanup(); releaseReject(error); }, 2000);
+    if (!cleanupAtDeadline) failureCleanupTimer = scheduleTimeout(() => { cleanup(); releaseReject(error); }, 2000);
     try { controlWorker?.postMessage({ type: "abort", instanceId }); }
     catch (abortError) { cleanup(); releaseReject(error); options.onFailure(new AggregateError([error, abortError], "controlWorker 故障且清理命令无法投递")); return; }
     if (cleanupAtDeadline) { cleanup(); releaseReject(error); }
@@ -233,15 +221,47 @@ export function createEngineControlClient(options: {
         if (Object.keys(value).sort().join(",") !== (hasPort ? "instanceId,port,requestId,type" : "instanceId,requestId,type")) throw new Error("controlWorker ingressBound 字段无效");
         const id = positiveSafeInteger(value.requestId, "controlWorker requestId");
         const waiter = ingressWaiters.get(id);
-        if (waiter === undefined || hasPort && !(value.port instanceof MessagePort)) throw new Error("controlWorker ingressBound request/port 无效");
+        if (waiter === undefined || hasPort && !(isMessagePort(value.port))) throw new Error("controlWorker ingressBound request/port 无效");
         ingressWaiters.delete(id);
-        clearTimeout(waiter.timer);
+        cancelTimeout(waiter.timer);
         if (hasPort) {
           if (ingressPort !== null) throw new Error("controlWorker 重复交付 ingress 业务端口");
-          ingressPort = businessPortHandle(value.port as MessagePort); ingressPort.start();
+          ingressPort = ownMessagePort(value.port as MessagePort); ingressPort.start();
         }
         if (ingressPort === null) throw new Error("controlWorker ingressBound 缺少首次业务端口");
         waiter.resolve(ingressPort);
+        return;
+      }
+      if (value.type === "publisherObserverFailure") {
+        exact(value, ["type", "instanceId", "generation", "message"], "publisherObserverFailure");
+        const generation = positiveSafeInteger(value.generation, "publisherObserverFailure generation");
+        if (typeof value.message !== "string" || !value.message.trim()) throw new Error("发布观察者故障缺少诊断");
+        if (!publisherClosing) options.onPublisherObserverFailure?.(generation, new Error(value.message));
+        return;
+      }
+      if (value.type === "publisherBound") {
+        const hasPort = Object.hasOwn(value, "port");
+        if (Object.keys(value).sort().join(",") !== (hasPort ? "controlSignal,instanceId,port,requestId,type" : "controlSignal,instanceId,requestId,type")) throw new Error("controlWorker publisherBound 字段无效");
+        const id = positiveSafeInteger(value.requestId, "controlWorker requestId");
+        const waiter = publisherWaiters.get(id);
+        if (waiter === undefined || hasPort && !(isMessagePort(value.port))) throw new Error("controlWorker publisherBound request/port 无效");
+        publisherWaiters.delete(id);
+        cancelTimeout(waiter.timer);
+        if (hasPort) {
+          if (publisherPort !== null) throw new Error("controlWorker 重复交付 publisher 业务端口");
+          publisherPort = ownMessagePort(value.port as MessagePort); publisherPort.start();
+        }
+        if (publisherPort === null) throw new Error("controlWorker publisherBound 缺少首次业务端口");
+        if (publisherClosing) {
+          // owner 已分配 Worker；关闭期仍接管新端口用于真实 quiescence，
+          // 但绝不能重新持有共享控制字。
+          waiter.resolve(publisherPort);
+          return;
+        }
+        const word = requireSharedControlWord(value.controlSignal);
+        if (controlSignal !== null && waiter.generation <= controlSignal.generation) throw new Error("controlWorker 共享控制 generation 未推进");
+        controlSignal = { generation: waiter.generation, word };
+        waiter.resolve(publisherPort);
         return;
       }
       if (value.type === "terminal") {
@@ -278,7 +298,7 @@ export function createEngineControlClient(options: {
         const error = new Error(`${detail.code} @ ${detail.where}: ${detail.message}`, { cause: detail });
         configuredReject(error);
         // 有效 owner 故障先保留其后续真实 terminal；构造前拒绝仍可准确结 not-allocated。
-        if (failureCleanupTimer === undefined) failureCleanupTimer = setTimeout(() => fail(new Error("controlWorker 故障后缺少真实 terminal 收据，release unknown", { cause: error }), true), 2000);
+        if (failureCleanupTimer === undefined) failureCleanupTimer = scheduleTimeout(() => fail(new Error("controlWorker 故障后缺少真实 terminal 收据，release unknown", { cause: error }), true), 2000);
         options.onFailure(error);
         return;
       }
@@ -332,21 +352,48 @@ export function createEngineControlClient(options: {
       if (failed || terminal || controlWorker === null) return Promise.reject(new Error("controlWorker 已关闭，不能 bindIngress"));
       const id = positiveSafeInteger(++requestId, "controlWorker requestId");
       return new Promise<EngineBusinessPort>((resolve, reject) => {
-        const waiter = { resolve, reject, timer: setTimeout(() => {
+        const waiter = { resolve, reject, timer: scheduleTimeout(() => {
           ingressWaiters.delete(id);
           const error = new Error("controlWorker bindIngress 超过 10000ms");
           reject(error); fail(error);
         }, 10_000) };
         ingressWaiters.set(id, waiter);
         try { controlWorker!.postMessage({ type: "bindIngress", instanceId, requestId: id, generation, token }); }
-        catch (error) { ingressWaiters.delete(id); clearTimeout(waiter.timer); reject(error instanceof Error ? error : new Error("发送 bindIngress 失败", { cause: error })); }
+        catch (error) { ingressWaiters.delete(id); cancelTimeout(waiter.timer); reject(error instanceof Error ? error : new Error("发送 bindIngress 失败", { cause: error })); }
       });
+    },
+    bindPublisher(generation, token, controlAddress) {
+      if (failed || terminal || publisherClosing || controlWorker === null) return Promise.reject(new Error("controlWorker 已关闭，不能 bindPublisher"));
+      controlSignal = null;
+      const id = positiveSafeInteger(++requestId, "controlWorker requestId");
+      return new Promise<EngineBusinessPort>((resolve, reject) => {
+        const waiter = { generation, resolve, reject, timer: scheduleTimeout(() => {
+          publisherWaiters.delete(id);
+          const error = new Error("controlWorker bindPublisher 超过 10000ms");
+          reject(error); fail(error);
+        }, 10_000) };
+        publisherWaiters.set(id, waiter);
+        try { controlWorker!.postMessage({ type: "bindPublisher", instanceId, requestId: id, generation, token, controlAddress }); }
+        catch (error) { publisherWaiters.delete(id); cancelTimeout(waiter.timer); reject(error instanceof Error ? error : new Error("发送 bindPublisher 失败", { cause: error })); }
+      });
+    },
+    markPending(generation) {
+      if (controlSignal === null || controlSignal.generation !== generation) return false;
+      markSharedControl(controlSignal.word);
+      return true;
+    },
+    unmarkPending(generation) {
+      if (controlSignal === null || controlSignal.generation !== generation) return false;
+      retractSharedControl(controlSignal.word);
+      return true;
     },
     beginShutdown(until) {
       if (!Number.isFinite(until) || until < 0) throw new Error("controlWorker shutdown deadline 无效");
       if (terminal || failed || terminalReceipt !== undefined) return;
       if (controlWorker === null) throw new Error("controlWorker 引用已撤下");
-      const deadline = performance.timeOrigin + until;
+      publisherClosing = true;
+      controlSignal = null;
+      const deadline = sharedTimeAt(until);
       controlWorker.postMessage({ type: "beginShutdown", instanceId, deadline });
     },
     completeShutdown() { businessShutdownCompleted = true; finishTerminal(); },

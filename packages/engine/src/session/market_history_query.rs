@@ -10,8 +10,7 @@
 //! - **副作用**：`query_market_history_for`/`query_current_minute_history_for`
 //!   记 `history_reads`（账户+股+市场分钟）；纯查询 `market_history_page`/
 //!   `current_minute_history` 不记；个人域查询不记（旧契约）；
-//! - 数据源=session 镜像（retained 链+当日分钟桶——驱动器每拍/日结
-//!   安装的发布投影，与发布版本同源同拍一致）。
+//! - 数据源=session 镜像，历史按已完成日 K 及开市状态提供；仅当天读取活动分钟桶。
 
 use super::{GameSession, SessionError};
 use crate::calendar::CivilDate;
@@ -166,10 +165,10 @@ impl GameSession {
                         .find(|candle| candle.time == candle_time)
                         .cloned()
                 });
-            let (availability, bars) = if date < self.state.setup.start_date {
-                (MarketHistoryAvailability::BeforeStart, Vec::new())
+            let availability = if date < self.state.setup.start_date {
+                MarketHistoryAvailability::BeforeStart
             } else if settled.is_none_or(|settled| date > settled) {
-                (MarketHistoryAvailability::NotEnded, Vec::new())
+                MarketHistoryAvailability::NotEnded
             } else {
                 let index = usize::try_from(date.days_since(self.state.setup.start_date))
                     .map_err(|_| invalid("日期索引溢出"))?;
@@ -184,21 +183,21 @@ impl GameSession {
                     .securities
                     .get(&request.stock.0)
                     .ok_or_else(|| invalid("已结束自然日缺证券条目"))?;
-                (
-                    if !session.trading {
-                        MarketHistoryAvailability::Closed
-                    } else if session.bars.is_empty() {
-                        MarketHistoryAvailability::NoTrades
-                    } else {
-                        MarketHistoryAvailability::Traded
-                    },
-                    session.bars.as_ref().clone(),
-                )
+                if !session.trading {
+                    MarketHistoryAvailability::Closed
+                } else if daily_candle
+                    .as_ref()
+                    .is_some_and(|candle| candle.volume > 0)
+                {
+                    MarketHistoryAvailability::Traded
+                } else {
+                    MarketHistoryAvailability::NoTrades
+                }
             };
             entries.push(MarketHistoryEntry {
                 date,
                 availability,
-                bars,
+                bars: Vec::new(),
                 daily_candle: if availability == MarketHistoryAvailability::NotEnded {
                     None
                 } else {

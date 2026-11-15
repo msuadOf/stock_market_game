@@ -114,8 +114,14 @@ export class ProtocolCoordinator {
       throw new ProtocolError("PROTOCOL_CURSOR", "baseline.continuation", "runtime 刷新基线必须匹配当前 generation、tick 和 seq");
     }
     const state = createProtocolState(update.snapshot, update.generation, update.catalogResolver);
+    const playerWorkingOrders = update.workingOrders === undefined
+      ? undefined
+      : parseBaselineWorkingOrders(update.workingOrders, state.snapshot.markets);
+    const orderProjection = playerWorkingOrders === undefined ? {} : { playerWorkingOrders };
     const hydrated: ProtocolState = {
       ...state,
+      ...orderProjection,
+      playerOrdersReady: playerWorkingOrders !== undefined,
       ...(update.continuation === true && previous !== null ? { intraday: previous.intraday, accepted: previous.accepted } : {}),
       securities: update.continuation === true && previous !== null ? previous.securities : update.securities,
       publicPublicationIds: update.continuation === true && previous !== null ? previous.publicPublicationIds : update.publicPublicationIds,
@@ -123,7 +129,7 @@ export class ProtocolCoordinator {
     if (update.continuation === true) {
       this.current = hydrated;
       this.currentStatus = { kind: "ready", state: hydrated };
-      this.snapshotDispatch(installProtocolSnapshotBaseline({ snapshot: hydrated.snapshot, generation: update.generation }));
+      this.snapshotDispatch(installProtocolSnapshotBaseline({ snapshot: hydrated.snapshot, generation: update.generation, ...orderProjection }));
       this.callbacks.onBaseline(hydrated, update);
       return;
     }
@@ -133,7 +139,7 @@ export class ProtocolCoordinator {
     this.baselineEpoch = companyGeneration;
     this.current = hydrated;
     this.currentStatus = { kind: "ready", state: hydrated };
-    this.snapshotDispatch(installHostBaseline({ snapshot: hydrated.snapshot, generation: update.generation, companyGeneration, companyCatalog: update.catalogResolver.companyCatalog, stockCatalog: update.catalogResolver.stockCatalog, civilDate: update.civilDate, revision: update.revision }));
+    this.snapshotDispatch(installHostBaseline({ snapshot: hydrated.snapshot, generation: update.generation, companyGeneration, companyCatalog: update.catalogResolver.companyCatalog, stockCatalog: update.catalogResolver.stockCatalog, civilDate: update.civilDate, revision: update.revision, ...orderProjection }));
     this.callbacks.onBaseline(hydrated, update);
   }
 

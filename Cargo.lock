@@ -2422,6 +2422,7 @@ name = "libos"
 version = "0.1.0"
 dependencies = [
  "tikv-jemallocator",
+ "tokio",
 ]
 
 [[package]]
@@ -2657,10 +2658,12 @@ name = "native-store"
 version = "0.1.0"
 dependencies = [
  "engine",
+ "libos",
  "rusqlite",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "tokio",
  "windows-sys 0.61.2",
 ]
 
@@ -4063,6 +4066,7 @@ dependencies = [
  "dashmap",
  "engine",
  "futures-util",
+ "libos",
  "native-store",
  "rand_core 0.6.4",
  "serde",
@@ -4302,6 +4306,8 @@ version = "0.1.0"
 dependencies = [
  "embed-resource",
  "engine",
+ "libos",
+ "native-store",
  "serde",
  "serde_json",
  "tauri",

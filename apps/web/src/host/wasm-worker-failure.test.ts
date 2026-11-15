@@ -310,29 +310,32 @@ test("WASM Worker safely stringifies a non-string serialization-error message", 
 });
 
 test("WASM Worker routes a structured request failure through HostFailure", () => {
-  posted.length = 0;
-  const request = Object.defineProperty({
-    type: "speedMetrics",
-    requestId: 19,
-  }, "generation", {
-    get() {
-      throw {
-        code: "STEP_FATAL",
-        message: "internal step failure: expected receipt hash differs",
-      };
-    },
-  });
+  for (const enumerable of [false, true]) {
+    posted.length = 0;
+    const request = Object.defineProperty({
+      type: "speedMetrics",
+      requestId: 19,
+    }, "generation", {
+      enumerable,
+      get() {
+        throw {
+          code: "STEP_FATAL",
+          message: "internal step failure: expected receipt hash differs",
+        };
+      },
+    });
 
-  assert.notEqual(messageListener, null);
-  sendRawWorkerRequest({ data: request } as unknown as MessageEvent<Record<string, unknown> & { type: string }>);
+    assert.notEqual(messageListener, null);
+    sendRawWorkerRequest({ data: request } as unknown as MessageEvent<Record<string, unknown> & { type: string }>);
 
-  assert.deepEqual(posted, [{
-    type: "failure",
-    generation: 0,
-    code: "STEP_FATAL",
-    where: "wasm-worker.speedMetrics",
-    message: "internal step failure: expected receipt hash differs",
-  }]);
+    assert.deepEqual(posted, [{
+      type: "failure",
+      generation: 0,
+      code: "STEP_FATAL",
+      where: "wasm-worker.speedMetrics",
+      message: "internal step failure: expected receipt hash differs",
+    }]);
+  }
 });
 
 

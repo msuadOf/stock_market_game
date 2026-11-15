@@ -220,12 +220,16 @@ mod early {
         },
     }
     struct PrimaryRecords {
-        engine: &'static TombstoneRecord,
-        ingress: &'static TombstoneRecord,
+        engine: TombstoneRecord,
+        ingress: TombstoneRecord,
+        publisher: TombstoneRecord,
+        auxiliary: TombstoneRecord,
     }
     static PRIMARY: OnceLock<PrimaryRecords> = OnceLock::new();
     const ENGINE_ID: u32 = 0;
     const INGRESS_ID: u32 = u32::MAX;
+    const PUBLISHER_ID: u32 = u32::MAX - 1;
+    const AUXILIARY_ID: u32 = u32::MAX - 2;
     static DEAD: AtomicU32 = AtomicU32::new(0);
     thread_local! {
         static TARGET: Cell<Option<EarlyTarget>> = const { Cell::new(None) };
@@ -239,29 +243,30 @@ mod early {
         });
     }
 
-    /// 初始化独立 memory 的两个主 Worker 记录，并绑定当前 engine TLS。
-    pub fn init_primary() -> Result<(u32, u32, u32), &'static str> {
+    /// 初始化独立 Memory 的三个主 Worker 记录，并绑定当前 engine TLS。
+    pub fn init_primary() -> Result<(u32, u32, u32, u32), &'static str> {
         if PRIMARY.get().is_some() || TARGET.with(|slot| slot.get().is_some()) {
             return Err("主 Worker tombstone 已初始化或 TLS 已绑定");
         }
-        let records = PrimaryRecords {
-            engine: Box::leak(Box::new(TombstoneRecord::new())),
-            ingress: Box::leak(Box::new(TombstoneRecord::new())),
-        };
-        let engine = records.engine;
-        let ingress = records.ingress;
         PRIMARY
-            .set(records)
+            .set(PrimaryRecords {
+                engine: TombstoneRecord::new(),
+                ingress: TombstoneRecord::new(),
+                publisher: TombstoneRecord::new(),
+                auxiliary: TombstoneRecord::new(),
+            })
             .map_err(|_| "主 Worker tombstone 并发重复初始化")?;
+        let records = PRIMARY.get().expect("主 Worker tombstone 写入后必须可读");
         TARGET.with(|slot| {
             slot.set(Some(EarlyTarget::Primary {
-                record: engine,
+                record: &records.engine,
                 worker_id: ENGINE_ID,
             }))
         });
         Ok((
-            engine as *const _ as u32,
-            ingress as *const _ as u32,
+            &records.engine as *const _ as u32,
+            &records.ingress as *const _ as u32,
+            &records.publisher as *const _ as u32,
             &DEAD as *const _ as u32,
         ))
     }
@@ -269,7 +274,7 @@ mod early {
     /// ingress 只能绑定同一共享 memory 预登记的记录及保留身份。
     pub fn bind_ingress(address: u32, worker_id: u32) -> Result<(), &'static str> {
         let records = PRIMARY.get().ok_or("主 Worker tombstone 尚未初始化")?;
-        if worker_id != INGRESS_ID || address != records.ingress as *const _ as u32 {
+        if worker_id != INGRESS_ID || address != &records.ingress as *const _ as u32 {
             return Err("ingress tombstone 地址或身份不匹配");
         }
         TARGET.with(|slot| {
@@ -277,8 +282,49 @@ mod early {
                 return Err("ingress TLS 已绑定 tombstone");
             }
             slot.set(Some(EarlyTarget::Primary {
-                record: records.ingress,
+                record: &records.ingress,
                 worker_id,
+            }));
+            Ok(())
+        })
+    }
+
+    /// publisher 只能绑定独立 Memory 预登记的记录及保留身份。
+    pub fn bind_publisher(address: u32, worker_id: u32) -> Result<(), &'static str> {
+        let records = PRIMARY.get().ok_or("主 Worker tombstone 尚未初始化")?;
+        if worker_id != PUBLISHER_ID || address != &records.publisher as *const _ as u32 {
+            return Err("publisher tombstone 地址或身份不匹配");
+        }
+        TARGET.with(|slot| {
+            if slot.get().is_some() {
+                return Err("publisher TLS 已绑定 tombstone");
+            }
+            slot.set(Some(EarlyTarget::Primary {
+                record: &records.publisher,
+                worker_id,
+            }));
+            Ok(())
+        })
+    }
+
+    /// 独立后台 I/O 副实例的通用诊断身份，与其他槽互斥。
+    pub fn auxiliary_address() -> Result<u32, &'static str> {
+        let records = PRIMARY.get().ok_or("主 Worker tombstone 尚未初始化")?;
+        Ok(&records.auxiliary as *const _ as u32)
+    }
+
+    pub fn bind_auxiliary(address: u32) -> Result<(), &'static str> {
+        let records = PRIMARY.get().ok_or("主 Worker tombstone 尚未初始化")?;
+        if address != &records.auxiliary as *const _ as u32 {
+            return Err("后台 I/O Worker tombstone 地址无效");
+        }
+        TARGET.with(|slot| {
+            if slot.get().is_some() {
+                return Err("后台 I/O Worker TLS 已绑定 tombstone");
+            }
+            slot.set(Some(EarlyTarget::Primary {
+                record: &records.auxiliary,
+                worker_id: AUXILIARY_ID,
             }));
             Ok(())
         })
@@ -290,6 +336,8 @@ mod early {
     }
 
     /// 由受控 std 在 panic_count 和标准 hook 前调用；不格式化或分配。
+    /// 硬 Rust panic 随后直接 abort，不会释放共享分配器或调用方的锁；即使
+    /// 诊断记录属于辅助 Worker，也必须通知同一 Memory 的共享等待者。
     #[no_mangle]
     pub unsafe extern "C" fn wasm_tombstone_early(ptr: *const u8, len: usize, has_message: bool) {
         DEAD.store(1, Ordering::SeqCst);
@@ -327,7 +375,9 @@ mod early {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub use early::{bind, bind_ingress, death_word, init_primary};
+pub use early::{
+    auxiliary_address, bind, bind_auxiliary, bind_ingress, bind_publisher, death_word, init_primary,
+};
 
 #[cfg(test)]
 #[path = "wasm_tombstone_tests.rs"]

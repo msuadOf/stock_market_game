@@ -105,9 +105,12 @@ export interface EngineHost {
   readonly capabilities: HostCapabilities;
   stop(): Promise<void>;
   dispose(): Promise<void>;
+  /** 排在权威已提交的日终候选之后；由独立存储任务回复。 */
+  waitCheckpointIdle?(): Promise<void>;
+  /** 本地权威快槽读取；只有明确不存在才返回 null。 */
+  readQuickArchive?(): Promise<unknown>;
   setSpeed(multiplier: number): Promise<void>;
   setPausePreferences(preferences: PausePreferences): Promise<void>;
-  setFrameRate(fps: number): void;
   /** 所有部署宿主都必须返回同形的权威 tick/现实秒采样；通信方式对 UI 透明。 */
   readSpeedMetrics(): Promise<SpeedMetrics>;
   /** 仅远程宿主提供；缺省表示该宿主没有网络 Publisher。 */

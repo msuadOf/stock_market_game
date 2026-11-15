@@ -25,7 +25,7 @@ use engine::{
     AccountId, Intent, NpcDecisionDiagnostics, SaveSlot, SessionError, SessionSetup, Snapshot,
 };
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Runtime, State};
+use tauri::{AppHandle, Manager, Runtime, State};
 
 /// 前端监听的事件名（`@tauri-apps/api/event` 的 `listen("engine-event", ...)`）。
 pub const ENGINE_EVENT_NAME: &str = "engine-event";
@@ -105,7 +105,10 @@ async fn create_session<R: Runtime>(
     let session_id = manager
         .new_session(setup, seed, app)
         .await
-        .map_err(map_session_error)?;
+        .map_err(|error| match error {
+            actor::DesktopSessionInitError::Session(source) => map_session_error(source),
+            actor::DesktopSessionInitError::Archive(source) => source.to_string(),
+        })?;
     Ok(session_id)
 }
 
@@ -158,6 +161,9 @@ fn map_baseline_error(
                 error.to_string(),
             )))
         }
+        actor::BaselineRequestError::Baseline(actor::BaselineError::Archive(error)) => {
+            BaselineIpcError::Existing(error.to_string())
+        }
         actor::BaselineRequestError::Command(error) => {
             BaselineIpcError::Existing(map_send_error(error))
         }
@@ -179,6 +185,45 @@ async fn engine_baseline(
         .map_err(|error| {
             map_baseline_error(error, "query_baseline", "desktop.actor.query_baseline")
         })
+}
+
+#[tauri::command]
+async fn engine_ack_observer(
+    state: State<'_, DesktopState>,
+    session_id: String,
+    generation: String,
+    ordinal: String,
+) -> Result<(), String> {
+    let handles = lookup_handles(&state, &session_id).await?;
+    handles
+        .acknowledge_observer(parse_generation(generation)?, parse_generation(ordinal)?)
+        .await
+}
+
+#[tauri::command]
+async fn engine_hold_observer(
+    state: State<'_, DesktopState>,
+    session_id: String,
+    generation: String,
+    held: bool,
+) -> Result<(), String> {
+    lookup_handles(&state, &session_id)
+        .await?
+        .set_observer_held(parse_generation(generation)?, held)
+        .await
+}
+
+#[tauri::command]
+async fn engine_resume_observer(
+    state: State<'_, DesktopState>,
+    session_id: String,
+    generation: String,
+    ordinal: String,
+) -> Result<(), String> {
+    let handles = lookup_handles(&state, &session_id).await?;
+    handles
+        .resume_observer(parse_generation(generation)?, parse_generation(ordinal)?)
+        .await
 }
 
 #[tauri::command]
@@ -457,6 +502,26 @@ async fn save_session(
         .map_err(map_send_error)
 }
 
+/// 无会话时读取已落盘的快速槽；运行中在该会话的归档 FIFO 后读取。
+#[tauri::command]
+async fn load_desktop_archive(
+    state: State<'_, DesktopState>,
+    session_id: Option<String>,
+) -> Result<Option<SaveSlot>, String> {
+    match session_id {
+        Some(session_id) => lookup_handles(&state, &session_id)
+            .await?
+            .read_quick_archive()
+            .await
+            .map_err(map_send_error),
+        None => state
+            .manager
+            .read_startup_archive()
+            .await
+            .map_err(|error| error.to_string()),
+    }
+}
+
 /// 原子恢复存档；校验失败时 actor 保留原会话，前端可继续运行或修正文件。
 #[tauri::command]
 async fn restore_session(
@@ -640,6 +705,9 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
             enqueue,
             snapshot,
             engine_baseline,
+            engine_hold_observer,
+            engine_resume_observer,
+            engine_ack_observer,
             host_capabilities,
             calculate_indicators,
             calculate_intraday_average,
@@ -660,6 +728,7 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
             npc_decision_diagnostics,
             speed_metrics,
             save_session,
+            load_desktop_archive,
             restore_session,
             set_speed,
             pause_session,
@@ -680,6 +749,9 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
             enqueue,
             snapshot,
             engine_baseline,
+            engine_hold_observer,
+            engine_resume_observer,
+            engine_ack_observer,
             host_capabilities,
             calculate_indicators,
             calculate_intraday_average,
@@ -700,6 +772,7 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
             npc_decision_diagnostics,
             speed_metrics,
             save_session,
+            load_desktop_archive,
             restore_session,
             host_parity_advance_civil_day,
             host_parity_step,
@@ -716,10 +789,15 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
 /// 注册命令 + 注入状态。失败时 panic（防御式：Tauri 启动失败属不可恢复，应显式崩溃而非静默）。
 pub fn run() {
     command_builder(tauri::Builder::default())
-        .setup(|_app| {
+        .setup(|app| {
             engine::runtime::validate_production_step_runtime(
                 std::env::var_os("ENGINE_STEP_RUNTIME").as_deref(),
             )?;
+            let path = app.path().app_data_dir()?.join("archive.sqlite3");
+            let database = native_store::NativeDatabase::open(&path)?;
+            app.state::<DesktopState>()
+                .manager
+                .initialize_archive(database)?;
             Ok(())
         })
         .run(tauri::generate_context!())

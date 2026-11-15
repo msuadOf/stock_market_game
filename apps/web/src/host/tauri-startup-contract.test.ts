@@ -14,7 +14,7 @@ describe("Tauri host startup contract", () => {
     assert.match(appSource, /if \(memoryTicket === undefined\) host = await createHost\(setup, seed, startupTarget, onSpawnFailure, initialSlot, undefined, onInitializationProgress\);/);
     assert.match(appSource, /else host = await createHost\(setup, seed, startupTarget, onSpawnFailure, initialSlot, memoryTicket, onInitializationProgress\);/);
     assert.match(appSource, /if \(startupTarget\.kind === "tauri"\) return createTauriHost\(setup, seed\);/);
-    assert.match(appSource, /if \(startupTarget\.kind === "remote"\) return createRemoteHost\(setup, seed, \{ baseUrl: startupTarget\.baseUrl \}\);/);
+    assert.match(appSource, /if \(startupTarget\.kind === "remote"\) \{\s*if \(startupTarget\.market === undefined\) throw new Error\([^)]+\);\s*return attachRemoteHost\(startupTarget\.baseUrl, startupTarget\.market\.token, startupTarget\.market\.context\);/);
     assert.match(appSource, /const options = \{ enableE2EStepping: tradingE2EMode, onSpawnFailure, initialArchive, memoryAdmissionTicket, onInitializationProgress, \.\.\.wasmRuntimeOptions \};/);
     const hostReadyIndex = appSource.indexOf("host = await createHost(setup, seed, startupTarget, onSpawnFailure, initialSlot, undefined, onInitializationProgress);");
     const ticketHostReadyIndex = appSource.indexOf("host = await createHost(setup, seed, startupTarget, onSpawnFailure, initialSlot, memoryTicket, onInitializationProgress);");
@@ -32,7 +32,7 @@ describe("Tauri host startup contract", () => {
     assert.match(hostSource, /timeline\.installInitialBaseline\(initialBaseline\)/);
     assert.match(timelineSource, /response\.generation !== this\.generation/);
     assert.match(timelineSource, /return this\.installSnapshot\(response, "Tauri engine_baseline"\)/);
-    assert.match(timelineSource, /prepareBaselineUpdate\(response\.generation, response\.snapshot, response\.stock_catalog, response\.company_catalog, \{\s*civilDate: parseIsoDate\(response\.civil_date, `\$\{where\}\.civil_date`\), revision: null,\s*\}\)/);
+    assert.match(timelineSource, /prepareBaselineUpdate\(response\.generation, response\.snapshot, response\.stock_catalog, response\.company_catalog, \{\s*civilDate: parseIsoDate\(response\.civil_date, `\$\{where\}\.civil_date`\), revision: null,\s*\}, \[\], \[\], response\.working_orders, response\.latest_checkpoint\)/);
     assert.match(updateSource, /parseProtocolSnapshot\(snapshot, "baseline\.snapshot", resolver\)/);
     assert.match(timelineSource, /parseIsoDate\(response\.civil_date, `\$\{where\}\.civil_date`\)/);
   });
@@ -80,7 +80,7 @@ describe("Tauri host startup contract", () => {
   it("pauses a host that finishes initialization after the page became hidden", () => {
     const appSource = readFileSync(new URL("../app/useSessionHostLifecycle.ts", import.meta.url), "utf8");
     const startIndex = appSource.indexOf("await host.start(");
-    const hiddenStopIndex = appSource.indexOf("if (isDocumentHidden()) await host.stop();", startIndex);
+    const hiddenStopIndex = appSource.indexOf("if (sharedMarket === undefined && isDocumentHidden()) await host.stop();", startIndex);
 
     assert.notEqual(startIndex, -1);
     assert.notEqual(hiddenStopIndex, -1);

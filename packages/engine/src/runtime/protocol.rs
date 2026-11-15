@@ -2025,8 +2025,12 @@ pub struct DeskReport {
 pub enum WorkerJoinDiagnostic {
     /// 兼容既有 wire 名称；判据是可运输原 panic 对象，不是目标平台。
     NativePanic,
-    WorkerPanic { code: u32 },
-    WorkerHardTrap { code: u32 },
+    WorkerPanic {
+        code: u32,
+    },
+    WorkerHardTrap {
+        code: u32,
+    },
     Transport,
 }
 

@@ -27,6 +27,7 @@ sha2 = "0.10"
 axum = { version = "0.7", features = ["ws"] }
 dashmap = "6.2.1"
 engine = { version = "0.1.0", path = "../../packages/engine" }
+libos = { path = "../../packages/libos", features = ["native-async"] }
 native-store = { path = "../../packages/native-store" }
 futures-util = "0.3"
 serde.workspace = true

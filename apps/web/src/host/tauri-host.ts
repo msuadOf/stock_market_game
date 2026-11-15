@@ -1,3 +1,4 @@
+import { isNewObserverDelivery, observerOrdinal, runObserverResync } from "./observer-resync.ts";
 import { checkRightsSubscriptionFailure, createRightsSubscription } from "./rights-subscription.ts";
 import { normalizeMarketHistoryRequest, normalizeMarketHistoryPage, wireMarketHistoryRequest } from "./market-history.ts";
 import { normalizeCurrentMinuteHistoryRequest, normalizeCurrentMinuteHistoryResponse, wireCurrentMinuteHistoryRequest } from "./current-minute-history.ts";
@@ -30,6 +31,7 @@ type EngineEventPayload = {
   readonly session_id: string;
   readonly timeline_id: string;
   readonly update: unknown;
+  readonly publication_ordinal?: string;
 };
 
 type EngineFailurePayload = {
@@ -39,6 +41,7 @@ type EngineFailurePayload = {
   readonly where: string;
   readonly message: string;
   readonly events: readonly unknown[];
+  readonly publication_ordinal?: string;
   readonly cause?: unknown;
   readonly context?: unknown;
   readonly recoverable?: boolean | null;
@@ -63,11 +66,12 @@ function generation(value: unknown, where: string): string {
 
 export function parseTauriEventPayload(value: unknown): EngineEventPayload {
   const source = record(value, "Tauri engine-event");
-  const keys = Object.keys(source);
-  if (keys.length !== 3 || !["session_id", "timeline_id", "update"].every((key) => Object.hasOwn(source, key))) {
+  const required = ["session_id", "timeline_id", "update"];
+  if (required.some(key => !Object.hasOwn(source, key)) || Object.keys(source).some(key => !required.includes(key) && key !== "publication_ordinal")) {
     throw new Error("Tauri engine-event 字段不符合完整协议更新契约");
   }
-  return { session_id: text(source.session_id, "Tauri engine-event.session_id"), timeline_id: text(source.timeline_id, "Tauri engine-event.timeline_id"), update: source.update };
+  const ordinal = Object.hasOwn(source, "publication_ordinal") ? generation(source.publication_ordinal, "Tauri engine-event.publication_ordinal") : undefined;
+  return { session_id: text(source.session_id, "Tauri engine-event.session_id"), timeline_id: text(source.timeline_id, "Tauri engine-event.timeline_id"), update: source.update, ...(ordinal === undefined ? {} : { publication_ordinal: ordinal }) };
 }
 
 export function tauriPausePreferenceArgs(sessionId: string, preferences: PausePreferences): { readonly sessionId: string; readonly preferences: PausePreferences } {
@@ -83,7 +87,7 @@ function parseHostCapabilities(value: unknown): boolean {
 function parseFailurePayload(value: unknown): EngineFailurePayload {
   const source = record(value, "Tauri engine-failure");
   const required = ["session_id", "timeline_id", "code", "message", "events"];
-  const optional = ["where", "cause", "context", "recoverable", "recoveryActions"];
+  const optional = ["where", "cause", "context", "recoverable", "recoveryActions", "publication_ordinal"];
   if (required.some((key) => !Object.hasOwn(source, key)) || Object.keys(source).some((key) => !required.includes(key) && !optional.includes(key))) {
     throw new Error("Tauri engine-failure 字段不符合契约");
   }
@@ -95,16 +99,23 @@ function parseFailurePayload(value: unknown): EngineFailurePayload {
     timeline_id: text(source.timeline_id, "Tauri engine-failure.timeline_id"),
     ...failure,
     events: source.events,
+    ...(Object.hasOwn(source, "publication_ordinal") ? { publication_ordinal: generation(source.publication_ordinal, "Tauri engine-failure.publication_ordinal") } : {}),
   };
 }
 
 function parseRestore(value: unknown): TauriBaselineResponse {
   const source = record(value, "Tauri restore_session");
-  const keys = Object.keys(source);
-  if (keys.length !== 6 || !["snapshot", "timeline_id", "generation", "civil_date", "stock_catalog", "company_catalog"].every((key) => Object.hasOwn(source, key))) {
+  const required = ["snapshot", "timeline_id", "generation", "civil_date", "stock_catalog", "company_catalog"];
+  const optional = ["working_orders", "publication_ordinal", "latest_checkpoint"];
+  if (required.some(key => !Object.hasOwn(source, key)) || Object.keys(source).some(key => !required.includes(key) && !optional.includes(key))) {
     throw new Error("Tauri restore_session 响应字段无效");
   }
-  return { snapshot: source.snapshot, stock_catalog: source.stock_catalog, company_catalog: source.company_catalog, civil_date: source.civil_date, timeline_id: text(source.timeline_id, "Tauri restore_session.timeline_id"), generation: generation(source.generation, "Tauri restore_session.generation") };
+  const hasOrders = Object.hasOwn(source, "working_orders");
+  const hasOrdinal = Object.hasOwn(source, "publication_ordinal");
+  if (hasOrders !== hasOrdinal) throw new Error("Tauri 基线必须同时携带委托与发布游标");
+  const checkpoint = Object.hasOwn(source, "latest_checkpoint") ? { latest_checkpoint: source.latest_checkpoint } : {};
+  const fence = hasOrdinal ? { working_orders: source.working_orders, publication_ordinal: generation(source.publication_ordinal, "Tauri baseline publication_ordinal") } : {};
+  return { snapshot: source.snapshot, stock_catalog: source.stock_catalog, company_catalog: source.company_catalog, civil_date: source.civil_date, timeline_id: text(source.timeline_id, "Tauri restore_session.timeline_id"), generation: generation(source.generation, "Tauri restore_session.generation"), ...fence, ...checkpoint };
 }
 
 export async function createTauriHost(setup: SessionSetup, seed: bigint): Promise<EngineHost> {
@@ -113,6 +124,11 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
   let callback: ((update: HostUpdate) => void | boolean) | null = null;
   let fatalCallback: ((failure: HostFailure) => void) | null = null;
   let baselineUnavailable = false;
+  let observationGap = false;
+  let heldCorrectionFailure: EngineFailurePayload | null = null;
+  let observerResync: { readonly generation: string; readonly task: Promise<void> } | null = null;
+  let publicationFloor: bigint | null = null;
+  let ackChain: Promise<void> = Promise.resolve();
   let running = false;
   let disposed = false;
   let eventUnlisten: UnlistenFn | null = null;
@@ -129,6 +145,46 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
     if (failure.code === "CATALOG_BASELINE_FAILED") baselineUnavailable = true;
     fatalCallback?.(companyWriteFailure ?? failure);
   };
+
+  function deliverOrderedFailure(payload: EngineFailurePayload): void {
+    const ordinal = payload.publication_ordinal;
+    const covered = ordinal !== undefined && !isNewObserverDelivery(ordinal, publicationFloor?.toString() ?? null);
+    const correction = isReportCorrectionPrepareRejection(payload, "desktop", timeline.currentGeneration());
+    // Only transient, ordered corrections can be superseded by a baseline.
+    // Latched authority failures and durable-save failures remain meaningful.
+    if (correction && covered) return;
+    if (correction && ordinal !== undefined && observationGap) {
+      if (isNewObserverDelivery(ordinal, heldCorrectionFailure?.publication_ordinal ?? null)) heldCorrectionFailure = payload;
+      return;
+    }
+    fail(payload);
+    if (ordinal !== undefined && !covered && !observationGap) {
+      publicationFloor = BigInt(ordinal);
+      acknowledgeObserver(payload.session_id, payload.timeline_id, ordinal);
+    }
+  }
+
+  function acknowledgeObserver(sid: string, tid: string, ordinal: string): void {
+    const currentGeneration = timeline.captureGeneration();
+    ackChain = ackChain.then(async () => {
+      if (disposed || !timeline.matchesTimeline(tid) || observationGap) return;
+      await invoke("engine_ack_observer", { sessionId: sid, generation: currentGeneration, ordinal });
+    }).catch((error: unknown) => {
+      if (disposed || !timeline.matchesTimeline(tid) || observationGap || String(error).includes("STALE_SESSION_GENERATION")) return;
+      // 即使市场已停止且发送者永远不会产生缺口，也可重置观察窗口。
+      observationGap = true;
+      void requestObserverResync().catch((resumeError: unknown) => {
+        if (disposed || !timeline.matchesTimeline(tid)) return;
+        fatalCallback?.({
+          code: "OBSERVER_ACK_FAILED",
+          where: "tauri-host.engine_ack_observer",
+          message: `确认失败：${String(error)}；重同步失败：${String(resumeError)}`,
+          recoverable: true,
+          recoveryActions: ["重新建立观察会话"],
+        });
+      });
+    });
+  }
 
   const historyQuery = async (kind: string, data: unknown): Promise<unknown> => {
     const cursor = timeline.captureQueryCursor();
@@ -162,14 +218,55 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
   try {
     eventUnlisten = await listen<unknown>("engine-event", (event) => {
       try {
-        const payload = parseTauriEventPayload(event.payload);
-        if (payload.session_id !== sessionId || !timeline.matchesTimeline(payload.timeline_id) || disposed) return;
-        if (callback?.(createProtocolUpdate(timeline.currentGeneration(), payload.update)) === false) {
-          callback = null;
-          running = false;
-          void invoke("pause_session", { sessionId: requireSession() }).catch((error: unknown) => {
-            fail({ code: "TAURI_PROTOCOL_STOP", where: "tauri-host.engine-event", message: error instanceof Error ? error.message : String(error) });
+        const envelope = record(event.payload, "Tauri engine-event");
+        if (Object.hasOwn(envelope, "gap")) {
+          exact(envelope, ["session_id", "timeline_id", "gap"], "Tauri 观察流缺口");
+          const sid = text(envelope.session_id, "Tauri 观察流 session_id");
+          const tid = text(envelope.timeline_id, "Tauri 观察流 timeline_id");
+          if (sid !== sessionId || !timeline.matchesTimeline(tid) || disposed || observationGap) return;
+          const gap = record(envelope.gap, "Tauri 观察流缺口");
+          exact(gap, ["through"], "Tauri 观察流缺口");
+          const through = generation(gap.through, "Tauri 观察流缺口序号");
+          observationGap = true;
+          void requestObserverResync().catch((error: unknown) => {
+            if (disposed || !timeline.matchesTimeline(tid)) return;
+            fatalCallback?.({
+              code: "OBSERVER_RESYNC_REQUIRED",
+              where: "tauri-host.engine-event",
+              message: `观察流至少到 ${through} 存在缺口，恢复失败：${error instanceof Error ? error.message : String(error)}。权威市场未因此暂停。`,
+              recoverable: true,
+              recoveryActions: ["重新建立观察会话"],
+            });
           });
+          return;
+        }
+        const payload = parseTauriEventPayload(event.payload);
+        if (payload.session_id !== sessionId || !timeline.matchesTimeline(payload.timeline_id) || disposed || observationGap) return;
+        const ordinal = payload.publication_ordinal === undefined ? null : BigInt(payload.publication_ordinal);
+        if (payload.publication_ordinal !== undefined && !isNewObserverDelivery(payload.publication_ordinal, publicationFloor?.toString() ?? null)) {
+          acknowledgeObserver(payload.session_id, payload.timeline_id, payload.publication_ordinal);
+          return;
+        }
+        if (callback === null) return;
+        let accepted = false;
+        try { accepted = callback(createProtocolUpdate(timeline.currentGeneration(), payload.update)) !== false; }
+        catch { /* Renderer exceptions are observer failures, not engine failures. */ }
+        if (!accepted) {
+          observationGap = true;
+          callback = null;
+          deliveredGeneration = null;
+          fatalCallback?.({
+            code: "OBSERVER_DELIVERY_REJECTED",
+            where: "tauri-host.engine-event",
+            message: "观察者拒绝增量；权威市场未暂停。",
+            recoverable: true,
+            recoveryActions: ["重新建立观察会话"],
+          });
+          return;
+        }
+        if (payload.publication_ordinal !== undefined && ordinal !== null) {
+          publicationFloor = ordinal;
+          acknowledgeObserver(payload.session_id, payload.timeline_id, payload.publication_ordinal);
         }
       } catch (error) {
         fail({ code: "TAURI_EVENT_PROTOCOL", where: "tauri-host.engine-event", message: error instanceof Error ? error.message : String(error) });
@@ -179,7 +276,7 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
       try {
         const payload = parseFailurePayload(event.payload);
         if (payload.session_id !== sessionId || !timeline.matchesTimeline(payload.timeline_id) || disposed) return;
-        fail(payload);
+        deliverOrderedFailure(payload);
       } catch (error) {
         fail({ code: "TAURI_FAILURE_PROTOCOL", where: "tauri-host.engine-failure", message: error instanceof Error ? error.message : String(error) });
       }
@@ -189,6 +286,7 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
     timeline.setInitialTimeline(sessionId);
     const initialBaseline = parseRestore(await invokeBaseline("engine_baseline", { sessionId, generation: timeline.currentGeneration() }));
     timeline.installInitialBaseline(initialBaseline);
+    publicationFloor = initialBaseline.publication_ordinal === undefined ? null : BigInt(initialBaseline.publication_ordinal);
     npcDiagnosticsEnabled = parseHostCapabilities(await invoke<unknown>("host_capabilities"));
   } catch (error) {
     disposed = true;
@@ -232,16 +330,68 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
       if (callback(baseline) === false) throw new Error(`Tauri 消费者拒绝 ${operation} baseline，未恢复 actor`);
     } catch (error) {
       callback = null;
-      const wasRunning = running;
-      running = false;
-      if (wasRunning) {
-        await invoke("pause_session", { sessionId: requireSession() });
-        assertResponseCurrent(baseline.generation, `${operation}.pause`);
-      }
       throw error;
     }
     deliveredGeneration = baseline.generation;
   };
+
+  function requestObserverResync(): Promise<void> {
+    const capturedGeneration = timeline.captureGeneration();
+    if (observerResync?.generation === capturedGeneration) return observerResync.task;
+    const task = (async () => {
+      const sid = requireSession();
+      await runObserverResync({
+        assertCurrent: () => assertResponseCurrent(capturedGeneration, "observerResync"),
+        async hold() {
+          await invoke("engine_hold_observer", { sessionId: sid, generation: capturedGeneration, held: true });
+          assertResponseCurrent(capturedGeneration, "observerResync.hold");
+          observationGap = true;
+        },
+        floor: () => publicationFloor?.toString() ?? null,
+        async capture() {
+          const value = parseRestore(await invokeBaseline("engine_baseline", { sessionId: sid, generation: capturedGeneration }));
+          return { ordinal: observerOrdinal(value.publication_ordinal), value };
+        },
+        async fence({ ordinal }) {
+          try {
+            await invoke("engine_resume_observer", { sessionId: sid, generation: capturedGeneration, ordinal });
+            return true;
+          } catch (error) {
+            if (String(error).includes("OBSERVER_BASELINE_STALE")) return false;
+            throw error;
+          }
+        },
+        async install({ ordinal, value }) {
+          if (callback === null) throw new Error("观察流已没有基线消费者");
+          const baseline = timeline.replaceRefreshedBaseline(value, capturedGeneration);
+          await deliverInstalledBaseline(baseline, "observerResync");
+          assertResponseCurrent(capturedGeneration, "observerResync.install");
+          publicationFloor = BigInt(ordinal);
+        },
+        async release() {
+          observationGap = false;
+          try {
+            await invoke("engine_hold_observer", { sessionId: sid, generation: capturedGeneration, held: false });
+            assertResponseCurrent(capturedGeneration, "observerResync.release");
+            if (!observationGap && heldCorrectionFailure !== null) {
+              const pending = heldCorrectionFailure;
+              heldCorrectionFailure = null;
+              if (timeline.matchesTimeline(pending.timeline_id)) deliverOrderedFailure(pending);
+            }
+            return !observationGap;
+          } catch (error) {
+            if (!disposed && timeline.currentGeneration() === capturedGeneration) observationGap = true;
+            throw error;
+          }
+        },
+      });
+    })();
+    const settled = task.finally(() => {
+      if (observerResync?.task === settled) observerResync = null;
+    });
+    observerResync = { generation: capturedGeneration, task: settled };
+    return settled;
+  }
 
   return {
     subscribeRightsOffering: createRightsSubscription(async (eventId, requestedShares) => {
@@ -324,6 +474,10 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
       const id = requireSession();
       callback = onUpdate;
       fatalCallback = onFatalError ?? null;
+      if (observationGap || observerResync?.generation === timeline.currentGeneration()) {
+        await requestObserverResync();
+        if (running) return;
+      }
       const baseline = timeline.baselineForDelivery();
       if (baseline !== null && deliveredGeneration !== baseline.generation) {
         if (callback(baseline) === false) {
@@ -374,7 +528,6 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
       await invoke("set_pause_preferences", tauriPausePreferenceArgs(requireSession(), preferences));
       assertResponseCurrent(generation, "setPausePreferences");
     },
-    setFrameRate() {},
     async readSpeedMetrics() {
       const response = await invoke<unknown>("speed_metrics", { sessionId: requireSession() });
       assertBaselineAvailable();
@@ -400,6 +553,12 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
       const response = record(await invoke<unknown>("civil_date", { sessionId: requireSession(), generation: timeline.currentGeneration() }), "Tauri civil_date");
       assertBaselineAvailable();
       return text(response.value, "Tauri civil_date.value");
+    },
+    async readQuickArchive() {
+      const generation = timeline.captureGeneration();
+      const result = await invoke<unknown>("load_desktop_archive", { sessionId: requireSession() });
+      assertResponseCurrent(generation, "readQuickArchive");
+      return result;
     },
     async save(candidate?: { readonly seq: number; readonly settledDate: string }) {
       const queryGeneration = timeline.captureGeneration();
@@ -440,9 +599,12 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
       return parseInitialAllocation(response.value, timeline.baselineForRead().stockCatalog.map(stock => stock.code), timeline.baselineForRead().catalogResolver);
     },
     async refreshBaseline() {
+      if (publicationFloor !== null || observerResync?.generation === timeline.currentGeneration() || observationGap) return requestObserverResync();
       const queryGeneration = timeline.captureGeneration();
       const restored = parseRestore(await invokeBaseline("engine_baseline", { sessionId: requireSession(), generation: queryGeneration }));
       assertResponseCurrent(queryGeneration, "refreshBaseline");
+      if (publicationFloor !== null || restored.publication_ordinal !== undefined || observerResync?.generation === queryGeneration || observationGap) return requestObserverResync();
+      // Legacy IPC mocks/hosts without an observation cursor only support a baseline read.
       const baseline = timeline.replaceRefreshedBaseline(restored, queryGeneration);
       await deliverInstalledBaseline(baseline, "refresh");
     },
@@ -464,6 +626,11 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
         assertResponseCurrent(requestedGeneration, "load");
         baseline = timeline.replaceRestoredBaseline(restored);
         companyWriteFailure = null;
+        observerResync = null;
+        heldCorrectionFailure = null;
+        ackChain = Promise.resolve();
+        observationGap = false;
+        publicationFloor = restored.publication_ordinal === undefined ? null : BigInt(restored.publication_ordinal);
       } catch (error) {
         baselineUnavailable = true;
         fail({ code: "TAURI_RESTORE_BASELINE", where: "tauri-host.load", message: error instanceof Error ? error.message : String(error), cause: error });

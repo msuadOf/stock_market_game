@@ -179,3 +179,30 @@ test("Given an already-published tick batch, when a CivilUpdate shares its tick 
   }, civilDate: "2030-01-03", revision: "1" });
   assert.equal(publications, 2);
 });
+
+test("同游标委托随宿主基线一次安装，订阅者不观察半份状态", { timeout: 10000 }, () => {
+  const actions: unknown[] = [];
+  const coordinator = new ProtocolCoordinator({
+    onBaseline(state) { assert.equal(state.playerOrdersReady, true); },
+    onApplied() { assert.fail("基线不应产生 tick"); },
+    onFailure() { assert.fail("合法基线不应失败"); },
+  }, (action) => actions.push(action));
+  assert.equal(coordinator.accept({ ...baseline(), workingOrders: [] }), true);
+  assert.equal(actions.length, 1);
+  assert.deepEqual((actions[0] as { payload: { playerWorkingOrders: unknown } }).payload.playerWorkingOrders, {});
+  const status = coordinator.status();
+  assert.equal(status.kind, "ready");
+  if (status.kind === "ready") assert.equal(status.state.playerOrdersReady, true);
+});
+
+test("无效的同游标委托拒绝整份基线", { timeout: 10000 }, () => {
+  const actions: unknown[] = [];
+  const coordinator = new ProtocolCoordinator({
+    onBaseline() { assert.fail("不能交付半份基线"); },
+    onApplied() { assert.fail("基线不应产生 tick"); },
+    onFailure() { assert.fail("基线解析错误应返回调用方"); },
+  }, (action) => actions.push(action));
+  assert.throws(() => coordinator.accept({ ...baseline(), workingOrders: [{ id: -1 }] }), /working_orders/);
+  assert.equal(coordinator.status().kind, "idle");
+  assert.deepEqual(actions, []);
+});

@@ -1,3 +1,5 @@
+import { runObserverResync } from "./observer-resync.ts";
+import { cancelInterval, cancelTimeout, isWebSocketOpen, openWebSocket, scheduleInterval, scheduleTimeout, type IntervalHandle, type TimeoutHandle } from "../../../../packages/libos/browser/browser-transport.ts";
 import { parseCredentialToken } from "./remote-auth.ts";
 import { checkRightsSubscriptionFailure, createRightsSubscription } from "./rights-subscription.ts";
 import { normalizeMarketHistoryRequest, normalizeMarketHistoryPage, wireMarketHistoryRequest } from "./market-history.ts";
@@ -20,7 +22,7 @@ import type { HostFailure, HostUpdate } from "./host-update.ts";
 import { UI_TARGET_HZ } from "./host-update.ts";
 import { remoteBaseUrl, remoteJson, remotePausePreferencePayload, remotePost, remoteSession, remoteWsUrl, remoteWsProtocols } from "./remote-request.ts";
 import { RemoteRequestScope } from "./remote-request-scope.ts";
-import { parseRemoteMessage } from "./remote-wire.ts";
+import { parseRemoteMessage, type RemoteMessage } from "./remote-wire.ts";
 import { ReportQueryContext } from "./report-query-context.ts";
 import { RemoteCommandRegistry } from "./remote-command-registry.ts";
 import { RemotePublisherState } from "./remote-publisher-state.ts";
@@ -75,7 +77,7 @@ async function connectRemoteHost(baseUrl: string, token: string, sessionId: stri
   if (rawCapabilities === null || typeof rawCapabilities !== "object" || Array.isArray(rawCapabilities)) throw new Error("远程宿主能力响应必须是对象");
   const capabilityRecord = rawCapabilities as Record<string, unknown>;
   if (Object.keys(capabilityRecord).length !== 1 || typeof capabilityRecord.npcDecisionDiagnostics !== "boolean") throw new Error("远程宿主能力响应不符合契约");
-  const socketFactory = options.webSocketFactory ?? ((url: string, protocols: string[]) => new WebSocket(url, protocols));
+  const socketFactory = options.webSocketFactory ?? openWebSocket;
   const publisher = new RemotePublisherState();
   const reports = new ReportQueryContext();
   const commands = new RemoteCommandRegistry();
@@ -87,12 +89,17 @@ async function connectRemoteHost(baseUrl: string, token: string, sessionId: stri
   let baselineDelivered = false;
   let companyWriteEpoch = 0;
   const requireCatalogResolver = () => { const baseline = publisher.baselineForRead(); if (baseline === null) throw new Error("远程只读查询需要baseline"); return baseline.catalogResolver; };
+  type ObservationReply = Extract<RemoteMessage, { kind: "observer-cut" | "observer-fenced" }>;
+  type Cut = Extract<ObservationReply, { kind: "observer-cut" }>;
+  let fencingSupported = false;
+  let lastRemoteCursor: { generation: string; tick: number; seq: number } | null = null;
+  let fencingWaiter: { receive(reply: ObservationReply): void; reject(error: Error): void } | null = null;
   let resyncPromise: Promise<void> | null = null;
-  let pullTimer: ReturnType<typeof setInterval> | null = null;
-  let pullResponseTimer: ReturnType<typeof setTimeout> | null = null;
+  let pullTimer: IntervalHandle | null = null;
+  let pullResponseTimer: TimeoutHandle | null = null;
   let pullWaiting = false;
-  let connectionTimer: ReturnType<typeof setTimeout> | null = null;
-  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let connectionTimer: TimeoutHandle | null = null;
+  let reconnectTimer: TimeoutHandle | null = null;
   let reconnectAttempts = 0;
   const requests = new RemoteRequestScope();
   const requestJson = (url: string, init: RequestInit, decoder?: typeof remoteJson) => {
@@ -109,10 +116,12 @@ async function connectRemoteHost(baseUrl: string, token: string, sessionId: stri
   };
   const wireAverage = (sample: { turnoverCents: string; tradeCount: number; volumeShares: number }) => ({ turnover_cents: sample.turnoverCents, trade_count: sample.tradeCount, volume_shares: sample.volumeShares });
   const clearTransportTimers = () => {
-    if (pullTimer !== null) clearInterval(pullTimer);
-    if (pullResponseTimer !== null) clearTimeout(pullResponseTimer);
-    if (connectionTimer !== null) clearTimeout(connectionTimer);
-    if (reconnectTimer !== null) clearTimeout(reconnectTimer);
+    fencingWaiter?.reject(new Error("远程观察流已断开"));
+
+    if (pullTimer !== null) cancelInterval(pullTimer);
+    if (pullResponseTimer !== null) cancelTimeout(pullResponseTimer);
+    if (connectionTimer !== null) cancelTimeout(connectionTimer);
+    if (reconnectTimer !== null) cancelTimeout(reconnectTimer);
     pullTimer = null;
     pullResponseTimer = null;
     pullWaiting = false;
@@ -138,9 +147,9 @@ async function connectRemoteHost(baseUrl: string, token: string, sessionId: stri
   const fail = (failure: HostFailure) => {
     companyWriteEpoch += 1;
     const baseline = publisher.baselineForRead();
-    if (baseline !== null && publisher.isProtocolReady() && publisher.currentSocket()?.readyState === WebSocket.OPEN
+    if (baseline !== null && publisher.isProtocolReady() && isWebSocketOpen(publisher.currentSocket())
       && isReportCorrectionPrepareRejection(failure, "server", baseline.generation)) {
-      if (pullResponseTimer !== null) clearTimeout(pullResponseTimer);
+      if (pullResponseTimer !== null) cancelTimeout(pullResponseTimer);
       pullResponseTimer = null;
       pullWaiting = false;
       interrupt("报表更正 prepare 被拒绝，旧提交已失效");
@@ -158,17 +167,111 @@ async function connectRemoteHost(baseUrl: string, token: string, sessionId: stri
     fatalCallback?.(failure);
   };
 
+  function waitForObservationReply(socket: WebSocket, command: object): Promise<ObservationReply> {
+    return new Promise((resolve, reject) => {
+      if (fencingWaiter !== null) { reject(new Error("远程观察请求已在途")); return; }
+      const timeout = scheduleTimeout(() => waiter.reject(new Error("远程观察请求超时（5000ms）")), 5000);
+      const finish = () => { cancelTimeout(timeout); if (fencingWaiter === waiter) fencingWaiter = null; };
+      const waiter = {
+        receive(reply: ObservationReply) { finish(); resolve(reply); },
+        reject(error: Error) { finish(); reject(error); },
+      };
+      fencingWaiter = waiter;
+      try { socket.send(JSON.stringify(command)); }
+      catch (error) { waiter.reject(error instanceof Error ? error : new Error(String(error))); }
+    });
+  }
+
+  function requestFencedResync(socket: WebSocket): Promise<void> {
+    let cutId: string | null = null;
+    let lastCapture = 0n;
+    return runObserverResync<Cut>({
+      assertCurrent() {
+        if (disposed || publisher.currentSocket() !== socket || !isWebSocketOpen(socket)) throw new Error("远程基线响应属于已关闭连接");
+      },
+      hold() {
+        interrupt("远程基线重同步");
+        publisher.beginResync();
+      },
+      floor: () => null, // Each server capture mints a new producer, with its own ordinal namespace.
+      async capture() {
+        const reply = await waitForObservationReply(socket, { CaptureObserver: {} });
+        if (reply.kind !== "observer-cut" || BigInt(reply.captureId) <= lastCapture) throw new Error("远程观察切面缺少新的捕获身份");
+        lastCapture = BigInt(reply.captureId);
+        return { ordinal: reply.ordinal, value: reply };
+      },
+      canUse: ({ value: { update } }) => isCurrentRemoteBaseline(update),
+      async fence({ ordinal, value: { captureId, update } }) {
+        const reply = await waitForObservationReply(socket, { FenceObserver: { capture_id: captureId, timeline_generation: update.generation, publication_ordinal: ordinal } });
+        if (reply.kind !== "observer-fenced" || reply.captureId !== captureId) throw new Error("远程观察栅栏回执不匹配");
+        return reply.accepted;
+      },
+      install({ value: { captureId, update } }) {
+        if (!installRemoteBaseline(update)) throw new Error("应用层拒绝权威基线");
+        cutId = captureId;
+      },
+      release() {
+        if (cutId === null) throw new Error("远程观察切面尚未安装");
+        socket.send(JSON.stringify({ ReleaseObserver: { capture_id: cutId } }));
+      },
+    });
+  }
+
+  function isCurrentRemoteBaseline(update: Extract<HostUpdate, { type: "baseline" }>): boolean {
+    const old = lastRemoteCursor;
+    return old === null || BigInt(update.generation) > BigInt(old.generation)
+      || (update.generation === old.generation && update.snapshot.tick >= old.tick && update.snapshot.seq >= old.seq);
+  }
+
+  function installRemoteBaseline(update: Extract<HostUpdate, { type: "baseline" }>): boolean {
+    if (!isCurrentRemoteBaseline(update)) throw new Error("远程权威基线回卷已安装的 generation/tick/seq");
+    publisher.installBaseline(update, () => reports.invalidate());
+    if (pendingRestore !== null) {
+      if (pendingRestore.generation !== null && update.generation !== pendingRestore.generation) pendingRestore.notify();
+      if (pendingRestore.awaitingAuthority) pendingRestore = null;
+    }
+    if (!deliver(update)) return false;
+    lastRemoteCursor = { generation: update.generation, tick: update.snapshot.tick, seq: update.snapshot.seq };
+    baselineDelivered = callback !== null;
+    publisher.resolveBaselineWaiter();
+    return true;
+  }
+
+  function noteDeliveredProtocol(update: Extract<HostUpdate, { type: "protocol" }>): void {
+    // Remote wire is JSON. Only inspect cursor fields to avoid decoding the batch twice.
+    const variants = update.update as { TickBatch?: { frames?: Array<{ tick?: number; seq_to?: number }> }; CivilUpdate?: { tick?: number; seq_to?: number } };
+    const cursor = variants.TickBatch?.frames?.at(-1) ?? variants.CivilUpdate;
+    if (!cursor || typeof cursor.tick !== "number" || typeof cursor.seq_to !== "number") return;
+    const old = lastRemoteCursor;
+    if (old !== null && old.generation === update.generation && (cursor.tick < old.tick || cursor.seq_to < old.seq)) return;
+    lastRemoteCursor = { generation: update.generation, tick: cursor.tick, seq: cursor.seq_to };
+  }
+
   const requestResync = (): Promise<void> => {
     if (resyncPromise !== null) return resyncPromise;
     const current = publisher.currentSocket();
-    if (current === null || current.readyState !== WebSocket.OPEN) {
+    if (current === null || !isWebSocketOpen(current)) {
       return Promise.reject(new Error("远程 Publisher 未连接，无法请求基线重同步"));
+    }
+    if (fencingSupported) {
+      const pending = requestFencedResync(current).catch((error: unknown) => {
+        // A rejected exchange can leave the server-side stream held. Close only
+        // this observation socket; never stop or dispose the remote market.
+        if (!disposed && publisher.currentSocket() === current) {
+          fail({ code: "REMOTE_RESYNC", where: "remote-host.fence", message: error instanceof Error ? error.message : String(error) });
+        }
+        throw error;
+      });
+      resyncPromise = pending;
+      const clear = () => { if (resyncPromise === pending) resyncPromise = null; };
+      void pending.then(clear, clear);
+      return pending;
     }
     interrupt("远程基线重同步");
     publisher.beginResync();
     const pending = new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => fail({ code: "REMOTE_BASELINE_TIMEOUT", where: "remote-host.resync", message: "权威基线重同步超时（5000ms）" }), 5000);
-      publisher.beginBaselineWait({ resolve() { clearTimeout(timeout); resolve(); }, reject(error) { clearTimeout(timeout); reject(error); } });
+      const timeout = scheduleTimeout(() => fail({ code: "REMOTE_BASELINE_TIMEOUT", where: "remote-host.resync", message: "权威基线重同步超时（5000ms）" }), 5000);
+      publisher.beginBaselineWait({ resolve() { cancelTimeout(timeout); resolve(); }, reject(error) { cancelTimeout(timeout); reject(error); } });
     });
     resyncPromise = pending;
     void pending.then(() => { if (resyncPromise === pending) resyncPromise = null; }, () => { if (resyncPromise === pending) resyncPromise = null; });
@@ -181,30 +284,24 @@ async function connectRemoteHost(baseUrl: string, token: string, sessionId: stri
     if (!publisher.isCurrentConnection(identity) || disposed) return;
     const parsed = parseRemoteMessage(raw, publisher.baselineForRead()?.generation ?? null);
     if (parsed.kind === "empty" || parsed.kind === "protocol" || parsed.kind === "baseline" || parsed.kind === "resync") {
-      if (pullResponseTimer !== null) clearTimeout(pullResponseTimer);
+      if (pullResponseTimer !== null) cancelTimeout(pullResponseTimer);
       pullResponseTimer = null;
       pullWaiting = false;
     }
     switch (parsed.kind) {
       case "baseline":
-        if (connectionTimer !== null) clearTimeout(connectionTimer);
+        if (connectionTimer !== null) cancelTimeout(connectionTimer);
         connectionTimer = null;
         reconnectAttempts = 0;
-        publisher.installBaseline(parsed.update, () => reports.invalidate());
-        if (pendingRestore !== null) {
-          if (pendingRestore.generation !== null && parsed.update.generation !== pendingRestore.generation) pendingRestore.notify();
-          if (pendingRestore.awaitingAuthority) pendingRestore = null;
-        }
-        if (!deliver(parsed.update)) return;
-        baselineDelivered = callback !== null;
-        publisher.resolveBaselineWaiter();
+        fencingSupported = parsed.fencing;
+        if (!installRemoteBaseline(parsed.update)) return;
         resyncPromise = null;
         if (delivery === "pull" && pullTimer === null) {
-          pullTimer = setInterval(() => {
+          pullTimer = scheduleInterval(() => {
             const current = publisher.currentSocket();
-            if (!pullWaiting && current !== null && current.readyState === WebSocket.OPEN && publisher.isProtocolReady()) {
+            if (!pullWaiting && current !== null && isWebSocketOpen(current) && publisher.isProtocolReady()) {
               pullWaiting = true;
-              pullResponseTimer = setTimeout(() => recover("远程 GetFrame 响应超时（5000ms）", identity), 5000);
+              pullResponseTimer = scheduleTimeout(() => recover("远程 GetFrame 响应超时（5000ms）", identity), 5000);
               pullResponseTimer.unref?.();
               try { current.send(JSON.stringify({ GetFrame: {} })); }
               catch (error) { recover(error instanceof Error ? error.message : String(error), identity); }
@@ -212,6 +309,10 @@ async function connectRemoteHost(baseUrl: string, token: string, sessionId: stri
           }, 16);
           pullTimer.unref?.();
         }
+        return;
+      case "observer-cut":
+      case "observer-fenced":
+        fencingWaiter?.receive(parsed);
         return;
       case "protocol":
         if (!publisher.isProtocolReady()) return;
@@ -221,7 +322,7 @@ async function connectRemoteHost(baseUrl: string, token: string, sessionId: stri
           });
           return;
         }
-        deliver(parsed.update);
+        if (deliver(parsed.update)) noteDeliveredProtocol(parsed.update);
         return;
       case "failure":
         fail(parsed.failure);
@@ -263,7 +364,7 @@ async function connectRemoteHost(baseUrl: string, token: string, sessionId: stri
       fail({ code: "REMOTE_SOCKET", where: "remote-host.reconnect", message: `远程连接恢复失败（3 次重试）：${message}` });
       return;
     }
-    reconnectTimer = setTimeout(() => {
+    reconnectTimer = scheduleTimeout(() => {
       reconnectTimer = null;
       try { connect(); }
       catch (error) { recover(error instanceof Error ? error.message : String(error), publisher.invalidateConnection()); }
@@ -275,6 +376,7 @@ async function connectRemoteHost(baseUrl: string, token: string, sessionId: stri
     if (publisher.currentSocket() !== null || disposed) return;
     const identity = publisher.invalidateConnection();
     commands.clearInterrupted();
+    fencingSupported = false;
     publisher.beginResync();
     const next = socketFactory(remoteWsUrl(baseUrl, sessionId, delivery), remoteWsProtocols(token));
     publisher.attachSocket(next);
@@ -290,16 +392,16 @@ async function connectRemoteHost(baseUrl: string, token: string, sessionId: stri
     next.onclose = () => {
       recover("远程 WebSocket 意外断开", identity);
     };
-    connectionTimer = setTimeout(() => recover("远程连接未在 5000ms 内返回权威基线", identity), 5000);
+    connectionTimer = scheduleTimeout(() => recover("远程连接未在 5000ms 内返回权威基线", identity), 5000);
     connectionTimer.unref?.();
   };
 
   const connectRestoredBaseline = (): Promise<void> => new Promise((resolve, reject) => {
     publisher.beginResync();
-    const timeout = setTimeout(() => fail({ code: "REMOTE_BASELINE_TIMEOUT", where: "remote-host.load", message: "读取恢复后的远程权威基线超时（5000ms）" }), 5000);
+    const timeout = scheduleTimeout(() => fail({ code: "REMOTE_BASELINE_TIMEOUT", where: "remote-host.load", message: "读取恢复后的远程权威基线超时（5000ms）" }), 5000);
     publisher.beginBaselineWait({
-      resolve() { clearTimeout(timeout); resolve(); },
-      reject(error) { clearTimeout(timeout); reject(error); },
+      resolve() { cancelTimeout(timeout); resolve(); },
+      reject(error) { cancelTimeout(timeout); reject(error); },
     });
     try {
       connect();
@@ -472,7 +574,6 @@ async function connectRemoteHost(baseUrl: string, token: string, sessionId: stri
       const currentGeneration = controlGeneration();
       await requestJson(`${baseUrl}/api/pause-preferences`, remotePost(remotePausePreferencePayload(sessionId, currentGeneration, preferences), token));
     },
-    setFrameRate() {},
     async readSpeedMetrics() {
       return parseSpeedMetrics(await requestJson(`${baseUrl}/api/speed?session_id=${encodeURIComponent(sessionId)}`, { method: "GET", headers: { authorization: `Bearer ${token}` } }));
     },
@@ -491,15 +592,15 @@ async function connectRemoteHost(baseUrl: string, token: string, sessionId: stri
     },
     async submitIntent(intent: CodedIntent) {
       const current = publisher.currentSocket();
-      if (current === null || current.readyState !== WebSocket.OPEN || publisher.isAwaitingBaseline()) throw new Error("远程 Publisher 尚未完成权威基线同步，写请求未入队");
+      if (current === null || !isWebSocketOpen(current) || publisher.isAwaitingBaseline()) throw new Error("远程 Publisher 尚未完成权威基线同步，写请求未入队");
       const baseline = publisher.baselineForRead();
       if (baseline === null) throw new Error("远程权威 generation 尚未就绪，写请求未入队");
       const generation = baseline.generation;
       const wiredIntent = wireIntentOf(intent, baseline.catalogResolver);
       const requestId = commands.next();
       await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => commands.rejectGateway(requestId, { code: "REMOTE_COMMAND_TIMEOUT", where: "remote-host.submitIntent", message: "入队确认超时（5000ms），结果未知，请核对权威委托状态，勿重复提交" }, true), 5000);
-        commands.register(requestId, { resolve() { clearTimeout(timeout); resolve(); }, reject(error) { clearTimeout(timeout); reject(error); } });
+        const timeout = scheduleTimeout(() => commands.rejectGateway(requestId, { code: "REMOTE_COMMAND_TIMEOUT", where: "remote-host.submitIntent", message: "入队确认超时（5000ms），结果未知，请核对权威委托状态，勿重复提交" }, true), 5000);
+        commands.register(requestId, { resolve() { cancelTimeout(timeout); resolve(); }, reject(error) { cancelTimeout(timeout); reject(error); } });
         // 请求层翻译：公共 Intent 的代码串 code 译为数值 StockId 后再提交（ADR 0041）。
         try { current.send(JSON.stringify({ SubmitIntent: { request_id: requestId, generation, intent: wiredIntent } })); }
         catch (error) { commands.rejectGateway(requestId, { code: "REMOTE_COMMAND_SEND", where: "remote-host.submitIntent", message: `写请求发送中断，结果未知：${error instanceof Error ? error.message : String(error)}` }); }
@@ -616,7 +717,12 @@ async function connectRemoteHost(baseUrl: string, token: string, sessionId: stri
         restore.notify();
         reports.invalidate();
         if (publisher.currentSocket() === null) await connectRestoredBaseline();
-        else await requestResync();
+        else {
+          // A pending refresh may have captured just before the restore commits.
+          // Wait for it, then request a new cut if it still denotes the old timeline.
+          if (resyncPromise !== null) await resyncPromise;
+          if ((publisher.baselineForRead()?.generation ?? null) === restore.generation) await requestResync();
+        }
       } catch (error) {
         // HTTP 失败不等于恢复未提交；由随后权威 baseline 确认新/旧 generation。
         restore.awaitingAuthority = true;

@@ -82,19 +82,23 @@ fn correction_actor(
 ) {
     let (sender, cmd_rx) = mpsc::unbounded_channel();
     let (event_tx, receiver) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
-    let mut pacing = ServerPacing::new(1, game.tick());
-    pacing.set_running(true, game.tick());
+    let mut pacing = ServerPacing::new(1, game.tick(), native_async::now());
+    pacing.set_running(true, game.tick(), native_async::now());
     let actor = SessionActor {
         ingress: Arc::new(RwLock::new((1, game.shared_ingress()))),
         members: Arc::new(RwLock::new(game.trading_subject_accounts())),
         controllers: std::collections::BTreeSet::from([correction_controller()]),
         archive: None,
+        archive_lane: None,
+        archive_epoch: 1,
+        archive_order: CheckpointOrder::new(1, 1),
         injected_step_failure: None,
         pacing,
         game,
         runtime_topology: Default::default(),
         cmd_rx,
         event_tx,
+        observers: Vec::new(),
         session_id: "correction-recovery".into(),
         public_revision: 0,
         timeline_generation: 1,
@@ -228,6 +232,7 @@ async fn correction_business_rejection_keeps_installed_close_and_contiguous_canc
                 operation_id: request.operation_id.clone(),
             },
         )
+        .await
         .unwrap();
     assert!(actor.game.report_corrections().unwrap().pending.is_empty());
     actor
@@ -238,6 +243,7 @@ async fn correction_business_rejection_keeps_installed_close_and_contiguous_canc
                 request: request.clone(),
             },
         )
+        .await
         .unwrap();
     let (reply, received) = oneshot::channel();
     actor
@@ -330,6 +336,7 @@ async fn correction_invalid_input_on_closed_day_keeps_real_actor_command_channel
                 operation_id: request.operation_id.clone(),
             },
         )
+        .await
         .unwrap();
     assert!(actor.game.report_corrections().unwrap().pending.is_empty());
     assert!(actor.game.game().save().is_ok());

@@ -5,8 +5,8 @@ use libos::lifecycle::ShutdownWake;
 use libos::thread_facade::WorkerHandle;
 use libos::wait;
 use std::sync::{
-    Arc,
     atomic::{AtomicBool, Ordering},
+    Arc,
 };
 use std::thread;
 
@@ -48,10 +48,17 @@ pub fn spawn_join(facade: bool, operations: u32) -> f64 {
             }
         })
     }
-    if facade { batch(operations, wrapped) } else { batch(operations, direct) }
+    if facade {
+        batch(operations, wrapped)
+    } else {
+        batch(operations, direct)
+    }
 }
 
-fn handoff_batch(operations: u32, recv: impl Fn(&Receiver<u32>, &AtomicBool) -> Option<u32> + Send + 'static) -> f64 {
+fn handoff_batch(
+    operations: u32,
+    recv: impl Fn(&Receiver<u32>, &AtomicBool) -> Option<u32> + Send + 'static,
+) -> f64 {
     let (tx, rx) = mpsc::channel();
     let (ready_tx, ready_rx) = mpsc::channel();
     let (out_tx, out_rx) = mpsc::channel();
@@ -112,7 +119,11 @@ pub fn shutdown_wake(facade: bool, operations: u32) -> f64 {
                 assert!(!stop.load(Ordering::SeqCst));
                 ready.send(()).expect("报告 worker 就绪");
                 // 无论调度先进入 recv 或先看到 stop，都从同一生产 API 验证不可交付。
-                let result = if facade { libos_recv(&rx, &stop) } else { raw_recv(&rx, &stop) };
+                let result = if facade {
+                    libos_recv(&rx, &stop)
+                } else {
+                    raw_recv(&rx, &stop)
+                };
                 assert_eq!(result, None, "硬停止不得向业务交付唤醒值");
                 // 保持接收端到所有者释放 keepalive，提高等价性而不假装测得已 park。
                 done.send(rx).expect("所有者必须收到停止回执");
@@ -128,7 +139,10 @@ pub fn shutdown_wake(facade: bool, operations: u32) -> f64 {
                 StopMechanism::Facade(wake) => wake.sever(&stop, &mut a, &mut b),
                 StopMechanism::Direct(primary, secondary) => {
                     stop.store(true, Ordering::SeqCst);
-                    for sender in std::mem::take(primary).into_iter().chain(std::mem::take(secondary)) {
+                    for sender in std::mem::take(primary)
+                        .into_iter()
+                        .chain(std::mem::take(secondary))
+                    {
                         sender.send(STOP).expect("保留收件端必须收到哨兵");
                     }
                     a.clear();
@@ -136,13 +150,20 @@ pub fn shutdown_wake(facade: bool, operations: u32) -> f64 {
                 }
             }
             for _ in 0..2 {
-                acknowledged.push(done_rx.recv_timeout(GUARD).expect("未收到双 worker 停止回执"));
+                acknowledged.push(
+                    done_rx
+                        .recv_timeout(GUARD)
+                        .expect("未收到双 worker 停止回执"),
+                );
             }
         });
         assert!(stop.load(Ordering::SeqCst) && a.is_empty() && b.is_empty());
         for rx in &acknowledged {
             // 若入口已观察 stop，哨兵还在；若先进入 recv，哨兵被消费但不交给业务。
-            assert!(matches!(rx.try_recv(), Ok(STOP) | Err(mpsc::TryRecvError::Empty)));
+            assert!(matches!(
+                rx.try_recv(),
+                Ok(STOP) | Err(mpsc::TryRecvError::Empty)
+            ));
             assert_eq!(rx.try_recv(), Err(mpsc::TryRecvError::Empty), "重复哨兵");
         }
         drop(keepalive);

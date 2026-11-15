@@ -6,7 +6,7 @@ import { MarketRuntimeProvider, useMarketRuntimeActions } from "./MarketRuntimeP
 export function actionsFor(host: EngineHost): ReturnType<typeof useMarketRuntimeActions> {
   let actions: ReturnType<typeof useMarketRuntimeActions> | undefined;
   function Probe() { actions = useMarketRuntimeActions(); return null; }
-  renderToStaticMarkup(createElement(MarketRuntimeProvider, { autoOrderManagerRef: { current: null }, setNotice: () => {}, hostRef: { current: host }, children: createElement(Probe) }));
+  renderToStaticMarkup(createElement(() => <MarketRuntimeProvider autoOrderManagerRef={{ current: null }} setNotice={() => {}} hostRef={{ current: host }}><Probe /></MarketRuntimeProvider>));
   if (actions === undefined) throw new Error("应用查询入口未安装");
   return actions;
 }

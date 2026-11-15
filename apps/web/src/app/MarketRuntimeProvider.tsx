@@ -94,13 +94,13 @@ export function MarketRuntimeProvider({ autoOrderManagerRef, setNotice, hostRef,
   }, [hostRef]);
   const queryMarketHistory = useCallback(async (request: MarketHistoryRequest) => {
     const host = hostRef.current;
-    if (host === null) throw new Error("游戏宿主尚未就绪，不能查询分钟历史");
+    if (host === null) throw new Error("游戏宿主尚未就绪，不能查询历史日K");
     const before = store.getState();
     const generation = before.snapshot.generation;
     const account = selectPlayerAccountId(before);
     const page = await host.queryMarketHistory(request);
     const after = store.getState();
-    if (hostRef.current !== host || after.snapshot.generation !== generation || selectPlayerAccountId(after) !== account) throw new Error("分钟历史响应属于已切换的宿主、市场或账户");
+    if (hostRef.current !== host || after.snapshot.generation !== generation || selectPlayerAccountId(after) !== account) throw new Error("历史日K响应属于已切换的宿主、市场或账户");
     return page;
   }, [hostRef]);
   const queryCurrentMinuteHistory = useCallback(async (request: CurrentMinuteHistoryRequest) => {

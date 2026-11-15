@@ -305,8 +305,8 @@ test("shutdown H5 不建 child；dispose 后迟到事件零槽写且清所有计
 });
 
 test("Worker id 最大值可用，耗尽显式失败且不回绕", { timeout: 10000 }, () => {
-  assert.deepEqual(allocateFacadeWorkerId(0xfffffffe), { workerId: 0xfffffffe, next: 0xffffffff });
-  for (const value of [0, -1, 1.5, 0xffffffff, 0x100000000, NaN]) assert.throws(() => allocateFacadeWorkerId(value), /Worker id/);
+  assert.deepEqual(allocateFacadeWorkerId(0xfffffffd), { workerId: 0xfffffffd, next: 0xfffffffe });
+  for (const value of [0, -1, 1.5, 0xfffffffe, 0xffffffff, 0x100000000, NaN]) assert.throws(() => allocateFacadeWorkerId(value), /Worker id/);
 });
 
 test("Channel 构造抛错也清构造出的 child 并返回 FAIL", { timeout: 10000 }, () => {

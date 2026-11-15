@@ -68,7 +68,7 @@ async function createFixture(
   let sharedMemory!: WebAssembly.Memory;
   const bindings = {
     wasm_tombstone_bind_ingress() {},
-      wasm_tombstone_init_primary: () => ({ engine: { workerId: 0, address: 60000 }, ingress: { workerId: 0xffffffff, address: 60256 }, death: { address: 65004, bytes: 4 } }),
+      wasm_tombstone_init_primary: () => ({ engine: { workerId: 0, address: 60000 }, ingress: { workerId: 0xffffffff, address: 60256 }, publisher: { workerId: 0xfffffffe, address: 60512 }, death: { address: 65004, bytes: 4 } }),
       initSync: ({ memory }: { memory: WebAssembly.Memory }) => { sharedMemory = memory; return { memory, __wbindgen_thread_destroy() {} }; },
     facade_slot_init_for_setup: () => { const words = new Int32Array(sharedMemory.buffer); Atomics.store(words, CAPACITY, 4); Atomics.store(words, GEN_BITS, 29); Atomics.store(words, FREE_HEAD, FREE_HEAD_EMPTY | 0); },
     clear_prepared_restore: () => {},
@@ -144,6 +144,21 @@ async function createFixture(
       return { operation_id: operationId };
     },
   };
+  let marketRunning = false;
+  let publicationOrdinal = 0;
+  Object.assign(bindings, {
+    market_runner_enable: () => { publicationOrdinal = 0; },
+    market_runner_set_running: (_handle: number, running: boolean) => { marketRunning = running; },
+    market_runner_set_speed: () => {},
+    market_runner_set_pause: () => {},
+    market_runner_speed_metrics: () => ({ requested: { mode: "fixed", multiplier: 1 }, actual_multiplier: 0, sample_duration_ms: 0, sample_ticks: 0, running: false }),
+    market_runner_turn: () => ({ running: marketRunning, delayMs: marketRunning ? 1000 : null, committedTicks: 0 }),
+    market_runner_step_once: (current: number) => { bindings.step(current); publicationOrdinal += 1; },
+    market_runner_end_civil: (current: number) => { calls.push(`stagedCivil:${current}`); marketRunning = false; publicationOrdinal += 1; },
+    market_runner_observer_baseline: (current: number) => ({ snapshot: bindings.snapshot(current), workingOrders: [], publicationOrdinal: String(publicationOrdinal) }),
+    market_runner_control_signal: () => 65008,
+    market_runner_command_consumed: () => {},
+  });
   replace(bindingsKey, bindings);
   replace("self", { crossOriginIsolated: true, postMessage: (message: Message) => { if (message.type === "engineLifecycle") {
     globalLifecycle.push(message);
@@ -170,6 +185,7 @@ async function createFixture(
       if (specifier === "../../wasm-pkg/web_wasm.js") {
         return { url: `virtual:wasm-pkg:owner-${id}`, shortCircuit: true };
       }
+      if (specifier === "./worker-task-scheduler.ts") return { url: `virtual:owner-scheduler:${id}`, shortCircuit: true };
       if (specifier === "./engine-clock-env.ts") return { url: `virtual:owner-env:${id}`, shortCircuit: true };
       return nextResolve(specifier, context);
     },
@@ -179,6 +195,7 @@ async function createFixture(
           .map((key) => (missingWrites === true || missingWrites === "malformed") && ["propose_player_company_action", "enqueue_report_correction", "cancel_report_correction", "subscribe_rights_offering"].includes(key) ? `export const ${key} = ${missingWrites === "malformed" ? "17" : "undefined"};` : `export const ${key} = (...args) => bindings.${key}(...args);`).join("\n");
         return { shortCircuit: true, format: "module", source: `const bindings = globalThis[Symbol.for("stock-game-wasm-owner-tests")];\n${exports}` };
       }
+      if (url.startsWith("virtual:owner-scheduler:")) return { shortCircuit: true, format: "module", source: "export class WorkerTaskScheduler { schedule(callback, delay) { return setTimeout(callback, delay); } cancel(timer) { clearTimeout(timer); } }" };
       if (url.startsWith("virtual:owner-env:")) return { shortCircuit: true, format: "module", source: `import {createFacadeThreadBinding} from ${JSON.stringify(new URL("./facade-thread-binding.ts", import.meta.url).href)}; const binding=createFacadeThreadBinding({isWorker:()=>true}); export const {bindFacadeThreadEnvironment,installFacadeSlotLayout,getArenaView}=binding;` };
       const loaded = nextLoad(url, context);
       if (url.includes("/wasm-worker.ts?owner-test=")) {
@@ -368,7 +385,7 @@ test("Worker 全部会话 caller 共用 owner，restore 完整回应先于 micro
     assert.equal(Object.hasOwn(f.posted[0], "memory"), false, "ingress 复用 supervisor 已接收的唯一 substrate");
     assert.deepEqual(f.posted.slice(1), [
       { type: "created", generation: 1, capabilities: { npcDecisionDiagnostics: false, indicatorCapabilities: { intradayAverage: false, macd: false, priceKdj: false, candleKdj: false }, personalTradeHistory: false } },
-      { ...catalogWorkerFixture(snapshot(0, 0)), type: "baseline", generation: 1, snapshot: snapshot(0, 0), civilDate: "2030-01-02" },
+      { ...catalogWorkerFixture(snapshot(0, 0)), type: "baseline", generation: 1, snapshot: snapshot(0, 0), civilDate: "2030-01-02", publisherToken: 7, publicationOrdinal: "0", workingOrders: [], controlAddress: 65008 },
     ]);
     f.posted.length = 0;
     f.send({ type: "save", generation: 1, requestId: 1 });
@@ -384,7 +401,7 @@ test("Worker 全部会话 caller 共用 owner，restore 完整回应先于 micro
     assert.equal((f.posted[0] as Message).token, 9);
     assert.equal(f.posted[0].generation, 2);
     assert.deepEqual(f.posted.slice(1), [
-      { ...catalogWorkerFixture(snapshot(0, 0)), type: "restored", generation: 1, nextGeneration: 2, requestId: 2, snapshot: snapshot(0, 0), civilDate: "2031-02-03" },
+      { ...catalogWorkerFixture(snapshot(0, 0)), type: "restored", generation: 1, nextGeneration: 2, requestId: 2, snapshot: snapshot(0, 0), civilDate: "2031-02-03", publisherToken: 9, publicationOrdinal: "0", workingOrders: [], controlAddress: 65008 },
     ]);
     await Promise.resolve();
     assert.equal(f.timers.size, 1);
@@ -400,7 +417,12 @@ test("Worker 全部会话 caller 共用 owner，restore 完整回应先于 micro
     f.send({ type: "setPausePreferences", generation: 2, requestId: 5, preferences: { pause_after_close: true, pause_before_open: false } });
     f.send({ type: "start", generation: 2, requestId: 22 });
     f.send({ type: "endCivilDay", generation: 2, requestId: 6 });
-    assert.deepEqual(f.posted.map((message) => message.type), ["pausePreferencesSet", "started", "protocol", "barrierPaused", "civilDayEnded"]);
+    assert.deepEqual(f.posted.map((message) => message.type), ["pausePreferencesSet", "started", "civilDayEnded"]);
+    assert.ok(f.calls.includes("stagedCivil:9"), "日界交给独立发送者，控制端不能直接发布");
+    const afterCivilWake = f.timers.values().next().value;
+    assert.ok(afterCivilWake, "authority 等待 Rust 的暂停回执");
+    f.timers.clear();
+    afterCivilWake();
     assert.equal(f.timers.size, 0);
     f.send({ type: "start", generation: 2, requestId: 23 });
     f.send({ type: "drop" });

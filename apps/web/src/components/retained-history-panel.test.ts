@@ -13,15 +13,12 @@ before(async () => {
 });
 after(async () => { await vite.close(); });
 
-test("日期分页与五日窗口诚实描述保留范围，不伪造分钟或收盘竞价指示量", { timeout: 10000 }, () => {
+test("日期分页只提供归档日K，不提供五日分时或日期分钟成交", { timeout: 10000 }, () => {
   const query = async () => { throw new Error("SSR不能读取宿主"); };
-  const dated = renderToStaticMarkup(React.createElement(Panel, { query, scopeKey: "1:0", code: "600001", currentDate: "2030-01-10" }));
-  assert.match(dated, /分钟历史起始日期/);
-  assert.match(dated, /每页5个自然日/);
-  assert.match(dated, /历史全部保留/);
-  const five = renderToStaticMarkup(React.createElement(Panel, { query, scopeKey: "1:0", code: "600001", currentDate: "2030-01-10", fiveDay: true }));
-  assert.match(five, /最近五个已结束开市日/);
-  assert.match(five, /读取／刷新五日/);
+  const html = renderToStaticMarkup(React.createElement(Panel, { query, scopeKey: "1:0", code: "600001", currentDate: "2030-01-10" }));
+  assert.match(html, /历史日K起始日期/);
+  assert.match(html, /每页31个自然日/);
+  assert.doesNotMatch(html, /五日分时|长期分钟历史/);
 });
 
 type Props = { children?: React.ReactNode; "aria-label"?: string; disabled?: boolean; value?: string; entry?: MarketHistoryPage["entries"][number]; onSubmit?: (event: { preventDefault(): void }) => void; onChange?: (event: { currentTarget: { value: string } }) => void; onClick?: () => void };
@@ -61,14 +58,16 @@ function mount() {
     submit() { nodes(tree).find((node) => node.type === "form")!.props.onSubmit!({ preventDefault() {} }); render(); },
     entries() { return nodes(tree).flatMap((node) => node.props.entry === undefined ? [] : [node.props.entry]); },
     content() { return text(tree); },
+    markup() { return renderToStaticMarkup(tree); },
     click(label: string) { const button = nodes(tree).find((node) => node.type === "button" && text(node) === label)!; assert.equal(button.props.disabled, false); button.props.onClick!(); render(); },
     replace() { scopeKey = "2:9"; code = "000001"; render(); render(); },
-    change() { nodes(tree).find((node) => node.props["aria-label"] === "分钟历史起始日期")!.props.onChange!({ currentTarget: { value: "2030-01-02" } }); render(); },
+    change() { nodes(tree).find((node) => node.props["aria-label"] === "历史日K起始日期")!.props.onChange!({ currentTarget: { value: "2030-01-02" } }); render(); },
     dispose() { cleanups.forEach((cleanup) => cleanup()); },
   };
 }
 function page(request: MarketHistoryRequest, date: string, next: string | null): MarketHistoryPage {
-  return { code: request.code, entries: [{ date, availability: "NoTrades", bars: [], daily_candle: null }], next_cursor: next, settled_through: "2030-01-09" };
+  const daily_candle = { time: Date.parse(`${date}T00:00:00Z`) / 1000, open: "1000", high: "1100", low: "950", close: "1050", volume: 150, trade_stats: { turnover_cents: "155000", trade_count: 3 } };
+  return { code: request.code, entries: [{ date, availability: "Traded", bars: [], daily_candle }], next_cursor: next, settled_through: "2030-01-09" };
 }
 async function settle() { for (let index = 0; index < 8; index++) await Promise.resolve(); }
 
@@ -82,6 +81,10 @@ test("日期窗口下一页使用日期游标，前页缓存不重新读取宿�
     ui.requests[1].resolve(page(ui.requests[1].request, "2030-01-03", null));
     await settle(); ui.render(); assert.equal(ui.entries()[0].date, "2030-01-03");
     ui.click("上一页"); assert.equal(ui.entries()[0].date, "2030-01-02");
+    assert.match(ui.markup(), /日K开\/高\/低\/收（元）/);
+    assert.match(ui.markup(), /10.00／11.00／9.50／10.50/);
+    assert.match(ui.markup(), />1550</);
+    assert.doesNotMatch(ui.markup(), /真实稀疏分钟|<svg/);
     assert.equal(ui.requests.length, 2);
   } finally { ui.dispose(); }
 });

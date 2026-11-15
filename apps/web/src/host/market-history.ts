@@ -1,14 +1,5 @@
-/**
- * 保留历史查询归一层（W3 取回自 18725d07，按 B2 新 wire 契约适配）。
- *
- * ADR-0041 词表对齐：视图层沿用六位代码串（`code`）寻址；B2 重建的引擎
- * wire 面为数值 `StockId`——请求翻译（`wireMarketHistoryRequest`，code→id）
- * 与响应翻译（归一入口 stock→code）都在 host 边界完成，面板与视图逻辑
- * 零数值 id 感知（对齐 `stock-history.ts` 既有先例）。
- *
- * 与旧 wire 的其余差异（B2 新基线，契约测试以引擎侧为准）：
- * - `MinuteBar`→`MinuteBarFact`：字段名/字符串口径逐一相同（仅类型名变更）；
- * - 可用性五态/分页游标/严格升序/日期连续性校验全部保留。
+/** 历史日 K 查询：跨宿主使用同一 wire 校验和 code ↔ StockId 翻译。
+ *  分钟数据仅来自单独的当前分钟接口；历史响应的 bars 兼容字段必须为空。
  */
 import type { CivilDate } from "../types/generated/CivilDate.ts";
 import type { DailyCandle } from "../types/generated/DailyCandle.ts";
@@ -18,10 +9,11 @@ import { exact, field, record, values } from "./protocol/guards.ts";
 import { parseDailyCandle } from "./protocol/wire-values.ts";
 import type { CatalogResolver } from "./catalog-resolver.ts";
 import { tradeHistoryDate } from "./personal-trade-history.ts";
+import { assertSettledDailyCandle } from "../utils/archive-daily-candle.ts";
 import { parseMoney } from "../utils/money.ts";
 import { parseTurnoverCents } from "../utils/turnover.ts";
 
-/** 视图请求（代码串词表——与旧 main 视图契约一致）。 */
+/** 上层使用证券六位代码，宿主边界翻译为 StockId。 */
 export interface MarketHistoryRequest {
   readonly code: string;
   readonly date_from: CivilDate;
@@ -124,16 +116,22 @@ export function normalizeMarketHistoryPage(value: unknown, request: MarketHistor
     previous = date;
     const availability = entry.availability;
     if (!["Traded", "NoTrades", "Closed", "BeforeStart", "NotEnded"].includes(String(availability))) throw new Error("未知历史可用性");
-    const bars = values(entry.bars, "bars").map(normalizeMinuteBar);
-    let last = -1;
-    for (const bar of bars) { if (bar.minute_of_day <= last) throw new Error("分钟bar必须按分钟严格递增"); last = bar.minute_of_day; }
-    if ((availability === "Traded") !== (bars.length > 0)) throw new Error("历史状态与真实成交不一致");
-    if (["Traded", "NoTrades", "Closed"].includes(String(availability)) && (settled === null || date > settled)) throw new Error("尚未日结不能冒充归档日期");
+    if (values(entry.bars, "bars").length !== 0) throw new Error("历史日K不得携带已结束日的分钟数据");
+    const isSettledSession = availability === "Traded" || availability === "NoTrades";
+    if ((isSettledSession || availability === "Closed") && (settled === null || date > settled)) throw new Error("尚未日结不能冒充归档日期");
     if (availability === "NotEnded" && settled !== null && date <= settled) throw new Error("已日结不能标为未结束");
     const candle = entry.daily_candle === null ? null : parseDailyCandle(entry.daily_candle, "daily_candle");
-    if (candle !== null && candle.time !== Date.parse(`${date}T00:00:00Z`) / 1000) throw new Error("日K日期与分钟日期不同");
-    if ((availability === "Closed" || availability === "NotEnded") && candle !== null) throw new Error("休市或未结束日期不能包含完整日K");
-    return { date, availability: availability as MarketHistoryEntry["availability"], bars, daily_candle: candle };
+    if (candle !== null && candle.time !== Date.parse(`${date}T00:00:00Z`) / 1000) throw new Error("日K与历史条目日期不同");
+    if (isSettledSession) {
+      if (candle === null) throw new Error("开市归档日期缺少日K");
+      assertSettledDailyCandle(candle, "daily_candle");
+      if ((availability === "Traded") !== (candle.volume > 0)) throw new Error("历史状态与日K成交量不一致");
+    } else if ((availability === "Closed" || availability === "NotEnded") && candle !== null) {
+      throw new Error("休市或未结束日期不能包含完整日K");
+    } else if (availability === "BeforeStart" && candle?.trade_stats != null) {
+      throw new Error("虚拟前史不能包含本局真实成交统计");
+    }
+    return { date, availability: availability as MarketHistoryEntry["availability"], bars: [], daily_candle: candle };
   });
   if (entries.length > expected.page_size) throw new Error("历史页超过page_size");
   if (expectedTime <= throughTime && entries.length !== expected.page_size) throw new Error("历史页提前截断日期范围");

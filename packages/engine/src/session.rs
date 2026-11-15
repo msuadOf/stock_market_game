@@ -153,6 +153,7 @@ impl Drop for VerificationActorGuard {
         verify_metrics::METRICS.producer_exit();
     }
 }
+pub mod checkpoint;
 pub(crate) mod information_anchor;
 mod initial_allocation;
 mod institutional_behavior;
@@ -170,6 +171,8 @@ mod plan_execution;
 mod plan_identity_runtime_tests;
 mod player_candidates;
 pub mod protocol;
+pub mod publication;
+pub mod runner;
 mod self_views;
 mod simple_preferences;
 pub use simple_preferences::SimplePreferencesError;
@@ -689,8 +692,8 @@ pub struct SaveSlot {
     /// 回执水位（B2 件 5 派生域游标——持久续号）。
     #[serde(default)]
     pub receipt_watermark: u64,
-    /// 保留历史链（B2：日结冻结的不可变日快照——全部保留（ADR-0034）；
-    /// serde 按值（`Arc` 为进程内共享形态））。
+    /// 日结后的开市状态索引；历史行情只保留日 K，不保留已结束日的分钟桶。
+    /// serde 按值（`Arc` 为进程内共享形态）。
     pub retained_market_days: Vec<crate::runtime::publication::SharedRetainedDay>,
     /// 当前随机数生成器状态；用十进制字符串避免 JavaScript 丢失 u64 精度。
     #[serde(with = "u64_decimal")]
@@ -6282,7 +6285,7 @@ mod b2_query_contract_tests {
         // settled_through 权威值（至 1/6 已结）。
         let page = session.market_history_page(&request).unwrap();
         assert_eq!(page.settled_through, Some(date("2030-01-06")));
-        // 成交日的 bar 值（desk 归一端到端贯通：首拍成交=570 分钟）。
+        // 完成日仅返回日 K；有成交状态不依赖已丢弃的分钟序列。
         let traded = session
             .market_history_page(&MarketHistoryRequest {
                 stock: crate::StockId(0),
@@ -6292,10 +6295,10 @@ mod b2_query_contract_tests {
                 page_size: 1,
             })
             .unwrap();
-        assert_eq!(traded.entries[0].bars.len(), 1);
-        assert_eq!(traded.entries[0].bars[0].minute_of_day, 570);
-        assert_eq!(traded.entries[0].bars[0].volume_shares, 100);
-        assert_eq!(traded.entries[0].bars[0].turnover_cents, 100_000);
+        assert!(page.entries.iter().all(|entry| entry.bars.is_empty()));
+        let candle = traded.entries[0].daily_candle.as_ref().unwrap();
+        assert_eq!(candle.volume, 100);
+        assert_eq!(candle.trade_stats.as_ref().unwrap().turnover_cents, 100_000);
     }
 
     #[test]
@@ -6810,9 +6813,11 @@ mod retained_snapshot_tests {
         assert_eq!(day.date, crate::CivilDate::from_iso("2030-01-02").unwrap());
         let session_0 = day.securities.get(&0).expect("在册证券有条目");
         assert!(session_0.trading, "开市日 trading=true");
-        assert_eq!(session_0.bars.len(), 1, "成交一笔恰一桶");
-        assert_eq!(session_0.bars[0].volume_shares, 100);
-        assert_eq!(session_0.bars[0].turnover_cents, 100_000);
+        assert_eq!(
+            serde_json::to_value(session_0).unwrap()["bars"],
+            serde_json::json!([]),
+            "已结束交易日不保存分时桶"
+        );
         // end_civil_day 不重复补条目（末条==settled）。
         session.end_civil_day().unwrap();
         assert_eq!(
@@ -6822,11 +6827,7 @@ mod retained_snapshot_tests {
         );
     }
 
-    /// 真实成交局的日 K stats×分钟桶互检（W3 接线实证缺陷的红证补立：
-    /// 真实跨价成交后日结，日 K OHLC 真实但 volume/turnover/trade_count
-    /// 全零——install_candles 占位路径在 desk roll_day 后 view.daily_active
-    /// 短暂 None 时以 {stats:Default} 整体覆盖既有活动 K。B2 既有测试
-    /// 只断言 bars，漏了日 K stats 与 bars 的逐字段互检）。
+    /// 日结保留与活跃分钟源一致的日 K，但不再暴露或写入旧分钟序列。
     #[test]
     fn traded_day_daily_candle_stats_match_minute_bars() {
         if !crate::runtime::step_runtime_enabled() {
@@ -6834,6 +6835,9 @@ mod retained_snapshot_tests {
         }
         let mut session = b2_session("2030-01-02");
         let code = execute_buy(&mut session);
+        let minute_query = crate::session::CurrentMinuteHistoryRequest { stock: code };
+        let live = session.current_minute_history(&minute_query).unwrap();
+        assert!(!live.bars.is_empty(), "确实生成了活跃日分钟桶");
         for _ in 0..2 {
             session.step().unwrap();
         }
@@ -6853,28 +6857,68 @@ mod retained_snapshot_tests {
             entry.availability,
             crate::session::MarketHistoryAvailability::Traded
         );
-        assert!(!entry.bars.is_empty(), "真实成交分钟桶非空");
+        assert!(entry.bars.is_empty(), "已结算开市日不保留分钟桶");
         let candle = entry.daily_candle.as_ref().expect("已结算开市日必有日 K");
-        let volume: u64 = entry.bars.iter().map(|bar| bar.volume_shares).sum();
-        let turnover: u128 = entry.bars.iter().map(|bar| bar.turnover_cents).sum();
-        let count: u64 = entry.bars.iter().map(|bar| bar.trade_count).sum();
-        assert!(volume > 0, "真实成交局日 K volume 不得为零");
-        assert_eq!(candle.volume, volume, "日 K 量==分钟桶累计");
+        assert_eq!(
+            candle.volume,
+            live.bars.iter().map(|bar| bar.volume_shares).sum::<u64>()
+        );
         let stats = candle
             .trade_stats
             .as_ref()
             .expect("真实成交局日 K 必有成交统计");
         assert_eq!(
             u128::from(stats.turnover_cents),
-            turnover,
-            "日 K 额==分钟桶累计"
+            live.bars.iter().map(|bar| bar.turnover_cents).sum::<u128>()
         );
-        assert_eq!(stats.trade_count, count, "日 K 笔数==分钟桶累计");
-        // OHLC 同样来自真实成交（互检外延：open/close=桶首尾）。
-        let first = &entry.bars[0];
-        let last = entry.bars.last().unwrap();
-        assert_eq!(candle.open, first.open);
-        assert_eq!(candle.close, last.close);
+        assert_eq!(
+            stats.trade_count,
+            live.bars.iter().map(|bar| bar.trade_count).sum::<u64>()
+        );
+        assert_eq!(candle.open, live.bars[0].open);
+        assert_eq!(candle.close, live.bars.last().unwrap().close);
+        assert_eq!(
+            Some(candle.high),
+            live.bars.iter().map(|bar| bar.high).max()
+        );
+        assert_eq!(Some(candle.low), live.bars.iter().map(|bar| bar.low).min());
+        let current = session.current_minute_history(&minute_query).unwrap();
+        assert_ne!(current.date, live.date, "读到下一交易日");
+        assert!(current.bars.is_empty(), "下一交易日不继承上日分钟桶");
+
+        // 模拟旧文件输入。读档只保留日 K，原有文件输入不改写。
+        let day_end_save = session.save().unwrap();
+        assert!(day_end_save.market_minute_bars.values().all(Vec::is_empty));
+        assert!(day_end_save
+            .market_minute_closes
+            .values()
+            .all(Vec::is_empty));
+        let mut old = serde_json::to_value(day_end_save).unwrap();
+        let legacy_bars = &mut old["retained_market_days"][0]["securities"]["0"]["bars"];
+        *legacy_bars = serde_json::to_value(&live.bars).unwrap();
+        let saved: crate::SaveSlot = serde_json::from_value(old.clone()).unwrap();
+        let restored = GameSession::restore(&saved).unwrap();
+        let restored_entry = restored
+            .market_history_page(&crate::session::MarketHistoryRequest {
+                stock: code,
+                date_from: live.date,
+                date_to: live.date,
+                after: None,
+                page_size: 1,
+            })
+            .unwrap()
+            .entries
+            .remove(0);
+        assert_eq!(&restored_entry, entry, "旧档恢复后的日 K 与成交状态不变");
+        let new = serde_json::to_value(restored.save().unwrap()).unwrap();
+        assert_eq!(
+            new["retained_market_days"][0]["securities"]["0"]["bars"],
+            serde_json::json!([])
+        );
+        assert_ne!(
+            old["retained_market_days"][0]["securities"]["0"]["bars"],
+            serde_json::json!([])
+        );
     }
 
     /// W3 接线实证测试的引擎直达等价（web-wasm protocol_tests 的
@@ -6921,7 +6965,7 @@ mod retained_snapshot_tests {
             .unwrap();
         assert!(!history.confirmations.is_empty(), "分页查询同源出数");
 
-        // 日结后面板四：保留历史（Traded + bars 非空）。
+        // 日结后面板四：保留历史（Traded + 日 K，分钟桶不跨日）。
         for _ in 0..2 {
             session.step().unwrap();
         }
@@ -6944,7 +6988,11 @@ mod retained_snapshot_tests {
             crate::session::MarketHistoryAvailability::Traded,
             "已结算开市日=Traded"
         );
-        assert!(!page.entries[0].bars.is_empty(), "保留链冻结真实分钟 bars");
+        assert!(
+            page.entries[0].bars.is_empty(),
+            "历史行情接口不返回旧分钟桶"
+        );
+        assert_eq!(page.entries[0].daily_candle.as_ref().unwrap().volume, 100);
     }
 
     #[test]

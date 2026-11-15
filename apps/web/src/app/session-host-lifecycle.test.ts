@@ -40,7 +40,7 @@ function fixture(overrides: Partial<SessionHostLifecyclePorts> = {}) {
     setIndicatorCalculator: () => { calls.push("register"); return () => { calls.push("unregister"); }; },
     connectProtocol: () => { calls.push("connect"); }, disconnectProtocol: () => { calls.push("disconnect"); },
     createHost: async () => { calls.push("create"); return host; }, checkWasmEnvironment: () => { calls.push("environment"); },
-    isDocumentHidden: () => true, getBrowserSaveRepository: () => ({ load: async () => { calls.push("read"); return null; } }),
+    isDocumentHidden: () => true, getQuickArchive: () => ({ load: async () => { calls.push("read"); return null; } }),
     setActiveSetup: () => { calls.push("setup"); }, configureMarketTiming: () => { calls.push("timing"); }, setStartDateDraft: () => {}, setPriceCageEnabledDraft: () => {},
     setFloatAllocationDraft: () => {}, setInitialAllocation: () => {},
     setDeliveryModes: () => {}, setDeliveryModeState: () => {}, setNotice: (value) => calls.push(value), setReady: () => { calls.push("ready"); },
@@ -743,7 +743,7 @@ test("pending完整X先获用户确认再传同一目标，只restore不读quick
     confirmMemoryHandover: async (handover) => {
       confirms++; await confirmation.promise;
       assert.equal(handover.kind, "frozen"); return handover.kind === "frozen" ? handover.pendingIntent : null;
-    }, getBrowserSaveRepository: () => { throw new Error("pending确认不能重读quickslot"); } });
+    }, getQuickArchive: () => { throw new Error("pending确认不能重读quickslot"); } });
   f.host.tick = () => 6; f.host.day = () => 2;
   f.ports.createHost = async (_setup, seed, _target, sink, x, ticket) => {
     creates++; assert.equal(seed, BigInt(archive.seed)); assert.equal(typeof sink, "function");
@@ -779,7 +779,7 @@ test("reload待确认X时用户明确改选Y，先确认Y再单次消费；不�
       assert.equal(explicit?.kind, "load"); if (explicit?.kind === "load") assert.equal(explicit.archive, y);
       assert.equal(JSON.parse(m.memory.session.data.get(SNAPSHOT_KEY)!).handover.pendingIntent.archive.seed, archive.seed);
       return explicit!;
-    }, getBrowserSaveRepository: () => { throw new Error("不得重读快速槽"); } });
+    }, getQuickArchive: () => { throw new Error("不得重读快速槽"); } });
   f.source.select(y); f.host.tick = () => 6; f.host.day = () => 2;
   f.ports.createHost = async (_setup, seed, _target, _sink, selected, ticket) => {
     created++; assert.equal(seed, 99n); assert.deepEqual(selected, y);
@@ -816,7 +816,7 @@ test("面板实际解析文件Y后才确认恢复，carrier仍绑定X且旧快�
   });
   const f = fixture({ wasmMemoryOwner: next, hostTransitionRef: next.hostTransitionRef,
     confirmMemoryHandover: selection.request,
-    getBrowserSaveRepository: () => ({ load: async () => { quickslotReads++; return archive; } }),
+    getQuickArchive: () => ({ load: async () => { quickslotReads++; return archive; } }),
     prepareWasmRestoreCapability: async selected => { assert.deepEqual(selected, y); },
   });
   f.host.tick = () => 6; f.host.day = () => 2;
@@ -853,7 +853,7 @@ test("用户取消冻结目标确认正常返回启动选择，原carrier与明�
   const f = fixture({ wasmMemoryOwner: m.owner, hostTransitionRef: m.owner.hostTransitionRef,
     confirmMemoryHandover: async () => null, onMemoryHandoverCancelled: async () => { returned++; },
     createHost: async () => { created++; throw new Error("取消不得分配"); },
-    getBrowserSaveRepository: () => { throw new Error("取消不得读快速槽"); }, setError: error => errors.push(error) });
+    getQuickArchive: () => { throw new Error("取消不得读快速槽"); }, setError: error => errors.push(error) });
   f.source.select(y); await f.runtime.start();
   assert.equal(returned, 1); assert.equal(created, 0); assert.deepEqual(errors, []);
   assert.equal(m.memory.session.data.get(SNAPSHOT_KEY), before); assert.equal(await f.source.read(async () => null), y);
@@ -938,7 +938,7 @@ test("失败交接重试须确认原X，不读quickslot/抽新seed/受理Y，提
   m.memory.session.onCall(null);
   const confirmed = deferred<boolean>(); let prompts = 0, creates = 0, reloads = 0;
   const f = fixture({ wasmMemoryOwner: m.owner, hostTransitionRef: m.owner.hostTransitionRef,
-    createSeed: () => { throw new Error("同事件重试不得再抽seed"); }, getBrowserSaveRepository: () => { throw new Error("同事件重试不得读quickslot"); },
+    createSeed: () => { throw new Error("同事件重试不得再抽seed"); }, getQuickArchive: () => { throw new Error("同事件重试不得读quickslot"); },
     createHost: async () => { creates++; throw new Error("reload前不得分配"); },
     confirmMemoryReloadRetry: async (handover) => { prompts++; assert.equal(handover.pendingIntent?.kind, "new"); if (handover.pendingIntent?.kind === "new") assert.equal(handover.pendingIntent.seed, "42"); return confirmed.promise; },
     reloadAfterMemoryNotice: async () => { reloads++; assert.ok(f.calls.some((call) => /已冻结本次选择/.test(call))); },

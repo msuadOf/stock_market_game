@@ -35,7 +35,7 @@ test("活动分钟按 StockId 键收存（日结清空=空数组合法，bars �
   assert.throws(() => parseActiveMinuteBars({ "9": [bar] }, "market_minute_bars", [stock], config), /证券不存在/)
 })
 
-test("归档分钟和日K逐项互证而非补造成交", { timeout: 10000 }, () => {
+test("兼容读取：旧存档归档分钟存在时仍逐项校验", { timeout: 10000 }, () => {
   const days = parseRetainedHistory([{ date: "2030-01-02", securities: { "0": { trading: true, bars: [bar] } } }], { stocks: [stock], ...config, start_date: "2030-01-02", settled_through: "2030-01-02" })
   const candle = { time: Date.parse("2030-01-02T00:00:00Z") / 1000, open: "1000", high: "1000", low: "1000", close: "1000", volume: 100, trade_stats: { turnover_cents: "100000", trade_count: 1 } }
   validateRetainedHistoryCandles(days, { "0": [candle] })
@@ -67,3 +67,11 @@ test("receipt 日志按账户收存且严格递增，水位必须超过最大已
   assert.throws(() => parseReceiptWatermark(7, log), /超过最大已发/)
   assert.throws(() => parseReceiptWatermark(-1, log))
 })
+
+test("新存档仅写入已结算日K，真实成交不依赖分钟字段", { timeout: 10000 }, () => {
+  const days = parseRetainedHistory([{ date: "2030-01-02", securities: { "0": { trading: true, bars: [] } } }], { stocks: [stock], ...config, start_date: "2030-01-02", settled_through: "2030-01-02" });
+  const candle = { time: Date.parse("2030-01-02T00:00:00Z") / 1000, open: "1000", high: "1100", low: "950", close: "1050", volume: 150, trade_stats: { turnover_cents: "155000", trade_count: 3 } };
+  assert.doesNotThrow(() => validateRetainedHistoryCandles(days, { "0": [candle] }));
+  assert.throws(() => validateRetainedHistoryCandles(days, { "0": [{ ...candle, trade_stats: { turnover_cents: "0", trade_count: 0 } }] }), /日K成交统计/);
+  assert.throws(() => validateRetainedHistoryCandles(days, { "0": [{ ...candle, high: "999" }] }), /日K.*OHLC/);
+});

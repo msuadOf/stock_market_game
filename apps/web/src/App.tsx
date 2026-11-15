@@ -14,6 +14,7 @@ import { Button, Card, HTMLSelect, Switch } from "@blueprintjs/core";
 import { useSelector } from "react-redux";
 import type { DeliveryMode, EngineHost, SpeedMetrics } from "./host/engine-host";
 import type { HostFailure, HostUpdate } from "./host/host-update.ts";
+import { isObserverOnlyFailure } from "./host/protocol-failure.ts";
 import { CompanyQueryCoordinator } from "./host/company-query-coordinator.ts";
 import { ProtocolCoordinator } from "./host/protocol-coordinator.ts";
 import { SpeedMetricsRequestGate, speedMetricsMatchesUiState } from "./host/speed";
@@ -59,9 +60,9 @@ import "ag-grid-community/styles/ag-theme-alpine.css";
 import { AUTO_ORDER_LABELS, type AutoOrderType } from "./components/auto-order-manager";
 import { useOrientation } from "./hooks/useOrientation";
 import { selectDayEndFileTarget, loadFromFile, type DayEndFileTarget } from "./save/save-file";
-import { captureCivilDayEndCandidate } from "./save/civil-day-end-capture.ts";
-import { validateDayEndCandidate } from "./save/day-end-candidate.ts";
-import { writeDayEndTargets } from "./save/day-end-targets.ts";
+import { validateDayEndArchive, validateDayEndCandidate, type DayEndSaveReference } from "./save/day-end-candidate.ts";
+import { readQuickArchive } from "./save/quick-archive-read.ts";
+import { parseSaveSlot } from "./save/save-schema.ts";
 import { SessionReplacementGate } from "./save/session-replacement.ts";
 import { CompressedIndexedDbSaveRepository } from "./save/indexed-db-save-repository";
 import { PlayerOrderRefreshGate, playerOrderFactsRequireRefresh } from "./components/player-orders.ts";
@@ -165,6 +166,10 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
   const protocolCoordinatorRef = useRef<ProtocolCoordinator | null>(null);
   const fatalHostErrorRef = useRef<(failure: string | HostFailure) => void>(() => {});
   fatalHostErrorRef.current = (failure) => {
+    if (typeof failure !== "string" && isObserverOnlyFailure(failure)) {
+      setNotice(`行情观察未同步：${failure.message}。市场推进未因此暂停。`);
+      return;
+    }
     store.dispatch(setRunning(false));
     setError(failure);
   };
@@ -265,7 +270,48 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     finally { setCancelAllPending(false); }
   }
 
+  // 仅本地会话允许读取浏览器快速槽；共享市场的日终档由 Server 管理。
+  const getQuickArchive = () => ({
+    load: () => {
+      if (startupTarget.kind === "remote") throw new Error("共享市场不能读取浏览器快速槽");
+      const host = hostRef.current;
+      const desktopStartup = host === null && startupTarget.kind === "tauri"
+        ? async () => (await import("@tauri-apps/api/core")).invoke("load_desktop_archive")
+        : undefined;
+      return readQuickArchive({
+        fence: host?.waitCheckpointIdle?.bind(host),
+        readAuthority: host?.readQuickArchive?.bind(host) ?? desktopStartup,
+        readLegacy: () => getBrowserSaveRepository().load(),
+        validate: (slot) => validateDayEndArchive(parseSaveSlot(slot)),
+      });
+    },
+  });
+
   function connectProtocol(host: EngineHost) {
+    let checkpointGeneration: string | null = null;
+    let lastWrittenCheckpoint = -1;
+    let pendingCheckpoints = new Set<number>();
+
+    function mirrorAuthorizedCheckpoint(generation: string, reference: DayEndSaveReference) {
+      const target = dayEndFileTargetRef.current;
+      const pending = pendingCheckpoints;
+      if (target === null || checkpointGeneration !== generation || reference.seq <= lastWrittenCheckpoint
+        || Array.from(pending).some(seq => seq >= reference.seq)) {
+        return;
+      }
+      pending.add(reference.seq);
+      const candidate = host.save(reference).then((slot) => validateDayEndCandidate(slot, reference));
+      void dayEndPersistenceRef.current.completed(
+        generation,
+        candidate,
+        (slot, isCurrent) => target.write(slot, () => isCurrent() && target === dayEndFileTargetRef.current),
+      ).then((saved) => {
+        if (saved && checkpointGeneration === generation) lastWrittenCheckpoint = Math.max(lastWrittenCheckpoint, reference.seq);
+        if (saved && host === hostRef.current) setNotice("已更新日终存档的授权文件副本");
+      }, (saveError: unknown) => {
+        if (host === hostRef.current) setNotice(`日终存档的授权文件副本更新失败：${saveError instanceof Error ? saveError.message : String(saveError)}`);
+      }).finally(() => { pending.delete(reference.seq); });
+    }
     companyCoordinatorRef.current = new CompanyQueryCoordinator(host, store.dispatch);
     protocolCoordinatorRef.current = new ProtocolCoordinator({
       prepareBaseline(protocolState, baseline, companyGeneration) {
@@ -274,17 +320,27 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
         return company.prepareBaseline({ civilDate: baseline.civilDate, revision: baseline.revision, seq: protocolState.snapshot.seq, catalogResolver: baseline.catalogResolver }, companyGeneration);
       },
       onBaseline(protocolState, baseline) {
+        const resync = checkpointGeneration === baseline.generation && baseline.continuation !== true;
         applyBaselineEffects(baseline.continuation === true, {
           replaceSession() {
             if (quickTrading.jobs().some(job => job.enabled)) setNotice("已重新同步游戏，定时自动下单已停止，请核对后重新开启");
             quickTrading.reset();
             saveSelectionGenerationRef.current += 1;
-            dayEndPersistenceRef.current.install(baseline.generation);
+            if (checkpointGeneration !== baseline.generation) {
+              checkpointGeneration = baseline.generation;
+              lastWrittenCheckpoint = -1;
+              pendingCheckpoints = new Set();
+              dayEndPersistenceRef.current.install(baseline.generation);
+            }
             clearPlayerOrders();
           },
           installView() { installBaselineRef.current(protocolState); setHostBaselineReady(true); },
           refreshOrders() { if (!TRADING_E2E_MODE) void refreshPlayerOrders(); },
         });
+        // 观察流补基线时可能跨过日界；如有授权文件，只从权威候选补文件副本，不负责快槽写入。
+        if (resync && baseline.latestCheckpoint !== undefined) {
+          mirrorAuthorizedCheckpoint(baseline.generation, baseline.latestCheckpoint);
+        }
       },
       onApplied(reduction, metadata) {
         const companyCoordinator = companyCoordinatorRef.current;
@@ -293,31 +349,10 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
         } else {
           companyCoordinator?.acceptCivil(reduction.update, metadata);
           clearPlayerOrders();
-          const target = dayEndFileTargetRef.current;
-          const reference = { seq: reduction.update.update.seq_to, settledDate: reduction.update.update.boundary.settled_date };
-          const candidate = captureCivilDayEndCandidate(
-            host.save(reference).then((slot) => validateDayEndCandidate(slot, reference)),
-            () => {
-              const protocolStatus = protocolCoordinatorRef.current?.status();
-              return host === hostRef.current
-                && protocolStatus?.kind === "ready"
-                && protocolStatus.state.cursor.generation === reduction.state.cursor.generation;
-            },
-            () => { void refreshPlayerOrders(); },
-          );
-          void dayEndPersistenceRef.current.completed(
-            reduction.state.cursor.generation,
-            candidate,
-            async (slot, isCurrent) => {
-              return await writeDayEndTargets(slot, isCurrent, [
-                { label: "浏览器快速槽", write: (value, current) => getBrowserSaveRepository().save(value, current) },
-                ...(target === null ? [] : [{ label: "授权文件", write: (value: unknown, current: () => boolean) => target.write(value, () => current() && target === dayEndFileTargetRef.current) }]),
-              ]);
-            },
-          ).then((saved) => {
-            if (saved && host === hostRef.current) setNotice(target === null ? "日终存档已更新（浏览器快速槽）" : "日终存档已更新（快速槽与授权文件）");
-          }, (saveError: unknown) => {
-            if (host === hostRef.current) setNotice(`日终存档更新失败：${saveError instanceof Error ? saveError.message : String(saveError)}`);
+          void refreshPlayerOrders();
+          mirrorAuthorizedCheckpoint(reduction.state.cursor.generation, {
+            seq: reduction.update.update.seq_to,
+            settledDate: reduction.update.update.boundary.settled_date,
           });
         }
         acceptReductionRef.current(reduction);
@@ -359,7 +394,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
     startupTarget, sessionSetup, speed, pauseAfterClose, pauseBeforeOpen, TRADING_E2E_MODE, pausePreferencesReady,
     malformedProtocolFixture: () => import.meta.env.DEV && new URLSearchParams(window.location.search).get("protocolFixture") === "malformed",
     setIndicatorCalculator, configureMarketTiming, setActiveSetup, setStartDateDraft, setPriceCageEnabledDraft, setFloatAllocationDraft, setInitialAllocation, setDeliveryModes, setDeliveryModeState,
-    setNotice, setReady, setError, onSpawnFailure, setHostBaselineReady, refreshPlayerOrders, getBrowserSaveRepository, connectProtocol,
+    setNotice, setReady, setError, onSpawnFailure, setHostBaselineReady, refreshPlayerOrders, getQuickArchive, connectProtocol,
     onMemoryHandoverCancelled: () => onSelectHost(stopStartupRef.current),
     loadMemoryHandoverFile: () => loadFromFile(() => dayEndPersistenceRef.current.beforeRead()),
     disconnectProtocol() {
@@ -409,7 +444,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
   const saveCommands = useSaveCommands({ hostRef, initialSaveSourceRef, dayEndPersistenceRef, autoOrderMgrRef, startupTarget,
     sessionReplacementGateRef, saveSelectionGenerationRef, dayEndFileTargetRef, playerOrderRefreshGateRef,
     speedMetricsLoadInProgressRef, speedMetricsRequestGateRef, fatalHostErrorRef,
-    activeSetup, startDateDraft, priceCageEnabledDraft, floatAllocationDraft, loadFromFile, selectDayEndFileTarget, getBrowserSaveRepository,
+    activeSetup, startDateDraft, priceCageEnabledDraft, floatAllocationDraft, loadFromFile, selectDayEndFileTarget, getQuickArchive,
     resetMarketHistory, configureMarketTiming, refreshPlayerOrders, clearPlayerOrders, setNotice, setError, setReady, setSessionSetup,
     setActiveSetup, setStartDateDraft, setPriceCageEnabledDraft, setFloatAllocationDraft, setInitialAllocation, setStartDateError, setSpeedMetricsPollingGeneration,
     setSpeedMetrics, setSpeedMetricsError });
@@ -671,7 +706,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
             <InitialAllocationSummary allocation={initialAllocation} />
             <Button onClick={handleNewGame}>创建新游戏</Button>
           </section>}
-          <UserPanel running={running} pauseAfterClose={pauseAfterClose} pauseBeforeOpen={pauseBeforeOpen} pausePreferencesPending={!canControlMarket || pausePreferences.pending} deliveryMode={deliveryMode} deliveryModes={deliveryModes} deliveryLabels={DELIVERY_MODE_LABELS} onPauseAfterCloseChange={(value) => { if (canControlMarket) void pausePreferences.changePreferences({ pause_after_close: value, pause_before_open: pauseBeforeOpen }); }} onPauseBeforeOpenChange={(value) => { if (canControlMarket) void pausePreferences.changePreferences({ pause_after_close: pauseAfterClose, pause_before_open: value }); }} onDeliveryModeChange={handleDeliveryModeChange} onSave={() => void handleSave()} loadDisabled={!canControlMarket} onLoad={() => { if (canControlMarket) void handleLoad(); }} onSaveFile={() => void handleSaveFile()} onLoadFile={() => { if (canControlMarket) void handleLoadFile(); }} />
+          <UserPanel running={running} pauseAfterClose={pauseAfterClose} pauseBeforeOpen={pauseBeforeOpen} pausePreferencesPending={!canControlMarket || pausePreferences.pending} deliveryMode={deliveryMode} deliveryModes={deliveryModes} deliveryLabels={DELIVERY_MODE_LABELS} onPauseAfterCloseChange={(value) => { if (canControlMarket) void pausePreferences.changePreferences({ pause_after_close: value, pause_before_open: pauseBeforeOpen }); }} onPauseBeforeOpenChange={(value) => { if (canControlMarket) void pausePreferences.changePreferences({ pause_after_close: pauseAfterClose, pause_before_open: value }); }} onDeliveryModeChange={handleDeliveryModeChange} onSave={() => void handleSave()} loadDisabled={!canControlMarket} onLoad={startupTarget.kind === "remote" ? undefined : () => void handleLoad()} onSaveFile={() => void handleSaveFile()} onLoadFile={() => { if (canControlMarket) void handleLoadFile(); }} />
         </Card>
       </WorkspaceGrid>
       {orientation === "landscape" && <footer className="desktop-account-bar" aria-label="模拟账户摘要">

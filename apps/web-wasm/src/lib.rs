@@ -332,11 +332,12 @@ struct SessionRegistry {
     runtime_topology: HostRuntimeTopology,
 }
 
-mod shutdown;
 #[cfg(all(target_family = "wasm", feature = "verification-harness"))]
 mod libos_join_verification;
 #[cfg(all(target_family = "wasm", feature = "verification-harness"))]
 mod libos_performance_verification;
+mod market_runner;
+mod shutdown;
 
 impl SessionRegistry {
     fn register(
@@ -403,6 +404,7 @@ impl SessionRegistry {
             Ok(())
         })?;
         self.sessions.remove(&handle);
+        market_runner::drop_drive(handle);
         Ok(())
     }
 
@@ -410,24 +412,16 @@ impl SessionRegistry {
         let session = self.sessions.get_mut(&handle).ok_or_else(|| {
             StepUpdateError::Operation(format!("invalid session handle: {handle}"))
         })?;
-        let result = (|| {
-            if session
-                .civil_day_ready()
-                .map_err(civil_error_to_step_update_error)?
-            {
-                let civil = session
-                    .end_civil_day_update()
-                    .map_err(civil_error_to_step_update_error)?;
-                return Ok(EngineUpdate::CivilUpdate(Box::new(civil)));
+        use engine::session::runner::manual::{manual_next, ManualNextError, ManualStepError};
+        let result = manual_next(session).map_err(|error| match error {
+            ManualNextError::Civil(source) => civil_error_to_step_update_error(source.into_error()),
+            ManualNextError::Step(ManualStepError::Readiness(source)) => {
+                civil_error_to_step_update_error(source)
             }
-            let frame = session
-                .step_frame()
-                .map_err(|error| StepUpdateError::Fatal(Box::new(error.into())))?;
-            let batch = session
-                .tick_batch(vec![frame])
-                .map_err(|error| StepUpdateError::Fatal(Box::new(error.into())))?;
-            Ok(EngineUpdate::TickBatch(Box::new(batch)))
-        })();
+            ManualNextError::Step(source) => {
+                session_error_to_step_update_error(source.into_session_error())
+            }
+        });
         result.map_err(|error| match error {
             StepUpdateError::Fatal(failure) => {
                 StepUpdateError::Fatal(Box::new((*failure).at_session(session)))
@@ -1367,7 +1361,10 @@ mod facade_slot_capacity_tests {
 
     #[test]
     fn facade_slot_capacity_accepts_existing_arena_maximum_without_allocating() {
-        assert_eq!(facade_slot_capacity_for_topology(1, 524_284), Ok((1 << 20) - 1));
+        assert_eq!(
+            facade_slot_capacity_for_topology(1, 524_284),
+            Ok((1 << 20) - 1)
+        );
     }
 
     #[test]
@@ -1493,6 +1490,7 @@ struct TombstoneDeathWord {
 struct TombstonePrimaryLayout {
     engine: TombstonePrimaryRecord,
     ingress: TombstonePrimaryRecord,
+    publisher: TombstonePrimaryRecord,
     death: TombstoneDeathWord,
 }
 
@@ -1500,7 +1498,7 @@ struct TombstonePrimaryLayout {
 #[cfg(target_family = "wasm")]
 #[wasm_bindgen]
 pub fn wasm_tombstone_init_primary() -> Result<JsValue, JsValue> {
-    let (engine, ingress, death) =
+    let (engine, ingress, publisher, death) =
         libos::thread_facade::init_tombstone_primary().map_err(JsValue::from_str)?;
     let layout = TombstonePrimaryLayout {
         engine: TombstonePrimaryRecord {
@@ -1510,6 +1508,10 @@ pub fn wasm_tombstone_init_primary() -> Result<JsValue, JsValue> {
         ingress: TombstonePrimaryRecord {
             worker_id: u32::MAX,
             address: ingress,
+        },
+        publisher: TombstonePrimaryRecord {
+            worker_id: u32::MAX - 1,
+            address: publisher,
         },
         death: TombstoneDeathWord {
             address: death,
@@ -1525,6 +1527,12 @@ pub fn wasm_tombstone_init_primary() -> Result<JsValue, JsValue> {
 #[wasm_bindgen]
 pub fn wasm_tombstone_bind_ingress(address: u32, worker_id: u32) -> Result<(), JsValue> {
     libos::thread_facade::bind_tombstone_ingress(address, worker_id).map_err(JsValue::from_str)
+}
+
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen]
+pub fn wasm_tombstone_bind_publisher(address: u32, worker_id: u32) -> Result<(), JsValue> {
+    libos::thread_facade::bind_tombstone_publisher(address, worker_id).map_err(JsValue::from_str)
 }
 
 // ---------------------------------------------------------------------------

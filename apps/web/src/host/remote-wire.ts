@@ -1,8 +1,11 @@
+import { observerOrdinal } from "./observer-resync.ts";
 import { prepareBaselineUpdate, createProtocolUpdate, type HostFailure, type HostUpdate } from "./host-update.ts";
 import { parseHostFailure } from "./protocol-failure.ts";
 
 export type RemoteMessage =
-  | { readonly kind: "baseline"; readonly update: Extract<HostUpdate, { type: "baseline" }> }
+  | { readonly kind: "baseline"; readonly fencing: boolean; readonly update: Extract<HostUpdate, { type: "baseline" }> }
+  | { readonly kind: "observer-cut"; readonly captureId: string; readonly ordinal: string; readonly update: Extract<HostUpdate, { type: "baseline" }> }
+  | { readonly kind: "observer-fenced"; readonly captureId: string; readonly accepted: boolean }
   | { readonly kind: "protocol"; readonly update: Extract<HostUpdate, { type: "protocol" }> }
   | { readonly kind: "failure"; readonly failure: HostFailure }
   | { readonly kind: "resync"; readonly message: string }
@@ -41,10 +44,12 @@ function failure(value: unknown, where: string): HostFailure {
 }
 
 function baseline(source: Readonly<Record<string, unknown>>): Extract<RemoteMessage, { kind: "baseline" }> {
-  exact(source, ["timeline_generation", "snapshot", "civil_date", "public_revision", "public_report_ids", "stock_catalog", "company_catalog"], "远程 Baseline");
+  optionalExact(source, ["timeline_generation", "snapshot", "civil_date", "public_revision", "public_report_ids", "stock_catalog", "company_catalog"], ["observer_fencing"], "远程 Baseline");
+  if (source.observer_fencing !== undefined && source.observer_fencing !== true) throw new Error("远程观察能力无效");
   if (!Array.isArray(source.public_report_ids) || source.public_report_ids.some((id) => typeof id !== "string" || !/^(0|[1-9]\d*)$/.test(id))) throw new Error("远程 Baseline.public_report_ids 无效");
   return {
     kind: "baseline",
+    fencing: source.observer_fencing === true,
     update: prepareBaselineUpdate(generation(source.timeline_generation, "远程 Baseline.timeline_generation"), source.snapshot, source.stock_catalog, source.company_catalog, metadata(source, "远程 Baseline"), [], source.public_report_ids),
   };
 }
@@ -59,6 +64,16 @@ export function parseRemoteMessage(raw: string, activeGeneration: string | null 
   const envelope = record(parsed, "远程消息");
   if (Object.keys(envelope).length !== 1) throw new Error("远程消息必须且只能包含一个消息变体");
   if (Object.hasOwn(envelope, "Baseline")) return baseline(record(envelope.Baseline, "远程 Baseline"));
+  if (Object.hasOwn(envelope, "ObserverCut")) {
+    const { capture_id, publication_ordinal, ...snapshot } = record(envelope.ObserverCut, "远程 ObserverCut");
+    return { kind: "observer-cut", captureId: observerOrdinal(capture_id), ordinal: observerOrdinal(publication_ordinal), update: baseline(snapshot).update };
+  }
+  if (Object.hasOwn(envelope, "ObserverFenced")) {
+    const source = record(envelope.ObserverFenced, "远程 ObserverFenced");
+    exact(source, ["capture_id", "accepted"], "远程 ObserverFenced");
+    if (typeof source.accepted !== "boolean") throw new Error("远程 ObserverFenced.accepted 无效");
+    return { kind: "observer-fenced", captureId: observerOrdinal(source.capture_id), accepted: source.accepted };
+  }
   if (Object.hasOwn(envelope, "PublisherFrame")) {
     const source = record(envelope.PublisherFrame, "远程 PublisherFrame");
     optionalExact(source, ["timeline_generation", "update", "civil_date", "public_revision"], ["failure"], "远程 PublisherFrame");

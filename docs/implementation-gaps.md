@@ -106,8 +106,8 @@
 | ID | 功能/缺少环节 | 依据与当前边界 |
 |---|---|---|
 | B01 | 已实现：玩家“最高/最低”限价选项 | 限价方式现在可选择指定/最高/最低；符号选价仍提交 `PlaceLimit`，受理时才解析合法价格，不冒充市价或持续追价。三项定向短测及独立复核通过；首次红测仅缺 helper 的加载失败，不冒充断言级 TDD。 |
-| B02 | 五日分时图及跨交易日分钟数据查询 | `UX-CONTRACT.md:45`、`apps/web/src/mobile/MobileStockDetail.tsx:273`；按钮禁用并说明等待跨日分钟数据。完整日 K 已保留，不等于已有历史分钟查询。 |
-| B03 | 更多图表周期、均线配置 | `apps/web/src/mobile/MobileStockDetail.tsx:98`、`apps/web/src/mobile/MobileStockDetail.tsx:277` 均为 disabled；尚未定义完整选项/交互，周/月 K 的既有展示不能算这些入口已开放。 |
+| B02 | 五日分时图及跨交易日分钟数据查询 | 产品明确不保留已日结分钟数据，五日分时及跨日分钟查询不再是待实现能力；按日期查询日K，查看当前交易日分钟K。 |
+| B03 | 图表均线配置 | 季K、年K以及当日分钟K已可选；自定义均线选项仍未完成。 |
 | B04 | 看点/资讯/社区/简况内容，以及首页资金/资讯/资产/分析快捷页和更多行情分类 | `apps/web/src/mobile/MobileStockDetail.tsx:286` 仍为占位，`apps/web/src/components/MarketGrid.tsx:182`、`apps/web/src/components/MarketGrid.tsx:190` 为禁用入口。标签切换/布局已有，但内容业务没实现；需产品范围，不能因有“占位”就称该业务已完成。个股资金统计与盘口并非缺失。 |
 | B05 | 收盘集合竞价独立曲线/尾盘可视区 | `docs/decisions/0014-closing-call-auction.md:18` 明确当前只画开盘竞价，收盘真实结果经日 K 传递；独立尾盘展示需扩展坐标契约，不是收盘撮合缺失。 |
 | B06 | 多存档槽管理、成就、完整玩家交易流水与复盘查询、云同步 | `docs/open-questions.md:67` 为 Stage 2 产品决策；`apps/web/src/save/save-repository.ts:66` 是单快速槽，`apps/web/src/store/store.ts:60` 的最新 100 笔成交带不是完整流水。 |

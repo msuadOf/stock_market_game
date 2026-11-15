@@ -955,3 +955,55 @@ async fn pull_rejection_delivers_accepted_close_without_get_frame_then_allows_ci
 async fn push_rejection_delivers_accepted_close_before_failure_then_allows_civil_retry() {
     correction_rejection_flushes_before_failure("push").await;
 }
+
+#[tokio::test]
+async fn observer_capture_requires_accepted_fence_and_explicit_release() {
+    ServerFixture::run(1000, |fixture| async move {
+        let (id, _handles, token, _) = fixture.session(71).await;
+        let request = WsRequest::builder()
+            .uri(format!("{}/ws?session_id={id}&delivery=pull&observer_fencing=true", fixture.ws_url()))
+            .header("authorization", format!("Bearer {token}"))
+            .header("Host", fixture.base_url.trim_start_matches("http://"))
+            .header("Upgrade", "websocket").header("Connection", "upgrade")
+            .header("Sec-WebSocket-Key", generate_key())
+            .header("Sec-WebSocket-Version", "13")
+            .body(()).unwrap();
+        let (mut ws, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+        macro_rules! recv {
+            () => {{
+                let text = tokio::time::timeout(Duration::from_secs(1), ws.next()).await.unwrap().unwrap().unwrap().into_text().unwrap();
+                serde_json::from_str::<serde_json::Value>(&text).unwrap()
+            }};
+        }
+        macro_rules! send {
+            ($frame:expr) => { ws.send(tokio_tungstenite::tungstenite::Message::Text($frame.to_string())).await.unwrap() };
+        }
+        use serde_json::json;
+        assert_eq!(recv!()["Baseline"]["observer_fencing"], true);
+        send!(json!({ "CaptureObserver": {} }));
+        let first = recv!();
+        send!(json!({ "CaptureObserver": {} }));
+        let second = recv!();
+        let first_id = first["ObserverCut"]["capture_id"].as_str().unwrap();
+        let cut = &second["ObserverCut"];
+        let id = cut["capture_id"].as_str().unwrap();
+        let current_generation = cut["timeline_generation"].as_u64().unwrap().to_string();
+        assert_ne!(first_id, id);
+        assert_eq!(cut["publication_ordinal"], "0");
+
+        send!(json!({ "FenceObserver": { "capture_id": first_id, "timeline_generation": current_generation, "publication_ordinal": "0" } }));
+        assert_eq!(recv!()["ObserverFenced"]["accepted"], false);
+        send!(json!({ "ReleaseObserver": { "capture_id": id } }));
+        assert_eq!(recv!()["GatewayError"]["code"], "OBSERVER_CUT_STALE");
+        send!(json!({ "FenceObserver": { "capture_id": id, "timeline_generation": current_generation, "publication_ordinal": "0" } }));
+        assert_eq!(recv!()["ObserverFenced"]["accepted"], true);
+
+        // 发送端接受并不意味着 UI 已安装；必须等对应释放才允许 pull。
+        send!(json!({ "GetFrame": {} }));
+        assert_eq!(recv!()["GatewayError"]["code"], "RESYNC_REQUIRED");
+        send!(json!({ "ReleaseObserver": { "capture_id": id } }));
+        send!(json!({ "GetFrame": {} }));
+        assert_eq!(recv!(), json!({ "FrameEmpty": {} }));
+        ws.close(None).await.unwrap();
+    }).await;
+}

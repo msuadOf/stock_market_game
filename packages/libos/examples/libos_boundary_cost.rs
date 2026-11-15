@@ -28,7 +28,10 @@ fn direct_recv(rx: &Receiver<u32>) -> u32 {
 
 #[cfg(not(target_family = "wasm"))]
 fn direct_deadline(rx: &Receiver<u32>) -> Duration {
-    assert_eq!(rx.recv_timeout(IDLE_LIMIT), Err(mpsc::RecvTimeoutError::Timeout));
+    assert_eq!(
+        rx.recv_timeout(IDLE_LIMIT),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    );
     assert_eq!(rx.try_recv(), Err(mpsc::TryRecvError::Empty));
     IDLE_LIMIT
 }
@@ -344,7 +347,10 @@ fn run_case(
     resolution: f64,
     segment: Option<u32>,
 ) {
-    let mut n = if matches!(name, "idle-deadline" | "spawn-join" | "message-handoff" | "shutdown-wake") {
+    let mut n = if matches!(
+        name,
+        "idle-deadline" | "spawn-join" | "message-handoff" | "shutdown-wake"
+    ) {
         16
     } else {
         4096
@@ -430,8 +436,18 @@ fn main() {
         None,
     );
     run_case("spawn-join", native_lifecycle::spawn_join, resolution, None);
-    run_case("message-handoff", native_lifecycle::message_handoff, resolution, None);
-    run_case("shutdown-wake", native_lifecycle::shutdown_wake, resolution, Some(1));
+    run_case(
+        "message-handoff",
+        native_lifecycle::message_handoff,
+        resolution,
+        None,
+    );
+    run_case(
+        "shutdown-wake",
+        native_lifecycle::shutdown_wake,
+        resolution,
+        Some(1),
+    );
     #[cfg(feature = "verification-harness")]
     {
         for (name, completion) in [

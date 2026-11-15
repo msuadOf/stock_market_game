@@ -2,8 +2,8 @@ use super::session_fixture as fixture;
 use super::*;
 include!("../../../../packages/engine/test-support/simple_company.rs");
 
-#[test]
-fn company_read_member_request_projects_the_actual_nonzero_members_data() {
+#[tokio::test]
+async fn company_read_member_request_projects_the_actual_nonzero_members_data() {
     use engine::session::protocol::{CompanyReadQuery, CompanyReadResult};
     let (mut actor, _) = catalog_actor_fixture();
     let mut setup = actor.game.export_setup_for_runtime();
@@ -32,6 +32,7 @@ fn company_read_member_request_projects_the_actual_nonzero_members_data() {
                 query: CompanyReadQuery::AccountDividendTaxStatus,
             },
         )
+        .await
         .unwrap();
     let MemberResponse::CompanyRead(
         1,
@@ -50,8 +51,9 @@ fn company_read_member_request_projects_the_actual_nonzero_members_data() {
     );
 }
 
-#[test]
-fn company_read_member_request_uses_current_nonzero_membership_and_rejects_stale_generation() {
+#[tokio::test]
+async fn company_read_member_request_uses_current_nonzero_membership_and_rejects_stale_generation()
+{
     use engine::session::protocol::{CompanyReadError, CompanyReadQuery};
     let (mut actor, _) = catalog_actor_fixture();
     let subject = OpaqueSubjectId::new("company-query-member".into()).unwrap();
@@ -70,6 +72,7 @@ fn company_read_member_request_uses_current_nonzero_membership_and_rejects_stale
                 query: CompanyReadQuery::AccountDividendTaxStatus,
             },
         )
+        .await
         .unwrap();
     let MemberResponse::CompanyRead(generation, response_owner, result) = response else {
         panic!("响应类型错误")
@@ -84,6 +87,7 @@ fn company_read_member_request_uses_current_nonzero_membership_and_rejects_stale
                 query: CompanyReadQuery::OwnerRightsOfferings
             }
         )
+        .await
         .is_err());
     let outsider = OpaqueSubjectId::new("not-joined".into()).unwrap();
     assert!(actor
@@ -94,6 +98,7 @@ fn company_read_member_request_uses_current_nonzero_membership_and_rejects_stale
                 query: CompanyReadQuery::AccountDividendTaxStatus
             }
         )
+        .await
         .is_err());
     assert_eq!(
         before,
@@ -119,12 +124,16 @@ fn production_actor_steps_and_delivers_tick_batches() {
         members: Arc::new(RwLock::new(game.trading_subject_accounts())),
         controllers: std::collections::BTreeSet::new(),
         archive: None,
+        archive_lane: None,
+        archive_epoch: 1,
+        archive_order: CheckpointOrder::new(1, 1),
         injected_step_failure: None,
-        pacing: ServerPacing::new(1, game.tick()),
+        pacing: ServerPacing::new(1, game.tick(), native_async::now()),
         game,
         runtime_topology: Default::default(),
         cmd_rx,
         event_tx,
+        observers: Vec::new(),
         session_id: "no-compute".into(),
         public_revision: 0,
         timeline_generation: 1,
@@ -143,6 +152,87 @@ fn production_actor_steps_and_delivers_tick_batches() {
         };
         assert_eq!(batch.frames.last().unwrap().tick, expected);
     }
+}
+
+#[test]
+fn archived_failure_from_retired_writer_cannot_pause_a_live_timeline() {
+    let (mut actor, mut events) = catalog_actor_fixture();
+    actor.timeline_generation = 2;
+    actor.archive_epoch = 5;
+    actor
+        .pacing
+        .set_running(true, actor.game.tick(), native_async::now());
+    actor.archive_order.install(2, 5);
+    let common = CheckpointKey {
+        generation: 2,
+        writer_epoch: 5,
+        tick: 17,
+        seq: 31,
+        day: 1,
+        settled_date: engine::CivilDate::from_iso("2030-01-02").unwrap(),
+    };
+    let prior = CheckpointKey {
+        seq: 30,
+        settled_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
+        ..common
+    };
+    actor.archive_order.staged(prior).unwrap();
+    actor.archive_order.staged(common).unwrap();
+
+    actor.finish_archive_write(
+        CheckpointKey {
+            generation: 1,
+            ..common
+        },
+        Err("旧时间线".into()),
+    );
+    actor.finish_archive_write(
+        CheckpointKey {
+            writer_epoch: 4,
+            ..common
+        },
+        Err("旧存档目标".into()),
+    );
+    actor.finish_archive_write(prior, Ok(()));
+    actor.finish_archive_write(
+        CheckpointKey { seq: 29, ..common },
+        Err("较旧存档写入".into()),
+    );
+    assert!(actor.pacing.is_running());
+    assert!(events.try_recv().is_err());
+
+    actor.finish_archive_write(common, Err("仍活跃的 writer 失败".into()));
+    assert!(!actor.pacing.is_running());
+    let failure = events.try_recv().unwrap().failure.unwrap();
+    assert_eq!(failure.code, "DAY_END_ARCHIVE_FAILED");
+    assert_eq!(failure.context.tick, Some(17));
+    assert_eq!(failure.context.seq, Some(31));
+    assert_eq!(failure.context.generation.as_deref(), Some("2"));
+    assert!(actor.fatal_failure.is_none());
+}
+
+#[test]
+fn stalled_observer_does_not_gate_commits_or_other_observers() {
+    let (mut actor, _) = catalog_actor_fixture();
+    let (sender, mut active) = broadcast::channel(1);
+    let mut stalled = sender.subscribe();
+    actor.event_tx = sender;
+
+    for expected in 1..=3 {
+        actor.run_protocol_batch(1);
+        let update = active.try_recv().expect("正常观察者不断流");
+        let Some(ProtocolUpdate::TickBatch(batch)) = update.update else {
+            panic!("每轮发布的必须是已提交的市场 batch");
+        };
+        assert_eq!(batch.frames.last().unwrap().tick, expected);
+    }
+
+    assert_eq!(actor.game.tick(), 3);
+    assert!(actor.fatal_failure.is_none());
+    assert!(matches!(
+        stalled.try_recv(),
+        Err(broadcast::error::TryRecvError::Lagged(2))
+    ));
 }
 
 #[tokio::test]
@@ -360,19 +450,23 @@ async fn capture(successful_steps: usize) {
         members: Arc::new(RwLock::new(Default::default())),
         controllers: std::collections::BTreeSet::new(),
         archive: None,
+        archive_lane: None,
+        archive_epoch: 1,
+        archive_order: CheckpointOrder::new(1, 1),
         injected_step_failure: Some((successful_steps, fatal.clone(), Arc::clone(&capture))),
-        pacing: ServerPacing {
-            speed_meter: SpeedMeter::new(game.tick()),
-            tick_interval: Duration::from_millis(1),
-            base_ms: 1,
-            running: true,
-            fastest: true,
-            requested_speed: RequestedSpeed::Fastest,
+        pacing: {
+            let mut pacing = ServerPacing::new(1, game.tick(), native_async::now());
+            pacing.set_running(true, game.tick(), native_async::now());
+            pacing
+                .apply_speed(f64::INFINITY, game.tick(), native_async::now())
+                .unwrap();
+            pacing
         },
         game,
         runtime_topology: Default::default(),
         cmd_rx,
         event_tx,
+        observers: Vec::new(),
         session_id: "fatal".into(),
 
         public_revision: 4,
@@ -453,8 +547,13 @@ async fn capture(successful_steps: usize) {
         actor.game.game().save().unwrap(),
         successful_steps,
     );
-    assert_eq!(actor.pacing.speed_meter.started_tick, before.0);
-    assert_eq!(actor.pacing.speed_meter.sample_ticks, 0);
+    assert_eq!(
+        actor
+            .pacing
+            .refresh_metrics(actor.game.tick(), native_async::now())
+            .sample_ticks,
+        0
+    );
     assert!(!actor.pacing.is_running());
     assert!(actor
         .game
@@ -562,7 +661,7 @@ async fn capture(successful_steps: usize) {
         actor.game.game().save().unwrap(),
         successful_steps,
     );
-    assert_eq!(actor.pacing.requested_speed, RequestedSpeed::Fastest);
+    assert!(actor.pacing.is_fastest());
     assert!(!actor.pacing.is_running());
     assert_eq!(actor.pause_preferences, PausePreferences::default());
     let mut verification = actor.game.fork_for_verification().unwrap();
@@ -689,20 +788,17 @@ async fn authority_reads_reject_stale_generations() {
         members: Arc::new(RwLock::new(game.trading_subject_accounts())),
         controllers: std::collections::BTreeSet::new(),
         archive: None,
+        archive_lane: None,
+        archive_epoch: 1,
+        archive_order: CheckpointOrder::new(1, 1),
         #[cfg(test)]
         injected_step_failure: None,
-        pacing: ServerPacing {
-            speed_meter: SpeedMeter::new(game.tick()),
-            tick_interval: Duration::from_millis(1),
-            base_ms: 1,
-            running: false,
-            fastest: false,
-            requested_speed: RequestedSpeed::Fixed { multiplier: 1.0 },
-        },
+        pacing: ServerPacing::new(1, game.tick(), native_async::now()),
         game,
         runtime_topology: Default::default(),
         cmd_rx,
         event_tx,
+        observers: Vec::new(),
         session_id: "authority-read".into(),
 
         public_revision: 0,
@@ -777,19 +873,16 @@ async fn command_burst_keeps_submission_order_after_callers_stop_waiting() {
         members: Arc::new(RwLock::new(Default::default())),
         controllers: std::collections::BTreeSet::new(),
         archive: None,
+        archive_lane: None,
+        archive_epoch: 1,
+        archive_order: CheckpointOrder::new(1, 1),
         injected_step_failure: None,
-        pacing: ServerPacing {
-            speed_meter: SpeedMeter::new(game.tick()),
-            tick_interval: Duration::from_millis(10_000),
-            base_ms: 10_000,
-            running: false,
-            fastest: false,
-            requested_speed: RequestedSpeed::Fixed { multiplier: 1.0 },
-        },
+        pacing: ServerPacing::new(10_000, game.tick(), native_async::now()),
         game,
         runtime_topology: Default::default(),
         cmd_rx,
         event_tx,
+        observers: Vec::new(),
         session_id: "command-burst".into(),
 
         public_revision: 0,
@@ -919,19 +1012,23 @@ fn zero_step_batch_keeps_progress_origin_and_ingress_facts() {
         members: Arc::new(RwLock::new(game.trading_subject_accounts())),
         controllers: std::collections::BTreeSet::new(),
         archive: None,
+        archive_lane: None,
+        archive_epoch: 1,
+        archive_order: CheckpointOrder::new(1, 1),
         injected_step_failure: None,
-        pacing: ServerPacing {
-            speed_meter: SpeedMeter::new(game.tick()),
-            tick_interval: Duration::from_millis(1),
-            base_ms: 1,
-            running: true,
-            fastest: true,
-            requested_speed: RequestedSpeed::Fastest,
+        pacing: {
+            let mut pacing = ServerPacing::new(1, game.tick(), native_async::now());
+            pacing.set_running(true, game.tick(), native_async::now());
+            pacing
+                .apply_speed(f64::INFINITY, game.tick(), native_async::now())
+                .unwrap();
+            pacing
         },
         game,
         runtime_topology: Default::default(),
         cmd_rx,
         event_tx,
+        observers: Vec::new(),
         session_id: "graveyard".into(),
 
         public_revision: 0,
@@ -968,12 +1065,16 @@ fn catalog_actor_fixture() -> (SessionActor, broadcast::Receiver<EngineUpdate>) 
             members: Arc::new(RwLock::new(game.trading_subject_accounts())),
             controllers: std::collections::BTreeSet::new(),
             archive: None,
+            archive_lane: None,
+            archive_epoch: 1,
+            archive_order: CheckpointOrder::new(1, 1),
             injected_step_failure: None,
-            pacing: ServerPacing::new(1, game.tick()),
+            pacing: ServerPacing::new(1, game.tick(), native_async::now()),
             game,
             runtime_topology: Default::default(),
             cmd_rx,
             event_tx,
+            observers: Vec::new(),
             session_id: "catalog-fixture".into(),
             public_revision: 0,
             timeline_generation: 1,

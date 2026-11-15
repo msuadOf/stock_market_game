@@ -138,7 +138,7 @@ test("G40：移动详情倍速透传同一已确认控制owner而非直接改Red
   assert.match(views, /onSpeedChange=\{props\.onSpeedChange\}/);
   assert.doesNotMatch(views, /dispatch\(setSpeed/);
   assert.match(app, /onFailure\(failure\) \{\s*fatalHostErrorRef\.current\(failure\)/);
-  assert.match(app, /onPauseAfterCloseChange=\{\(value\) => void pausePreferences\.changePreferences/);
+  assert.match(app, /onPauseAfterCloseChange=\{\(value\) => \{ if \(canControlMarket\) void pausePreferences\.changePreferences/);
 });
 
 test("G25/G30/G33/G34：最终CSS热区、focus token、容器字号与交易底页减少动效规则", { timeout: 10000 }, () => {

@@ -1,7 +1,7 @@
-use super::SessionActor;
+use super::{delivery::Packet, SessionActor};
 use engine::{session::StepFatal, SessionError};
 use serde::Serialize;
-use tauri::{Emitter, Runtime};
+use tauri::Runtime;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct HostFailure {
@@ -217,13 +217,17 @@ impl HostFailure {
     }
 
     pub(super) fn civil(error: SessionError) -> Self {
+        Self::civil_ref(&error)
+    }
+
+    pub(super) fn civil_ref(error: &SessionError) -> Self {
         match error {
-            SessionError::Step(fatal) => Self::step(fatal),
+            SessionError::Step(fatal) => Self::step(fatal.clone()),
             other => Self {
                 code: "CIVIL_DAY_SETTLEMENT_FAILED",
-                message: failure_description(&other).1.to_owned(),
+                message: failure_description(other).1.to_owned(),
                 r#where: "desktop.actor.civil_day".into(),
-                cause: failure_cause(&other),
+                cause: failure_cause(other),
                 context: FailureContext::new("endCivilDay"),
                 recoverable: false,
                 recovery_actions: vec![
@@ -234,8 +238,30 @@ impl HostFailure {
         }
     }
 
-    pub(super) fn correction_prepare_rejected(error: SessionError) -> Self {
-        let mut failure = Self::civil(error);
+    pub(super) fn archive(error: &str) -> Self {
+        Self {
+            code: "DAY_END_ARCHIVE_FAILED",
+            message: format!("日终已成功完成，但 SQLite 保存失败，上一份有效日终档仍保留：{error}"),
+            r#where: "desktop.actor.save_day_end".into(),
+            cause: None,
+            context: FailureContext::new("saveDayEnd"),
+            recoverable: true,
+            recovery_actions: vec![
+                "检查 SQLite 文件权限与磁盘空间后恢复推进，在下一日终重试保存",
+                "复制存档错误详情反馈",
+            ],
+        }
+    }
+
+    pub(super) fn with_archive_key(&mut self, key: engine::session::checkpoint::CheckpointKey) {
+        self.context.tick = Some(key.tick);
+        self.context.seq = Some(key.seq);
+        self.context.day = Some(key.day);
+        self.context.generation = Some(key.generation.to_string());
+    }
+
+    pub(super) fn correction_prepare_rejected(error: &SessionError) -> Self {
+        let mut failure = Self::civil_ref(error);
         failure.code = "REPORT_CORRECTION_PREPARE_REJECTED";
         failure.r#where = "desktop.actor.prepare_civil_updates".into();
         failure.recoverable = true;
@@ -248,12 +274,39 @@ impl HostFailure {
 }
 
 #[derive(Clone, Serialize)]
-struct EngineFailurePayload<'a> {
-    session_id: &'a str,
-    timeline_id: &'a str,
+pub(super) struct EngineFailurePayload {
+    session_id: String,
+    timeline_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) publication_ordinal: Option<String>,
     #[serde(flatten)]
     failure: HostFailure,
     events: [engine::Event; 0],
+}
+
+impl EngineFailurePayload {
+    pub(super) fn note_missing_publications(&mut self, from: u64, through: u64) {
+        use std::fmt::Write;
+        write!(
+            self.failure.message,
+            "；观察者未收到已提交的发布序号 {from}–{through}"
+        )
+        .expect("写 String 不会失败");
+    }
+
+    #[cfg(test)]
+    pub(super) fn terminal_fixture() -> Self {
+        let mut failure = HostFailure::archive("terminal fixture");
+        failure.code = "TEST_TERMINAL";
+        failure.recoverable = false;
+        Self {
+            session_id: "test".into(),
+            timeline_id: "test".into(),
+            publication_ordinal: None,
+            failure,
+            events: [],
+        }
+    }
 }
 
 impl<R: Runtime> SessionActor<R> {
@@ -262,31 +315,31 @@ impl<R: Runtime> SessionActor<R> {
     }
 
     pub(super) fn stop_after_host_failure(&mut self, mut failure: HostFailure) {
-        if !failure.recoverable {
-            if let Err(error) = self.game.shared_ingress().close() {
-                failure
-                    .message
-                    .push_str(&format!("；关闭 ingress 失败：{error}"));
-            }
-        }
-        failure.context.tick = Some(self.game.tick());
-        failure.context.seq = Some(self.game.seq());
-        failure.context.day = Some(self.game.day());
-        failure.context.generation = Some(self.generation.to_string());
-        self.pacing.stop_after_failure();
+        engine::session::runner::apply_authority_failure(
+            &self.game,
+            failure.recoverable,
+            &mut failure.message,
+        );
+        failure.context.tick.get_or_insert_with(|| self.game.tick());
+        failure.context.seq.get_or_insert_with(|| self.game.seq());
+        failure.context.day.get_or_insert_with(|| self.game.day());
+        failure
+            .context
+            .generation
+            .get_or_insert_with(|| self.generation.to_string());
+        self.pacing.stop_after_failure(libos::native_async::now());
+        let recoverable = failure.recoverable;
         let payload = EngineFailurePayload {
-            session_id: &self.session_id,
-            timeline_id: &self.timeline_id,
-            failure: failure.clone(),
+            session_id: self.session_id.clone(),
+            timeline_id: self.timeline_id.clone(),
+            publication_ordinal: None,
+            failure,
             events: [],
         };
-        if let Err(emit_error) = self.app.emit("engine-failure", payload) {
-            eprintln!(
-                "[session {}] {} notification failed: {emit_error}; {}",
-                self.session_id, failure.code, failure.message
-            );
-        }
-        if !failure.recoverable {
+        if recoverable {
+            self.delivery.stage(Packet::Failure(payload));
+        } else {
+            self.delivery.stage_terminal(payload);
             self.cmd_rx.close();
         }
     }

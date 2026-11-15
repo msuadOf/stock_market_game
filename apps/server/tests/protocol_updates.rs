@@ -2,7 +2,9 @@
 mod fixture;
 
 use engine::session::protocol::{EngineUpdate, PausePreferences, ReplayGuard};
-use engine::CivilDate;
+use engine::session::publication::Read;
+use engine::session::OpaqueSubjectId;
+use engine::{CivilDate, StockId};
 use server::SessionManager;
 use std::time::Duration;
 
@@ -113,4 +115,69 @@ async fn before_open_pauses_after_barrier_and_resumes_once() {
         },
     )
     .await;
+}
+
+#[tokio::test]
+async fn stalled_observer_does_not_hold_over_live_intraday_price_lines() {
+    let database = native_store::NativeDatabase::open_in_memory().unwrap();
+    let guest = server::identity::IdentityService::new(database.clone())
+        .guest()
+        .unwrap();
+    let manager = SessionManager::with_database(database);
+    let first_day = CivilDate::from_iso("2030-01-02").unwrap();
+    let subject = OpaqueSubjectId::new(guest.subject.subject_id).unwrap();
+    let (id, created) = manager
+        .new_shared_session(fixture::civil_setup(first_day), 41, subject.clone())
+        .unwrap();
+    assert!(created);
+    let handles = manager.lookup(&id).unwrap();
+    let mut stalled = handles.observe_for(subject).await.unwrap();
+    handles
+        .set_pause_preferences(
+            1,
+            PausePreferences {
+                pause_after_close: false,
+                pause_before_open: true,
+            },
+        )
+        .await
+        .unwrap();
+    handles.set_speed(f64::INFINITY).await.unwrap();
+    handles.set_running(true).await.unwrap();
+
+    // 不消费观察队列、不确认消息；只为检验日界，通过权威控制查询等待停在次日开盘前。
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while handles.speed_metrics().await.unwrap().running {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("观察者停滞不应阻挡权威推进跨日");
+
+    let saved = handles.save(1, None).await.unwrap();
+    let stock = StockId(0);
+    assert_eq!(saved.civil_clock.settled_through, Some(first_day));
+    assert_eq!(saved.civil_clock.current_date, first_day.next().unwrap());
+    assert_eq!(saved.snapshot.tick, fixture::TICKS_PER_DAY);
+    assert!(saved.market_minute_closes.values().all(Vec::is_empty));
+    assert!(saved.market_minute_bars.values().all(Vec::is_empty));
+    let finished = saved.snapshot.daily_candles[&stock].last().unwrap();
+    let epoch = CivilDate::from_iso("1970-01-01").unwrap();
+    assert_eq!(finished.time, first_day.days_since(epoch) * 86_400);
+    // 停滞端现在才读取第一包，证明确有旧日分时线，而不是空行情恰好留下空桶。
+    let Read::Item { ordinal: 1, value } = stalled.observer.poll() else {
+        panic!("观察者应收到日结以前的行情前缀");
+    };
+    let Some(EngineUpdate::TickBatch(batch)) =
+        value.into_projected(&mut stalled.initial_orders).update
+    else {
+        panic!("观察者第一包应为交易 tick 批次");
+    };
+    assert!(batch.frames.iter().any(|frame| {
+        frame
+            .timeseries_payload
+            .continuous_points
+            .contains_key(&stock)
+    }));
+    manager.remove(&id).unwrap().shutdown().await.unwrap();
 }

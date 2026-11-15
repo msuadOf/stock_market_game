@@ -10,6 +10,9 @@ export type TauriBaselineResponse = {
   readonly timeline_id: string;
   readonly generation: string;
   readonly civil_date: unknown;
+  readonly working_orders?: unknown;
+  readonly publication_ordinal?: string;
+  readonly latest_checkpoint?: unknown;
 };
 
 type QueryCursor = { readonly generation: string; readonly baselineEpoch: number };
@@ -89,7 +92,7 @@ export class TauriTimelineState {
   private installSnapshot(response: TauriBaselineResponse, where: string): Baseline {
     const candidate = prepareBaselineUpdate(response.generation, response.snapshot, response.stock_catalog, response.company_catalog, {
       civilDate: parseIsoDate(response.civil_date, `${where}.civil_date`), revision: null,
-    });
+    }, [], [], response.working_orders, response.latest_checkpoint);
     this.generation = response.generation;
     this.timelineId = response.timeline_id;
     this.cachedBaseline = candidate;

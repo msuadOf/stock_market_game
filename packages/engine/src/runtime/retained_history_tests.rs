@@ -1,10 +1,8 @@
-//! B2 件 4：保留历史快照链（日结冻结 desk 日快照——对照 18725d07
-//! `RetainedHistoryDay`/`SharedHistoryDay` 语义基线）。
+//! 日结 Drain 的分钟桶和已完成日开市状态的独立发布测试。
 //!
 //! 语义合同（Sol 设计门裁决）：
 //! - 日结 Drain 应答捎带当日分钟K桶（roll_day 清桶前的唯一窗口）；
-//! - 协调者索引持不可变句柄（`Arc<RetainedDaySnapshot>`——封闭块共享，
-//!   全历史保留（ADR-0034），五日仅显示窗），经发布面读取；
+//! - 协调者索引持不可变日级状态，不保留旧分钟桶，经发布面读取；
 //! - 日结全成功后 history/日期/settled_through 原子发布——版本
 //!   `generation` 区分同 tick 的 civil 推进。
 
@@ -50,10 +48,10 @@ fn auction_world(script: Box<dyn Fn(GroupIdx) -> GroupScript>) -> World {
 }
 
 #[test]
-fn trading_day_end_freezes_retained_snapshot_with_exact_bars() {
+fn trading_day_end_exposes_exact_bars_for_reconciliation_before_freeze() {
     // tick1 连续成交一笔（565 无——auction=6 时 tick1 是申报窗；改用
     // tick4 开盘清算成交），跑满 30 tick + 日结：retained 链恰一条当日
-    // 快照，bars 与成交逐位一致（trading=true）。
+    // 快照，分钟桶在冻结前取出对账（trading=true）。
     let script = |_: GroupIdx| -> GroupScript {
         Box::new(|tick, _round| {
             let mut plan = TickPlan::default();
@@ -101,7 +99,7 @@ fn trading_day_end_freezes_retained_snapshot_with_exact_bars() {
                 0_u32,
                 super::publication::RetainedMinuteSession {
                     trading: true,
-                    bars: Arc::new(bars),
+                    bars: [],
                 },
             )]
             .into_iter()
@@ -111,7 +109,8 @@ fn trading_day_end_freezes_retained_snapshot_with_exact_bars() {
         snapshot_seen = snapshot;
     }
     let retained = world.retained_days();
-    assert_eq!(retained.len(), 1, "保留链恰一条（ADR-0034 全保留）");
+    assert_eq!(retained.len(), 1, "开市状态索引恰一条");
+    assert!(retained[0].securities[&0].bars.is_empty());
     assert!(
         Arc::ptr_eq(&retained[0], &snapshot_seen),
         "协调者持同一不可变句柄"
@@ -206,14 +205,13 @@ fn published_retained_and_generation_advance_atomically_on_freeze() {
     world.run_day_end_public().expect("显式首日市场日终");
     world.set_civil_date(next_date);
     world.run_ticks(1).expect("次日首拍保留同一发布口径");
-    let empty = Arc::new(Vec::new());
     world.freeze_retained_day(Arc::new(RetainedDaySnapshot {
         date: first_date,
         securities: [(
             0_u32,
             super::publication::RetainedMinuteSession {
                 trading: true,
-                bars: empty,
+                bars: [],
             },
         )]
         .into_iter()

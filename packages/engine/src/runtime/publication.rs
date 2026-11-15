@@ -29,59 +29,76 @@ use crate::calendar::CivilDate;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-/// 一日分钟K历史快照（B2：日结冻结的不可变块——保留链节点）。
+/// 已完成自然日的证券开市状态；日 K 由独立的日级蜡烛序列持有。
 ///
-/// 语义合同（对照 18725d07 `RetainedHistoryDay`/`SharedHistoryDay`）：
-/// - `securities` 覆盖**全部**在册证券（开市与休市日都留条目——休市
-///   `trading=false` 且 bars 恒空）；
-/// - bars 为封闭块共享（`Arc`——冻结后不可变；发布/查询零复制）；
-/// - ADR-0034：保留链**全部保留**（五日窗只是显示语义，非存储窗）。
+/// 盘中分钟桶只用于当日读面和日结前对账，历史链只记录证券是否开市。
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct RetainedDaySnapshot {
     /// 自然日。
     pub date: CivilDate,
-    /// 每证券当日分钟会话（键=股索引）。
+    /// 每证券开市状态（键=股索引，休市证券也留条目）。
     pub securities: BTreeMap<u32, RetainedMinuteSession>,
 }
 
-/// 单证券一日分钟会话（开市/休市状态+bars）。
-///
-/// serde 手写（`Arc` 委托内值——旧 `SharedHistoryDay` 同式：存档序列化
-/// 按值，恢复重建 `Arc`；`Arc` 是进程内共享形态而非 wire 形态）。
-#[derive(Clone, Debug, PartialEq, Eq, ts_rs::TS)]
+/// 单证券的日级开市状态。类型名和 JSON 字段延续旧档合同。
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, ts_rs::TS)]
 #[ts(export)]
 pub struct RetainedMinuteSession {
-    /// 开市=true（Trading）/休市=false（Closed）——旧 `HistorySessionStatus` 二值。
+    /// 开市=true，休市=false；是否有成交由已完成日 K 的成交量判定。
     pub trading: bool,
-    /// 当日分钟K桶（零成交开市日为空——NoTrades 语义；休市恒空）。
-    pub bars: Arc<Vec<MinuteBarFact>>,
-}
-
-impl serde::Serialize for RetainedMinuteSession {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("RetainedMinuteSession", 2)?;
-        state.serialize_field("trading", &self.trading)?;
-        state.serialize_field("bars", self.bars.as_ref())?;
-        state.end()
-    }
+    /// 兼容旧 wire 的空字段；在新历史中不是分钟序列，不持有分配。
+    #[ts(as = "Vec<MinuteBarFact>")]
+    pub bars: [MinuteBarFact; 0],
 }
 
 impl<'de> serde::Deserialize<'de> for RetainedMinuteSession {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
         struct Wire {
             trading: bool,
-            bars: Vec<MinuteBarFact>,
+            #[serde(deserialize_with = "discard_legacy_minute_bars")]
+            bars: bool,
         }
         let wire = Wire::deserialize(deserializer)?;
+        if !wire.trading && wire.bars {
+            return Err(serde::de::Error::custom("旧档的休市证券不能有成交分钟"));
+        }
         Ok(Self {
             trading: wire.trading,
-            bars: Arc::new(wire.bars),
+            bars: [],
         })
     }
+}
+
+/// 读旧档时逐条解码验证 wire 类型，不把历史分钟序列分配到内存后再丢弃。
+fn discard_legacy_minute_bars<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<bool, D::Error> {
+    struct LegacyMinuteBars;
+
+    impl<'de> serde::de::Visitor<'de> for LegacyMinuteBars {
+        type Value = bool;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("旧档分钟 K 数组或新档兼容空数组")
+        }
+
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(
+            self,
+            mut sequence: A,
+        ) -> Result<bool, A::Error> {
+            let mut has_legacy_bars = false;
+            while sequence.next_element::<MinuteBarFact>()?.is_some() {
+                has_legacy_bars = true;
+            }
+            Ok(has_legacy_bars)
+        }
+    }
+
+    deserializer.deserialize_seq(LegacyMinuteBars)
 }
 
 /// 保留链节点的进程内共享形态（serde 按值委托内值——旧 `SharedHistoryDay`

@@ -45,26 +45,30 @@ pub use backend::native::{defer, degradation};
 #[cfg(target_family = "wasm")]
 mod wasm_owner;
 #[cfg(target_family = "wasm")]
-pub use wasm_owner::{close_wasm_reclaimer, defer, degradation, start_wasm_reclaimer,
-    CloseError, RejectReason, StartError, try_defer};
+pub use wasm_owner::{
+    close_wasm_reclaimer, defer, degradation, start_wasm_reclaimer, try_defer, CloseError,
+    RejectReason, StartError,
+};
 
-#[cfg(feature = "verification-harness")]
-#[doc(hidden)]
-pub use backend::{Job, TestBackend, QUEUE_CAPACITY};
 #[cfg(all(feature = "verification-harness", not(target_family = "wasm")))]
 #[doc(hidden)]
 pub use backend::native::{defer_job, verification_sender};
+#[cfg(feature = "verification-harness")]
+#[doc(hidden)]
+pub use backend::{Job, TestBackend, QUEUE_CAPACITY};
 #[cfg(all(feature = "verification-harness", target_family = "wasm"))]
 #[doc(hidden)]
 pub use wasm_owner::defer_job;
 
 #[cfg(all(feature = "verification-harness", not(target_family = "wasm")))]
-pub fn with_verification_sender<R>(observe: impl FnOnce(Option<&std::sync::mpsc::SyncSender<Job>>) -> R) -> R {
+pub fn with_verification_sender<R>(
+    observe: impl FnOnce(Option<&std::sync::mpsc::SyncSender<Job>>) -> R,
+) -> R {
     observe(verification_sender())
 }
 
 #[cfg(all(feature = "verification-harness", target_family = "wasm"))]
-pub use wasm_owner::{with_verification_sender, verify_close_wasm_reclaimer};
+pub use wasm_owner::{verify_close_wasm_reclaimer, with_verification_sender};
 
 mod backend {
     use super::{DeferredDropDegradation, Submission};
@@ -97,13 +101,17 @@ mod backend {
         SpawnFailed { os_errno: Option<i32> },
     }
 
-    pub(super) fn spawn_consumer() -> std::io::Result<(RunningBackend, crate::thread_facade::WorkerHandle<()>)> {
+    pub(super) fn spawn_consumer(
+    ) -> std::io::Result<(RunningBackend, crate::thread_facade::WorkerHandle<()>)> {
         let (tx, rx) = mpsc::sync_channel::<Job>(QUEUE_CAPACITY);
-        let handle = crate::thread_facade::WorkerHandle::spawn("engine-deferred-drop".to_owned(), move || {
-            while let Ok(job) = rx.recv() {
-                job();
-            }
-        })?;
+        let handle = crate::thread_facade::WorkerHandle::spawn(
+            "engine-deferred-drop".to_owned(),
+            move || {
+                while let Ok(job) = rx.recv() {
+                    job();
+                }
+            },
+        )?;
         Ok((RunningBackend::new(tx), handle))
     }
 
@@ -117,7 +125,9 @@ mod backend {
         fn backend() -> &'static Backend {
             BACKEND.get_or_init(|| match spawn_consumer() {
                 Ok((running, _handle)) => Backend::Running(running),
-                Err(error) => Backend::SpawnFailed { os_errno: error.raw_os_error() },
+                Err(error) => Backend::SpawnFailed {
+                    os_errno: error.raw_os_error(),
+                },
             })
         }
 
@@ -176,14 +186,14 @@ mod backend {
             Backend::SpawnFailed { os_errno } => Some(DeferredDropDegradation::SpawnFailed {
                 os_errno: *os_errno,
             }),
-            Backend::Running(running) => {
-                running_degradation(running)
-            }
+            Backend::Running(running) => running_degradation(running),
         }
     }
 
     pub(super) fn running_degradation(running: &RunningBackend) -> Option<DeferredDropDegradation> {
-        running.disconnected.load(Ordering::Relaxed)
+        running
+            .disconnected
+            .load(Ordering::Relaxed)
             .then_some(DeferredDropDegradation::UnexpectedDisconnected)
     }
 

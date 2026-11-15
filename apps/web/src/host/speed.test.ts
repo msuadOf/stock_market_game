@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  HostSpeedMeter,
   SpeedMetricsRequestGate,
   assertValidSpeedMultiplier,
   parseSpeedMetrics,
@@ -40,79 +39,14 @@ test("实测倍率必须同时匹配当前速度和运行状态", () => {
   assert.equal(speedMetricsMatchesUiState(runningMetrics, 30, true), false);
 });
 
-test("统一测速协议拒绝暂停状态携带非零实测倍率", () => {
-  assert.throws(() => parseSpeedMetrics({
+test("统一测速协议接受故障停机之前完整的采样窗口", () => {
+  assert.doesNotThrow(() => parseSpeedMetrics({
     requested: { mode: "fixed", multiplier: 1 },
     actual_multiplier: 1,
     sample_duration_ms: 1_000,
     sample_ticks: 1,
     running: false,
-  }), /暂停状态/);
-});
-
-test("所有本地宿主使用同一采样器按权威 tick 计算实际倍率", () => {
-  let now = 1_000;
-  const meter = new HostSpeedMeter(() => now);
-  meter.setSpeed(60);
-  meter.setRunning(true);
-  meter.recordTicks(29);
-
-  now += 499;
-  assert.deepEqual(meter.read(), {
-    requested: { mode: "fixed", multiplier: 60 },
-    actual_multiplier: null,
-    sample_duration_ms: 0,
-    sample_ticks: 0,
-    running: true,
-  });
-
-  meter.recordTicks(1);
-  now += 1;
-  assert.deepEqual(meter.read(), {
-    requested: { mode: "fixed", multiplier: 60 },
-    actual_multiplier: 60,
-    sample_duration_ms: 500,
-    sample_ticks: 30,
-    running: true,
-  });
-});
-
-test("本地宿主测速在暂停与切速后重置采样窗口", () => {
-  let now = 0;
-  const meter = new HostSpeedMeter(() => now);
-  meter.setSpeed(Infinity);
-  meter.setRunning(true);
-  meter.recordTicks(400);
-
-  meter.setRunning(false);
-  assert.deepEqual(meter.read(), {
-    requested: { mode: "fastest" },
-    actual_multiplier: 0,
-    sample_duration_ms: 0,
-    sample_ticks: 0,
-    running: false,
-  });
-
-  now = 600;
-  meter.setRunning(true);
-  meter.recordTicks(300);
-  now = 1_100;
-  assert.equal(meter.read().actual_multiplier, 600);
-
-  meter.setSpeed(3);
-  assert.deepEqual(meter.read(), {
-    requested: { mode: "fixed", multiplier: 3 },
-    actual_multiplier: null,
-    sample_duration_ms: 0,
-    sample_ticks: 0,
-    running: true,
-  });
-});
-
-test("本地宿主测速拒绝非法 tick 增量", () => {
-  const meter = new HostSpeedMeter(() => 0);
-  assert.throws(() => meter.recordTicks(-1), /tick/);
-  assert.throws(() => meter.recordTicks(0.5), /tick/);
+  }));
 });
 
 test("读档开始后拒绝读档前尚未完成的测速响应", async () => {

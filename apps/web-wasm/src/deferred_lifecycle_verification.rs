@@ -1,13 +1,13 @@
 //! 真实 LibOS 析构消费者的测试装配。所有结果都来自产品队列与实际 owner。
 
 use libos::deferred_drop::{
-    CloseError, QUEUE_CAPACITY, RejectReason, StartError, Submission, close_wasm_reclaimer, defer,
-    defer_job, degradation, start_wasm_reclaimer, try_defer, verify_close_wasm_reclaimer,
+    close_wasm_reclaimer, defer, defer_job, degradation, start_wasm_reclaimer, try_defer,
+    verify_close_wasm_reclaimer, CloseError, RejectReason, StartError, Submission, QUEUE_CAPACITY,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::{
     cell::RefCell,
-    sync::{Arc, Mutex, mpsc},
+    sync::{mpsc, Arc, Mutex},
     thread::ThreadId,
     time::Duration,
 };
@@ -33,16 +33,27 @@ impl Drop for Probe {
 }
 
 fn probe(id: usize, drops: &Drops) -> Probe {
-    Probe { id, caller: std::thread::current().id(), drops: Arc::clone(drops) }
+    Probe {
+        id,
+        caller: std::thread::current().id(),
+        drops: Arc::clone(drops),
+    }
 }
 
 fn tags(drops: &Drops) -> Vec<Value> {
-    drops.lock().unwrap().iter().map(|(id, by)| json!({ "id": id, "by": by })).collect()
+    drops
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(id, by)| json!({ "id": id, "by": by }))
+        .collect()
 }
 
 fn per_job(drops: &Drops, n: usize) -> Vec<usize> {
     let mut counts = vec![0; n];
-    for (id, _) in drops.lock().unwrap().iter() { counts[*id] += 1; }
+    for (id, _) in drops.lock().unwrap().iter() {
+        counts[*id] += 1;
+    }
     counts
 }
 
@@ -69,7 +80,9 @@ fn close() -> Result<&'static str, &'static str> {
     }
 }
 
-fn hold_consumer(on_release: impl FnOnce() + Send + 'static) -> Result<mpsc::Sender<()>, &'static str> {
+fn hold_consumer(
+    on_release: impl FnOnce() + Send + 'static,
+) -> Result<mpsc::Sender<()>, &'static str> {
     let (entered_tx, entered_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
     let result = defer_job(Box::new(move || {
@@ -77,7 +90,9 @@ fn hold_consumer(on_release: impl FnOnce() + Send + 'static) -> Result<mpsc::Sen
             on_release();
         }
     }));
-    if result != Submission::Queued { return Err("消费者栏杆必须真实排队"); }
+    if result != Submission::Queued {
+        return Err("消费者栏杆必须真实排队");
+    }
     libos::wait::recv_deadline(&entered_rx, WAIT, false)
         .map_err(|_| "未收到真实析构消费者进入栏杆的回执")?;
     Ok(release_tx)
@@ -90,7 +105,9 @@ pub(super) fn observe_normal() -> Result<Value, &'static str> {
     let submissions = [defer(probe(0, &drops)), defer(probe(1, &drops))].map(disposition);
     let on_return = per_job(&drops, 2);
     release.send(()).map_err(|_| "析构栏杆在释放前断开")?;
-    if close()? != "drained-and-joined" { return Err("正常析构必须获得 Rust join 证明"); }
+    if close()? != "drained-and-joined" {
+        return Err("正常析构必须获得 Rust join 证明");
+    }
     Ok(json!({
         "disposition": submissions,
         "completedOnReturn": on_return,
@@ -136,7 +153,9 @@ fn rejection_witness() -> Value {
             };
             json!({"result": "rejected", "code": code, "sameValueReturned": same, "dropsAtReturn": before, "dropsAfterCallerDrop": after})
         }
-        Ok(result) => json!({"result": disposition(result), "dropsAtReturn": per_job(&drops, 1)[0]}),
+        Ok(result) => {
+            json!({"result": disposition(result), "dropsAtReturn": per_job(&drops, 1)[0]})
+        }
     }
 }
 
@@ -154,8 +173,12 @@ fn close_lifecycle() -> Result<Value, &'static str> {
     let drops = Drops::default();
     let submissions = [defer(probe(0, &drops)), defer(probe(1, &drops))].map(disposition);
     let witness_order = Arc::clone(&order);
-    let marker = defer_job(Box::new(move || witness_order.lock().unwrap().push("consumer-completed")));
-    if marker != Submission::Queued { return Err("关闭证明的完成 marker 必须真实排队"); }
+    let marker = defer_job(Box::new(move || {
+        witness_order.lock().unwrap().push("consumer-completed")
+    }));
+    if marker != Submission::Queued {
+        return Err("关闭证明的完成 marker 必须真实排队");
+    }
     let mut at_entry = None;
     let mut release_result = None;
     let closed = verify_close_wasm_reclaimer(|| {
@@ -163,8 +186,11 @@ fn close_lifecycle() -> Result<Value, &'static str> {
         at_entry = Some(tags(&drops));
         order.lock().unwrap().push("gate-released");
         release_result = Some(release.send(()));
-    }).map_err(|_| "真实 Reclaimer join 失败")?;
-    release_result.ok_or("没有进入真实 close")?.map_err(|_| "析构栏杆在释放前断开")?;
+    })
+    .map_err(|_| "真实 Reclaimer join 失败")?;
+    release_result
+        .ok_or("没有进入真实 close")?
+        .map_err(|_| "析构栏杆在释放前断开")?;
     order.lock().unwrap().push("close-returned");
     let observed_order = order.lock().unwrap().clone();
     Ok(json!({
@@ -189,8 +215,11 @@ fn arm_consumer_panic() -> Result<Value, &'static str> {
 }
 
 fn release_consumer_panic() -> Result<Value, &'static str> {
-    PANIC_GATE.with(|slot| slot.borrow_mut().take()).ok_or("缺少真实消费者栏杆")?
-        .send(()).map_err(|_| "真实消费者栏杆已断开")?;
+    PANIC_GATE
+        .with(|slot| slot.borrow_mut().take())
+        .ok_or("缺少真实消费者栏杆")?
+        .send(())
+        .map_err(|_| "真实消费者栏杆已断开")?;
     Ok(Value::Null)
 }
 

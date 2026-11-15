@@ -8,7 +8,7 @@ import { test } from "node:test";
 const api = () => import("./frontend-build.mjs");
 
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
-const requiredExports = ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "world_runtime_abi_version", "init_wasm_wait", "wasm_wait_abort_layout", "shutdown_session", "start_wasm_reclaimer", "close_wasm_reclaimer", "wasm_tombstone_bind_ingress", "wasm_tombstone_init_primary", "wasm_wait_death_layout"];
+const requiredExports = ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "world_runtime_abi_version", "init_wasm_wait", "wasm_wait_abort_layout", "shutdown_session", "start_wasm_reclaimer", "close_wasm_reclaimer", "wasm_tombstone_bind_ingress", "wasm_tombstone_bind_publisher", "market_publisher_signal", "market_publisher_take", "market_publisher_resume", "market_publisher_ack", "market_publisher_release", "market_runner_enable", "market_runner_set_running", "market_runner_set_speed", "market_runner_set_pause", "market_runner_turn", "market_runner_speed_metrics", "market_runner_step_once", "market_runner_end_civil", "market_runner_observer_baseline", "market_runner_control_signal", "market_runner_command_consumed", "wasm_tombstone_init_primary", "wasm_wait_death_layout"];
 
 async function sourceFixture(root) {
   const inputs = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/config.toml", "apps/web-wasm/Cargo.toml", "apps/web-wasm/.cargo/config.toml", "apps/web-wasm/src/lib.rs", "packages/engine/Cargo.toml", "packages/engine/src/lib.rs", "packages/libos/Cargo.toml", "packages/libos/src/lib.rs"];

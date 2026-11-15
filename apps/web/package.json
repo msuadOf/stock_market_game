@@ -14,6 +14,7 @@
   "dependencies": {
     "@blueprintjs/core": "^6.16.0",
     "@blueprintjs/icons": "^6.11.0",
+    "@noble/hashes": "2.0.1",
     "@reduxjs/toolkit": "^2.12.0",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2.7.3",

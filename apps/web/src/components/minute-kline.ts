@@ -1,10 +1,8 @@
-import type { MarketHistoryPage, MinuteBar } from "../host/market-history.ts";
+import type { MinuteBar } from "../host/market-history.ts";
 import { tradeHistoryDate } from "../host/personal-trade-history.ts";
 import { parseDecimalId } from "../host/protocol/wire-values.ts";
 import { parseMoney } from "../utils/money.ts";
 import { parseTurnoverCents } from "../utils/turnover.ts";
-
-type MarketHistoryEntry = MarketHistoryPage["entries"][number];
 
 export const MINUTE_KLINE_PERIODS = [120, 60, 30, 15, 5, 1] as const;
 export type MinuteKlinePeriod = typeof MINUTE_KLINE_PERIODS[number];
@@ -108,24 +106,6 @@ export function aggregateMinuteBars(date: string, bars: readonly MinuteBar[], pe
     } else {
       result.push({ ...bar, date, minute_of_day: bucketMinute });
     }
-  }
-  return result;
-}
-
-export function aggregateMinuteKlines(entries: readonly MarketHistoryEntry[], period: number): MinuteKline[] {
-  assertPeriod(period);
-  const result: MinuteKline[] = [];
-  let previousDate: string | null = null;
-  for (const entry of entries) {
-    tradeHistoryDate(entry.date, "minute_kline.entry.date");
-    if (previousDate !== null && entry.date <= previousDate) throw new Error("分钟历史自然日期必须严格递增且不可重复");
-    previousDate = entry.date;
-    if (entry.availability !== "Traded") {
-      if (entry.bars.length !== 0) throw new Error("仅已日结真实成交日期可以生成分钟K");
-      continue;
-    }
-    if (entry.bars.length === 0) throw new Error("有成交日期必须包含真实分钟成交事实");
-    result.push(...aggregateMinuteBars(entry.date, entry.bars, period));
   }
   return result;
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CompressedIndexedDbSaveRepository, IndexedDbSaveStorage, QUICK_SAVE_KEY } from "./indexed-db-save-repository.ts";
+import { CompressedIndexedDbSaveRepository, IndexedDbSaveStorage, QUICK_SAVE_KEY, SAVE_DATABASE } from "./indexed-db-save-repository.ts";
 import { currentSaveFixture } from "./current-save-fixture.ts";
 import { parseSaveSlot } from "./save-schema.ts";
 
@@ -14,6 +14,7 @@ interface FakeRequest {
 }
 
 function fakeFactory(options: {
+  absent?: boolean;
   beforeOpen?: () => void;
   beforePut?: () => void;
   putError?: Error;
@@ -75,6 +76,7 @@ function fakeFactory(options: {
     },
   };
   const factory = {
+    async databases() { return options.absent && opens === 0 ? [] : [{ name: SAVE_DATABASE, version: 1 }]; },
     open() {
       opens += 1;
       const opening = request(database);
@@ -111,6 +113,13 @@ test("新库无槽时只读已有同格式 LocalStorage 档，不在启动时复
   assert.equal(reads, 1);
   assert.equal(fake.entries.size, 0);
   assert.equal(fake.commits(), 0);
+});
+
+test("全新游戏读档检查不创建快速槽数据库", async () => {
+  const fake = fakeFactory({ absent: true });
+  const repository = new CompressedIndexedDbSaveRepository(fake.factory, { getItem: () => encoded }, codec);
+  assert.deepEqual(await repository.load(), slot);
+  assert.equal(fake.opens(), 0);
 });
 
 test("IndexedDB 坏档不会退回旧 LocalStorage 档掩盖损坏", async () => {

@@ -63,7 +63,7 @@ export interface SessionHostLifecyclePorts {
   createSeed?(): bigint;
   checkWasmEnvironment(): void;
   isDocumentHidden(): boolean;
-  getBrowserSaveRepository(): { load(): Promise<StrictSaveEnvelope | null> };
+  getQuickArchive(): { load(): Promise<StrictSaveEnvelope | null> };
   setActiveSetup(setup: SessionSetup): void;
   configureMarketTiming(setup: SessionSetup): void;
   setStartDateDraft(date: string): void;
@@ -90,7 +90,7 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
     pauseBeforeOpen, TRADING_E2E_MODE, setIndicatorCalculator, setActiveSetup, configureMarketTiming, setStartDateDraft,
     setPriceCageEnabledDraft, setFloatAllocationDraft, setInitialAllocation, setDeliveryModes, setDeliveryModeState, setNotice, setReady, setError,
     hostUpdateRef, fatalHostErrorRef, connectProtocol, disconnectProtocol, createHost, checkWasmEnvironment,
-    isDocumentHidden, getBrowserSaveRepository, onRunning, onAutoTriggered, malformedProtocolFixture,
+    isDocumentHidden, getQuickArchive, onRunning, onAutoTriggered, malformedProtocolFixture,
     createSeed = createNewSessionSeed,
   } = ports;
   let cancelled = false;
@@ -249,7 +249,7 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
       }
       let initialSlot = sharedMarket !== undefined ? null : confirmedIntent === undefined ? await initialSaveSourceRef.current.read(async () => {
         if (TRADING_E2E_MODE) return null;
-        const slot = await getBrowserSaveRepository().load();
+        const slot = await getQuickArchive().load();
         return slot === null ? null : validateDayEndArchive(slot);
       }) : confirmedIntent.kind === "load" ? confirmedIntent.archive : null;
       if (cancelled) return;

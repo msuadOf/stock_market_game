@@ -42,8 +42,7 @@ interface Props {
   onIndicatorDataSourceChange: (source: IndicatorDataSource) => void;
   /** Rust 分时均价曲线计算入口；引擎查询 API 重建批次接线，缺省时选 Rust 源显式提示未接线。 */
   calculateIntradayAverageCurve?: (input: IntradayAverageCurveInput) => Promise<readonly (IntradayAverageResult | null)[]>;
-  /** 五日与分钟 K 面板内容；宿主接线（引擎查询 API 重建批次）后注入，缺省时显式提示未接入。 */
-  minuteHistoryContent?: ReactNode;
+  /** 当前交易日的实时分钟 K 面板。 */
   minuteKlineContent?: ReactNode;
   /** 本人交割单（W3）：表格状态由调用方持有（宿主查询+分页），组件只渲染。 */
   confirmations?: readonly PersonalTradeConfirmation[];
@@ -53,7 +52,7 @@ interface Props {
   onRefreshConfirmations?: () => void;
   onOlderConfirmations?: () => void;
   /** 按日期查询保留历史（W3）；缺省不渲染。 */
-  dateMinuteHistoryContent?: ReactNode;
+  dateDailyHistoryContent?: ReactNode;
   trades: readonly TradeEvent[];
   elapsedMinutes: number;
   totalMinutes: number;
@@ -83,9 +82,6 @@ interface Props {
 function tone(diff: number): "rise" | "fall" | "flat" {
   return diff > 0 ? "rise" : diff < 0 ? "fall" : "flat";
 }
-
-/** 五日/分钟 K 依赖跨日分钟数据，宿主面板接线前的显式占位：不伪造数据、不静默空白。 */
-
 
 function IntradayPanel({ code, market, minutePoints, auctionPoints, trades, activeDailyCandle, elapsedMinutes, totalMinutes, gameDay, gameTick, indicatorDataSource, indicatorCapabilities, calculateIntradayAverageCurve }: Pick<Props, "code" | "market" | "minutePoints" | "auctionPoints" | "trades" | "activeDailyCandle" | "elapsedMinutes" | "totalMinutes" | "gameDay" | "gameTick" | "indicatorDataSource" | "indicatorCapabilities" | "calculateIntradayAverageCurve">) {
   const timeline = useTradingTimeline();
@@ -282,10 +278,10 @@ export function MobileStockDetail(props: Props) {
       <label>指标数据源<select aria-label="指标数据源" value={props.indicatorDataSource} onChange={(event) => props.onIndicatorDataSourceChange(event.currentTarget.value === "rust" ? "rust" : "frontend")}><option value="frontend">前端</option><option value="rust">Rust</option></select></label>
       <div id="mobile-chart-panel" role="tabpanel" aria-label={`${props.period}图表`}>
         <div hidden={props.period !== "分时"}><IntradayPanel {...props} /></div>
-        {props.period === "五日" ? props.minuteHistoryContent : minuteKlinePeriod(props.period) !== null ? props.minuteKlineContent : calendarCandlePeriod(props.period) !== null && <MarketKlinePanel code={props.code} key={props.code} dailyCandles={props.dailyCandles} period={props.period} indicatorCalculator={props.indicatorCalculator} indicatorDataSource={props.indicatorDataSource} indicatorCapabilities={props.indicatorCapabilities} />}
+        {minuteKlinePeriod(props.period) !== null ? props.minuteKlineContent : calendarCandlePeriod(props.period) !== null && <MarketKlinePanel code={props.code} key={props.code} dailyCandles={props.dailyCandles} period={props.period} indicatorCalculator={props.indicatorCalculator} indicatorDataSource={props.indicatorDataSource} indicatorCapabilities={props.indicatorCapabilities} />}
       </div>
       {props.confirmations !== undefined && <TradeConfirmationTable rows={props.confirmations} loading={props.confirmationLoading ?? false} error={props.confirmationError ?? null} hasQueried={props.confirmationQueried ?? false} onRefresh={props.onRefreshConfirmations ?? (() => { throw new Error("交割单刷新入口未接线"); })} onOlder={props.onOlderConfirmations ?? (() => { throw new Error("交割单翻页入口未接线"); })} />}
-      {props.dateMinuteHistoryContent}
+      {props.dateDailyHistoryContent}
       <div className="msd-info-tabs" role="tablist" aria-label="股票详情信息">
         {infoTabs.map((item) => <button type="button" role="tab" id={`info-${item}`} aria-controls="mobile-info-panel" aria-selected={props.infoTab === item} tabIndex={props.infoTab === item ? 0 : -1} key={item} onKeyDown={(event) => moveTabFocus(event, infoTabs)} onClick={() => props.onInfoTabChange(item)}>{item}</button>)}
       </div>

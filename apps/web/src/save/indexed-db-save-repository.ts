@@ -51,6 +51,8 @@ export class IndexedDbSaveStorage implements AsyncSaveStorage {
   }
 
   async getItem(key: string): Promise<string | null> {
+    // 首次读档检查不创建数据库；正常首日只在日结时写盘。
+    if (this.connection === null && !(await this.factory.databases()).some(database => database.name === this.database)) return null;
     const database = await this.open();
     return new Promise((resolve, reject) => {
       const transaction = database.transaction(SAVE_OBJECT_STORE, "readonly");

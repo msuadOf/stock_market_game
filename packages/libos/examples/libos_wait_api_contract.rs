@@ -9,8 +9,15 @@ mod construction_cleanup;
 
 #[cfg(all(target_family = "wasm", feature = "verification-harness"))]
 mod browser {
-    use libos::{clock::Instant, wait::{self, WaitFailure, WaitObserver}};
-    use std::{cell::RefCell, sync::mpsc::{self, Sender}, time::Duration};
+    use libos::{
+        clock::Instant,
+        wait::{self, WaitFailure, WaitObserver},
+    };
+    use std::{
+        cell::RefCell,
+        sync::mpsc::{self, Sender},
+        time::Duration,
+    };
 
     #[link(wasm_import_module = "env")]
     unsafe extern "C" {
@@ -56,10 +63,18 @@ mod browser {
                 wait::recv_deadline(rx, Duration::ZERO, false),
                 Err(WaitFailure::Uninitialized(_))
             ));
-            assert!(matches!(wait::worker_recv(rx, stop), Err(WaitFailure::Uninitialized(_))));
+            assert!(matches!(
+                wait::worker_recv(rx, stop),
+                Err(WaitFailure::Uninitialized(_))
+            ));
             assert!(matches!(
                 wait::worker_recv_spin(
-                    rx, stop, wait::SpinConfig { enabled: false, window: Duration::ZERO },
+                    rx,
+                    stop,
+                    wait::SpinConfig {
+                        enabled: false,
+                        window: Duration::ZERO
+                    },
                 ),
                 Err(WaitFailure::Uninitialized(_))
             ));
@@ -78,16 +93,29 @@ mod browser {
         assert_ne!(death.address, 0);
         assert_eq!((abort.bytes, death.bytes), (1, 4));
         assert_eq!(death.address % death.bytes, 0);
-        assert!(abort.address + abort.bytes <= death.address || death.address + death.bytes <= abort.address);
+        assert!(
+            abort.address + abort.bytes <= death.address
+                || death.address + death.bytes <= abort.address
+        );
 
         assert!(wait::init_wasm_wait(60, 1, 500, 1500).is_err());
         assert!(wait::spin_config(false).enabled);
         assert_eq!(wait::spin_config(false).window, Duration::from_micros(40));
         let abort_after = wait::wasm_wait_abort_layout().unwrap();
         let death_after = wait::wasm_wait_death_layout().unwrap();
-        assert_eq!((abort_after.address, abort_after.bytes), (abort.address, abort.bytes));
-        assert_eq!((death_after.address, death_after.bytes), (death.address, death.bytes));
-        assert_eq!(wait::recv_deadline(&rx, Duration::ZERO, false), Ok(61), "失败或重复初始化不得吞掉缓冲");
+        assert_eq!(
+            (abort_after.address, abort_after.bytes),
+            (abort.address, abort.bytes)
+        );
+        assert_eq!(
+            (death_after.address, death_after.bytes),
+            (death.address, death.bytes)
+        );
+        assert_eq!(
+            wait::recv_deadline(&rx, Duration::ZERO, false),
+            Ok(61),
+            "失败或重复初始化不得吞掉缓冲"
+        );
         drop(tx);
         assert_eq!(wait::worker_recv(&rx, &stop), Ok(None));
     }
@@ -98,7 +126,10 @@ mod browser {
         SENDER.with_borrow_mut(|cell| {
             let tx = cell.take().expect("每次注入只使用一个有效 Sender");
             match kind {
-                0 => { tx.send(42).unwrap(); *cell = Some(tx); }
+                0 => {
+                    tx.send(42).unwrap();
+                    *cell = Some(tx);
+                }
                 1 => drop(tx),
                 _ => panic!("未知测试事件"),
             }
@@ -121,22 +152,27 @@ mod browser {
         assert!(coarse <= 1);
         let (tx, rx) = mpsc::channel();
         SENDER.with_borrow_mut(|cell| assert!(cell.replace(tx).is_none()));
-        let result = wait::verify_coordinator_recv(&rx, Duration::from_millis(1), coarse != 0, &Probe);
+        let result =
+            wait::verify_coordinator_recv(&rx, Duration::from_millis(1), coarse != 0, &Probe);
         match case {
             0 => assert_eq!(result, Ok(42), "在超时判定点可观察到数据，优先交付"),
-            1 => assert_eq!(result, Err(WaitFailure::Disconnected), "在超时判定点已断开，不报告空队列超时"),
+            1 => assert_eq!(
+                result,
+                Err(WaitFailure::Disconnected),
+                "在超时判定点已断开，不报告空队列超时"
+            ),
             2 => {
                 assert!(matches!(result, Err(WaitFailure::Deadline { .. })));
                 wait_contract_publish(0);
                 assert_eq!(rx.try_recv(), Ok(42), "判定后的消息留给后续接收");
             }
             // 不要求暴露绝对时钟原点，只要求正常锚定后退回样本以类型化错误退出。
-            3 | 4 => {
-                match result {
-                    Err(WaitFailure::ClockRegressed { previous, observed }) => assert!(previous > observed),
-                    other => panic!("回退时须返回 ClockRegressed，实际：{other:?}"),
+            3 | 4 => match result {
+                Err(WaitFailure::ClockRegressed { previous, observed }) => {
+                    assert!(previous > observed)
                 }
-            }
+                other => panic!("回退时须返回 ClockRegressed，实际：{other:?}"),
+            },
             _ => panic!("未知测试 case"),
         }
         SENDER.with_borrow_mut(|cell| drop(cell.take()));

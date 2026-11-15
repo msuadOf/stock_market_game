@@ -71,7 +71,7 @@ async function createFixture(
   const bindings: Record<string, unknown> = {
       start_wasm_reclaimer() {},
       close_wasm_reclaimer() { return true; },
-    wasm_tombstone_init_primary: () => ({ engine: { workerId: 0, address: 60000 }, ingress: { workerId: 0xffffffff, address: 60256 }, death: { address: 65004, bytes: 4 } }),
+    wasm_tombstone_init_primary: () => ({ engine: { workerId: 0, address: 60000 }, ingress: { workerId: 0xffffffff, address: 60256 }, publisher: { workerId: 0xfffffffe, address: 60512 }, death: { address: 65004, bytes: 4 } }),
       initSync: (input: { memory: WebAssembly.Memory }) => { boundMemory = input.memory; return { memory: options.sharedMemory ? boundMemory : memory, __wbindgen_thread_destroy() {} }; },
     facade_slot_init_for_setup: () => { const words = new Int32Array(boundMemory.buffer); Atomics.store(words, CAPACITY, 4); Atomics.store(words, GEN_BITS, 29); },
     facade_slot_layout: () => ({ baseAddr: 0, headerWords: HEADER_WORDS, slotStride: SLOT_STRIDE, joinStride: JOIN_STRIDE, capacity: 4, genBits: 29 }),
@@ -85,6 +85,19 @@ async function createFixture(
     step: () => tickBatch([frame(1, 0, [0])], snapshot(1, 1)),
     tick: () => 1n,
   };
+  Object.assign(bindings, {
+    market_runner_enable: () => {},
+    market_runner_set_running: () => {},
+    market_runner_set_speed: () => {},
+    market_runner_set_pause: () => {},
+    market_runner_speed_metrics: () => ({ requested: { mode: "fixed", multiplier: 1 }, actual_multiplier: 0, sample_duration_ms: 0, sample_ticks: 0, running: false }),
+    market_runner_turn: () => ({ running: false, delayMs: null, committedTicks: 0 }),
+    market_runner_step_once: () => {},
+    market_runner_end_civil: () => {},
+    market_runner_observer_baseline: (current: number) => ({ snapshot: { handle: current }, publicationOrdinal: "0", workingOrders: [] }),
+    market_runner_control_signal: () => 65008,
+    market_runner_command_consumed: () => {},
+  });
   if (options.withIngressToken) bindings.ingress_token = (current: number) => current;
   replace(bindingsKey, bindings);
   replace("self", {

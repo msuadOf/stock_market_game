@@ -195,7 +195,7 @@ async fn assert_auto_step_fatal(fastest: bool, successful_steps: usize) {
 }
 
 #[tokio::test]
-async fn fixed_high_speed_production_batches_every_due_frame_before_ipc() {
+async fn fixed_high_speed_preserves_ipc_sequence_without_ui_cadence() {
     let mut setup = super::tests::diagnostic_setup();
     setup.start_date = engine::CivilDate::from_iso("2030-01-02").unwrap();
     setup.ticks_per_day = 120;
@@ -212,45 +212,27 @@ async fn fixed_high_speed_production_batches_every_due_frame_before_ipc() {
         "timeline",
     );
     harness.subscribe_engine_events();
-    harness.actor.pacing.tick_interval = Duration::from_millis(1);
-    harness.actor.last_fixed_publish -= Duration::from_millis(16);
-    let before_publish = harness.actor.last_fixed_publish;
-    harness.actor.tick_and_emit().await;
-    let payload = harness.events_rx.as_mut().unwrap().try_recv().unwrap();
-    let value: serde_json::Value = serde_json::from_str(&payload).unwrap();
-    let frames = value["update"]["TickBatch"]["frames"].as_array().unwrap();
-    assert!(frames.len() > 1, "固定高倍率必须在 Rust 聚合后跨 IPC");
-    for pair in frames.windows(2) {
-        assert_eq!(pair[0]["seq_to"], pair[1]["seq_from"]);
-        assert_eq!(
-            pair[0]["tick"].as_u64().unwrap() + 1,
-            pair[1]["tick"].as_u64().unwrap()
-        );
+
+    let mut previous_seq = None;
+    for next_tick in initial_tick + 1..=initial_tick + 2 {
+        let engine::session::runner::WakePlan::At(due) = harness.actor.pacing.cadence.wake_plan()
+        else {
+            panic!("固定倍率须等待市场 deadline");
+        };
+        let permit = harness.actor.pacing.cadence.begin_turn(due).unwrap();
+        harness.actor.drive_cycle(permit);
+        let payload = harness.events_rx.as_mut().unwrap().try_recv().unwrap();
+        let value: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        let frames = value["update"]["TickBatch"]["frames"].as_array().unwrap();
+        assert_eq!(frames.len(), 1, "固定倍率每个市场时隙推进一次");
+        assert_eq!(frames[0]["tick"], next_tick);
+        if let Some(previous) = previous_seq {
+            assert_eq!(frames[0]["seq_from"], previous);
+        }
+        previous_seq = Some(frames[0]["seq_to"].clone());
     }
+    assert_eq!(harness.actor.game.tick(), initial_tick + 2);
     assert!(harness.events_rx.as_mut().unwrap().try_recv().is_err());
-    let first_tick = harness.actor.game.tick();
-    assert_eq!(
-        harness.actor.last_fixed_publish,
-        before_publish + Duration::from_millis(first_tick - initial_tick)
-    );
-    harness.actor.last_fixed_publish -= Duration::from_millis(16);
-    let second_before_publish = harness.actor.last_fixed_publish;
-    harness.actor.tick_and_emit().await;
-    let second_payload = harness.events_rx.as_mut().unwrap().try_recv().unwrap();
-    let second_value: serde_json::Value = serde_json::from_str(&second_payload).unwrap();
-    let second_frames = second_value["update"]["TickBatch"]["frames"]
-        .as_array()
-        .unwrap();
-    assert!(second_frames.len() > 1);
-    assert_eq!(second_frames[0]["tick"].as_u64().unwrap(), first_tick + 1);
-    assert_eq!(
-        second_frames[0]["seq_from"],
-        frames.last().unwrap()["seq_to"]
-    );
-    assert_eq!(
-        harness.actor.last_fixed_publish,
-        second_before_publish + Duration::from_millis(harness.actor.game.tick() - first_tick)
-    );
 }
 
 #[tokio::test]
@@ -264,6 +246,7 @@ async fn desktop_controls_resolve_only_after_actor_applies_them() {
         "timeline",
     );
     let handles = SessionHandles {
+        ack_route: AckRoute::default(),
         ingress: Arc::clone(&harness.actor.ingress),
         cmd_tx: harness.cmd_tx.clone(),
     };
@@ -280,7 +263,7 @@ async fn desktop_controls_resolve_only_after_actor_applies_them() {
 }
 
 #[tokio::test]
-async fn fixed_cold_batch_preserves_unfinished_tick_debt() {
+async fn fixed_late_wake_uses_common_skip_policy_without_tick_debt() {
     let mut setup = super::tests::diagnostic_setup();
     setup.start_date = engine::CivilDate::from_iso("2030-01-02").unwrap();
     setup.ticks_per_day = 120;
@@ -294,29 +277,24 @@ async fn fixed_cold_batch_preserves_unfinished_tick_debt() {
         "timeline",
     );
     harness.subscribe_engine_events();
-    harness.actor.pacing.tick_interval = Duration::from_millis(1);
-    harness.actor.last_fixed_publish -= Duration::from_millis(16);
-    let original = harness.actor.last_fixed_publish;
-    harness.actor.tick_and_emit().await;
-    let completed = harness.actor.game.tick();
-    assert!(completed > 0);
+    let engine::session::runner::WakePlan::At(due) = harness.actor.pacing.cadence.wake_plan()
+    else {
+        panic!("固定倍率须等待市场 deadline");
+    };
+    let late = due + Duration::from_millis(16);
+    let permit = harness.actor.pacing.cadence.begin_turn(late).unwrap();
+    harness.actor.drive_cycle(permit);
+    assert!(harness.actor.pacing.cadence.begin_turn(late).is_none());
     assert_eq!(
-        harness.actor.last_fixed_publish,
-        original + Duration::from_millis(completed)
+        harness.actor.pacing.cadence.wake_plan(),
+        engine::session::runner::WakePlan::At(late + Duration::from_millis(1)),
     );
-    assert!(
-        harness.actor.last_fixed_publish.elapsed()
-            >= Duration::from_millis(16).saturating_sub(Duration::from_millis(completed))
-    );
+    assert_eq!(harness.actor.game.tick(), 1);
     let payload = harness.events_rx.as_mut().unwrap().try_recv().unwrap();
     let value: serde_json::Value = serde_json::from_str(&payload).unwrap();
-    assert_eq!(
-        value["update"]["TickBatch"]["frames"]
-            .as_array()
-            .unwrap()
-            .len() as u64,
-        completed
-    );
+    let frames = value["update"]["TickBatch"]["frames"].as_array().unwrap();
+    assert_eq!(frames.len(), 1);
+    assert_eq!(frames[0]["tick"], 1);
 }
 
 #[tokio::test]

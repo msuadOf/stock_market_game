@@ -12,6 +12,7 @@ export function remoteWsUrl(baseUrl: string, sessionId: string, delivery: Delive
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   url.searchParams.set("session_id", sessionId);
   url.searchParams.set("delivery", delivery);
+  url.searchParams.set("observer_fencing", "true");
   return url.toString();
 }
 

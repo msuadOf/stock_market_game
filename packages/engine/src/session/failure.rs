@@ -1880,7 +1880,7 @@ impl GameSession {
     /// B2 件 4 组装核心（单一事实源——runtime driver 编排与**串行安装**
     /// 共用同一实现；原 `RuntimeDriver::assemble_retained_day_at` 挪入）：
     /// 每股开市判定+桶校验（+交易日日K对账：量/额/笔/OHLC 逐位——旧
-    /// `validate_bars_against_candle` 语义）+保留快照组装。
+    /// `validate_bars_against_candle` 语义）+日级开市状态；分钟桶随后释放。
     pub(crate) fn assemble_retained_day_snapshot(
         &self,
         bars: Vec<Option<Vec<crate::runtime::MinuteBarFact>>>,
@@ -1975,10 +1975,7 @@ impl GameSession {
             }
             securities.insert(
                 idx as u32,
-                crate::runtime::publication::RetainedMinuteSession {
-                    trading,
-                    bars: std::sync::Arc::new(bars_vec),
-                },
+                crate::runtime::publication::RetainedMinuteSession { trading, bars: [] },
             );
         }
         Ok(std::sync::Arc::new(

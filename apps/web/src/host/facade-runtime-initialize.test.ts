@@ -32,7 +32,7 @@ function fixture(glueMethods: Record<string, unknown> = {}, onLoad: () => void =
         initSync: () => { calls.push("instantiate"); return { memory, __wbindgen_thread_destroy() {} }; },
         facade_slot_init_for_setup: () => { calls.push("setup"); },
         facade_slot_layout: () => { calls.push("layout"); return LAYOUT; },
-        wasm_tombstone_init_primary: () => { calls.push("primary"); return { engine: { workerId: 0, address: 60000 }, ingress: { workerId: 0xffffffff, address: 60256 }, death: { address: 65004, bytes: 4 } }; },
+        wasm_tombstone_init_primary: () => { calls.push("primary"); return { engine: { workerId: 0, address: 60000 }, ingress: { workerId: 0xffffffff, address: 60256 }, publisher: { workerId: 0xfffffffe, address: 60512 }, death: { address: 65004, bytes: 4 } }; },
         wasm_wait_abort_layout: () => ({ address: 65000, bytes: 1 }),
         wasm_wait_death_layout: () => ({ address: 65004, bytes: 4 }),
         ...glueMethods,

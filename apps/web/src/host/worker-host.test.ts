@@ -122,7 +122,7 @@ for (const scenario of ["consumerReject", "initializationTimeout", "staleEnqueue
       const intent = { Cancel: { code: "000812", id: 7 } } as Parameters<typeof host.submitIntent>[0];
       const pending = host.submitIntent(intent);
       await Promise.resolve();
-      const rejected = assert.rejects(pending, /消费者拒绝|已过期/);
+      const rejected = scenario === "consumerReject" ? null : assert.rejects(pending, /消费者拒绝|已过期/);
       if (scenario === "consumerReject") {
         let accept = true;
         const starting = host.start(() => accept);
@@ -140,9 +140,11 @@ for (const scenario of ["consumerReject", "initializationTimeout", "staleEnqueue
       }
       if (scenario === "consumerReject") {
         await drainLegacyPorts();
-        assert.equal(intake.terminations, 1);
-      }
-      await rejected;
+        assert.equal(intake.terminations, 0, "观察者拒绝不能关闭权威入队端");
+        const request = intake.sent.findLast((entry) => entry.type === "enqueue")!;
+        intake.emit({ type: "enqueued", generation: 1, requestId: request.requestId });
+        await pending;
+      } else await rejected;
       await host.dispose();
       assert.equal(engine.terminations, 1);
       assert.equal(intake.terminations, 1);
@@ -165,7 +167,7 @@ test("Worker 股票历史请求绑定 requestId 与 generation，且不携带可
 });
 
 for (const operation of ["baseline", "refreshBaseline", "load"] as const) {
-  test(`Worker ${operation} baseline 被消费者拒绝时终止并显式失败`, { timeout: 10000 }, async () => {
+  test(`Worker ${operation} baseline 被拒绝时明确隔离受影响的通道`, { timeout: 10000 }, async () => {
     const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
     class BaselineRejectingWorker extends LegacyWorker {
       static current: BaselineRejectingWorker;
@@ -205,11 +207,18 @@ for (const operation of ["baseline", "refreshBaseline", "load"] as const) {
         await rejected;
       }
       await drainLegacyPorts();
-      assert.equal(worker.terminations, 1);
-      assert.match(String(await pendingQuery), /消费者拒绝/);
+      if (operation === "refreshBaseline") {
+        assert.equal(worker.terminations, 0, "同代观察者拒绝切面不能终止权威");
+        const query = worker.sent.findLast((item) => item.type === "civilDate")!;
+        worker.emit({ type: "civilDate", generation: 1, requestId: query.requestId, date: "2030-01-01" });
+        assert.equal(await pendingQuery, null, "同代观察失败不得取消在途权威查询");
+      } else {
+        assert.equal(worker.terminations, 1);
+        assert.match(String(await pendingQuery), /消费者拒绝/);
+        await assert.rejects(host.start(() => true), /已被销毁/);
+      }
       assert.equal(failures.length, 1);
       assert.equal(worker.sent.filter((item) => item.type === "uiFrame").length, 0);
-      await assert.rejects(host.start(() => true), /已被销毁/);
     } finally {
       await host?.dispose();
       if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
@@ -449,6 +458,25 @@ test("Worker initialization sends init without pool size and reports startup fai
   }
 });
 
+for (const deferPublisherPort of [false, true]) {
+  test(`首次 publisher 端口在 dispose ${deferPublisherPort ? "之后" : "之前"}交付仍获得真实 quiescence`, { timeout: 10000 }, async () => {
+    const f = fixtureW1({ deferPublisherPort });
+    try {
+      const creating = f.launch(); await drainW1();
+      f.ingress(); f.baseline(); await drainW1(); f.ack(f.workers[1], 1); await drainW1();
+      const host = await creating;
+      const starting = assert.rejects(host.start(() => {}), /开跑前已关闭|取消/);
+      const disposing = host.dispose();
+      if (deferPublisherPort) f.finishPublisherPort();
+      await drainW1();
+      assert.deepEqual(f.publisherWorker!.sent.filter((request) => request.type === "quiescePublisher")
+        .map((request) => request.generation), [0], "已分配且未绑定的 Worker 只关停一次");
+      await disposing;
+      await starting;
+    } finally { await f.cleanup(); }
+  });
+}
+
 test("duplicate delivered baselines preserve pending order queries, while a new generation invalidates them", async () => {
   const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
   class BaselineWorker extends LegacyWorker {
@@ -502,7 +530,7 @@ test("duplicate delivered baselines preserve pending order queries, while a new 
   }
 });
 
-test("Worker 控制等待应用回执，protocolBatch 每个提交接纳后立即 ACK 且不等待 render", { timeout: 10000 }, async () => {
+test("Worker 控制等待应用回执，独立 publisher 按序投递且不确认给推进端", { timeout: 10000 }, async () => {
   const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
   class ControlledWorker extends LegacyWorker {
     static current: ControlledWorker;
@@ -536,7 +564,20 @@ test("Worker 控制等待应用回执，protocolBatch 每个提交接纳后立�
     await drainLegacyPorts();
     assert.deepEqual(updates.slice(1).map((update) => (update as { update: unknown }).update), commits);
     await drainLegacyPorts();
-    assert.deepEqual(worker.sent.at(-1), { type: "uiFrame", generation: 1, deliveryId: 3 });
+    assert.equal(worker.sent.some((item) => item.type === "uiFrame"), false);
+    worker.emit({ type: "publicationGap", generation: 1, oldestAfter: "3" });
+    await drainLegacyPorts();
+    const repair = worker.sent.at(-1)!;
+    assert.equal(repair.type, "recoverPublisher");
+    worker.emit({ ...catalogWorkerFixture(snapshot), type: "publisherRecovered", civilDate: "2030-01-01",
+      generation: 1, requestId: repair.requestId, snapshot, publicationOrdinal: "4" });
+    await drainLegacyPorts();
+    assert.equal((updates.at(-1) as { type: string }).type, "baseline");
+    // 新的 Publisher 数据必须从刚安装基线的后继序号开始；旧 3/4 会被丢弃。
+    worker.emit({ type: "protocol", generation: 1, publicationOrdinal: "5", update: commits[0] });
+    await drainLegacyPorts();
+    assert.deepEqual((updates.at(-1) as { update: unknown }).update, commits[0]);
+    assert.equal(worker.sent.some((item) => item.type === "uiFrame"), false);
     const speedChange = assert.rejects(host.setSpeed(10), /已过期 generation/);
     await drainLegacyPorts();
     const requestId = worker.sent.at(-1)!.requestId;
@@ -559,6 +600,59 @@ test("Worker 控制等待应用回执，protocolBatch 每个提交接纳后立�
     if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
     else Object.defineProperty(globalThis, "Worker", original);
   }
+});
+
+test("同代刷新先 ACK 在途事实，拒绝的切面不上屏，只在接纳新切面后启动读取", { timeout: 10000 }, async () => {
+  const f = fixtureW1({ manualPublisherFence: true });
+  try {
+    const creating = f.launch();
+    await drainW1();
+    f.ingress(); f.baseline(); await drainW1(); f.ack(f.workers[1], 1); await drainW1();
+    const host = await creating;
+    const engine = f.workers[0];
+    const updates: unknown[] = [];
+    const starting = host.start((update) => { updates.push(update); });
+    await drainW1();
+    const publisher = f.publisherWorker!;
+    const started = engine.sent.findLast((request) => request.type === "start")!;
+    engine.emit({ type: "started", requestId: started.requestId, generation: 1 });
+    await starting;
+
+    const refreshing = host.refreshBaseline!();
+    await drainW1();
+    const pause = publisher.sent.findLast((request) => request.type === "pausePublisher")!;
+    assert.equal(engine.sent.some((request) => request.type === "refreshBaseline"), false, "停读栅栏前不得捕获新切面");
+    const update = { TickBatch: { frames: ["已在途的事实"] } };
+    publisher.emit({ type: "protocol", generation: 1, publicationOrdinal: "1", update });
+    publisher.emit({ type: "publisherPaused", requestId: pause.requestId, generation: 1 });
+    await drainW1();
+    assert.deepEqual((updates.at(-1) as { update: unknown }).update, update);
+    assert.equal(publisher.sent.some((request) => request.type === "ackPublisher" && request.ordinal === "1"), true);
+    const first = engine.sent.findLast((request) => request.type === "refreshBaseline")!;
+    const sendBaseline = (type: string, requestId: unknown, ordinal: string) => {
+      const snapshot = protocolSnapshot(Number(ordinal), Number(ordinal));
+      engine.emit({ ...catalogWorkerFixture(snapshot), type, requestId, generation: 1, snapshot,
+        civilDate: "2030-01-02", publicationOrdinal: ordinal });
+    };
+    sendBaseline("refreshed", first.requestId, "2");
+    await drainW1();
+    const resume = publisher.sent.findLast((request) => request.type === "resumePublisher")!;
+    assert.equal(resume.ordinal, "2");
+    assert.equal(updates.length, 2, "只有初始切面和已在途事实");
+    publisher.emit({ type: "publisherResumed", requestId: resume.requestId, generation: 1, accepted: false });
+    await drainW1();
+    assert.equal(updates.length, 2, "过期切面不得呈现给 UI");
+    assert.equal(publisher.sent.some((request) => request.type === "startPublisher"), false);
+    const retry = engine.sent.findLast((request) => request.type === "recoverPublisher")!;
+    sendBaseline("publisherRecovered", retry.requestId, "3");
+    await drainW1();
+    const secondResume = publisher.sent.findLast((request) => request.type === "resumePublisher")!;
+    assert.equal(secondResume.ordinal, "3");
+    publisher.emit({ type: "publisherResumed", requestId: secondResume.requestId, generation: 1, accepted: true });
+    await refreshing;
+    assert.equal((updates.at(-1) as { snapshot: { seq: number } }).snapshot.seq, 3);
+    assert.equal(publisher.sent.some((request) => request.type === "startPublisher"), true);
+  } finally { await f.cleanup(); }
 });
 
 test("Worker cached baseline 拒绝不启动或 ACK，显式重试仍交付且旧 host 不干扰新 host", { timeout: 10000 }, async () => {
@@ -668,7 +762,7 @@ test("Worker dispose 与 fatal 立即取消在途请求，释放监听并拒绝�
   }
 });
 
-test("Worker 真实 coordinator 拒绝批次中间提交后不消费尾部、不 ACK、立即终止并取消控制", { timeout: 10000 }, async () => {
+test("Worker 真实 coordinator 拒绝投递后隔离观察者，不停止权威推进", { timeout: 10000 }, async () => {
   const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
   class RejectingWorker extends LegacyWorker {
     static current: RejectingWorker;
@@ -694,19 +788,23 @@ test("Worker 真实 coordinator 拒绝批次中间提交后不消费尾部、不
     await drainLegacyPorts();
     worker.emit({ type: "started", generation: 1, requestId: worker.sent.at(-1)!.requestId });
     await starting;
-    const pending = assert.rejects(host.setSpeed(10), /消费者拒绝/);
+    const pending = host.setSpeed(10);
+    await drainLegacyPorts();
+    const speedRequest = worker.sent.at(-1)!;
+    assert.equal(speedRequest.type, "setSpeed");
     worker.emit({ type: "protocolBatch", generation: 1, deliveryId: 7, updates: [
       tickBatch([frame(1, 0, [0])], protocolSnapshot(1, 1)),
       tickBatch([frame(3, 1, [0])], protocolSnapshot(3, 2)),
       tickBatch([frame(2, 1, [0])], protocolSnapshot(2, 2)),
     ] });
+    await drainLegacyPorts();
+    worker.emit({ type: "speedSet", generation: 1, requestId: speedRequest.requestId });
     await pending;
     assert.equal(applications, 1);
     assert.equal(failures.length, 1);
     assert.equal(coordinator.status().kind, "failure");
     assert.equal(worker.sent.filter((message) => message.type === "uiFrame").length, 0);
-    await drainLegacyPorts();
-    assert.equal(worker.terminations, 1);
+    assert.equal(worker.terminations, 0);
     worker.emit({ type: "protocol", generation: 1, deliveryId: 8, update: tickBatch([frame(1, 0, [0])], protocolSnapshot(1, 1)) });
     assert.equal(applications, 1);
     await host.dispose();
@@ -1066,7 +1164,7 @@ test("Worker generation 前进取消旧 save 与队列，同代 baseline 保留�
     assert.ok(newGenerationQuery, "同步 baseline callback 应创建新代查询");
     await drainLegacyPorts();
     const newGenerationRequest = worker.sent.at(-1)!;
-    assert.deepEqual(newGenerationRequest, { type: "civilDate", requestId: newGenerationRequest.requestId, generation: 3 });
+    assert.deepEqual(newGenerationRequest, { type: "civilDate", requestId: newGenerationRequest.requestId, generation: 3, controlHandle: 3 });
     worker.emit({ type: "civilDate", requestId: newGenerationRequest.requestId, generation: 3, date: "2030-01-04" });
     const newGenerationOutcome = await newGenerationQuery;
     assert.equal((newGenerationOutcome as { kind: string }).kind, "value");
@@ -1079,10 +1177,18 @@ test("Worker generation 前进取消旧 save 与队列，同代 baseline 保留�
     assert.ok(newGenerationQuery, "restore baseline callback 应创建新代查询");
     await drainLegacyPorts();
     const restoreGenerationRequest = worker.sent.at(-1)!;
-    assert.deepEqual(restoreGenerationRequest, { type: "civilDate", requestId: restoreGenerationRequest.requestId, generation: 4 });
+    assert.deepEqual(restoreGenerationRequest, { type: "civilDate", requestId: restoreGenerationRequest.requestId, generation: 4 },
+      "restore callback 早于 publisher 新代绑定，不能拿旧代控制字标记新代请求");
     worker.emit({ type: "civilDate", requestId: restoreGenerationRequest.requestId, generation: 4, date: "2030-01-05" });
     const restoreGenerationOutcome = await newGenerationQuery;
     assert.equal((restoreGenerationOutcome as { kind: string }).kind, "value");
+    const boundQuery = host.civilDate!();
+    await drainLegacyPorts();
+    const boundRequest = worker.sent.at(-1)!;
+    assert.deepEqual(boundRequest, { type: "civilDate", requestId: boundRequest.requestId, generation: 4, controlHandle: 4 });
+    worker.emit({ type: "civilDate", requestId: boundRequest.requestId, generation: 4, date: "2030-01-05" });
+    assert.equal(await boundQuery, "2030-01-05");
+
   } finally {
     await host?.dispose();
     if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
@@ -1134,4 +1240,27 @@ test("Worker 排队 save postMessage 同步失败显式拒绝并放行后续 FIF
   port.emit({ type: "civilDate", requestId: queryId, generation: 4, date: "2030-01-05" });
   await query;
   assert.equal(requests.pendingCount(), 0);
+});
+
+test("Browser 归档失败暂停会话但不销毁权威", { timeout: 10000 }, async () => {
+  const f = fixtureW1();
+  try {
+    f.launch(); await drainW1(); f.ingress(); f.baseline(); await drainW1();
+    f.ack(f.workers[1]!, 1); await drainW1();
+    const state = f.readOutcome();
+    if (state.status !== "fulfilled") throw new Error("夹具的宿主未就绪");
+    const engine = f.workers[0]!;
+    const notices: string[] = [];
+    const starting = state.host.start(() => {}, failure => { notices.push(failure.message); });
+    await drainW1();
+    const start = engine.sent.findLast(item => item.type === "start");
+    assert.ok(start);
+    engine.emit({ type: "started", requestId: start.requestId, generation: 1 });
+    await starting;
+    const failure = { type: "failure", code: "DAY_END_ARCHIVE_FAILED", where: "wasm-worker.checkpoint", recoverable: true };
+    engine.emit({ ...failure, generation: 1, message: "有效旧档保留" });
+    await drainW1();
+    assert.deepEqual(notices, ["有效旧档保留"]);
+    assert.equal(engine.terminations, 0, "归档故障未破坏冻结的权威状态");
+  } finally { await f.cleanup(); }
 });

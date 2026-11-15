@@ -76,7 +76,7 @@ export const setup = { stocks: [{ code: "000812" }] } as Parameters<typeof creat
 const capabilities = { npcDecisionDiagnostics: false, personalTradeHistory: false, indicatorCapabilities: { intradayAverage: false, macd: false, priceKdj: false, candleKdj: false } };
 
 /** 同时支持 pre-host init 与新 bootstrap；ready 只有新控制端真实 ACK 后才产生。 */
-export function fixture(options: { initError?: unknown; initAfterMemoryFailure?: unknown; initBeforeMemoryFailure?: unknown; claimUnallocatedAfterMemory?: boolean; engineConstructError?: unknown; channelError?: boolean; childConstructError?: unknown; spawnSink?: (failure: HostFailure) => void; beforeInitPost?: (clock: Clock) => void } = {}) {
+export function fixture(options: { initError?: unknown; initAfterMemoryFailure?: unknown; initBeforeMemoryFailure?: unknown; claimUnallocatedAfterMemory?: boolean; engineConstructError?: unknown; channelError?: boolean; childConstructError?: unknown; spawnSink?: (failure: HostFailure) => void; beforeInitPost?: (clock: Clock) => void; manualPublisherFence?: boolean; deferPublisherPort?: boolean } = {}) {
   const originals = new Map<string, PropertyDescriptor | undefined>();
   function install(name: string, value: unknown) {
     originals.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
@@ -93,8 +93,10 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
   const layout = { baseAddr: 0, headerWords: HEADER_WORDS, slotStride: SLOT_STRIDE, joinStride: JOIN_STRIDE, capacity: 4, genBits: 29 };
   const words = new Int32Array(memory.buffer);
   Atomics.store(words, CAPACITY, layout.capacity); Atomics.store(words, GEN_BITS, layout.genBits); Atomics.store(words, FREE_HEAD, FREE_HEAD_EMPTY | 0);
-  const primary = { engine: { workerId: 0, address: 4200 }, ingress: { workerId: 0xffffffff, address: 4456 }, death: { address: 4100, bytes: 4 } };
+  const primary = { engine: { workerId: 0, address: 4200 }, ingress: { workerId: 0xffffffff, address: 4456 }, publisher: { workerId: 0xfffffffe, address: 4712 }, death: { address: 4100, bytes: 4 } };
   const substrate = { module, memory, layout, diagnostics: false, waitAbort: { address: 4096, bytes: 1 as const }, waitDeath: { address: 4100, bytes: 4 as const } };
+  const publishers: WorkerHandle[] = [];
+  let pendingPublisherPort: (() => void) | undefined;
   let configured = 0;
   let configuredSubstrate: typeof substrate | undefined;
   class FixtureChannel extends NodeMessageChannel {
@@ -129,14 +131,22 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
       }
     }
   }
+  function withPublicationFence(value: unknown): unknown {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+    const packet = value as Record<string, unknown>;
+    return ["baseline", "restored", "refreshed", "runtimeSyncFlushed", "publisherRecovered"].includes(String(packet.type))
+      ? { publisherToken: Number(packet.nextGeneration ?? packet.generation), controlAddress: 5000, publicationOrdinal: "0", workingOrders: [], ...packet }
+      : value;
+  }
   class FixtureWorker extends WorkerHandle {
-    readonly kind: "engine" | "ingress" | "child";
+    readonly kind: "engine" | "ingress" | "child" | "publisher";
     constructor(url: URL) {
       super();
-      this.kind = url.pathname.endsWith("wasm-worker.ts") ? "engine" : url.pathname.endsWith("wasm-ingress-worker.ts") ? "ingress" : "child";
+      this.kind = url.pathname.endsWith("wasm-worker.ts") ? "engine" : url.pathname.endsWith("wasm-ingress-worker.ts") ? "ingress" : url.pathname.endsWith("wasm-publisher-worker.ts") ? "publisher" : "child";
       if (this.kind === "engine" && options.engineConstructError !== undefined) throw options.engineConstructError;
       if (this.kind === "child" && options.childConstructError !== undefined) throw options.childConstructError;
-      workers.push(this);
+      if (this.kind === "publisher") publishers.push(this);
+      else workers.push(this);
       this.onPost = (request) => {
         if (request.type === "init") {
           if (options.initBeforeMemoryFailure !== undefined) {
@@ -155,6 +165,20 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
           this.dataPort!.postMessage({ type: "ingressQuiescent", requestId: request.requestId, generation: request.generation });
           this.emit({ type: "ingressLifecycle", instanceId: this.instanceId, state: "quiescent" });
         });
+        if (request.type === "bindPublisher") workerQueueMicrotask(() => {
+          this.dataPort!.postMessage({ type: "publisherBound", requestId: request.requestId, generation: request.generation });
+          this.emit({ type: "publisherLifecycle", instanceId: this.instanceId, state: "configured", generation: request.generation, token: request.token });
+        });
+        if ((request.type === "pausePublisher" && !options.manualPublisherFence) || request.type === "startPublisher") workerQueueMicrotask(() => {
+          this.dataPort!.postMessage({ type: request.type === "pausePublisher" ? "publisherPaused" : "publisherStarted", requestId: request.requestId, generation: request.generation });
+        });
+        if (request.type === "resumePublisher" && !options.manualPublisherFence) workerQueueMicrotask(() => {
+          this.dataPort!.postMessage({ type: "publisherResumed", requestId: request.requestId, generation: request.generation, accepted: true });
+        });
+        if (request.type === "quiescePublisher") workerQueueMicrotask(() => {
+          this.dataPort!.postMessage({ type: "publisherQuiescent", requestId: request.requestId, generation: request.generation });
+          this.emit({ type: "publisherLifecycle", instanceId: this.instanceId, state: "quiescent" });
+        });
         if (request.type === "create") workerQueueMicrotask(() => this.dataPort!.postMessage({ type: "created", generation: 1, capabilities }));
       };
       this.onWorkerPost = (value) => {
@@ -172,7 +196,7 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
           const businessChannel = channels.find((channel) => (channel.port2 as unknown as MessagePort) === this.dataPort);
           if (businessChannel === undefined) throw new Error("fixture 找不到 engine business port 对端");
           this.receiverListenerCount = () => portListeners.get(businessChannel.port1)!.size;
-          this.onRawEmit = (message) => businessChannel.port1.dispatchEvent(new MessageEvent("message", { data: message }));
+          this.onRawEmit = (message) => businessChannel.port1.dispatchEvent(new MessageEvent("message", { data: withPublicationFence(message) }));
           this.instanceId = Number(value.instanceId);
           this.controlPort.addEventListener("message", (event) => {
             const request = event.data as { type?: string };
@@ -198,7 +222,7 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
           });
           this.dataPort.start();
         }
-        if (value.type === "bindIngressTransport") {
+        if (value.type === "bindIngressTransport" || value.type === "bindPublisherTransport") {
           this.dataPort = value.dataPort as MessagePort;
           const businessChannel = channels.find((channel) => (channel.port2 as unknown as MessagePort) === this.dataPort);
           if (businessChannel === undefined) throw new Error("fixture 找不到 ingress business port 对端");
@@ -217,7 +241,7 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
     }
     override emit(value: unknown) {
       const type = value !== null && typeof value === "object" ? (value as { type?: unknown }).type : undefined;
-      if (this.dataPort !== undefined && typeof type === "string" && type !== "engineLifecycle" && type !== "ingressLifecycle" && !type.startsWith("facade")) this.dataPort.postMessage(value);
+      if (this.dataPort !== undefined && typeof type === "string" && type !== "engineLifecycle" && type !== "ingressLifecycle" && type !== "publisherLifecycle" && !type.startsWith("facade")) this.dataPort.postMessage(withPublicationFence(value));
       else super.emit(value);
     }
   }
@@ -228,9 +252,15 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
       createEngineControlOwner({
         createEngineWorker: () => new FixtureWorker(new URL("./wasm-worker.ts", import.meta.url)) as unknown as Worker,
         createIngressWorker: () => new FixtureWorker(new URL("./wasm-ingress-worker.ts", import.meta.url)) as unknown as Worker,
+        createPublisherWorker: () => new FixtureWorker(new URL("./wasm-publisher-worker.ts", import.meta.url)) as unknown as Worker,
         createChildWorker: () => new FixtureWorker(new URL("./facade-child-worker.ts", import.meta.url)) as unknown as Worker,
         createChannel: () => new FixtureChannel() as unknown as MessageChannel,
-        postMessage: (message) => this.emit(message),
+        postMessage: (message) => {
+          const packet = message as { type?: string };
+          if (options.deferPublisherPort === true && packet.type === "publisherBound" && Object.hasOwn(packet, "port")) {
+            pendingPublisherPort = () => this.emit(message);
+          } else this.emit(message);
+        },
         addMessageListener: (listener) => { this.ownerListener = listener; },
         reportError: (error) => { throw error; },
       });
@@ -259,7 +289,7 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
     void creating.then((host) => { outcome = { status: "fulfilled", host }; }, (error: unknown) => { outcome = { status: "rejected", error }; });
     return creating;
   }
-  function baseline(generation = 1) { workers[0].dataPort!.postMessage({ ...catalogWorkerFixture(snapshot(generation, generation)), type: "baseline", civilDate: "2030-01-02", generation, snapshot: snapshot(generation, generation) }); }
+  function baseline(generation = 1) { workers[0].dataPort!.postMessage({ ...catalogWorkerFixture(snapshot(generation, generation)), type: "baseline", civilDate: "2030-01-02", generation, publisherToken: generation, controlAddress: 5000, publicationOrdinal: "0", workingOrders: [], snapshot: snapshot(generation, generation) }); }
   function ingress(generation = 1, token: unknown = generation, extra: Record<string, unknown> = {}) { workers[0].dataPort!.postMessage({ type: "ingress", generation, token, shared: true, ...extra }); }
   function ack(worker: WorkerHandle, generation: number, failure?: string) {
     const request = worker.sent.findLast((item) => item.type === "bindIngress" && item.generation === generation);
@@ -282,7 +312,7 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
     else if (outcome.status === "pending" && workers[0] !== undefined) { workers[0].emit({ type: "failure", code: "FIXTURE_CLEANUP", where: "fixture", message: "测试收尾" }); await drain(); }
     // fixture 的防泄漏兜底发生在产品清理断言之后，不能用它证明产品已清理。
     for (const channel of channels) { channel.port1.close(); channel.port2.close(); }
-    for (const worker of [...workers, ...controllers]) if (worker.terminations === 0) worker.terminate();
+    for (const worker of [...workers, ...controllers, ...publishers]) if (worker.terminations === 0) worker.terminate();
     clock.tasks.clear();
     for (const [name, descriptor] of originals) {
       if (descriptor === undefined) Reflect.deleteProperty(globalThis, name);
@@ -290,5 +320,9 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
     }
     await drain();
   }
-  return { clock, workers, controllers, channels, portCloses, failures, substrate, words, layout, launch, baseline, ingress, ack, spawn, cleanup, get outcome() { return outcome; }, readOutcome(): Outcome { return outcome; }, get configuredSubstrate() { return configuredSubstrate; }, get configured() { return configured; } };
+  return { clock, workers, get publisherWorker() { return publishers.at(-1); },
+    finishPublisherPort() {
+      if (pendingPublisherPort === undefined) throw new Error("fixture 缺少在途 publisher 端口");
+      const finish = pendingPublisherPort; pendingPublisherPort = undefined; finish();
+    }, controllers, channels, portCloses, failures, substrate, words, layout, launch, baseline, ingress, ack, spawn, cleanup, get outcome() { return outcome; }, readOutcome(): Outcome { return outcome; }, get configuredSubstrate() { return configuredSubstrate; }, get configured() { return configured; } };
 }

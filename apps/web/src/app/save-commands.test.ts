@@ -17,7 +17,7 @@ function fixture(archive = commandDayEndArchiveFixture()) {
     day: () => 3 });
   let setup: SessionSetup | null = null;
   const ports: SaveCommandPorts = {
-    startupTarget: { kind: "remote", baseUrl: "http://localhost" },
+    startupTarget: { kind: "tauri" },
     hostRef: { current: host }, initialSaveSourceRef: { current: new InitialSaveSource<StrictSaveEnvelope>() }, dayEndPersistenceRef: { current: new DayEndPersistence() },
     autoOrderMgrRef: { current: null }, sessionReplacementGateRef: { current: new SessionReplacementGate() }, saveSelectionGenerationRef: { current: 0 },
     dayEndFileTargetRef: { current: null }, playerOrderRefreshGateRef: { current: new PlayerOrderRefreshGate() },
@@ -25,7 +25,7 @@ function fixture(archive = commandDayEndArchiveFixture()) {
     fatalHostErrorRef: { current: (value) => { calls.push(`fatal:${String(value)}`); } },
     activeSetup: DEFAULT_SETUP, startDateDraft: "2031-02-03", priceCageEnabledDraft: false, floatAllocationDraft: DEFAULT_SETUP.float_allocation,
     loadFromFile: async beforeRead => { await beforeRead?.(); return archive; }, selectDayEndFileTarget: async () => ({ write: async () => { calls.push("file-write"); } }),
-    getBrowserSaveRepository: () => ({ load: async () => archive }), resetMarketHistory: () => { calls.push("history"); },
+    getQuickArchive: () => ({ load: async () => archive }), resetMarketHistory: () => { calls.push("history"); },
     configureMarketTiming: () => { calls.push("timing"); },
     refreshPlayerOrders: async () => { calls.push("orders-refresh"); }, clearPlayerOrders: () => { calls.push("orders-clear"); },
     setNotice: (value) => { notices.push(value); }, setError: (value) => { calls.push(`error:${String(value)}`); }, setReady: (value) => { calls.push(`ready:${value}`); },
@@ -37,73 +37,70 @@ function fixture(archive = commandDayEndArchiveFixture()) {
   return { calls, notices, archive, host, ports, commands: createSaveCommands(ports), setup: () => setup };
 }
 
-test("快速槽读档等待点击前的日终写入，首次档案不会误报无存档", { timeout: 10000 }, async () => {
-  for (const previous of [null, commandDayEndArchiveFixture()]) {
-    const f = fixture(), commit = deferred<void>(), entered = deferred<void>();
-    let saved = previous;
-    let reads = 0;
-    f.ports.getBrowserSaveRepository = () => ({ load: async () => { reads++; return saved; } });
-    const queue = f.ports.dayEndPersistenceRef.current;
-    queue.install("current");
-    const writing = queue.completed("current", Promise.resolve(f.archive), async (_slot, current) => {
-      entered.resolve();
-      await commit.promise;
-      assert.equal(current(), true, "读取快速槽前不能取消已经提交的当日日终写入");
-      saved = f.archive;
-    });
-    await entered.promise;
-    let loaded: StrictSaveEnvelope | null = null;
-    f.host.load = async slot => { loaded = slot as StrictSaveEnvelope; };
-    const loading = createSaveCommands(f.ports).load();
-    await Promise.resolve();
-    await Promise.resolve();
-    assert.equal(reads, 0);
-    assert.equal(loaded, null);
-    assert.match(f.notices[0], /正在读取.*等待.*写入/);
-    commit.resolve();
-    await Promise.all([writing, loading]);
-    assert.equal(reads, 1);
-    assert.equal(loaded, f.archive);
-    assert.match(f.notices.at(-1)!, /已读档/);
-  }
+test("共享市场拒绝读取浏览器快速槽，但保留明确选择文件的入口", async () => {
+  const f = fixture();
+  f.ports.startupTarget = { kind: "remote", baseUrl: "http://localhost" };
+  f.ports.getQuickArchive = () => { throw new Error("共享市场不得读取本地快速槽"); };
+  const commands = createSaveCommands(f.ports);
+  await commands.load();
+  assert.deepEqual(f.calls, []);
+  assert.match(f.notices.at(-1)!, /Server.*日终档案/);
+  assert.equal(f.ports.saveSelectionGenerationRef.current, 0);
+
+  await commands.loadFile();
+  assert.equal(f.calls.filter(call => call === "load").length, 1);
 });
 
-test("读档等待的写入失败不会载入旧快速槽，错误明确展示且允许重试", { timeout: 10000 }, async () => {
-  const f = fixture(), commit = deferred<void>(), entered = deferred<void>();
-  let reads = 0;
-  f.ports.getBrowserSaveRepository = () => ({ load: async () => { reads++; return f.archive; } });
-  const queue = f.ports.dayEndPersistenceRef.current;
-  queue.install("current");
-  const writing = queue.completed("current", Promise.resolve(f.archive), async () => {
+test("快速槽读档等权威存储提交，首次日终不会误报无存档", { timeout: 10000 }, async () => {
+  const f = fixture(), committed = deferred<void>(), entered = deferred<void>();
+  let loaded: StrictSaveEnvelope | null = null;
+  f.ports.getQuickArchive = () => ({ load: async () => {
     entered.resolve();
-    await commit.promise;
-    throw new Error("磁盘写入失败");
-  });
-  const rejected = assert.rejects(writing, /磁盘写入失败/);
+    await committed.promise;
+    return f.archive;
+  } });
+  f.host.load = async slot => { loaded = slot as StrictSaveEnvelope; };
+  const loading = createSaveCommands(f.ports).load();
   await entered.promise;
+  assert.equal(loaded, null);
+  assert.match(f.notices[0], /正在读取.*等待.*写入/);
+  committed.resolve();
+  await loading;
+  assert.equal(loaded, f.archive);
+});
+
+test("权威存储读失败不会载入旧快速槽，授权文件写入失败不阻断快槽重试", { timeout: 10000 }, async () => {
+  const f = fixture();
+  const before = f.ports.dayEndPersistenceRef.current;
+  before.install("current");
+  const writing = before.completed("current", Promise.resolve(f.archive), async () => {
+    throw new Error("授权副本写入失败");
+  });
+  const witnessed = assert.rejects(writing, /授权副本写入失败/);
+  let attempts = 0;
+  f.ports.getQuickArchive = () => ({ load: async () => {
+    if (++attempts === 1) throw new Error("快速槽读取失败");
+    return f.archive;
+  } });
   const commands = createSaveCommands(f.ports);
-  const loading = commands.load();
-  await Promise.resolve();
-  commit.resolve();
-  await Promise.all([rejected, loading]);
-  assert.equal(reads, 0);
-  assert.equal(f.calls.includes("load"), false);
-  assert.match(f.notices.at(-1)!, /读档失败.*磁盘写入失败/);
   await commands.load();
-  assert.equal(reads, 1, "显式重试可以读取上次有效档案");
+  assert.equal(f.calls.includes("load"), false);
+  assert.match(f.notices.at(-1)!, /读档失败.*快速槽读取失败/);
+  await Promise.all([witnessed, commands.load()]);
+  assert.equal(attempts, 2);
   assert.match(f.notices.at(-1)!, /已读档/);
 });
 
-test("等待写档时拒绝重复读档，替换宿主后旧操作不读取或取消新局队列", { timeout: 10000 }, async () => {
+test("等待权威快槽时拒绝重复读档，替换宿主后不安装旧存档", { timeout: 10000 }, async () => {
   const f = fixture(), commit = deferred<void>(), entered = deferred<void>();
-  let reads = 0;
-  f.ports.getBrowserSaveRepository = () => ({ load: async () => { reads++; return f.archive; } });
+  f.ports.getQuickArchive = () => ({ load: async () => {
+    entered.resolve(); await commit.promise; return f.archive;
+  } });
   const queue = f.ports.dayEndPersistenceRef.current;
   queue.install("old");
-  const writing = queue.completed("old", Promise.resolve(f.archive), async () => { entered.resolve(); await commit.promise; });
-  await entered.promise;
   const commands = createSaveCommands(f.ports);
   const loading = commands.load();
+  await entered.promise;
   await commands.load();
   assert.match(f.notices.at(-1)!, /上一项读档.*尚未结束/);
   f.ports.hostRef.current = commandHostFixture();
@@ -111,8 +108,7 @@ test("等待写档时拒绝重复读档，替换宿主后旧操作不读取或�
   queue.install("new");
   const noticesBeforeReplacement = [...f.notices];
   commit.resolve();
-  await Promise.all([writing, loading]);
-  assert.equal(reads, 0);
+  await loading;
   assert.deepEqual(f.calls, []);
   assert.deepEqual(f.notices, noticesBeforeReplacement);
   assert.equal(await queue.completed("new", Promise.resolve(f.archive), async () => {}), true);
@@ -163,7 +159,7 @@ test("load 失败先同步权威基线；同步失败升级 fatal；旧宿主响
   f.host.refreshBaseline = async () => { throw new Error("同步失败"); }; await f.commands.loadFile();
   assert.ok(f.calls.some((value) => /fatal:文件读档后权威基线同步失败.*同步失败/.test(value)));
   const g = fixture(), pending = deferred<StrictSaveEnvelope | null>(), entered = deferred<void>();
-  g.ports.getBrowserSaveRepository = () => ({ load: () => { entered.resolve(); return pending.promise; } });
+  g.ports.getQuickArchive = () => ({ load: () => { entered.resolve(); return pending.promise; } });
   const loading = createSaveCommands(g.ports).load();
   await entered.promise;
   g.ports.hostRef.current = null; pending.resolve(g.archive); await loading;
@@ -320,7 +316,7 @@ test("WASM快速槽与文件读档冻结实际X后请求整实例替换，不调
 test("WASM读取失败或取消不消费选择、不换局、不调用旧Memory load", { timeout: 10000 }, async () => {
   for (const operation of ["load", "loadFile"] as const) {
     const f = fixture(); f.ports.startupTarget = { kind: "wasm" };
-    f.ports.getBrowserSaveRepository = () => ({ load: async () => { throw new Error("读取实际X失败"); } });
+    f.ports.getQuickArchive = () => ({ load: async () => { throw new Error("读取实际X失败"); } });
     f.ports.loadFromFile = async () => null;
     await createSaveCommands(f.ports)[operation]();
     assert.equal(f.setup(), null); assert.equal(f.ports.initialSaveSourceRef.current.hasExplicitSelection(), false);

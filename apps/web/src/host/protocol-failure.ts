@@ -2,6 +2,22 @@ import type { HostFailure } from "./host-update.ts";
 import { exact, field, record, safeU32, values } from "./protocol/guards.ts";
 import { ProtocolError } from "./protocol/types.ts";
 
+/** 只有经宿主观察端分类的通知可保留当前权威运行显示。 */
+export function isObserverOnlyFailure(failure: HostFailure | string): boolean {
+  if (typeof failure === "string") return false;
+  switch (failure.code) {
+    case "WASM_WORKER_PUBLICATION":
+      return failure.where === "worker-host.publisher";
+    case "OBSERVER_ACK_FAILED":
+      return failure.where === "tauri-host.engine_ack_observer";
+    case "OBSERVER_RESYNC_REQUIRED":
+    case "OBSERVER_DELIVERY_REJECTED":
+      return failure.where === "tauri-host.engine-event";
+    default:
+      return false;
+  }
+}
+
 /** 只消费可信 Host 本次真实 prepare 拒绝的专属契约；普通 recoverable 不授予继续写权限。 */
 export function isReportCorrectionPrepareRejection(failure: HostFailure, host: "server" | "desktop", generation: string): boolean {
   if (failure.code !== "REPORT_CORRECTION_PREPARE_REJECTED" || failure.where !== `${host}.actor.prepare_civil_updates` || failure.recoverable !== true) return false;

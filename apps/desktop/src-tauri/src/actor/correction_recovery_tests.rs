@@ -554,6 +554,7 @@ async fn target_day_not_ready_uses_the_actual_save_error_conversion() {
     let error = game.save_current_day(game.civil_date()).unwrap_err();
     let (cmd_tx, mut commands) = mpsc::unbounded_channel();
     let handles = SessionHandles {
+        ack_route: AckRoute::default(),
         cmd_tx,
         ingress: Arc::new(RwLock::new((1, game.shared_ingress()))),
     };

@@ -271,19 +271,17 @@ fn closing_only_trades_reach_day_kline_and_receipts() {
         },
         event_candle,
     );
-    // 保留快照：日 0 bars 总量=200，含 900（收盘竞价）桶。
+    // 日内分钟桶在日结对账后释放，收盘竞价成交仍体现在日 K 与交割单。
     let day0 = crate::CivilDate::from_iso("2030-01-02").unwrap();
     let retained = session
         .retained_market_days()
         .last()
         .expect("日 0 保留快照已冻结");
     assert_eq!(retained.0.date, day0, "保留快照归日 0");
-    let bars = &retained.0.securities[&0].bars;
-    let vol: u64 = bars.iter().map(|b| b.volume_shares).sum();
-    assert_eq!(vol, 200, "保留 bars 总量=收盘段 200");
-    assert!(
-        bars.iter().any(|b| b.minute_of_day == 900),
-        "收盘竞价 900 桶在列"
+    assert!(retained.0.securities[&0].trading);
+    assert_eq!(
+        serde_json::to_value(&retained.0.securities[&0]).unwrap()["bars"],
+        serde_json::json!([])
     );
     // 次日（日 1）活动 K 不被收盘段污染。
     assert_eq!(
@@ -337,13 +335,8 @@ fn closing_only_trades_reach_day_kline_and_receipts() {
         .expect("restore 后日 0 保留快照");
     assert_eq!(restored_day.0.date, day0, "restore 后保留快照归日 0");
     assert_eq!(
-        restored_day.0.securities[&0]
-            .bars
-            .iter()
-            .map(|bar| bar.volume_shares)
-            .sum::<u64>(),
-        200,
-        "restore 后日 0 bars 保留收盘竞价成交"
+        serde_json::to_value(&restored_day.0.securities[&0]).unwrap()["bars"],
+        serde_json::json!([])
     );
     let (buyer2, _) = trade_pair(&restored);
     let restored_rows = restored
@@ -419,14 +412,15 @@ fn intraday_plus_closing_day_kline_matches_bars_and_desk() {
         },
         boundary.get(&StockId(0)).expect("股 0 日 K"),
     );
-    // 保留快照：bars 总量=500 与日 K 逐位（冻结对账在全对账分支通过）。
     let retained = session
         .retained_market_days()
         .last()
         .expect("日 0 保留快照");
-    let bars = &retained.0.securities[&0].bars;
-    let vol: u64 = bars.iter().map(|b| b.volume_shares).sum();
-    assert_eq!(vol, 500, "bars 总量=日 K 量");
+    assert!(retained.0.securities[&0].trading);
+    assert_eq!(
+        serde_json::to_value(&retained.0.securities[&0]).unwrap()["bars"],
+        serde_json::json!([])
+    );
     // 次日活动 K 零量（收盘段不污染）。
     assert_eq!(
         driver.world_public_views()[0]
@@ -482,9 +476,12 @@ fn second_day_boundary_keeps_days_independent() {
     let driver = driver;
     let retained = session.retained_market_days();
     assert_eq!(retained.len(), 2, "两日各冻一条");
-    let day1_bars = &retained[1].0.securities[&0].bars;
-    let vol: u64 = day1_bars.iter().map(|b| b.volume_shares).sum();
-    assert_eq!(vol, 400, "日 1 bars=日内 200+收盘 200");
+    assert!(
+        retained
+            .iter()
+            .all(|day| day.0.securities[&0].bars.is_empty()),
+        "两日均不留分钟桶"
+    );
     // install 面：末条=日 1 终 K；其前=日 0 终 K（不被覆盖）。
     let hist = session.candle_book_histories_for_runtime(&StockId(0));
     assert_day_k(
