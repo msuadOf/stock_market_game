@@ -1,3 +1,5 @@
+import { createNewSessionSeed } from "../config/session-seed.ts";
+import { RemoteLoginScreen } from "./RemoteLoginScreen.tsx";
 import { useCallback, useRef, useState, type Dispatch, type MutableRefObject, type ReactElement, type SetStateAction } from "react";
 import { DEFAULT_SETUP } from "../config/defaults";
 import type { AutoOrderManager } from "../components/auto-order-manager.ts";
@@ -55,6 +57,7 @@ export function AppRoot({ renderShell }: { renderShell: (props: AppRootShellProp
   const [returningToStartup, setReturningToStartup] = useState(false);
   const [startupReturnError, setStartupReturnError] = useState<string | null>(null);
   const [startupTarget, setStartupTarget] = useState<StartupTarget | null>(() => initialStartupTarget(import.meta.env.MODE));
+  const [remoteSeed, setRemoteSeed] = useState<string | null>(null);
   const [startupMode, setStartupMode] = useState<StartupMode>(import.meta.env.DEV && import.meta.env.VITE_ENGINE_HOST === "remote" ? "remote" : "local");
   const [remoteAddress, setRemoteAddress] = useState(import.meta.env.DEV ? import.meta.env.VITE_REMOTE_BASE_URL ?? "" : "");
   const [startupError, setStartupError] = useState<string | null>(null);
@@ -90,11 +93,20 @@ export function AppRoot({ renderShell }: { renderShell: (props: AppRootShellProp
         try {
           const target = resolveStartupTarget(startupMode, remoteAddress, "__TAURI_INTERNALS__" in window, browserWasmEnvironment);
           setStartupError(null);
+          if (target.kind === "remote") setRemoteSeed(createNewSessionSeed().toString());
           setStartupTarget(target);
         } catch (startupFailure) {
           setStartupError(startupFailure instanceof Error ? startupFailure.message : String(startupFailure));
         }
       }} /></HostSpawnFailureReport>;
+  }
+  if (startupTarget.kind === "remote" && startupTarget.market === undefined) {
+    if (remoteSeed === null) throw new Error("远程市场创建选项缺少种子");
+    return <HostSpawnFailureReport failures={spawnFailures} onDismiss={dismissSpawnFailures}>
+      <RemoteLoginScreen baseUrl={startupTarget.baseUrl} setup={sessionSetup} seed={remoteSeed}
+        onConnected={(token, context, created) => setStartupTarget({ ...startupTarget, market: { token, context, created } })}
+        onBack={() => setStartupTarget(null)} />
+    </HostSpawnFailureReport>;
   }
   return (
     <HostSpawnFailureReport failures={spawnFailures} onDismiss={dismissSpawnFailures}>

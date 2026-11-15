@@ -72,3 +72,17 @@ test("未确认重新加入不发请求；坏列表、响应与错误只显式�
   const network = new RemoteAuthClient("https://example.test", async () => { throw new Error(token); });
   await assert.rejects(network.me(token), (error: Error) => error.message.includes("网络") && !error.message.includes(token));
 });
+
+test("默认浏览器 fetch 保持全局 receiver，避免 Illegal invocation", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async function (this: typeof globalThis, input) {
+      assert.equal(this, globalThis);
+      assert.equal(input, "https://example.test/api/auth/guest");
+      return Response.json({ subject, token }, { status: 201 });
+    };
+    assert.deepEqual(await new RemoteAuthClient("https://example.test").guest(), { subject, token });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

@@ -33,7 +33,7 @@ test("WASM 校验在快速槽读取和 Worker 创建前，远程地址显式传�
   assert.ok(initialization.indexOf("checkWasmEnvironment()") < initialization.indexOf("initialSaveSourceRef.current.read("));
   assert.ok(initialization.indexOf("checkWasmEnvironment()") < initialization.indexOf("await createHost("));
   assert.match(initialization, /if \(startupTarget.kind === "wasm"\) checkWasmEnvironment/);
-  assert.match(lifecycle, /return createRemoteHost\(setup, seed, \{ baseUrl: startupTarget.baseUrl \}\)/);
+  assert.match(lifecycle, /return attachRemoteHost\(startupTarget.baseUrl, startupTarget.market.token, startupTarget.market.context\)/);
   assert.doesNotMatch(initialization, /VITE_ENGINE_HOST|VITE_REMOTE_BASE_URL/);
 });
 
@@ -84,4 +84,34 @@ test("Memory重载前的黄带notice必须在实际loading返回分支可见", {
   assert.ok(start > 0 && end > start, "锁定实际 App loading 分支");
   const loading = source.slice(start, end);
   assert.match(loading, /notice\s*!==\s*null[\s\S]*role="status"[\s\S]*aria-live="polite"[\s\S]*\{notice\}/, "Memory yellow notice必须在加载UI实际渲染，双rAF不能代替可见内容");
+});
+
+test("远程地址选择后先登录，再以服务端市场上下文连接宿主", () => {
+  assert.ok(root.indexOf("<RemoteLoginScreen") >= 0);
+  assert.ok(root.indexOf("<RemoteLoginScreen") < root.indexOf("renderShell({"));
+  assert.match(root, /onConnected=\{\(token, context, created\)/);
+  assert.match(lifecycle, /return attachRemoteHost\(startupTarget.baseUrl,/);
+  assert.doesNotMatch(lifecycle, /return createRemoteHost\(/);
+});
+
+test("无共享市场控制权时桌面／移动倍速及暂停按钮禁用，并且命令端拒绝调用", () => {
+  assert.match(source, /const canControlMarket = startupTarget.kind !== "remote" \|\| startupTarget.market\?\.context.can_control === true/);
+  assert.match(source, /className="speed-select" disabled=\{!canControlMarket\}/);
+  assert.match(source, /className="simulation-button" disabled=\{!canControlMarket\}/);
+  assert.match(source, /if \(canControlMarket\) void sessionControls.toggleRunning\(\)/);
+  assert.match(source, /if \(canControlMarket\) void sessionControls.setSpeed\(value\)/);
+  assert.match(source, /pausePreferencesPending=\{!canControlMarket \|\| pausePreferences.pending\}/);
+  assert.match(source, /<ConnectedMobileDetail[^>]+marketControlsDisabled=\{!canControlMarket\}/);
+  const mobileConnection = readFileSync(new URL("./LocalRefreshViews.tsx", import.meta.url), "utf8");
+  assert.match(mobileConnection, /<MobileStockDetail[\s\S]+marketControlsDisabled=\{props.marketControlsDisabled\}/);
+});
+
+test("共享市场不使用本地重开流程，只有控制者可读取日终档", () => {
+  assert.match(source, /startupTarget.kind === "remote" \? <section [^>]+aria-label="共享市场管理"/);
+  assert.match(source, /if \(canControlMarket\) void handleLoad\(\)/);
+  assert.match(source, /if \(canControlMarket\) void handleLoadFile\(\)/);
+  assert.match(source, /loadDisabled=\{!canControlMarket\}/);
+  const panel = readFileSync(new URL("./LocalRefreshViews.tsx", import.meta.url), "utf8");
+  assert.match(panel, /disabled=\{props.loadDisabled\} onClick=\{props.onLoad\}/);
+  assert.match(panel, /disabled=\{props.loadDisabled\} onClick=\{props.onLoadFile\}/);
 });

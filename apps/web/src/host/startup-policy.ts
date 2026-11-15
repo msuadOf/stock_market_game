@@ -1,9 +1,11 @@
+import type { RemoteMarketContext } from "./remote-market-context.ts";
+
 export type StartupMode = "local" | "remote";
 
 export type StartupTarget =
   | { readonly kind: "wasm" }
   | { readonly kind: "tauri" }
-  | { readonly kind: "remote"; readonly baseUrl: string };
+  | { readonly kind: "remote"; readonly baseUrl: string; readonly market?: { readonly token: string; readonly context: RemoteMarketContext; readonly created: boolean } };
 
 export interface WasmEnvironment {
   readonly isSecureContext: boolean;

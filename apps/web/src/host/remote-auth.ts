@@ -34,7 +34,7 @@ export function parseIdentitySubject(value: unknown): IdentitySubject {
 export class RemoteAuthClient {
   readonly baseUrl: string;
   private readonly fetchFn: typeof fetch;
-  constructor(baseUrl: string, fetchFn: typeof fetch = fetch) {
+  constructor(baseUrl: string, fetchFn: typeof fetch = globalThis.fetch.bind(globalThis)) {
     this.baseUrl = credentialServerKey(baseUrl);
     this.fetchFn = fetchFn;
   }

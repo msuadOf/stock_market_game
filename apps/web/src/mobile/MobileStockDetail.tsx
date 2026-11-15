@@ -69,6 +69,7 @@ interface Props {
   onKlineDaysChange: (days: number) => void;
   onPeriodChange: (period: MobileChartPeriod) => void;
   onInfoTabChange: (tab: MobileInfoTab) => void;
+  marketControlsDisabled?: boolean;
   onSpeedChange: (speed: number) => void;
   onPauseToggle: () => void;
   onBack: () => void;
@@ -262,11 +263,12 @@ export function MobileStockDetail(props: Props) {
         <button type="button" className="msd-stock-switch msd-previous" aria-label="上一只" disabled={props.canSwitchStock === false} onClick={props.onPrevious}>◀</button>
         <div className="msd-security-title"><strong>{props.name}</strong><small>{props.code}</small></div>
         <button type="button" className="msd-stock-switch msd-next" aria-label="下一只" disabled={props.canSwitchStock === false} onClick={props.onNext}>▶</button>
-        <MobileRunToggle running={props.running} onToggle={props.onPauseToggle} variant="detail" />
+        <MobileRunToggle running={props.running} disabled={props.marketControlsDisabled} onToggle={props.onPauseToggle} variant="detail" />
         <MobileSpeedSelect
           speed={props.speed}
           measuredSpeed={props.measuredSpeed}
           measuredSpeedTitle={props.measuredSpeedTitle}
+          disabled={props.marketControlsDisabled}
           onChange={props.onSpeedChange}
         />
       </header>

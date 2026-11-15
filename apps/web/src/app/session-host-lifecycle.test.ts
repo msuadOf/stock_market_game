@@ -72,6 +72,58 @@ test("新局在同一宿主开跑前取得真实分配，读档不查询初始�
   assert.ok(restored.calls.includes("ready"));
   await restored.runtime.dispose();
 });
+test("加入既有共享市场只订阅和离开，不改全局状态或消费本地快速档", async () => {
+  const context = { session_id: "existing", generation: "8", setup: { ...DEFAULT_SETUP, start_date: "2031-01-02" },
+    seed: "9007199254740993", resumed: false, can_control: false, member: null, needs_rejoin: true };
+  const f = fixture({ startupTarget: { kind: "remote", baseUrl: "http://localhost", market: {
+    token: "f".repeat(64), context, created: false,
+  } } });
+  const archive = commandDayEndArchiveFixture();
+  f.source.select(archive);
+  const host = Object.assign(f.host, {
+    async subscribeUpdates() { f.calls.push("subscribe"); },
+    async initialAllocation() { f.calls.push("query-allocation"); return { stocks: [] }; },
+    async readSpeedMetrics() {
+      f.calls.push("metrics");
+      return { requested: { mode: "fixed" as const, multiplier: 3 }, actual_multiplier: 0, running: false,
+        sample_duration_ms: 0, sample_ticks: 0 };
+    },
+  });
+  f.ports.createHost = async (setup, seed, _target, _onSpawnFailure, initialArchive) => {
+    assert.equal(setup, context.setup);
+    assert.equal(seed, 9007199254740993n);
+    assert.equal(initialArchive, null);
+    return host;
+  };
+  const runtime = createSessionHostLifecycle(f.ports);
+  await runtime.start();
+  await runtime.stopCurrentSession();
+  assert.deepEqual(f.calls, ["setup", "timing", "register", "connect", "subscribe", "query-allocation", "metrics", "running:false", "ready", "unregister", "disconnect", "dispose"]);
+  assert.equal(await f.source.read(async () => null), archive);
+});
+test("共享市场创建者的启动控制授权仅用一次，重新挂载只订阅", async () => {
+  const context = { session_id: "creator", generation: "1", setup: DEFAULT_SETUP, seed: "7", resumed: false,
+    can_control: true, member: { account_id: "7", admission_funding: { external_cash: "100" } }, needs_rejoin: false };
+  const f = fixture({ startupTarget: { kind: "remote", baseUrl: "http://localhost", market: {
+    token: "f".repeat(64), context, created: true,
+  } } });
+  Object.assign(f.host, {
+    async subscribeUpdates() { f.calls.push("subscribe"); },
+    async readSpeedMetrics() { return { requested: { mode: "fixed", multiplier: 1 }, actual_multiplier: null, running: true,
+      sample_duration_ms: 0, sample_ticks: 0 }; },
+  });
+  await f.runtime.start();
+  await f.runtime.stopCurrentSession();
+  const remounted = createSessionHostLifecycle(f.ports);
+  await remounted.start();
+  await remounted.stopCurrentSession();
+  assert.equal(f.calls.filter((call) => call === "speed").length, 1);
+  assert.equal(f.calls.filter((call) => call === "preferences").length, 1);
+  assert.equal(f.calls.filter((call) => call === "start").length, 1);
+  assert.equal(f.calls.filter((call) => call === "subscribe").length, 1);
+  assert.ok(!f.calls.includes("stop"));
+});
+
 test("读档成功通知等待恢复、start 与后台 stop 全部确认并完成启动源", { timeout: 10000 }, async () => {
   let confirmStart!: () => void;
   let confirmStop!: () => void;

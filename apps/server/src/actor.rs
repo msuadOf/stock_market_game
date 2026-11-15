@@ -495,7 +495,10 @@ impl ServerPacing {
     }
 
     fn refresh_metrics(&mut self, tick: u64) -> SpeedMetrics {
-        self.speed_meter.refresh(tick);
+        // 暂停和故障停止不是运行采样窗；保留对应状态的既有读数。
+        if self.running {
+            self.speed_meter.refresh(tick);
+        }
         SpeedMetrics {
             requested: self.requested_speed.clone(),
             actual_multiplier: self.speed_meter.actual_multiplier,
@@ -915,6 +918,17 @@ mod interval_tests {
         let mut minimal = super::ServerPacing::new(1, 0);
         minimal.apply_speed(super::MAX_SPEED_MULTIPLIER, 0);
         assert_eq!(minimal.tick_interval(), Duration::from_millis(1));
+    }
+
+    #[test]
+    fn paused_speed_telemetry_does_not_open_sampling_windows() {
+        let mut pacing = super::ServerPacing::new(1_000, 10);
+        pacing.speed_meter.started_at -= Duration::from_secs(2);
+        let paused = pacing.refresh_metrics(10);
+        assert!(!paused.running);
+        assert_eq!(paused.actual_multiplier, Some(0.0));
+        assert_eq!(paused.sample_duration_ms, 0);
+        assert_eq!(paused.sample_ticks, 0);
     }
 
     #[test]

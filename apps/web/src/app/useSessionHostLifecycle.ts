@@ -1,5 +1,5 @@
 import { prepareDocumentWasmRestoreCapability } from "../host/wasm-restore-capability-source.ts";
-import { store } from "../store/store.ts";
+import { setSpeed, store } from "../store/store.ts";
 import { useEffect, useState, type MutableRefObject } from "react";
 import { createMemoryHandoverSelection } from "./memory-handover-selection.ts";
 import type { MemoryHandoverPanelProps } from "./MemoryHandoverPanel.tsx";
@@ -10,7 +10,7 @@ import type { DeliveryMode, EngineHost } from "../host/engine-host.ts";
 import type { HostFailure, HostUpdate } from "../host/host-update.ts";
 import { createProtocolUpdate } from "../host/host-update.ts";
 import { createTauriHost } from "../host/tauri-host.ts";
-import { createRemoteHost } from "../host/remote-host.ts";
+import { attachRemoteHost } from "../host/remote-host.ts";
 import { createWorkerHost, type WorkerE2EHost } from "../host/worker-host.ts";
 import { WasmHostInitializationError } from "../host/wasm-host-initialization-error.ts";
 import { WasmMemoryStorageError } from "../host/wasm-memory-storage.ts";
@@ -78,6 +78,9 @@ export interface SessionHostLifecyclePorts {
   onRunning(running: boolean): void;
   onAutoTriggered(id: string): void;
 }
+
+// 创建者的初始控制只随本次明确创建授权一次。按选择对象记忆，不保留凭据引用。
+const initializedSharedMarkets = new WeakSet<object>();
 
 /** 单次 effect 的资源 owner；hostRef 只是 AppShell 借用的当前宿主别名。 */
 export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
@@ -159,6 +162,7 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
       releases--; publishReleased();
     }
   };
+  const sharedMarket = startupTarget.kind === "remote" ? startupTarget.market : undefined;
   const stopCurrentSession = () => {
     if (teardownTask !== undefined) return teardownTask;
     ending = true;
@@ -171,7 +175,7 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
     }
     teardownTask = (async () => {
       let stopFailure: { readonly error: unknown } | null = null;
-      try { if (memoryTicket === undefined) await ownedHost?.stop(); } catch (failure) {
+      try { if (memoryTicket === undefined && sharedMarket === undefined) await ownedHost?.stop(); } catch (failure) {
         stopFailure = { error: failure };
         if (outcome.kind === "released") outcome = { kind: "failed", error: failure };
       }
@@ -243,7 +247,7 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
           else initialSaveSourceRef.current.reset();
         }
       }
-      let initialSlot = confirmedIntent === undefined ? await initialSaveSourceRef.current.read(async () => {
+      let initialSlot = sharedMarket !== undefined ? null : confirmedIntent === undefined ? await initialSaveSourceRef.current.read(async () => {
         if (TRADING_E2E_MODE) return null;
         const slot = await getBrowserSaveRepository().load();
         return slot === null ? null : validateDayEndArchive(slot);
@@ -253,8 +257,8 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
         await ports.prepareWasmRestoreCapability(initialSlot);
         if (cancelled) return;
       }
-      let setup = initialSlot === null ? sessionSetup : initialSlot.setup;
-      let seed = confirmedIntent?.kind === "new" ? BigInt(confirmedIntent.seed)
+      let setup = sharedMarket?.context.setup ?? (initialSlot === null ? sessionSetup : initialSlot.setup);
+      let seed = sharedMarket !== undefined ? BigInt(sharedMarket.context.seed) : confirmedIntent?.kind === "new" ? BigInt(confirmedIntent.seed)
         : initialSlot === null ? (TRADING_E2E_MODE ? DEFAULT_SEED : createSeed()) : BigInt(initialSlot.seed);
       if (confirmedIntent?.kind === "new") setup = confirmedIntent.setup;
       if (startupTarget.kind === "wasm" && ports.wasmMemoryOwner !== undefined) {
@@ -286,7 +290,8 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
       }
       if (initialSlot !== null && startupTarget.kind !== "wasm") await host.load(initialSlot);
       if (cancelled) return;
-      if (initialSlot === null) {
+      const existingSharedMarket = sharedMarket !== undefined && (!sharedMarket.created || initializedSharedMarkets.has(sharedMarket));
+      if (initialSlot === null && !existingSharedMarket) {
         const allocation = await host.initialAllocation();
         if (cancelled) return;
         setInitialAllocation(allocation);
@@ -321,19 +326,35 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
       }, (id) => { if (!cancelled) onAutoTriggered(id); }, (_id, submitError) => {
         if (!cancelled) setNotice(`条件单提交失败：${submitError instanceof Error ? submitError.message : String(submitError)}`);
       });
-      // 同步 RTK autoOrders → Manager
-      await host.setSpeed(speed);
-      if (cancelled) return;
-      await host.setPausePreferences({ pause_after_close: pauseAfterClose, pause_before_open: pauseBeforeOpen });
-      if (cancelled) return;
-      await host.start(
-        (update) => {
-          // 关闭旧宿主时仍须 ACK 已在途的 transport；取消的 UI 不再消费任何旧消息。
-          if (closingTransportHost === host && (update.type === "baseline" || update.type === "protocol")) return true;
-          return !cancelled && host === hostRef.current ? hostUpdateRef.current(update) : false;
-        },
-        (failure) => { if (!cancelled && host === hostRef.current) fatalHostErrorRef.current(failure); },
-      );
+      // 已存在的共享市场只订阅其权威状态，不能把本地速度、暂停偏好或运行状态写回。
+      if (!existingSharedMarket) {
+        if (sharedMarket !== undefined) initializedSharedMarkets.add(sharedMarket);
+        await host.setSpeed(speed);
+        if (cancelled) return;
+        await host.setPausePreferences({ pause_after_close: pauseAfterClose, pause_before_open: pauseBeforeOpen });
+        if (cancelled) return;
+      }
+      const onUpdate = (update: HostUpdate) => {
+        // 关闭旧宿主时仍须 ACK 已在途的 transport；取消的 UI 不再消费任何旧消息。
+        if (closingTransportHost === host && (update.type === "baseline" || update.type === "protocol")) return true;
+        return !cancelled && host === hostRef.current ? hostUpdateRef.current(update) : false;
+      };
+      const onFatalError = (failure: HostFailure) => {
+        if (!cancelled && host === hostRef.current) fatalHostErrorRef.current(failure);
+      };
+      if (existingSharedMarket) {
+        if (!("subscribeUpdates" in host) || typeof host.subscribeUpdates !== "function") {
+          throw new Error("远程共享市场宿主不支持独立读取订阅");
+        }
+        await host.subscribeUpdates(onUpdate, onFatalError);
+        if (cancelled) return;
+        // 活跃市场先安装 baseline 与增量消费者，再发起额外读取。
+        const allocation = await host.initialAllocation();
+        if (cancelled) return;
+        setInitialAllocation(allocation);
+      } else {
+        await host.start(onUpdate, onFatalError);
+      }
       if (cancelled) return;
       if (TRADING_E2E_MODE) {
         const controlledHost = host as EngineHost & Partial<WorkerE2EHost>;
@@ -367,17 +388,23 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
       // 初始化是异步的：页面可能已在宿主创建期间转入后台，而当时的
       // visibilitychange 监听器还拿不到 host。就绪后必须补做一次同步，
       // 避免隐藏页持续以 720x/最快占满 CPU。
-      if (isDocumentHidden()) await host.stop();
+      if (sharedMarket === undefined && isDocumentHidden()) await host.stop();
       if (cancelled) return;
       if (TRADING_E2E_MODE) {
         await host.stop();
         if (cancelled) return;
         onRunning(false);
+      } else if (existingSharedMarket) {
+        const metrics = await host.readSpeedMetrics();
+        if (cancelled) return;
+        const authoritativeSpeed = metrics.requested.mode === "fastest" ? Infinity : metrics.requested.multiplier;
+        store.dispatch(setSpeed(authoritativeSpeed));
+        onRunning(metrics.running);
       } else {
         onRunning(true);
       }
       if (!cancelled) {
-        initialSaveSourceRef.current.complete();
+        if (sharedMarket === undefined) initialSaveSourceRef.current.complete();
         if (initialSlot !== null) setNotice(`已读档（第 ${host.day() + 1} 个交易日）`);
         setReady(true);
       }
@@ -423,7 +450,10 @@ export function createSessionHostLifecycle(ports: SessionHostLifecyclePorts) {
 }
 export function createSessionHost(setup: SessionSetup, seed: bigint, startupTarget: StartupTarget, tradingE2EMode: boolean, onSpawnFailure: (failure: HostFailure) => void, initialArchive: StrictSaveEnvelope | null, memoryAdmissionTicket?: WasmMemoryAdmissionTicket, onInitializationProgress?: (message: string) => void): Promise<EngineHost> {
   if (startupTarget.kind === "tauri") return createTauriHost(setup, seed);
-  if (startupTarget.kind === "remote") return createRemoteHost(setup, seed, { baseUrl: startupTarget.baseUrl });
+  if (startupTarget.kind === "remote") {
+    if (startupTarget.market === undefined) throw new Error("远程市场尚未登录或选定");
+    return attachRemoteHost(startupTarget.baseUrl, startupTarget.market.token, startupTarget.market.context);
+  }
   let wasmRuntimeOptions;
   try { wasmRuntimeOptions = parseWasmRuntimeOptions(window.location.search); }
   catch (error) {

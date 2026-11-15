@@ -1,3 +1,4 @@
+import { parseCredentialToken } from "./remote-auth.ts";
 import { checkRightsSubscriptionFailure, createRightsSubscription } from "./rights-subscription.ts";
 import { normalizeMarketHistoryRequest, normalizeMarketHistoryPage, wireMarketHistoryRequest } from "./market-history.ts";
 import { normalizeCurrentMinuteHistoryRequest, normalizeCurrentMinuteHistoryResponse, wireCurrentMinuteHistoryRequest } from "./current-minute-history.ts";
@@ -11,7 +12,7 @@ import type { DeliveryMode, EngineHost } from "./engine-host.ts";
 import { createCompanyReadQueries } from "./company-read.ts";
 import { createCompanyWriteCommands, type CompanyWriteCommands } from "./company-write.ts";
 import { companyWriteHttpJson } from "./company-write-http.ts";
-import { parseRemoteMarketContext } from "./remote-market-context.ts";
+import { parseRemoteMarketContext, type RemoteMarketContext } from "./remote-market-context.ts";
 import { parsePlayerCompanyProposal } from "./player-proposals.ts";
 import { parseCompanyReportCorrection } from "./report-corrections.ts";
 import { string } from "../save/schema/primitives.ts";
@@ -53,7 +54,20 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
   const created = remoteSession(await remoteJson(fetchFn, `${baseUrl}/api/new`, remotePost({ setup, seed: seed.toString() })));
   const token = options.token ?? (environment.DEV === true ? environment.VITE_REMOTE_TOKEN : undefined) ?? created.token ?? "local-player";
   if (token === null || token.length === 0) throw new Error("远程会话缺少授权 token");
-  const capabilityParams = new URLSearchParams({ session_id: created.id });
+  return connectRemoteHost(baseUrl, token, created.id, options, null);
+}
+
+export type RemoteMarketHost = EngineHost & {
+  subscribeUpdates(onUpdate: Parameters<EngineHost["start"]>[0], onFatalError?: Parameters<EngineHost["start"]>[1]): Promise<void>;
+};
+
+export function attachRemoteHost(baseUrl: string, token: string, market: RemoteMarketContext, options: Pick<RemoteHostOptions, "fetchFn" | "webSocketFactory"> = {}): Promise<RemoteMarketHost> {
+  return connectRemoteHost(remoteBaseUrl(baseUrl), parseCredentialToken(token), market.session_id, options, market);
+}
+
+async function connectRemoteHost(baseUrl: string, token: string, sessionId: string, options: RemoteHostOptions, market: RemoteMarketContext | null): Promise<RemoteMarketHost> {
+  const fetchFn = options.fetchFn ?? fetch;
+  const capabilityParams = new URLSearchParams({ session_id: sessionId });
   const rawCapabilities = await remoteJson(fetchFn, `${baseUrl}/api/host-capabilities?${capabilityParams}`, {
     method: "GET",
     headers: { authorization: `Bearer ${token}` },
@@ -87,7 +101,7 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
   };
   const hostQuery = async (kind: string, data: unknown): Promise<unknown> => {
     const cursor = publisher.captureQueryCursor("远程基线尚未就绪，不能查询");
-    const response = record(await requestJson(`${baseUrl}/api/host-query`, remotePost({ session_id: created.id, generation: cursor.generation, query: { kind, data } }, token)), "远程查询响应");
+    const response = record(await requestJson(`${baseUrl}/api/host-query`, remotePost({ session_id: sessionId, generation: cursor.generation, query: { kind, data } }, token)), "远程查询响应");
     exact(response, ["generation", "value"], "远程查询响应");
     if (disposed) throw new Error("远程查询响应属于已销毁会话");
     publisher.assertQueryCursor(cursor, response.generation, "远程查询响应属于已过期 baseline/generation");
@@ -262,7 +276,7 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
     const identity = publisher.invalidateConnection();
     commands.clearInterrupted();
     publisher.beginResync();
-    const next = socketFactory(remoteWsUrl(baseUrl, created.id, delivery), remoteWsProtocols(token));
+    const next = socketFactory(remoteWsUrl(baseUrl, sessionId, delivery), remoteWsProtocols(token));
     publisher.attachSocket(next);
     next.onmessage = (event) => {
       if (disposed || !publisher.isCurrentConnection(identity)) return;
@@ -313,9 +327,9 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
         throw error;
       }
     }
-    const context = await settled(async () => parseRemoteMarketContext(await requestJson(`${baseUrl}/api/market/context?${new URLSearchParams({ session_id: created.id })}`, { method: "GET", headers: { authorization: `Bearer ${token}` } })));
+    const context = await settled(async () => parseRemoteMarketContext(await requestJson(`${baseUrl}/api/market/context?${new URLSearchParams({ session_id: sessionId })}`, { method: "GET", headers: { authorization: `Bearer ${token}` } })));
     assertCurrent(context.generation);
-    if (context.session_id !== created.id) throw new Error("远程公司写命令 context.session_id 与当前会话不一致");
+    if (context.session_id !== sessionId) throw new Error("远程公司写命令 context.session_id 与当前会话不一致");
     if (proposal && (context.member === null || context.needs_rejoin)) throw new Error("远程公司提案需要当前可信 member 本人身份，请先加入市场");
     if (!proposal && !context.can_control) throw new Error("当前可信 context 没有市场控制权限，不能发送报表更正命令");
     const owner = proposal ? context.member!.account_id : undefined;
@@ -326,7 +340,7 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
         : command.kind === "EnqueueReportCorrection"
           ? ["enqueue-report-correction", { request: command.request }, "REPORT_CORRECTION_REJECTED"] as const
           : ["cancel-report-correction", { operation_id: command.operation_id }, "REPORT_CORRECTION_REJECTED"] as const;
-      const raw = await settled(() => requestJson(`${baseUrl}/api/${path}`, remotePost({ session_id: created.id, generation: cursor.generation, ...payload }, token), (fetcher, url, init) => companyWriteHttpJson(fetcher, url, init, rejectedCode)));
+      const raw = await settled(() => requestJson(`${baseUrl}/api/${path}`, remotePost({ session_id: sessionId, generation: cursor.generation, ...payload }, token), (fetcher, url, init) => companyWriteHttpJson(fetcher, url, init, rejectedCode)));
       const response = record(raw, `远程 ${path}`);
       exact(response, command.kind === "ProposePlayerCompanyAction" ? ["generation", "receipt"] : ["generation", "operation_id"], `远程 ${path}`);
       assertCurrent(response.generation);
@@ -334,6 +348,25 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
     }, () => catalog, owner);
     return execute(commands);
   }
+
+  const controlGeneration = (): string => {
+    const baseline = publisher.baselineForRead();
+    if (baseline !== null && publisher.isProtocolReady()) return baseline.generation;
+    // 共享连接必须有当前授权基线；仅旧的直接建会话契约从 generation 1 启动。
+    if (market !== null) throw new Error("远程权威 generation 尚未就绪，控制命令未发送");
+    return "1";
+  };
+  const listen = (onUpdate: Parameters<EngineHost["start"]>[0], onFatalError?: Parameters<EngineHost["start"]>[1]) => {
+    if (disposed) throw new Error("远程会话已经销毁，不能重新启动");
+    callback = onUpdate;
+    fatalCallback = onFatalError ?? null;
+    connect();
+    const baseline = publisher.baselineForRead();
+    if (baseline !== null && !baselineDelivered && publisher.isProtocolReady()) {
+      if (!deliver(baseline)) throw new Error("应用层拒绝远程初始基线，启动未确认");
+      baselineDelivered = true;
+    }
+  };
 
   return {
     subscribeRightsOffering: createRightsSubscription(async (eventId, requestedShares) => {
@@ -346,12 +379,12 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
         publisher.assertQueryCursor(cursor, responseGeneration, "远程配股认购确认已过期；结果未知，请核对权威状态");
       };
       try {
-        const context = parseRemoteMarketContext(await requestJson(`${baseUrl}/api/market/context?${new URLSearchParams({ session_id: created.id })}`, { method: "GET", headers: { authorization: `Bearer ${token}` } }));
+        const context = parseRemoteMarketContext(await requestJson(`${baseUrl}/api/market/context?${new URLSearchParams({ session_id: sessionId })}`, { method: "GET", headers: { authorization: `Bearer ${token}` } }));
         assertCurrent(context.generation);
-        if (context.session_id !== created.id || context.member === null || context.needs_rejoin) throw new Error("配股认购需要当前可信 member 本人身份，请先加入市场");
+        if (context.session_id !== sessionId || context.member === null || context.needs_rejoin) throw new Error("配股认购需要当前可信 member 本人身份，请先加入市场");
         let raw: unknown;
         try {
-          raw = await requestJson(`${baseUrl}/api/subscribe-rights-offering`, remotePost({ session_id: created.id, generation: cursor.generation, event_id: eventId, requested_shares: requestedShares }, token), (fetcher, url, init) => companyWriteHttpJson(fetcher, url, init, "RIGHTS_SUBSCRIPTION_REJECTED"));
+          raw = await requestJson(`${baseUrl}/api/subscribe-rights-offering`, remotePost({ session_id: sessionId, generation: cursor.generation, event_id: eventId, requested_shares: requestedShares }, token), (fetcher, url, init) => companyWriteHttpJson(fetcher, url, init, "RIGHTS_SUBSCRIPTION_REJECTED"));
         } catch (error) {
           checkRightsSubscriptionFailure(error, eventId, context.member.account_id);
           throw error;
@@ -380,27 +413,30 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
     ...createCompanyReadQueries(async query => {
       if (disposed || !publisher.isProtocolReady()) throw new Error("远程公司查询需要健康的当前会话基线");
       const cursor = publisher.captureQueryCursor("远程公司查询需要当前基线");
-      const response = record(await requestJson(`${baseUrl}/api/company-read-query`, remotePost({ session_id: created.id, generation: cursor.generation, query }, token)), "远程 company_read_query");
+      const response = record(await requestJson(`${baseUrl}/api/company-read-query`, remotePost({ session_id: sessionId, generation: cursor.generation, query }, token)), "远程 company_read_query");
       exact(response, ["generation", "owner", "value"], "远程 company_read_query");
       if (disposed || !publisher.isProtocolReady()) throw new Error("远程公司查询响应属于已销毁或已中断会话");
       publisher.assertQueryCursor(cursor, response.generation, "远程公司查询响应属于已过期会话 generation");
       return { owner: response.owner, value: response.value };
     }, requireCatalogResolver),
     capabilities: { deliveryModes: ["push", "pull"], targetUiHz: UI_TARGET_HZ, sharedMemory: false, reconnect: true, publicCompanyReports: true, personalTradeHistory: true, indicatorCapabilities: { intradayAverage: true, macd: true, priceKdj: true, candleKdj: true }, npcDecisionDiagnostics: capabilityRecord.npcDecisionDiagnostics },
-    async start(onUpdate, onFatalError) {
-      if (disposed) throw new Error("远程会话已经销毁，不能重新启动");
+    async subscribeUpdates(onUpdate, onFatalError) {
+      if (disposed) throw new Error("远程会话已经销毁，不能订阅");
+      if (publisher.baselineForRead() !== null) {
+        listen(onUpdate, onFatalError);
+        return;
+      }
       callback = onUpdate;
       fatalCallback = onFatalError ?? null;
-      connect();
-      const baseline = publisher.baselineForRead();
-      if (baseline !== null && !baselineDelivered && publisher.isProtocolReady()) {
-        if (!deliver(baseline)) throw new Error("应用层拒绝远程初始基线，启动未确认");
-        baselineDelivered = true;
-      }
-      await requestJson(`${baseUrl}/api/running`, remotePost({ session_id: created.id, running: true }, token));
+      await connectRestoredBaseline();
+    },
+    async start(onUpdate, onFatalError) {
+      if (market !== null && publisher.baselineForRead() === null) await connectRestoredBaseline();
+      listen(onUpdate, onFatalError);
+      await requestJson(`${baseUrl}/api/running`, remotePost({ session_id: sessionId, generation: controlGeneration(), running: true }, token));
     },
     async stop() {
-      await requestJson(`${baseUrl}/api/running`, remotePost({ session_id: created.id, running: false }, token));
+      await requestJson(`${baseUrl}/api/running`, remotePost({ session_id: sessionId, generation: controlGeneration(), running: false }, token));
     },
     async dispose() {
       if (disposed) return;
@@ -415,7 +451,9 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
       callback = null;
       fatalCallback = null;
       publisher.rejectBaselineWaiter(new Error("远程会话已销毁，基线确认结果未知"));
-      await requests.request(fetchFn, `${baseUrl}/api/session?session_id=${encodeURIComponent(created.id)}`, {
+      // 离开窗口只断开本客户端；不能销毁其他玩家正在使用的共享市场。
+      if (market !== null) return;
+      await requests.request(fetchFn, `${baseUrl}/api/session?session_id=${encodeURIComponent(sessionId)}`, {
         method: "DELETE",
         headers: { authorization: `Bearer ${token}` },
       }).catch((error) => {
@@ -428,15 +466,15 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
       });
     },
     async setSpeed(multiplier) {
-      await requestJson(`${baseUrl}/api/speed`, remotePost({ session_id: created.id, speed: remoteSpeedValue(multiplier) }, token));
+      await requestJson(`${baseUrl}/api/speed`, remotePost({ session_id: sessionId, generation: controlGeneration(), speed: remoteSpeedValue(multiplier) }, token));
     },
     async setPausePreferences(preferences: PausePreferences) {
-      const currentGeneration = publisher.baselineForRead()?.generation ?? "1";
-      await requestJson(`${baseUrl}/api/pause-preferences`, remotePost(remotePausePreferencePayload(created.id, currentGeneration, preferences), token));
+      const currentGeneration = controlGeneration();
+      await requestJson(`${baseUrl}/api/pause-preferences`, remotePost(remotePausePreferencePayload(sessionId, currentGeneration, preferences), token));
     },
     setFrameRate() {},
     async readSpeedMetrics() {
-      return parseSpeedMetrics(await requestJson(`${baseUrl}/api/speed?session_id=${encodeURIComponent(created.id)}`, { method: "GET", headers: { authorization: `Bearer ${token}` } }));
+      return parseSpeedMetrics(await requestJson(`${baseUrl}/api/speed?session_id=${encodeURIComponent(sessionId)}`, { method: "GET", headers: { authorization: `Bearer ${token}` } }));
     },
     getDeliveryMode() { return delivery; },
     setDeliveryMode(mode) {
@@ -488,8 +526,8 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
       if (disposed || baseline === null || publisher.isAwaitingBaseline()) throw new Error("远程基线尚未就绪或已失效，不能保存");
       const queryGeneration = baseline.generation;
       const result = await requestJson(`${baseUrl}/api/save`, remotePost(candidate === undefined
-        ? { session_id: created.id, generation: queryGeneration }
-        : { session_id: created.id, generation: queryGeneration, candidate }, token));
+        ? { session_id: sessionId, generation: queryGeneration }
+        : { session_id: sessionId, generation: queryGeneration, candidate }, token));
       if (disposed || !publisher.hasGeneration(queryGeneration) || publisher.isAwaitingBaseline()) throw new Error("远程存档响应属于已过期会话 generation");
       return result;
     },
@@ -500,7 +538,7 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
     async playerWorkingOrders(): Promise<readonly PlayerWorkingOrder[]> {
       const cursor = publisher.captureQueryCursor("远程基线尚未就绪，不能查询玩家活动委托");
       const queryGeneration = cursor.generation;
-      const params = new URLSearchParams({ session_id: created.id, generation: queryGeneration });
+      const params = new URLSearchParams({ session_id: sessionId, generation: queryGeneration });
       const raw = await requestJson(`${baseUrl}/api/player-working-orders?${params}`, {
         method: "GET",
         headers: { authorization: `Bearer ${token}` },
@@ -514,7 +552,7 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
     async queryStockHistory(code: StockCode): Promise<HistoricalStockData> {
       const cursor = publisher.captureQueryCursor("远程基线尚未就绪，不能查询股票历史");
       // HTTP 查询参数 code 为数值 StockId（ADR 0041）。
-      const params = new URLSearchParams({ session_id: created.id, generation: cursor.generation, code: String(requireCatalogResolver().stockId(code)) });
+      const params = new URLSearchParams({ session_id: sessionId, generation: cursor.generation, code: String(requireCatalogResolver().stockId(code)) });
       const raw = await requestJson(`${baseUrl}/api/stock-history?${params}`, { method: "GET", headers: { authorization: `Bearer ${token}` } });
       if (raw === null || typeof raw !== "object" || Array.isArray(raw)) throw new Error("远程股票历史响应必须是对象");
       const response = raw as Record<string, unknown>;
@@ -526,7 +564,7 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
       if (disposed) throw new Error("远程会话已经销毁，不能查询初始分配");
       if (publisher.baselineForRead() === null) await connectRestoredBaseline();
       const cursor = publisher.captureQueryCursor("远程初始分配需要当前权威基线");
-      const params = new URLSearchParams({ session_id: created.id, generation: cursor.generation });
+      const params = new URLSearchParams({ session_id: sessionId, generation: cursor.generation });
       const response = record(await requestJson(`${baseUrl}/api/initial-allocation?${params}`, { method: "GET", headers: { authorization: `Bearer ${token}` } }), "远程初始分配响应");
       exact(response, ["generation", "data"], "远程初始分配响应");
       if (disposed) throw new Error("远程初始分配响应属于已销毁会话");
@@ -535,7 +573,7 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
     },
     async calculateIndicators(input: IndicatorInput): Promise<IndicatorResults> {
       const normalized = normalizeIndicatorInput(input);
-      const result = await requestJson(`${baseUrl}/api/indicators`, remotePost({ session_id: created.id, ...normalized }, token));
+      const result = await requestJson(`${baseUrl}/api/indicators`, remotePost({ session_id: sessionId, ...normalized }, token));
       return normalizeIndicatorResults(result, normalized);
     },
     async queryMarketHistory(request) {
@@ -573,7 +611,7 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
       } };
       pendingRestore = restore;
       try {
-        await requestJson(`${baseUrl}/api/load`, remotePost({ session_id: created.id, slot }, token));
+        await requestJson(`${baseUrl}/api/load`, remotePost({ session_id: sessionId, slot }, token));
         if (disposed) throw new Error("远程会话已销毁，读档响应已失效");
         restore.notify();
         reports.invalidate();
@@ -589,7 +627,7 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
     },
     async queryPublicReports(query: PublicReportQuery): Promise<PublicReportPage> {
       const queryEpoch = reports.captureEpoch();
-      const params = new URLSearchParams({ session_id: created.id });
+      const params = new URLSearchParams({ session_id: sessionId });
       if (query.cursor !== null) params.set("cursor", String(query.cursor));
       if (query.page_size !== null) params.set("limit", String(query.page_size));
       const page = normalizePublicReportPage(await requestJson(`${baseUrl}/api/companies/${encodeURIComponent(String(query.company_id))}/reports?${params}`, { method: "GET", headers: { authorization: `Bearer ${token}` } }));
@@ -599,7 +637,7 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
     async publicReportById(id: string): Promise<PublicReportSummary> {
       const queryEpoch = reports.captureEpoch();
       const companyId = reports.companyFor(id);
-      const params = new URLSearchParams({ session_id: created.id });
+      const params = new URLSearchParams({ session_id: sessionId });
       const report = normalizePublicReportById(await requestJson(`${baseUrl}/api/companies/${encodeURIComponent(String(companyId))}/reports/${encodeURIComponent(id)}?${params}`, { method: "GET", headers: { authorization: `Bearer ${token}` } }));
       reports.validateReport(queryEpoch, companyId, id, report);
       return report;
@@ -609,7 +647,7 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
       if (!Number.isSafeInteger(account) || account < 0) throw new Error("NPC 账户 ID 必须是非负安全整数");
       const cursor = publisher.captureQueryCursor("远程基线尚未就绪，不能查询 NPC 决策诊断");
       const queryGeneration = cursor.generation;
-      const params = new URLSearchParams({ session_id: created.id, generation: queryGeneration });
+      const params = new URLSearchParams({ session_id: sessionId, generation: queryGeneration });
       const result = await requestJson(`${baseUrl}/api/diagnostics/npc/${account}?${params}`, { method: "GET", headers: { authorization: `Bearer ${token}` } });
       if (result === null || typeof result !== "object" || Array.isArray(result)) throw new Error("远程 NPC 诊断响应必须是对象");
       const response = result as Record<string, unknown>;

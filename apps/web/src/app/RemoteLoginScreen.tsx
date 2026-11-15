@@ -17,7 +17,7 @@ interface RemoteLoginScreenProps {
   /** B4b 恢复点：公司配置 draft（18725d07 传给 parseCompanySystemConfig）。 */
   readonly companySystemDraft?: string;
   readonly creationSettings?: ReactNode;
-  readonly onConnected: (token: string, context: RemoteMarketContext) => void;
+  readonly onConnected: (token: string, context: RemoteMarketContext, created: boolean) => void;
   readonly onBack: () => void;
 }
 
@@ -121,7 +121,7 @@ export function RemoteLoginScreen({ baseUrl, setup, seed, creationSettings, onCo
       const joined = await client.join(login.token, context, confirmedRejoin === context.session_id);
       if (!isCurrent()) return;
       if (joined.member === null || joined.needs_rejoin) throw new Error("Server 未确认当前主体的资金账户，请刷新市场列表并反馈 remote-login");
-      onConnected(login.token, joined);
+      onConnected(login.token, joined, false);
     });
   }
 
@@ -131,7 +131,7 @@ export function RemoteLoginScreen({ baseUrl, setup, seed, creationSettings, onCo
       const created = await client.create(login.token, setup, seed);
       if (!isCurrent()) return;
       if (created.member === null || created.needs_rejoin || !created.can_control) throw new Error("Server 未返回创建者的资金账户与市场控制能力，请刷新市场列表并反馈 remote-login");
-      onConnected(login.token, created);
+      onConnected(login.token, created, true);
     });
   }
 
@@ -182,7 +182,7 @@ export function RemoteLoginScreen({ baseUrl, setup, seed, creationSettings, onCo
           <label><input type="checkbox" disabled={busy} checked={confirmedRejoin === context.session_id} onChange={(event) => setConfirmedRejoin(event.currentTarget.checked ? context.session_id : null)} />确认重新加入此市场</label>
         </>}
         <button type="button" disabled={busy || (context.needs_rejoin && confirmedRejoin !== context.session_id)} onClick={() => join(context)}>{context.member !== null ? "进入已有账户" : context.needs_rejoin ? "确认重新加入并进入" : "加入公开市场"}</button>
-        {context.can_control && context.member === null && <button type="button" disabled={busy} onClick={() => onConnected(login.token, context)}>仅进入公共市场／控制（不创建资金账户）</button>}
+        {context.can_control && context.member === null && <button type="button" disabled={busy} onClick={() => onConnected(login.token, context, false)}>仅进入公共市场／控制（不创建资金账户）</button>}
       </li>)}</ul>}
       <button type="button" disabled={busy} onClick={logout}>退出当前登录（撤销 credential，不删除持仓）</button>
     </>}

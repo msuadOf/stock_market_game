@@ -122,6 +122,7 @@ type AppShellProps = AppRootShellProps;
 export { ReturnToStartupControl };
 
 function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, sessionSetup, setSessionSetup, returningToStartup, returningToStartupRef, startupReturnError, onSpawnFailure, onSelectHost, autoOrderMgrRef, hostRef, notice, setNotice }: AppShellProps) {
+  const canControlMarket = startupTarget.kind !== "remote" || startupTarget.market?.context.can_control === true;
   const hasSnapshot = useSelector((s: RootState) => s.snapshot.snapshot !== null);
   const snapshotGeneration = useSelector((state: RootState) => state.snapshot.generation);
   const playerAccount = useSelector((s: RootState) => s.snapshot.snapshot?.accounts[PLAYER_ACCOUNT_KEY] ?? null);
@@ -392,12 +393,14 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
   // 抢占全部 CPU，并让可见页的 K 线看似停止；隐藏时暂停宿主，重新可见时按 UI
   // 的运行状态恢复。游戏状态仍保留在各自 Worker 中，不会重建或丢失。
   useEffect(() => {
+    // 共享 Server 的运行状态不能被任一页面切到后台所改变。
+    if (startupTarget.kind === "remote") return;
     const syncHostVisibility = () => {
       if (hostRef.current) void sessionControls.syncVisibility(document.hidden);
     };
     document.addEventListener("visibilitychange", syncHostVisibility);
     return () => document.removeEventListener("visibilitychange", syncHostVisibility);
-  }, [hostRef, sessionControls]);
+  }, [hostRef, sessionControls, startupTarget]);
 
   useEffect(() => {
     refreshDailyChart();
@@ -413,8 +416,8 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
   const { recoverFromFile, noticeSavePolicy: handleSave, load: handleLoad, selectFile: handleSaveFile,
     loadFile: handleLoadFile, newGame: handleNewGame } = saveCommands;
 
-  const handlePauseToggle = useCallback(() => { void sessionControls.toggleRunning(); }, [sessionControls]);
-  const handleSpeedChange = useCallback((value: number) => { void sessionControls.setSpeed(value); }, [sessionControls]);
+  const handlePauseToggle = useCallback(() => { if (canControlMarket) void sessionControls.toggleRunning(); }, [canControlMarket, sessionControls]);
+  const handleSpeedChange = useCallback((value: number) => { if (canControlMarket) void sessionControls.setSpeed(value); }, [canControlMarket, sessionControls]);
 
   const handleDeliveryModeChange = useCallback((mode: DeliveryMode) => {
     const host = hostRef.current;
@@ -463,12 +466,12 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
         <Button onClick={selectHost}>返回启动选择</Button>
         {startupReturnError !== null && <p role="alert">{startupReturnError}</p>}
       </section>
-      <section aria-label="存档错误恢复">
+      {startupTarget.kind !== "remote" && <section aria-label="存档错误恢复">
         <p>不会自动忽略坏档或改写原档；可明确创建新游戏，或选择另一份日终存档。</p>
         <Button onClick={handleNewGame}>创建新游戏</Button>
         <Button onClick={() => void recoverFromFile()}>选择其他日终存档</Button>
-        {notice !== null && <p role="status">{notice}</p>}
-      </section>
+      </section>}
+      {notice !== null && <p role="status">{notice}</p>}
     </>;
   }
   if (!ready || !hostBaselineReady || !hasSnapshot) {
@@ -507,9 +510,10 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
           <ConnectedMobileGameClock />
           <strong>{mobilePrimaryTitle(mobileTab, securityBrowser.view)}</strong>
           <span className="mobile-head-tools">
-            <MobileRunToggle running={running} onToggle={handlePauseToggle} variant="global" />
+            <MobileRunToggle running={running} disabled={!canControlMarket} onToggle={handlePauseToggle} variant="global" />
             <MobileSpeedSelect
               speed={speed}
+              disabled={!canControlMarket}
               measuredSpeed={measuredSpeedText}
               measuredSpeedTitle={measuredSpeedTitle}
               onChange={handleSpeedChange}
@@ -519,7 +523,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
         <div className="brand"><span className="desktop-brand-mark" aria-hidden="true">行情</span>股票模拟<span className="desktop-brand-caption">交易终端</span></div>
         <div className="controls">
           <span className="label">速度</span>
-          <HTMLSelect className="speed-select" value={speed === Infinity ? "Infinity" : String(speed)} onChange={(e) => {
+          <HTMLSelect className="speed-select" disabled={!canControlMarket} value={speed === Infinity ? "Infinity" : String(speed)} onChange={(e) => {
             const raw = e.target.value;
             const v = raw === "Infinity" ? Infinity : Number(raw);
             handleSpeedChange(v);
@@ -539,7 +543,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
           <output className={`speed-actual ${speedMetricsError ? "is-error" : ""}`} title={measuredSpeedTitle}>
             {measuredSpeedText}
           </output>
-          <Button className="simulation-button" intent={running ? "danger" : "success"} onClick={handlePauseToggle}>{running ? "暂停" : "继续"}</Button>
+          <Button className="simulation-button" disabled={!canControlMarket} intent={running ? "danger" : "success"} onClick={handlePauseToggle}>{running ? "暂停" : "继续"}</Button>
           <DesktopDayTag />
           <span className={`session-status ${running ? "is-running" : "is-paused"}`} aria-live="polite">
             <i aria-hidden="true" />{running ? "交易中" : "已暂停"}
@@ -655,15 +659,19 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
         <Card className="panel user-panel" id="section-user">
           <h3 className="panel-title">我的</h3>
           <ReturnToStartupControl onSelectHost={onSelectHost} stopSession={stopStartupRef.current} error={startupReturnError} />
-          <section className="new-game-panel" aria-label="新游戏">
+          {startupTarget.kind === "remote" ? <section className="new-game-panel" aria-label="共享市场管理">
+            <h4>共享市场</h4>
+            <p>新建共享市场请返回启动选择，在 Server 上登录后显式创建。这里不会重开本地游戏。</p>
+            <InitialAllocationSummary allocation={initialAllocation} />
+          </section> : <section className="new-game-panel" aria-label="新游戏">
             <h4>新游戏</h4>
             <StartDateInput value={startDateDraft} error={startDateError} onChange={(value) => { setStartDateDraft(value); setStartDateError(null); }} />
             <PriceCageInput enabled={priceCageEnabledDraft} onChange={setPriceCageEnabledDraft} />
             <FloatAllocationInput value={floatAllocationDraft} onChange={setFloatAllocationDraft} />
             <InitialAllocationSummary allocation={initialAllocation} />
             <Button onClick={handleNewGame}>创建新游戏</Button>
-          </section>
-          <UserPanel running={running} pauseAfterClose={pauseAfterClose} pauseBeforeOpen={pauseBeforeOpen} pausePreferencesPending={pausePreferences.pending} deliveryMode={deliveryMode} deliveryModes={deliveryModes} deliveryLabels={DELIVERY_MODE_LABELS} onPauseAfterCloseChange={(value) => void pausePreferences.changePreferences({ pause_after_close: value, pause_before_open: pauseBeforeOpen })} onPauseBeforeOpenChange={(value) => void pausePreferences.changePreferences({ pause_after_close: pauseAfterClose, pause_before_open: value })} onDeliveryModeChange={handleDeliveryModeChange} onSave={() => void handleSave()} onLoad={() => void handleLoad()} onSaveFile={() => void handleSaveFile()} onLoadFile={() => void handleLoadFile()} />
+          </section>}
+          <UserPanel running={running} pauseAfterClose={pauseAfterClose} pauseBeforeOpen={pauseBeforeOpen} pausePreferencesPending={!canControlMarket || pausePreferences.pending} deliveryMode={deliveryMode} deliveryModes={deliveryModes} deliveryLabels={DELIVERY_MODE_LABELS} onPauseAfterCloseChange={(value) => { if (canControlMarket) void pausePreferences.changePreferences({ pause_after_close: value, pause_before_open: pauseBeforeOpen }); }} onPauseBeforeOpenChange={(value) => { if (canControlMarket) void pausePreferences.changePreferences({ pause_after_close: pauseAfterClose, pause_before_open: value }); }} onDeliveryModeChange={handleDeliveryModeChange} onSave={() => void handleSave()} loadDisabled={!canControlMarket} onLoad={() => { if (canControlMarket) void handleLoad(); }} onSaveFile={() => void handleSaveFile()} onLoadFile={() => { if (canControlMarket) void handleLoadFile(); }} />
         </Card>
       </WorkspaceGrid>
       {orientation === "landscape" && <footer className="desktop-account-bar" aria-label="模拟账户摘要">
@@ -685,7 +693,7 @@ function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, s
       {orientation === "portrait" && (
         <>
         <MobileDetailLayer ui={mobileUi}>
-            <ConnectedMobileDetail browser={securityBrowser} klineDays={klineDays} setKlineDays={setKlineDays} period={mobileUi.chartPeriod} infoTab={mobileUi.infoTab} speed={speed} measuredSpeed={measuredSpeedText} measuredSpeedTitle={measuredSpeedTitle} running={running} initialCivilDate={activeSetup.start_date} onCompanyQuery={queryCompanyReports} onAdvanceCivilDay={advanceCivilDay} contractReadHost={hostRef.current} onPeriodChange={(period) => dispatchMobileUi({ type: "select-period", period })} onInfoTabChange={showDetailInfo} onSpeedChange={handleSpeedChange} onPauseToggle={handlePauseToggle} onBack={() => dispatchMobileUi({ type: "back" })} onSelect={selectStock} />
+            <ConnectedMobileDetail marketControlsDisabled={!canControlMarket} browser={securityBrowser} klineDays={klineDays} setKlineDays={setKlineDays} period={mobileUi.chartPeriod} infoTab={mobileUi.infoTab} speed={speed} measuredSpeed={measuredSpeedText} measuredSpeedTitle={measuredSpeedTitle} running={running} initialCivilDate={activeSetup.start_date} onCompanyQuery={queryCompanyReports} onAdvanceCivilDay={advanceCivilDay} contractReadHost={hostRef.current} onPeriodChange={(period) => dispatchMobileUi({ type: "select-period", period })} onInfoTabChange={showDetailInfo} onSpeedChange={handleSpeedChange} onPauseToggle={handlePauseToggle} onBack={() => dispatchMobileUi({ type: "back" })} onSelect={selectStock} />
         </MobileDetailLayer>
         <nav className="mobile-tabbar mobile-main-tabbar" aria-label="主导航">
           {MOBILE_PRIMARY_NAV.map(([tab, label]) => (
