@@ -136,15 +136,18 @@ async function withConfiguredOwner(run: (fixture: {
   readonly posted: Record<string, unknown>[];
   readonly words: Int32Array;
   readonly control: MessagePort;
-}) => Promise<void>, phase: "configured" | "registered" | "unallocated" | "wait-death" = "configured") {
+  readonly publishers: WorkerHandle[];
+}) => Promise<void>, phase: "configured" | "registered" | "unallocated" | "wait-death" | "publisher" = "configured") {
   const channels: MessageChannel[] = [];
   const createChannel = () => { const channel = new MessageChannel(); channels.push(channel); return channel; };
   const data = createChannel(), engine = new WorkerHandle(), posted: Record<string, unknown>[] = [];
+  const publishers: WorkerHandle[] = [];
   let listener!: (event: MessageEvent<unknown>) => void;
   createEngineControlOwner({
     createEngineWorker: () => engine as unknown as Worker,
     createChildWorker: () => new WorkerHandle() as unknown as Worker,
     createIngressWorker: () => new WorkerHandle() as unknown as Worker,
+    createPublisherWorker: () => { const worker = new WorkerHandle(); publishers.push(worker); return worker as unknown as Worker; },
     createChannel,
     postMessage: (value) => { posted.push(value); },
     addMessageListener: (value) => { listener = value; },
@@ -157,8 +160,9 @@ async function withConfiguredOwner(run: (fixture: {
   Atomics.store(words, CAPACITY, 4); Atomics.store(words, GEN_BITS, 29); Atomics.store(words, FREE_HEAD, FREE_HEAD_EMPTY | 0);
   if (phase === "configured") control.postMessage({ type: "facadeEngineSubstrate", module: new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])), memory,
     layout: { baseAddr: 0, headerWords: HEADER_WORDS, slotStride: SLOT_STRIDE, joinStride: JOIN_STRIDE, capacity: 4, genBits: 29 }, diagnostics: false });
-  else if (phase === "wait-death") {
+  else if (phase === "wait-death" || phase === "publisher") {
     control.postMessage({ type: "facadeEngineMemory", allocationId: 1, memory });
+    if (phase === "publisher") control.postMessage({type:"facadeEngineDeath",allocationId:1,primary:{engine:{workerId:0,address:4200},ingress:{workerId:0xffffffff,address:4456},publisher:{workerId:0xfffffffe,address:4712},death:{address:4100,bytes:4}}});
     control.postMessage({ type: "facadeEngineConfiguration", allocationId: 1, module: new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])),
       layout: { baseAddr: 0, headerWords: HEADER_WORDS, slotStride: SLOT_STRIDE, joinStride: JOIN_STRIDE, capacity: 4, genBits: 29 }, diagnostics: false,
       waitAbort: { address: 4096, bytes: 1 }, waitDeath: { address: 4100, bytes: 4 } });
@@ -166,8 +170,8 @@ async function withConfiguredOwner(run: (fixture: {
   else if (phase === "registered") control.postMessage({ type: "facadeEngineMemory", allocationId: 1, memory });
   try {
     for (let count = 0; count < 8; count++) await setImmediate();
-    assert.equal(posted.some((value) => value.type === "configured"), phase === "configured" || phase === "wait-death", JSON.stringify(posted));
-    await run({ send, engine, posted, words, control });
+    assert.equal(posted.some((value) => value.type === "configured"), phase === "configured" || phase === "wait-death" || phase === "publisher", JSON.stringify(posted));
+    await run({ send, engine, posted, words, control, publishers });
   } finally {
     send({ type: "invalid", instanceId: 1 });
     for (const channel of channels) { channel.port1.close(); channel.port2.close(); }
@@ -243,4 +247,59 @@ test("control owner 原生错误不可克隆时仍交付首错与 terminal", { t
     assert.equal(posted.filter((message) => message.type === "terminal").length, 1);
     assert.equal(engine.terminations, 1);
   }, "wait-death");
+});
+
+test("同代publisher重建等待owner退出证明，旧Worker迟到消息不能污染新物理epoch", { timeout: 10000 }, async () => {
+  await withConfiguredOwner(async ({send,posted,publishers}) => {
+    const bind = (requestId:number) => send({type:"bindPublisher",instanceId:1,requestId,generation:1,token:1,controlAddress:5000});
+    bind(1); const first=publishers[0]!;
+    first.emit({type:"publisherLifecycle",instanceId:1,state:"configured",generation:1,token:1});
+    bind(2);
+    assert.equal(publishers.length,1,"业务端ACK先到时必须等待global quiescence");
+    assert.equal(posted.filter(value=>value.type==="publisherBound").length,1);
+    first.emit({type:"publisherLifecycle",instanceId:1,state:"quiescent"});
+    assert.equal(publishers.length,2); assert.equal(first.terminations,1);
+    const replies=posted.filter(value=>value.type==="publisherBound");
+    assert.equal(replies[0].publisherEpoch,1); assert.equal(replies[1].publisherEpoch,2);
+    assert.notEqual(replies[0].port,replies[1].port);
+    first.emit({type:"publisherLifecycle",instanceId:1,state:"quiescent"});
+    first.emit({type:"publisherLifecycle",instanceId:1,state:"configured",generation:1,token:1});
+    first.dispatchEvent(new Event("error"));
+    publishers[1]!.emit({type:"publisherLifecycle",instanceId:1,state:"configured",generation:1,token:1});
+    assert.equal(posted.some(value=>value.type==="failure"),false);
+  },"publisher");
+});
+
+test("control client同代新物理epoch使用新port，旧业务端不可继续发送", { timeout: 10000 }, async () => {
+  await withClient(async(client,worker,failures)=>{
+    worker.emit({type:"configured",instanceId:client.instanceId});
+    const firstChannel=new MessageChannel(),secondChannel=new MessageChannel();
+    const word=new Int32Array(new SharedArrayBuffer(4));
+    try {
+      const first=client.bindPublisher(1,1,4);
+      worker.emit({type:"publisherBound",instanceId:client.instanceId,requestId:worker.sent.at(-1)!.requestId,publisherEpoch:1,previousPublisherEpoch:0,controlSignal:word,port:firstChannel.port1});
+      const retired=await first;
+      const second=client.bindPublisher(1,1,4);
+      worker.emit({type:"publisherBound",instanceId:client.instanceId,requestId:worker.sent.at(-1)!.requestId,publisherEpoch:2,previousPublisherEpoch:1,controlSignal:word,port:secondChannel.port1});
+      assert.notEqual(await second,retired);
+      worker.emit({type:"publisherObserverFailure",instanceId:client.instanceId,publisherEpoch:1,generation:1,message:"迟到旧物理实例故障"});
+      assert.throws(()=>retired.postMessage({late:true}),/关闭/);
+      assert.deepEqual(failures,[]);
+      worker.emit({type:"terminal",instanceId:client.instanceId,release:{kind:"not-allocated"}});client.completeShutdown();await client.release;
+    } finally {firstChannel.port1.close();firstChannel.port2.close();secondChannel.port1.close();secondChannel.port2.close();}
+  });
+});
+
+test("同代publisher重建不清除writing tombstone，不建立新物理Worker", { timeout: 10000 }, async () => {
+  await withConfiguredOwner(async ({send,posted,publishers,words}) => {
+    send({type:"bindPublisher",instanceId:1,requestId:1,generation:1,token:1,controlAddress:5000});
+    publishers[0]!.emit({type:"publisherLifecycle",instanceId:1,state:"configured",generation:1,token:1});
+    Atomics.store(words,4712/4,1);
+    send({type:"bindPublisher",instanceId:1,requestId:2,generation:1,token:1,controlAddress:5000});
+    publishers[0]!.emit({type:"publisherLifecycle",instanceId:1,state:"quiescent"});
+    assert.equal(publishers.length,1);
+    assert.equal(Atomics.load(words,4712/4),1,"不能清除首故障记录来冒充健康重建");
+    assert.equal(posted.filter(value=>value.type==="publisherBound").length,1);
+    assert.ok(posted.some(value=>value.type==="failure"));
+  },"publisher");
 });

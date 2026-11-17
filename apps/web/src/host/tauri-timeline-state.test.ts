@@ -63,3 +63,14 @@ test("Tauri dispose 只清 timeline/cache，保留 generation/epoch 的既有查
   assert.doesNotThrow(() => timeline.assertQueryCursor(cursor, "2", "过期"));
   assert.throws(() => timeline.replaceRefreshedBaseline({ ...catalogWireFixture(snapshot), snapshot, generation: "1", timeline_id: "old", civil_date: "2030-01-01" }, "1"), /已过期会话 generation/);
 });
+
+test("提交回执无 baseline 也必须撤销旧 generation 与查询游标", { timeout: 10000 }, () => {
+  const timeline = new TauriTimelineState();
+  timeline.setInitialTimeline("old");
+  const cursor = timeline.captureQueryCursor();
+  timeline.acceptCommittedReplacement("1", "2", "new");
+  assert.equal(timeline.currentGeneration(), "2");
+  assert.equal(timeline.matchesTimeline("new"), true);
+  assert.throws(() => timeline.assertQueryCursor(cursor, "1", "stale"), /stale/);
+  assert.throws(() => timeline.baselineForRead(), /尚未就绪/);
+});

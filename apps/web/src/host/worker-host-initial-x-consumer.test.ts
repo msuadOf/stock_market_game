@@ -8,7 +8,7 @@ import { WasmMemoryStorage } from "./wasm-memory-storage.ts";
 import { fixture as storageFixture, MiB } from "./wasm-memory-storage.test-support.ts";
 
 // 这是可信 producer 接口的传输 fixture，不是实际发布包能力证据。
-const capability = { kind: "verified-package", wasmSha256: "a".repeat(64), glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "wasm_tombstone_init_primary", "wasm_tombstone_bind_ingress", "start_wasm_reclaimer", "close_wasm_reclaimer"] };
+const capability = { kind: "verified-package", wasmSha256: "a".repeat(64), glueSha256: "b".repeat(64), sourceSha256: "c".repeat(64), buildManifestSha256: "d".repeat(64), exports: ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "commit_session_replacement", "prepare_session_replacement", "fence_session_replacement", "wasm_tombstone_init_primary", "wasm_tombstone_bind_ingress", "start_wasm_reclaimer", "close_wasm_reclaimer"] };
 test("有 verified package capability 时 bootstrap 唯一完整 X，ready 后仅 restoreInitial", { timeout: 10000 }, async () => {
   const f = fixture(); const storage = storageFixture();
   const runtimeCapability = { ...capability, exports: [...capability.exports, "world_runtime_abi_version", "init_wasm_wait", "wasm_wait_abort_layout", "wasm_wait_death_layout", "shutdown_session"] };

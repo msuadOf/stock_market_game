@@ -909,7 +909,7 @@ async fn correction_rejection_flushes_before_failure(delivery: &str) {
     }).await.expect("HostFailure 必须按时交付");
     assert_eq!(ticks, vec![1, 2], "{delivery} 必须在 HostFailure 前主动 flush 已接受末拍；pull 无需 GetFrame");
     assert_eq!(failure["code"], "REPORT_CORRECTION_PREPARE_REJECTED");
-    assert_eq!(failure["where"], "server.actor.prepare_civil_updates");
+    assert_eq!(failure["where"], "session.authority.prepare_civil_updates");
     assert_eq!(failure["recoverable"], true);
     assert_eq!(failure["context"]["tick"], 2);
     correction_http(app.clone(), "POST", "/api/cancel-report-correction", &token,

@@ -9,10 +9,13 @@ async fn consume_without_terminal<T, F>(
     controlled: tokio::sync::mpsc::Receiver<Control>,
     window: NonZeroUsize,
 ) where
-    F: FnMut(DeliveryAction<T>) -> bool,
+    F: FnMut(DeliveryAction<T>, u64) -> bool,
 {
     consume(
         observer,
+        1,
+        Arc::new(AtomicU64::new(1)),
+        Arc::new(std::sync::Mutex::new(None)),
         send,
         signal,
         controlled,
@@ -32,7 +35,7 @@ async fn blocked_delivery_does_not_wait_for_frontend_or_stop_authority() {
         let (_, resume) = tokio::sync::mpsc::channel(1);
         consume_without_terminal(
             observer,
-            move |action| match action {
+            move |action, _lease| match action {
                 DeliveryAction::Item { value: item, .. } => {
                     captured.send(Some(item)).unwrap();
                     let _ = release_rx.recv_timeout(Duration::from_secs(1));
@@ -83,7 +86,7 @@ async fn observer_fence_resumes_only_after_the_captured_gap() {
     let (captured, mut output) = tokio::sync::mpsc::unbounded_channel();
     let sink = libos::native_async::spawn_io_lane(consume_without_terminal(
         observer,
-        move |event| {
+        move |event, _lease| {
             captured.send(event).unwrap();
             true
         },
@@ -95,7 +98,11 @@ async fn observer_fence_resumes_only_after_the_captured_gap() {
 
     let (reply, ack) = tokio::sync::oneshot::channel();
     resume
-        .try_send(Control::Resume(ResumeRequest { ordinal: 1, reply }))
+        .try_send(Control::Resume(ResumeRequest {
+            lease: 1,
+            ordinal: 1,
+            reply,
+        }))
         .unwrap_or_else(|_| panic!("恢复请求应入队"));
     producer_signal.notify();
     assert_eq!(
@@ -104,7 +111,11 @@ async fn observer_fence_resumes_only_after_the_captured_gap() {
     );
     let (reply, ack) = tokio::sync::oneshot::channel();
     resume
-        .try_send(Control::Resume(ResumeRequest { ordinal: 2, reply }))
+        .try_send(Control::Resume(ResumeRequest {
+            lease: 1,
+            ordinal: 2,
+            reply,
+        }))
         .unwrap_or_else(|_| panic!("恢复请求应入队"));
     producer_signal.notify();
     assert_eq!(ack.await.unwrap(), Ok(()));
@@ -134,7 +145,7 @@ async fn renderer_credit_caps_only_observer_delivery() {
     let (captured, mut output) = tokio::sync::mpsc::unbounded_channel();
     let sink = libos::native_async::spawn_io_lane(consume_without_terminal(
         observer,
-        move |event| {
+        move |event, _lease| {
             captured.send(event).unwrap();
             true
         },
@@ -169,7 +180,11 @@ async fn renderer_credit_caps_only_observer_delivery() {
 
     let (reply, result) = tokio::sync::oneshot::channel();
     assert!(commands
-        .try_send(Control::Ack(AckRequest { ordinal: 1, reply }))
+        .try_send(Control::Ack(AckRequest {
+            lease: 1,
+            ordinal: 1,
+            reply
+        }))
         .is_ok());
     ack_signal.notify();
     assert_eq!(result.await.unwrap(), Ok(()));
@@ -185,7 +200,11 @@ async fn renderer_credit_caps_only_observer_delivery() {
     // 生产者关闭不是队列排空；ACK 路由还在时允许最后的成功帧发送。
     let (reply, result) = tokio::sync::oneshot::channel();
     assert!(commands
-        .try_send(Control::Ack(AckRequest { ordinal: 2, reply }))
+        .try_send(Control::Ack(AckRequest {
+            lease: 1,
+            ordinal: 2,
+            reply
+        }))
         .is_ok());
     ack_signal.notify();
     assert_eq!(result.await.unwrap(), Ok(()));
@@ -207,7 +226,7 @@ async fn observer_accepts_fence_while_held_without_delivering_next_packet() {
     let (captured, mut output) = tokio::sync::mpsc::unbounded_channel();
     let sink = libos::native_async::spawn_io_lane(consume_without_terminal(
         observer,
-        move |event| {
+        move |event, _lease| {
             captured.send(event).unwrap();
             false
         },
@@ -218,7 +237,11 @@ async fn observer_accepts_fence_while_held_without_delivering_next_packet() {
 
     let (reply, ack) = oneshot::channel();
     control
-        .send(Control::Hold { held: true, reply })
+        .send(Control::Hold {
+            lease: 2,
+            held: true,
+            reply,
+        })
         .await
         .unwrap_or_else(|_| panic!("hold unavailable"));
     signal.notify();
@@ -227,7 +250,11 @@ async fn observer_accepts_fence_while_held_without_delivering_next_packet() {
 
     let (reply, ack) = oneshot::channel();
     control
-        .send(Control::Resume(ResumeRequest { ordinal: 0, reply }))
+        .send(Control::Resume(ResumeRequest {
+            lease: 2,
+            ordinal: 0,
+            reply,
+        }))
         .await
         .unwrap_or_else(|_| panic!("resume unavailable"));
     signal.notify();
@@ -239,7 +266,11 @@ async fn observer_accepts_fence_while_held_without_delivering_next_packet() {
 
     let (reply, ack) = oneshot::channel();
     control
-        .send(Control::Hold { held: false, reply })
+        .send(Control::Hold {
+            lease: 2,
+            held: false,
+            reply,
+        })
         .await
         .unwrap_or_else(|_| panic!("release unavailable"));
     signal.notify();
@@ -269,7 +300,11 @@ async fn terminal_survives_queue_overflow_closed_credit_and_fenced_hold() {
         if held {
             let (reply, _) = oneshot::channel();
             assert!(control
-                .try_send(Control::Hold { held: true, reply })
+                .try_send(Control::Hold {
+                    lease: 2,
+                    held: true,
+                    reply
+                })
                 .is_ok());
         }
         for value in 1..=count {
@@ -287,7 +322,10 @@ async fn terminal_survives_queue_overflow_closed_credit_and_fenced_hold() {
         let mut delivered = Vec::new();
         consume(
             observer,
-            |event| {
+            1,
+            Arc::new(AtomicU64::new(1)),
+            Arc::new(std::sync::Mutex::new(None)),
+            |event, _lease| {
                 delivered.push(event);
                 true
             },
@@ -335,4 +373,71 @@ async fn terminal_survives_queue_overflow_closed_credit_and_fenced_hold() {
             );
         }
     }
+}
+
+#[tokio::test]
+async fn old_lease_ack_and_release_cannot_unlock_same_generation_observer() {
+    let (producer, observer) = publication::channel::<u64>(NonZeroUsize::MIN);
+    let signal = Arc::clone(observer.signal());
+    let (control, requests) = tokio::sync::mpsc::channel(4);
+    let sink = libos::native_async::spawn_io_lane(consume_without_terminal(
+        observer,
+        |_, _lease| true,
+        Arc::clone(&signal),
+        requests,
+        NonZeroUsize::MIN,
+    ));
+    let (reply, received) = oneshot::channel();
+    control
+        .send(Control::Hold {
+            lease: 2,
+            held: true,
+            reply,
+        })
+        .await
+        .unwrap_or_else(|_| panic!("hold 入队失败"));
+    signal.notify();
+    assert_eq!(received.await.unwrap(), Ok(()));
+    let (reply, received) = oneshot::channel();
+    control
+        .send(Control::Ack(AckRequest {
+            lease: 1,
+            ordinal: 0,
+            reply,
+        }))
+        .await
+        .unwrap_or_else(|_| panic!("ACK 入队失败"));
+    signal.notify();
+    assert_eq!(received.await.unwrap(), Err("STALE_OBSERVER_LEASE".into()));
+    let (reply, received) = oneshot::channel();
+    control
+        .send(Control::Hold {
+            lease: 1,
+            held: false,
+            reply,
+        })
+        .await
+        .unwrap_or_else(|_| panic!("release 入队失败"));
+    signal.notify();
+    assert_eq!(received.await.unwrap(), Err("STALE_OBSERVER_LEASE".into()));
+    drop(producer);
+    signal.close();
+    sink.await.unwrap();
+}
+
+// 未运行回归：退出错误必须进入关闭收据，不能仅写stderr后伪报成功。
+#[tokio::test]
+async fn delivery_finish_reports_lane_panic() {
+    let app = tauri::test::mock_app();
+    let mut delivery = Delivery::inline_test(app.handle().clone());
+    delivery
+        .retired
+        .push(libos::native_async::spawn_io_lane(async {
+            panic!("注入观察lane退出");
+        }));
+    let error = delivery
+        .finish()
+        .await
+        .expect_err("lane panic不能确认成功关闭");
+    assert!(error.contains("观察通道执行任务退出异常"));
 }

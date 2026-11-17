@@ -13,6 +13,7 @@ export function remoteWsUrl(baseUrl: string, sessionId: string, delivery: Delive
   url.searchParams.set("session_id", sessionId);
   url.searchParams.set("delivery", delivery);
   url.searchParams.set("observer_fencing", "true");
+  url.searchParams.set("observer_protocol", "2");
   return url.toString();
 }
 

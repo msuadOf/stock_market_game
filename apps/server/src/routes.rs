@@ -865,6 +865,8 @@ pub struct WsQuery {
     pub delivery: DeliveryMode,
     #[serde(default)]
     pub observer_fencing: bool,
+    #[serde(default)]
+    pub observer_protocol: u8,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
@@ -887,6 +889,21 @@ enum ClientCommand {
     },
     ReleaseObserver {
         capture_id: String,
+    },
+    ReleaseObserverV2 {
+        capture_id: String,
+        timeline_generation: String,
+        observer_lease: String,
+        publication_ordinal: String,
+    },
+    AcceptPublication {
+        timeline_generation: String,
+        observer_lease: String,
+        publication_ordinal: String,
+    },
+    #[cfg(all(feature = "host-parity", debug_assertions))]
+    InspectObserver {
+        request_id: String,
     },
     SubmitIntent {
         request_id: u64,
@@ -1310,6 +1327,7 @@ pub async fn api_host_capabilities(
     match authorized_market(&state, &query.session_id, authorization_token(&headers)).await {
         Ok(_) => (StatusCode::OK, Json(serde_json::json!({
             "npcDecisionDiagnostics": cfg!(all(feature = "simulation-diagnostics", debug_assertions)),
+            "restoreOutcome": "commit-receipt-v1",
         }))).into_response(),
         Err(response) => *response,
     }
@@ -1654,6 +1672,22 @@ pub async fn api_save(
 /// POST /api/load：完整校验通过后原子替换 actor 会话，失败保留原状态。
 /// 缺 token 返回 401；未知 session 或错误 token 返回 403。
 pub async fn api_load(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> Response {
+    let typed = headers
+        .get("x-session-restore-outcome")
+        .and_then(|value| value.to_str().ok())
+        == Some("commit-receipt-v1");
+    let mut response = api_load_inner(state, headers, body, typed).await;
+    // 所有前置校验/鉴权拒绝都未派发 actor；未知只在派发后丢失回执时显式设置。
+    if typed && !response.headers().contains_key("x-session-restore-outcome") {
+        response.headers_mut().insert(
+            "x-session-restore-outcome",
+            axum::http::HeaderValue::from_static("rejected"),
+        );
+    }
+    response
+}
+
+async fn api_load_inner(state: AppState, headers: HeaderMap, body: Bytes, typed: bool) -> Response {
     if body.len() > MAX_LOAD_BODY_BYTES {
         return api_error(
             StatusCode::PAYLOAD_TOO_LARGE,
@@ -1695,17 +1729,35 @@ pub async fn api_load(State(state): State<AppState>, headers: HeaderMap, body: B
         }
         Err(error) => return api_error(StatusCode::BAD_REQUEST, "INVALID_SAVE", error.to_string()),
     };
-    match handles.restore(slot).await {
-        Ok(snapshot) => (StatusCode::OK, Json(snapshot)).into_response(),
-        Err(SendCommandError::ActorGone) => api_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "ACTOR_GONE",
-            "session actor gone",
-        ),
-        Err(SendCommandError::Rejected(reason)) => {
+    match handles.restore_with_receipt(slot).await {
+        Ok(result) if typed => {
+            let mut response = (StatusCode::OK, Json(serde_json::json!({
+                "outcome": "committed", "replacement": result.replacement, "snapshot": result.snapshot,
+            }))).into_response();
+            response.headers_mut().insert(
+                "x-session-restore-outcome",
+                axum::http::HeaderValue::from_static("committed"),
+            );
+            response
+        }
+        Ok(result) => (StatusCode::OK, Json(result.snapshot)).into_response(),
+        Err(crate::actor::RestoreDispatchError::Unknown) => {
+            let mut response = api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "RESTORE_OUTCOME_UNKNOWN",
+                "restore dispatched but commit receipt unavailable",
+            );
+            if typed {
+                response.headers_mut().insert(
+                    "x-session-restore-outcome",
+                    axum::http::HeaderValue::from_static("unknown"),
+                );
+            }
+            response
+        }
+        Err(crate::actor::RestoreDispatchError::Rejected(reason)) => {
             api_error(StatusCode::BAD_REQUEST, "INVALID_SAVE", reason)
         }
-        Err(SendCommandError::InvalidSpeed(_)) => unreachable!("load cannot validate speed"),
     }
 }
 
@@ -1840,7 +1892,7 @@ pub async fn api_host_parity_advance_civil_day(
         Ok(body) => body,
         Err(error) => return invalid_json_response(error),
     };
-    let (handles, subject) =
+    let (handles, _subject) =
         match authorized_market_controller(&state, &body.session_id, authorization_token(&headers))
             .await
         {
@@ -1877,7 +1929,7 @@ pub async fn api_host_parity_step(
         Ok(body) => body,
         Err(error) => return invalid_json_response(error),
     };
-    let (handles, subject) =
+    let (handles, _subject) =
         match authorized_market_controller(&state, &body.session_id, authorization_token(&headers))
             .await
         {
@@ -1955,8 +2007,16 @@ pub async fn ws_handler(
         Ok(context) => context,
         Err(response) => return *response,
     };
-    ws.protocols(["stock-game"])
-        .on_upgrade(move |socket| run_ws(socket, handles, subject, q.delivery, q.observer_fencing))
+    ws.protocols(["stock-game"]).on_upgrade(move |socket| {
+        run_ws(
+            socket,
+            handles,
+            subject,
+            q.delivery,
+            q.observer_fencing,
+            q.observer_protocol == 2,
+        )
+    })
 }
 
 #[derive(Default)]
@@ -2076,6 +2136,10 @@ mod heartbeat_tests {
 
 /// WebSocket 只驱动已注册的共享观察端，不缓存另一份行情队列。
 struct WsPublisherConnection {
+    observer_protocol_v2: bool,
+    terminal: std::sync::Arc<std::sync::OnceLock<crate::actor::ObserverTerminal>>,
+    terminal_delivery: engine::session::publication::lifecycle::TerminalDelivery,
+    lifecycle: engine::session::publication::lifecycle::ObserverLifecycle,
     delivery: DeliveryMode,
     timeline_generation: u64,
     pump: ObserverPump<crate::actor::ScopedEngineUpdate>,
@@ -2084,12 +2148,23 @@ struct WsPublisherConnection {
     delivered_failure: Option<crate::actor::HostFailure>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum TransportAcknowledgement {
+    Accepted,
+    StaleLease,
+    InvalidOrdinal,
+}
+
 enum FrameAction {
     Frame {
         ordinal: u64,
         update: PublisherFrame,
     },
-    Failure(crate::actor::HostFailure),
+    Failure(u64, crate::actor::HostFailure),
+    Terminal {
+        failure: crate::actor::HostFailure,
+        missing: Option<(u64, u64)>,
+    },
     Resync(&'static str),
     Ignored,
     Empty,
@@ -2105,8 +2180,17 @@ impl WsPublisherConnection {
             baseline,
             observer,
             initial_orders,
+            terminal,
         } = attachment;
+        let mut lifecycle = engine::session::publication::lifecycle::ObserverLifecycle::default();
+        let lease = lifecycle.hold(baseline.timeline_generation);
+        lifecycle.fence(lease, 0);
+        lifecycle.release(lease);
         let connection = Self {
+            observer_protocol_v2: false,
+            terminal,
+            terminal_delivery: Default::default(),
+            lifecycle,
             delivery,
             timeline_generation: baseline.timeline_generation,
             pump: ObserverPump::new(
@@ -2114,19 +2198,87 @@ impl WsPublisherConnection {
                 engine::session::publication::OBSERVER_IN_FLIGHT_LIMIT,
             ),
             initial_orders,
-            awaiting_resync: baseline.failure.is_some(),
+            awaiting_resync: baseline
+                .failure
+                .as_ref()
+                .is_some_and(|failure| !failure.recoverable),
             delivered_failure: baseline.failure.clone(),
         };
         (connection, baseline)
     }
 
+    /// 换观察流保留租约计数，使同代旧 socket 完成回执不能归入新流。
+    fn continue_lease_from(&mut self, previous: &mut Self) {
+        self.observer_protocol_v2 = previous.observer_protocol_v2;
+        self.lifecycle = std::mem::take(&mut previous.lifecycle);
+        let lease = self.lifecycle.hold(self.timeline_generation);
+        assert!(self.lifecycle.fence(lease, 0));
+        assert!(self.lifecycle.release(lease));
+    }
+
+    fn acknowledge_transport(
+        &mut self,
+        lease: engine::session::publication::lifecycle::ObserverLease,
+        ordinal: u64,
+    ) -> TransportAcknowledgement {
+        if !self.lifecycle.is_current(lease) {
+            return TransportAcknowledgement::StaleLease;
+        }
+        if !self.lifecycle.flushed(lease, ordinal) {
+            return TransportAcknowledgement::InvalidOrdinal;
+        }
+        if matches!(self.pump.acknowledge(ordinal), Ok(true)) {
+            TransportAcknowledgement::Accepted
+        } else {
+            TransportAcknowledgement::InvalidOrdinal
+        }
+    }
+
+    fn release_fenced(
+        &mut self,
+        cut: &mut ObserverCutState,
+        capture: u64,
+        generation: u64,
+        lease: u64,
+        ordinal: u64,
+    ) -> bool {
+        let identity = engine::session::publication::lifecycle::ObserverLease { generation, lease };
+        ordinal == 0
+            && self.lifecycle.is_current(identity)
+            && cut
+                .lifecycle
+                .current()
+                .is_some_and(|value| value.generation == generation && value.lease == capture)
+            && cut.release(capture)
+    }
+
+    fn take_terminal(&mut self, cannot_drain: bool) -> Option<FrameAction> {
+        let terminal = self.terminal.get()?;
+        let missing = self.terminal_delivery.take(
+            self.pump.terminal_readiness(terminal.through),
+            cannot_drain,
+            self.lifecycle.evidence().sent,
+            terminal.through,
+        )?;
+        Some(FrameAction::Terminal {
+            failure: terminal.failure.clone(),
+            missing,
+        })
+    }
+
     fn poll(&mut self) -> FrameAction {
+        if let Some(action) = self.take_terminal(false) {
+            return action;
+        }
         match self.pump.poll() {
             PumpRead::Ready(PublicationRead::Item { ordinal, value }) => {
                 let update = value.into_projected(&mut self.initial_orders);
                 self.classify(ordinal, update)
             }
             PumpRead::Ready(PublicationRead::NeedsBaseline { .. }) => {
+                if let Some(action) = self.take_terminal(true) {
+                    return action;
+                }
                 self.awaiting_resync = true;
                 FrameAction::Resync("event_stream_lagged")
             }
@@ -2136,15 +2288,19 @@ impl WsPublisherConnection {
     }
 
     fn classify(&mut self, ordinal: u64, update: PublisherFrame) -> FrameAction {
+        if update.timeline_generation != self.timeline_generation {
+            self.awaiting_resync = true;
+            return FrameAction::Resync("timeline_changed");
+        }
         if let Some(failure) = update.failure.as_ref() {
             if self
                 .delivered_failure
                 .as_ref()
-                .is_some_and(|first| !first.recoverable || first == failure)
+                .is_some_and(|first| !first.recoverable)
             {
                 return FrameAction::Ignored;
             }
-            return FrameAction::Failure(failure.clone());
+            return FrameAction::Failure(ordinal, failure.clone());
         }
         if update.timeline_generation != self.timeline_generation {
             self.awaiting_resync = true;
@@ -2164,14 +2320,22 @@ impl WsPublisherConnection {
         {
             return;
         }
-        self.awaiting_resync = !failure.is_correction_prepare_rejected(self.timeline_generation);
+        self.awaiting_resync = !failure.recoverable;
         self.delivered_failure = Some(failure);
     }
 
-    async fn wait_push_or_barrier(&mut self) -> FrameAction {
+    async fn wait_push_or_barrier(&mut self, held: bool) -> FrameAction {
         loop {
             let epoch = self.pump.signal().load();
-            if self.pump.should_poll(self.delivery == DeliveryMode::Push) {
+            if let Some(action) = self.take_terminal(held || self.awaiting_resync) {
+                return action;
+            }
+            if !held
+                && !self.awaiting_resync
+                && self.pump.should_poll(
+                    self.delivery == DeliveryMode::Push || self.terminal.get().is_some(),
+                )
+            {
                 match self.poll() {
                     FrameAction::Empty => {}
                     FrameAction::Ignored => continue,
@@ -2189,22 +2353,70 @@ impl WsPublisherConnection {
                     warn!(?error, "ws: invalid shared publisher ordinal");
                     return false;
                 }
-                if !send_publisher_frame(sender, &update).await {
+                let lease = self.lifecycle.current().expect("WS 观察流必须持有 lease");
+                self.lifecycle.sent(lease, ordinal);
+                if !send_publisher_frame(
+                    sender,
+                    &update,
+                    self.observer_protocol_v2.then_some((lease.lease, ordinal)),
+                )
+                .await
+                {
                     return false;
                 }
-                match self.pump.acknowledge(ordinal) {
-                    Ok(true) => true,
-                    result => {
-                        warn!(
-                            ?result,
-                            "ws: publisher transport did not confirm its ordinal"
-                        );
-                        false
-                    }
+                // socket flush 只释放传输 credit，不声称浏览器已经接纳。
+                let acknowledged = self.acknowledge_transport(lease, ordinal)
+                    == TransportAcknowledgement::Accepted;
+                if !acknowledged {
+                    warn!("ws: publisher transport did not confirm its current lease ordinal");
                 }
+                acknowledged
             }
-            FrameAction::Failure(failure) => {
-                if !send_host_failure(sender, failure.clone()).await {
+            FrameAction::Terminal { failure, missing } => {
+                let lease = self
+                    .lifecycle
+                    .current()
+                    .expect("terminal 必须有真实观察租约");
+                let delivered = if self.observer_protocol_v2 {
+                    let payload = serde_json::json!({ "ObserverTerminal": { "timeline_generation": self.timeline_generation.to_string(),
+                        "observer_lease": lease.lease.to_string(), "missing": missing.map(|(from, through)| serde_json::json!({"from":from.to_string(),"through":through.to_string()})), "failure": failure } });
+                    sender
+                        .send(axum::extract::ws::Message::Text(payload.to_string()))
+                        .await
+                        .is_ok()
+                } else {
+                    if missing.is_some()
+                        && !send_resync_required(sender, "terminal_prefix_missing", None).await
+                    {
+                        return false;
+                    }
+                    send_host_failure(sender, failure.clone()).await
+                };
+                self.failure_delivered(failure);
+                delivered
+            }
+            FrameAction::Failure(ordinal, failure) => {
+                if self.pump.record_sent(ordinal).is_err() {
+                    return false;
+                }
+                let lease = self.lifecycle.current().expect("有序故障必须持有观察租约");
+                if !self.lifecycle.sent(lease, ordinal) {
+                    return false;
+                }
+                let delivered = if self.observer_protocol_v2 {
+                    let payload = serde_json::json!({"PublicationFailure": {"timeline_generation":lease.generation.to_string(),
+                        "observer_lease":lease.lease.to_string(),"publication_ordinal":ordinal.to_string(),"failure":failure}});
+                    sender
+                        .send(axum::extract::ws::Message::Text(payload.to_string()))
+                        .await
+                        .is_ok()
+                } else {
+                    send_host_failure(sender, failure.clone()).await
+                };
+                if !delivered
+                    || self.acknowledge_transport(lease, ordinal)
+                        != TransportAcknowledgement::Accepted
+                {
                     return false;
                 }
                 self.failure_delivered(failure);
@@ -2226,41 +2438,39 @@ impl WsPublisherConnection {
 /// WS 切面是当前连接的租约；每条新观察流使用自己的 0 号基线。
 #[derive(Default)]
 struct ObserverCutState {
-    counter: u64,
-    held: Option<(u64, u64, bool)>,
+    lifecycle: engine::session::publication::lifecycle::ObserverLifecycle,
 }
 
 impl ObserverCutState {
     fn begin(&mut self, generation: u64) -> u64 {
-        self.counter = self.counter.checked_add(1).expect("观察切面序号溢出");
-        self.held = Some((self.counter, generation, false));
-        self.counter
+        self.lifecycle.hold(generation).lease
     }
-
     fn matches(&self, id: u64, generation: u64, ordinal: u64) -> bool {
         ordinal == 0
+            && self.lifecycle.is_held()
             && self
-                .held
-                .is_some_and(|(current, expected, _)| (current, expected) == (id, generation))
+                .lifecycle
+                .is_current(engine::session::publication::lifecycle::ObserverLease {
+                    generation,
+                    lease: id,
+                })
     }
-
     fn accept(&mut self, id: u64, generation: u64, ordinal: u64, endpoint_accepted: bool) -> bool {
-        if !self.matches(id, generation, ordinal) || !endpoint_accepted {
-            return false;
-        }
-        self.held = Some((id, generation, true));
-        true
+        self.matches(id, generation, ordinal)
+            && endpoint_accepted
+            && self.lifecycle.fence(
+                engine::session::publication::lifecycle::ObserverLease {
+                    generation,
+                    lease: id,
+                },
+                ordinal,
+            )
     }
-
     fn release(&mut self, id: u64) -> bool {
-        if !self
-            .held
-            .is_some_and(|(current, _, accepted)| current == id && accepted)
-        {
+        let Some(lease) = self.lifecycle.current() else {
             return false;
-        }
-        self.held = None;
-        true
+        };
+        lease.lease == id && self.lifecycle.release(lease)
     }
 }
 
@@ -2288,6 +2498,7 @@ async fn run_ws(
     subject: engine::session::OpaqueSubjectId,
     delivery: DeliveryMode,
     advertising_observer_fence: bool,
+    observer_protocol_v2: bool,
 ) {
     let (deadline_sender, mut deadline_receiver) = tokio::sync::watch::channel(None);
     let connection = run_ws_connection(
@@ -2296,6 +2507,7 @@ async fn run_ws(
         subject,
         delivery,
         advertising_observer_fence,
+        observer_protocol_v2,
         deadline_sender,
     );
     supervise_ws_connection(connection, &mut deadline_receiver).await;
@@ -2336,15 +2548,24 @@ async fn run_ws_connection(
     subject: engine::session::OpaqueSubjectId,
     delivery: DeliveryMode,
     advertising_observer_fence: bool,
+    observer_protocol_v2: bool,
     deadline_sender: tokio::sync::watch::Sender<Option<tokio::time::Instant>>,
 ) {
     let (mut sender, mut receiver) = socket.split();
 
     let mut connection = match handles.observe_for(subject.clone()).await {
         Ok(attachment) => {
-            let (connection, baseline) = WsPublisherConnection::attach(delivery, attachment);
+            let (mut connection, baseline) = WsPublisherConnection::attach(delivery, attachment);
+            connection.observer_protocol_v2 = observer_protocol_v2;
             let failed = baseline.failure.is_some();
-            if !send_ws_baseline(&mut sender, baseline, advertising_observer_fence).await || failed
+            if !send_negotiated_baseline(
+                &mut sender,
+                baseline,
+                advertising_observer_fence,
+                observer_protocol_v2.then_some(1),
+            )
+            .await
+                || (failed && !observer_protocol_v2)
             {
                 return;
             }
@@ -2372,7 +2593,7 @@ async fn run_ws_connection(
 
     loop {
         tokio::select! {
-            action = connection.wait_push_or_barrier(), if !connection.awaiting_resync && observer_cut.held.is_none() => {
+            action = connection.wait_push_or_barrier(observer_cut.lifecycle.is_held()) => {
                 if !connection.deliver(&mut sender, action).await { break; }
             }
             // 心跳：30s 发 Ping（防中间设备杀空闲连接）。
@@ -2413,10 +2634,11 @@ async fn run_ws_connection(
                                 ClientCommand::Resync {} => {
                                     match handles.observe_for(subject.clone()).await {
                                         Ok(attachment) => {
-                                            let (replacement, baseline) = WsPublisherConnection::attach(delivery, attachment);
-                                            if !send_baseline(&mut sender, baseline).await { break; }
+                                            let (mut replacement, baseline) = WsPublisherConnection::attach(delivery, attachment);
+                                            replacement.continue_lease_from(&mut connection);
+                                            if !send_negotiated_baseline(&mut sender, baseline, advertising_observer_fence, observer_protocol_v2.then(|| replacement.lifecycle.current().unwrap().lease)).await { break; }
                                             connection = replacement;
-                                            observer_cut.held = None;
+                                            observer_cut.lifecycle.invalidate();
                                         }
                                         Err(crate::actor::PublicBaselineError::Catalog(error)) => {
                                             let failure = crate::actor::HostFailure::catalog(&error, "public_baseline", "server.actor.public_baseline");
@@ -2431,14 +2653,15 @@ async fn run_ws_connection(
                                 ClientCommand::CaptureObserver {} => {
                                     match handles.observe_for(subject.clone()).await {
                                         Ok(attachment) => {
-                                            let (replacement, baseline) = WsPublisherConnection::attach(delivery, attachment);
-                                            if baseline.failure.is_some() {
+                                            let (mut replacement, baseline) = WsPublisherConnection::attach(delivery, attachment);
+                                            replacement.continue_lease_from(&mut connection);
+                                            if baseline.failure.is_some() && !observer_protocol_v2 {
                                                 let _ = send_baseline(&mut sender, baseline).await;
                                                 break;
                                             }
                                             let id = observer_cut.begin(baseline.timeline_generation);
                                             connection = replacement;
-                                            if !send_observer_cut(&mut sender, &baseline, id).await { break; }
+                                            if !send_observer_cut(&mut sender, &baseline, id, observer_protocol_v2.then(|| connection.lifecycle.current().unwrap().lease)).await { break; }
                                         }
                                         Err(crate::actor::PublicBaselineError::Catalog(error)) => {
                                             let failure = crate::actor::HostFailure::catalog(&error, "public_baseline", "server.actor.public_baseline");
@@ -2465,13 +2688,44 @@ async fn run_ws_connection(
                                     let response = serde_json::json!({ "ObserverFenced": { "capture_id": capture_id, "accepted": accepted } });
                                     if sender.send(axum::extract::ws::Message::Text(response.to_string())).await.is_err() { break; }
                                 }
+                                ClientCommand::ReleaseObserverV2 { capture_id, timeline_generation, observer_lease, publication_ordinal } => {
+                                    let accepted = observer_protocol_v2 && match (
+                                        capture_id.parse::<u64>(), timeline_generation.parse::<u64>(), observer_lease.parse::<u64>(), publication_ordinal.parse::<u64>()) {
+                                        (Ok(id), Ok(generation), Ok(lease), Ok(ordinal)) => {
+                                            connection.release_fenced(&mut observer_cut, id, generation, lease, ordinal)
+                                        }, _ => false,
+                                    };
+                                    let response = serde_json::json!({"ObserverReleased": {"capture_id":capture_id,
+                                        "timeline_generation":timeline_generation,"observer_lease":observer_lease,"publication_ordinal":publication_ordinal,"accepted":accepted}});
+                                    if sender.send(axum::extract::ws::Message::Text(response.to_string())).await.is_err() { break; }
+                                }
+                                #[cfg(all(feature = "host-parity", debug_assertions))]
+                                ClientCommand::InspectObserver { request_id } => {
+                                    let snapshot = connection.lifecycle.snapshot();
+                                    let lease = snapshot.lease.expect("实际连接必须持有观察租约");
+                                    let value = serde_json::json!({"ObserverEvidence": {"request_id":request_id,
+                                        "generation":lease.generation.to_string(),"lease":lease.lease.to_string(),
+                                        "sent":snapshot.delivery.sent.to_string(),"flushed":snapshot.delivery.flushed.to_string(),
+                                        "accepted":snapshot.delivery.accepted.to_string()}});
+                                    if sender.send(axum::extract::ws::Message::Text(value.to_string())).await.is_err() { break; }
+                                }
+                                ClientCommand::AcceptPublication { timeline_generation, observer_lease, publication_ordinal } => {
+                                    let accepted = observer_protocol_v2 && match (timeline_generation.parse::<u64>(), observer_lease.parse::<u64>(), publication_ordinal.parse::<u64>()) {
+                                        (Ok(generation), Ok(lease), Ok(ordinal)) => connection.lifecycle.accepted(
+                                            engine::session::publication::lifecycle::ObserverLease { generation, lease }, ordinal),
+                                        _ => false,
+                                    };
+                                    let response = serde_json::json!({"PublicationAccepted": {"timeline_generation":timeline_generation,
+                                        "observer_lease":observer_lease,"publication_ordinal":publication_ordinal,"accepted":accepted}});
+                                    if sender.send(axum::extract::ws::Message::Text(response.to_string())).await.is_err() { break; }
+                                }
                                 ClientCommand::ReleaseObserver { capture_id } => {
-                                    let released = parse_host_parity_generation(&capture_id)
+                                    let released = !observer_protocol_v2 && parse_host_parity_generation(&capture_id)
                                         .is_ok_and(|id| observer_cut.release(id));
                                     if !released && !send_gateway_error(&mut sender, None, "OBSERVER_CUT_STALE", "无已接受的同代观察切面").await { break; }
                                 }
                                 ClientCommand::GetFrame {} => {
-                                    if observer_cut.held.is_some() || connection.awaiting_resync {
+                                    if observer_cut.lifecycle.is_held() || connection.awaiting_resync {
                                         if !send_gateway_error(&mut sender, None, "RESYNC_REQUIRED", "send Resync before requesting frames").await { break; }
                                     } else if delivery != DeliveryMode::Pull {
                                         if !send_gateway_error(&mut sender, None, "WRONG_DELIVERY_MODE", "GetFrame 只允许用于 pull 模式").await { break; }
@@ -2528,7 +2782,28 @@ async fn run_ws_connection(
 type WsSender =
     futures_util::stream::SplitSink<axum::extract::ws::WebSocket, axum::extract::ws::Message>;
 
-async fn send_publisher_frame(sender: &mut WsSender, frame: &PublisherFrame) -> bool {
+async fn send_publisher_frame(
+    sender: &mut WsSender,
+    frame: &PublisherFrame,
+    identity: Option<(u64, u64)>,
+) -> bool {
+    if let Some((lease, ordinal)) = identity {
+        let mut value = match serde_json::to_value(frame) {
+            Ok(value) => value,
+            Err(error) => {
+                error!(%error, "发布帧编码失败");
+                return false;
+            }
+        };
+        value["observer_lease"] = lease.to_string().into();
+        value["publication_ordinal"] = ordinal.to_string().into();
+        return sender
+            .send(axum::extract::ws::Message::Text(
+                serde_json::json!({"PublisherFrame":value}).to_string(),
+            ))
+            .await
+            .is_ok();
+    }
     #[derive(Serialize)]
     enum Wire<'a> {
         PublisherFrame(&'a PublisherFrame),
@@ -2549,6 +2824,7 @@ async fn send_observer_cut(
     sender: &mut WsSender,
     baseline: &crate::actor::PublicBaseline,
     capture_id: u64,
+    lease: Option<u64>,
 ) -> bool {
     #[derive(Serialize)]
     struct Cut<'a> {
@@ -2556,6 +2832,12 @@ async fn send_observer_cut(
         baseline: &'a crate::actor::PublicBaseline,
         publication_ordinal: &'static str,
         capture_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        observer_lease: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        observer_protocol: Option<u8>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        failure: Option<&'a crate::actor::HostFailure>,
     }
     #[derive(Serialize)]
     enum Wire<'a> {
@@ -2565,6 +2847,9 @@ async fn send_observer_cut(
         baseline,
         publication_ordinal: "0",
         capture_id: capture_id.to_string(),
+        observer_lease: lease.map(|value| value.to_string()),
+        observer_protocol: lease.map(|_| 2),
+        failure: baseline.failure.as_ref(),
     });
     match serde_json::to_string(&response) {
         Ok(json) => sender
@@ -2586,6 +2871,42 @@ async fn send_baseline(
     baseline: crate::actor::PublicBaseline,
 ) -> bool {
     send_ws_baseline(sender, baseline, false).await
+}
+
+async fn send_negotiated_baseline(
+    sender: &mut WsSender,
+    baseline: crate::actor::PublicBaseline,
+    fencing: bool,
+    lease: Option<u64>,
+) -> bool {
+    if let Some(lease) = lease {
+        let mut value = match serde_json::to_value(&baseline) {
+            Ok(value) => value,
+            Err(error) => {
+                error!(%error, "基线编码失败");
+                return false;
+            }
+        };
+        if let Some(failure) = &baseline.failure {
+            value["failure"] = match serde_json::to_value(failure) {
+                Ok(value) => value,
+                Err(error) => {
+                    error!(%error, "基线故障编码失败");
+                    return false;
+                }
+            };
+        }
+        value["observer_fencing"] = true.into();
+        value["observer_protocol"] = 2.into();
+        value["observer_lease"] = lease.to_string().into();
+        return sender
+            .send(axum::extract::ws::Message::Text(
+                serde_json::json!({"Baseline":value}).to_string(),
+            ))
+            .await
+            .is_ok();
+    }
+    send_ws_baseline(sender, baseline, fencing).await
 }
 
 async fn send_ws_baseline(
@@ -2778,6 +3099,10 @@ mod publisher_connection_tests {
     fn connection(delivery: DeliveryMode) -> WsPublisherConnection {
         let (_, observer) = channel(NonZeroUsize::MIN);
         WsPublisherConnection {
+            observer_protocol_v2: false,
+            terminal: Default::default(),
+            terminal_delivery: Default::default(),
+            lifecycle: engine::session::publication::lifecycle::ObserverLifecycle::default(),
             delivery,
             timeline_generation: 7,
             pump: ObserverPump::new(observer, NonZeroUsize::MIN),
@@ -2785,6 +3110,45 @@ mod publisher_connection_tests {
             awaiting_resync: false,
             delivered_failure: None,
         }
+    }
+
+    #[test]
+    fn release_requires_current_generation_lease_capture_and_fence() {
+        let mut connection = connection(DeliveryMode::Push);
+        let lease = connection.lifecycle.hold(7);
+        assert!(connection.lifecycle.fence(lease, 0));
+        assert!(connection.lifecycle.release(lease));
+        let mut cut = ObserverCutState::default();
+        let stale = cut.begin(7);
+        let current = cut.begin(7);
+        assert!(!connection.release_fenced(&mut cut, current, 7, lease.lease, 0));
+        assert!(cut.accept(current, 7, 0, true));
+        assert!(!connection.release_fenced(&mut cut, stale, 7, lease.lease, 0));
+        assert!(!connection.release_fenced(&mut cut, current, 6, lease.lease, 0));
+        assert!(!connection.release_fenced(&mut cut, current, 7, lease.lease + 1, 0));
+        assert!(!connection.release_fenced(&mut cut, current, 7, lease.lease, 1));
+        assert!(connection.release_fenced(&mut cut, current, 7, lease.lease, 0));
+        assert!(!connection.release_fenced(&mut cut, current, 7, lease.lease, 0));
+    }
+
+    #[test]
+    fn terminal_held_reports_missing_prefix_once_without_queue_credit() {
+        let mut connection = connection(DeliveryMode::Push);
+        connection
+            .terminal
+            .set(crate::actor::ObserverTerminal {
+                through: 3,
+                failure: failure(),
+            })
+            .unwrap();
+        assert!(matches!(
+            connection.take_terminal(true),
+            Some(FrameAction::Terminal {
+                missing: Some((1, 3)),
+                ..
+            })
+        ));
+        assert!(connection.take_terminal(true).is_none());
     }
 
     fn failure() -> HostFailure {
@@ -2847,14 +3211,19 @@ mod publisher_connection_tests {
     }
 
     #[test]
-    fn failure_precedes_generation_checks_and_latches_after_delivery() {
+    fn current_failure_latches_after_delivery_and_old_generation_is_rejected() {
         let mut connection = connection(DeliveryMode::Pull);
         connection.awaiting_resync = true;
         let mut failed = update(6);
         failed.timeline_generation = 6;
         failed.failure = Some(failure());
-        let FrameAction::Failure(delivered) = connection.classify(1, failed.clone()) else {
-            panic!("首个故障必须先于旧 timeline 检查");
+        assert!(matches!(
+            connection.classify(1, failed.clone()),
+            FrameAction::Resync("timeline_changed")
+        ));
+        failed.timeline_generation = 7;
+        let FrameAction::Failure(1, delivered) = connection.classify(1, failed.clone()) else {
+            panic!("当前代际首个故障必须可交付");
         };
         assert!(connection.delivered_failure.is_none());
         connection.failure_delivered(delivered);
@@ -2869,7 +3238,7 @@ mod publisher_connection_tests {
     fn prepare_rejection_preserves_current_timeline_unless_a_fatal_was_delivered() {
         for delivery in [DeliveryMode::Push, DeliveryMode::Pull] {
             let mut connection = connection(delivery);
-            let rejected = HostFailure::correction_prepare_rejection_fixture();
+            let rejected = crate::actor::correction_prepare_rejection_fixture();
             connection.failure_delivered(rejected.clone());
             assert!(!connection.awaiting_resync);
             assert!(matches!(
@@ -2888,3 +3257,204 @@ mod publisher_connection_tests {
 #[cfg(test)]
 #[path = "routes/company_write_tests.rs"]
 mod company_write_tests;
+
+/// actor 合同测试使用真实发布队列；没有 socket 时不虚构 sent/flushed/accepted。
+#[cfg(test)]
+pub(crate) struct AuthorityTraceObserver {
+    connection: WsPublisherConnection,
+    cut: ObserverCutState,
+    previous_lease: Option<(u64, u64)>,
+    previous_transport_lease: Option<engine::session::publication::lifecycle::ObserverLease>,
+}
+
+#[cfg(test)]
+impl AuthorityTraceObserver {
+    pub(crate) fn attach(attachment: crate::actor::ObservationAttachment) -> Self {
+        let (connection, _) = WsPublisherConnection::attach(DeliveryMode::Push, attachment);
+        Self {
+            connection,
+            cut: ObserverCutState::default(),
+            previous_lease: None,
+            previous_transport_lease: None,
+        }
+    }
+
+    pub(crate) fn snapshot(&self) -> serde_json::Value {
+        let evidence = self.connection.lifecycle.evidence();
+        let lease = self
+            .cut
+            .lifecycle
+            .current()
+            .or_else(|| self.connection.lifecycle.current());
+        serde_json::json!({
+            "generation": self.connection.timeline_generation.to_string(),
+            "lease": lease.map_or("0".to_owned(), |identity| identity.lease.to_string()),
+            "sent": evidence.sent.to_string(), "flushed": evidence.flushed.to_string(),
+            "accepted": evidence.accepted.to_string(), "held": self.cut.lifecycle.is_held(),
+        })
+    }
+
+    pub(crate) fn replace(&mut self, attachment: crate::actor::ObservationAttachment) {
+        let generation = attachment.baseline.timeline_generation;
+        self.previous_lease = self
+            .cut
+            .lifecycle
+            .current()
+            .map(|lease| (lease.lease, lease.generation));
+        let id = self.cut.begin(generation);
+        self.previous_transport_lease = self.connection.lifecycle.current();
+        let (mut connection, _) = WsPublisherConnection::attach(DeliveryMode::Push, attachment);
+        connection.continue_lease_from(&mut self.connection);
+        self.connection = connection;
+        let ready = !self.connection.pump.signal().is_closed()
+            && self.connection.pump.resume_after(0).is_ok();
+        assert!(
+            self.cut.accept(id, generation, 0, ready),
+            "真实新观察切面必须可安装"
+        );
+        assert!(self.cut.release(id), "应用安装后才能放行真实切面");
+    }
+
+    pub(crate) fn reject_old_lease(&mut self) -> bool {
+        let Some((id, generation)) = self.previous_lease else {
+            return false;
+        };
+        let Some(old_transport) = self.previous_transport_lease else {
+            return false;
+        };
+        let before = self.connection.lifecycle.snapshot();
+        let ack_rejected = self.connection.acknowledge_transport(old_transport, 1)
+            == TransportAcknowledgement::StaleLease;
+        ack_rejected
+            && self.connection.lifecycle.snapshot() == before
+            && !self.cut.accept(id, generation, 0, true)
+            && !self.cut.release(id)
+    }
+
+    pub(crate) fn reject_old_generation(&mut self) -> bool {
+        let Some(identity) = self.cut.lifecycle.current() else {
+            return false;
+        };
+        let Some(transport) = self.connection.lifecycle.current() else {
+            return false;
+        };
+        if identity.generation == 0 || transport.generation == 0 {
+            return false;
+        }
+        let before = self.connection.lifecycle.snapshot();
+        let old_transport = engine::session::publication::lifecycle::ObserverLease {
+            generation: transport.generation - 1,
+            lease: transport.lease,
+        };
+        self.connection.acknowledge_transport(old_transport, 1)
+            == TransportAcknowledgement::StaleLease
+            && self.connection.lifecycle.snapshot() == before
+            && !self
+                .cut
+                .accept(identity.lease, identity.generation - 1, 0, true)
+    }
+
+    pub(crate) fn poll_kinds(&mut self) -> Vec<String> {
+        let mut kinds = Vec::new();
+        loop {
+            match self.connection.poll() {
+                FrameAction::Frame { .. } => kinds.push("prefix".to_owned()),
+                FrameAction::Terminal { failure, .. } | FrameAction::Failure(_, failure) => {
+                    kinds.push(failure.code.to_owned());
+                    self.connection.failure_delivered(failure);
+                }
+                FrameAction::Resync(reason) => {
+                    kinds.push(reason.to_owned());
+                    break;
+                }
+                FrameAction::Ignored => continue,
+                FrameAction::Empty | FrameAction::Closed => {
+                    if let Some(FrameAction::Terminal { failure, .. }) =
+                        self.connection.take_terminal(true)
+                    {
+                        kinds.push(failure.code.to_owned());
+                        self.connection.failure_delivered(failure);
+                    }
+                    break;
+                }
+            }
+        }
+        kinds
+    }
+}
+
+// 故障端口仅存在于显式验证 feature 的 debug 产品；标准分发无路由、无命令。
+#[cfg(all(feature = "host-parity", debug_assertions))]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorityContractBody {
+    session_id: String,
+    generation: String,
+    id: String,
+    checkpoint: Option<crate::actor::authority_product::ContractCheckpoint>,
+}
+#[cfg(all(feature = "host-parity", debug_assertions))]
+pub async fn api_authority_contract_setup() -> Response {
+    Json(serde_json::json!({"setup":engine::session::authority_contract::setup(),"seed":"7",
+        "verification":true,"scenarioVersion":1,"supportedActions":crate::actor::authority_product::ACTIONS,
+        "notApplicable":{"shutdown-unknown-worker-exit-no-reuse":{"mechanism":"wasm-shared-memory-worker","reason":"Native actor 不使用共享 WASM Memory 或跨 Worker 退出证明"}},
+        "phaseMapping":{"restore-postcommit-io":"separate-catalog"}})).into_response()
+}
+#[cfg(all(feature = "host-parity", debug_assertions))]
+async fn authority_contract_request(
+    state: AppState,
+    headers: HeaderMap,
+    body: Result<Json<AuthorityContractBody>, JsonRejection>,
+    snapshot_only: bool,
+) -> Response {
+    let Json(body) = match body {
+        Ok(body) => body,
+        Err(error) => return invalid_json_response(error),
+    };
+    let (handles, _) =
+        match authorized_market_controller(&state, &body.session_id, authorization_token(&headers))
+            .await
+        {
+            Ok(context) => context,
+            Err(response) => return *response,
+        };
+    let generation = match parse_host_parity_generation(&body.generation) {
+        Ok(generation) => generation,
+        Err(response) => return *response,
+    };
+    let closed_action = !snapshot_only
+        && matches!(
+            body.id.as_str(),
+            "shutdown" | "shutdown-pending" | "shutdown-known-archive-failure-cleanup"
+        );
+    match handles
+        .authority_contract(generation, body.id, body.checkpoint, snapshot_only)
+        .await
+    {
+        Ok(mut row) => {
+            // 这些动作已从真实 actor 得到关闭终态；移除验证会话，不再向关闭邮箱请求鉴权。
+            if closed_action {
+                let removed = state.manager.remove(&body.session_id).is_some();
+                row["registryRemoved"] = serde_json::json!(removed);
+            }
+            (StatusCode::OK, Json(row)).into_response()
+        }
+        Err(error) => api_error(StatusCode::BAD_REQUEST, "AUTHORITY_CONTRACT_FAILED", error),
+    }
+}
+#[cfg(all(feature = "host-parity", debug_assertions))]
+pub async fn api_authority_contract_action(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Result<Json<AuthorityContractBody>, JsonRejection>,
+) -> Response {
+    authority_contract_request(state, headers, body, false).await
+}
+#[cfg(all(feature = "host-parity", debug_assertions))]
+pub async fn api_authority_contract_snapshot(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Result<Json<AuthorityContractBody>, JsonRejection>,
+) -> Response {
+    authority_contract_request(state, headers, body, true).await
+}

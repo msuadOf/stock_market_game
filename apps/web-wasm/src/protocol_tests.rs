@@ -392,7 +392,7 @@ fn civil_settlement_error_maps_to_the_cross_host_failure_code() {
         failure.message,
         "日终存档或协议状态校验失败（原始详情已脱敏）"
     );
-    assert_eq!(failure.r#where, "web-wasm.end_civil_day_update");
+    assert_eq!(failure.r#where, "session.authority.civil_day");
     assert!(failure.cause.is_none());
 }
 
@@ -870,4 +870,30 @@ fn target_day_not_ready_uses_the_actual_session_error_conversion() {
             StepUpdateError::Operation(message)
         );
     }
+}
+
+#[test]
+fn prepared_replacement_fence_closes_old_producer_before_archive_retirement() {
+    let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
+    let mut registry = SessionRegistry::default();
+    let previous = registry.create(setup.clone(), 701).unwrap();
+    let candidate = registry.create(setup, 702).unwrap();
+    let producer = ingress_operation(|services| Ok(services[&previous].clone())).unwrap();
+    assert!(registry.fence_replacement(previous, candidate, 1).is_err());
+    producer
+        .enqueue_player_intent(AccountId(0), ingress_cancel(1))
+        .unwrap();
+    registry.prepared_replacements.insert(
+        candidate,
+        engine::session::replacement::ReplacementPlan::prepare(1).unwrap(),
+    );
+    registry.fence_replacement(previous, candidate, 1).unwrap();
+    assert!(producer
+        .enqueue_player_intent(AccountId(0), ingress_cancel(2))
+        .is_err());
+    assert!(!ingress_operation(|services| Ok(services.contains_key(&previous))).unwrap());
+    assert_eq!(registry.generations.get(&previous), Some(&1));
+    assert!(registry.sessions.contains_key(&previous));
+    registry.remove(previous).unwrap();
+    registry.remove(candidate).unwrap();
 }

@@ -1,5 +1,5 @@
-use super::failure::{failure_cause, failure_description};
 use super::*;
+use engine::session::authority::{failure_cause, failure_description};
 
 #[test]
 fn producer_failure_contains_real_location_and_recovery_details() {
@@ -133,7 +133,10 @@ async fn assert_auto_step_fatal(fastest: bool, successful_steps: usize) {
         })
     );
     assert!(!actor.pacing.is_running());
-    assert!(harness.cmd_tx.is_closed());
+    assert!(
+        !harness.cmd_tx.is_closed(),
+        "terminal 保留查询、恢复与关闭控制通道"
+    );
     assert!(actor
         .game
         .shared_ingress()
@@ -152,7 +155,10 @@ async fn assert_auto_step_fatal(fastest: bool, successful_steps: usize) {
             reply,
         })
         .await;
-    assert!(rejected.await.is_err());
+    assert!(
+        rejected.await.unwrap().is_err(),
+        "fatal 后控制明确拒绝而非丢失响应"
+    );
     assert!(!actor.pacing.is_running());
     assert_eq!(actor.game.tick(), committed_tick);
     assert_eq!(actor.game.seq(), committed_seq);
@@ -186,12 +192,20 @@ async fn assert_auto_step_fatal(fastest: bool, successful_steps: usize) {
         serde_json::to_value(expected_prefix).unwrap(),
         "日终 retained 必须保留失败前全部真实帧"
     );
+    let (reply, closed) = oneshot::channel();
+    harness
+        .cmd_tx
+        .send(SessionCommand::Shutdown { reply })
+        .unwrap();
     tokio::time::timeout(Duration::from_secs(1), harness.actor.run())
         .await
         .unwrap();
+    closed.await.unwrap().unwrap();
     assert!(notices_rx.try_recv().is_err());
     assert!(events_rx.try_recv().is_err());
-    println!("desktop fatal fastest={fastest} after={successful_steps} committed tick={committed_tick} seq={committed_seq} host_stopped=1: {payload}");
+    println!(
+        "desktop fatal fastest={fastest} after={successful_steps} committed tick={committed_tick} seq={committed_seq} host_stopped=1: {payload}"
+    );
 }
 
 #[tokio::test]
@@ -246,6 +260,7 @@ async fn desktop_controls_resolve_only_after_actor_applies_them() {
         "timeline",
     );
     let handles = SessionHandles {
+        shutdown_result: Arc::clone(&harness.actor.shutdown_result),
         ack_route: AckRoute::default(),
         ingress: Arc::clone(&harness.actor.ingress),
         cmd_tx: harness.cmd_tx.clone(),
@@ -410,4 +425,92 @@ fn producer_failure_redacts_real_bare_amount_overflow_operands() {
         "公司会计金额运算溢出（操作数已脱敏）"
     );
     assert!(value["cause"]["cause"]["cause"].is_null());
+}
+
+// 关闭只拒收新邮件，已经入队的查询仍必须由 actor 排空并回复。
+#[tokio::test]
+async fn closed_mailbox_drains_queued_queries_before_actor_exit() {
+    for fastest in [false, true] {
+        let game = ProtocolSession::new(super::tests::diagnostic_setup(), 7).unwrap();
+        let expected_tick = game.tick();
+        let mut harness = ActorHarness::new_protocol_actor(
+            game,
+            fastest,
+            PausePreferences::default(),
+            "drain-session",
+            "drain-timeline",
+        );
+        let (reply, response) = oneshot::channel();
+        harness
+            .cmd_tx
+            .send(SessionCommand::Snapshot { reply })
+            .unwrap();
+        harness.actor.cmd_rx.close();
+        tokio::time::timeout(Duration::from_secs(1), harness.actor.run())
+            .await
+            .unwrap();
+        assert_eq!(
+            response.await.expect("关闭前已入队的查询必须得到回复").tick,
+            expected_tick
+        );
+    }
+}
+
+#[tokio::test]
+async fn confirmed_shutdown_is_idempotent_but_preserves_known_archive_failure() {
+    for archive_failed in [false, true] {
+        let game = ProtocolSession::new(super::tests::diagnostic_setup(), 7).unwrap();
+        let mut harness = ActorHarness::new_protocol_actor(
+            game,
+            false,
+            PausePreferences::default(),
+            "shutdown-idempotent",
+            "shutdown-idempotent",
+        );
+        if archive_failed {
+            harness.actor.archive_order.block("已知归档失败".into());
+        }
+        let handles = SessionHandles {
+            cmd_tx: harness.cmd_tx.clone(),
+            ingress: harness.actor.ingress.clone(),
+            ack_route: AckRoute::default(),
+            shutdown_result: harness.actor.shutdown_result.clone(),
+        };
+        let (reply, response) = oneshot::channel();
+        harness
+            .actor
+            .handle_command(SessionCommand::Shutdown { reply })
+            .await;
+        let first = response.await.unwrap();
+        assert_eq!(first.is_err(), archive_failed);
+        let repeated = handles.shutdown().await;
+        match first {
+            Ok(()) => assert!(repeated.is_ok()),
+            Err(message) => assert!(
+                matches!(repeated, Err(SendCommandError::Rejected(actual)) if actual == message)
+            ),
+        }
+    }
+}
+#[tokio::test]
+async fn closed_mailbox_without_shutdown_receipt_is_not_success() {
+    let game = ProtocolSession::new(super::tests::diagnostic_setup(), 7).unwrap();
+    let mut harness = ActorHarness::new_protocol_actor(
+        game,
+        false,
+        PausePreferences::default(),
+        "unknown-exit",
+        "unknown-exit",
+    );
+    let handles = SessionHandles {
+        cmd_tx: harness.cmd_tx.clone(),
+        ingress: harness.actor.ingress.clone(),
+        ack_route: AckRoute::default(),
+        shutdown_result: harness.actor.shutdown_result.clone(),
+    };
+    harness.actor.cmd_rx.close();
+    assert!(matches!(
+        handles.shutdown().await,
+        Err(SendCommandError::ActorGone)
+    ));
 }

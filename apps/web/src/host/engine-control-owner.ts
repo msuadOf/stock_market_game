@@ -23,6 +23,10 @@ type ActiveOwner = {
   ingress: Worker | null;
   publisher: Worker | null;
   publisherGeneration: number;
+  publisherEpoch: number;
+  publisherToken: number;
+  publisherControlAddress: number;
+  pendingPublisherBind: ControlRequest | null;
   readonly publisherBindings: Map<number, number>;
   publisherQuiescent: boolean;
   ingressPort: MessagePort | null;
@@ -73,6 +77,7 @@ function dropReferences(active: ActiveOwner): void {
   active.ports.clear();
   active.ingressConfigurations.clear();
   active.publisherBindings.clear();
+  active.pendingPublisherBind = null;
   active.publisher = null;
   active.ingressPort = null;
   active.supervisor = null;
@@ -169,7 +174,7 @@ function initialize(value: unknown): ActiveOwner {
   const instanceId = safe(request.instanceId, "controlWorker instanceId");
   if (request.type !== "start" || typeof request.runtimeOverride !== "boolean" || !(request.dataPort instanceof MessagePort)) throw new Error("controlWorker start 内容无效");
   const active: ActiveOwner = { instanceId, supervisor: null, engine: null, engineCreated: false, ingress: null, ingressPort: null,
-    ingressPortSent: false, ingressGeneration: 0, ingressConfigurations: new Map(), publisher: null, publisherGeneration: 0, publisherBindings: new Map(), publisherQuiescent: false, listeners: [], ports: new Set([request.dataPort as MessagePort]), engineQuiescent: false, ingressQuiescent: false, childrenDrained: false, shutdownDeadline: Infinity, finalizing: false, terminal: false, failing: false, failurePending: false, configured: false };
+    ingressPortSent: false, ingressGeneration: 0, ingressConfigurations: new Map(), publisher: null, publisherGeneration: 0, publisherEpoch: 0, publisherToken: 0, publisherControlAddress: 0, pendingPublisherBind: null, publisherBindings: new Map(), publisherQuiescent: false, listeners: [], ports: new Set([request.dataPort as MessagePort]), engineQuiescent: false, ingressQuiescent: false, childrenDrained: false, shutdownDeadline: Infinity, finalizing: false, terminal: false, failing: false, failurePending: false, configured: false };
   owner = active;
   const engine = dependencies.createEngineWorker(`stock-game:${instanceId}:engine`);
   active.engineCreated = true;
@@ -280,7 +285,7 @@ function bindIngress(active: ActiveOwner, request: ControlRequest): void {
 function postPublisherObserverFailure(active: ActiveOwner, generation: number, message: string): void {
   if (active.terminal || active.failing || generation < active.publisherGeneration) return;
   if (generation !== active.publisherGeneration || !message.trim()) throw new Error("发布观察者故障身份或诊断无效");
-  post({ type: "publisherObserverFailure", instanceId: active.instanceId, generation, message });
+  post({ type: "publisherObserverFailure", instanceId: active.instanceId, publisherEpoch: active.publisherEpoch, generation, message });
 }
 
 function bindPublisher(active: ActiveOwner, request: ControlRequest): void {
@@ -288,26 +293,55 @@ function bindPublisher(active: ActiveOwner, request: ControlRequest): void {
   const requestId = safe(request.requestId, "bindPublisher requestId");
   const generation = safe(request.generation, "bindPublisher generation");
   const token = safe(request.token, "bindPublisher token");
-  if (token > 0xffffffff || active.shutdownDeadline !== Infinity || generation <= active.publisherGeneration) throw new Error("bindPublisher 阶段、token 或 generation 无效");
+  if (token > 0xffffffff || active.shutdownDeadline !== Infinity || active.failurePending || generation < active.publisherGeneration)
+    throw new Error("bindPublisher 阶段、token 或 generation 无效");
+  if (active.pendingPublisherBind !== null) throw new Error("publisher退出证明仍在途，禁止叠加bind");
+  const controlAddress = safe(request.controlAddress, "bindPublisher controlAddress");
+  if (generation === active.publisherGeneration) {
+    if (active.publisher === null || token !== active.publisherToken || controlAddress !== active.publisherControlAddress)
+      throw new Error("同代publisher重建必须保留真实token/control地址");
+    if (!active.publisherQuiescent) {
+      // 业务Channel的关闭ACK可能先于global退出证明；保留请求而不伪造已退出。
+      active.pendingPublisherBind = request;
+      return;
+    }
+  }
   const supervisor = active.supervisor;
   if (supervisor === null) throw new Error("controlWorker 缺少已配置的 supervisor");
   const substrate = supervisor.getSubstrate();
-  const controlAddress = safe(request.controlAddress, "bindPublisher controlAddress");
   const controlSignal = sharedControlWord(substrate.memory, controlAddress);
+  if (active.publisher !== null && active.publisherQuiescent) {
+    const retired = active.publisher;
+    supervisor.retireQuiescentPublisher(retired);
+    for (let index=active.listeners.length-1; index>=0; index--) {
+      const [target,type,listener]=active.listeners[index]!;
+      if (target === retired) { target.removeEventListener(type,listener); active.listeners.splice(index,1); }
+    }
+    active.publisher = null;
+    active.publisherBindings.clear();
+  }
   active.publisherGeneration = generation;
+  active.publisherToken = token;
+  active.publisherControlAddress = controlAddress;
   active.publisherBindings.set(generation, token);
   if (active.publisher !== null) {
-    post({ type: "publisherBound", instanceId: active.instanceId, requestId, controlSignal });
+    post({ type: "publisherBound", instanceId: active.instanceId, requestId, publisherEpoch: active.publisherEpoch, controlSignal });
     return;
   }
   if (dependencies.createPublisherWorker === undefined) throw new Error("controlWorker 缺少独立发布 Worker 工厂");
   if (substrate.primary === undefined) throw new Error("发布 Worker 缺少预登记的独立 tombstone");
-  const publisher = dependencies.createPublisherWorker(`stock-game:${active.instanceId}:publisher`);
+  const previousPublisherEpoch = active.publisherEpoch;
+  const publisherEpoch = safe(previousPublisherEpoch + 1, "publisher物理epoch");
+  const publisher = dependencies.createPublisherWorker(`stock-game:${active.instanceId}:publisher:${publisherEpoch}`);
   active.publisher = publisher;
+  active.publisherEpoch = publisherEpoch;
+  active.publisherQuiescent = false;
   supervisor.attachPublisher(publisher);
   const channel = dependencies.createChannel();
   active.ports.add(channel.port1); active.ports.add(channel.port2);
+  const current = () => active.publisher === publisher && active.publisherEpoch === publisherEpoch;
   listen(active, publisher, "message", (event) => {
+    if (!current()) return;
     try {
       const raw: unknown = (event as MessageEvent<unknown>).data;
       if (raw === null || typeof raw !== "object" || Array.isArray(raw)) throw new Error("发布 Worker 全局消息必须是控制对象");
@@ -330,12 +364,16 @@ function bindPublisher(active: ActiveOwner, request: ControlRequest): void {
         if (active.publisherQuiescent) throw new Error("发布 Worker quiescent 重复");
         active.publisherQuiescent = true;
         supervisor.markQuiescent(publisher);
+        const pending = active.pendingPublisherBind;
+        active.pendingPublisherBind = null;
+        if (pending !== null && active.shutdownDeadline === Infinity) bindPublisher(active, pending);
         finalize(active);
       } else throw new Error("发布 Worker lifecycle 阶段无效");
     } catch (error) { sendFailure(active, error); }
   });
-  listen(active, publisher, "error", (event) => sendFailure(active, workerEventFailure(event, "publisher", "error")));
+  listen(active, publisher, "error", (event) => { if (current()) sendFailure(active, workerEventFailure(event, "publisher", "error")); });
   listen(active, publisher, "messageerror", () => {
+    if (!current()) return;
     // JS 解码错误不能证明共享 Memory 被破坏；保留 owner 并等待真实关闭收据。
     try { postPublisherObserverFailure(active, active.publisherGeneration, "发布 Worker 控制消息无法解码"); }
     catch (error) { sendFailure(active, error); }
@@ -343,7 +381,7 @@ function bindPublisher(active: ActiveOwner, request: ControlRequest): void {
   publisher.postMessage({ type: "bindPublisherTransport", instanceId: active.instanceId, dataPort: channel.port2,
     module: substrate.module, memory: substrate.memory, layout: substrate.layout, diagnostics: substrate.diagnostics, primary: substrate.primary.publisher }, [channel.port2]);
   active.ports.delete(channel.port2);
-  post({ type: "publisherBound", instanceId: active.instanceId, requestId, controlSignal, port: channel.port1 }, [channel.port1]);
+  post({ type: "publisherBound", instanceId: active.instanceId, requestId, publisherEpoch, previousPublisherEpoch, controlSignal, port: channel.port1 }, [channel.port1]);
   active.ports.delete(channel.port1);
 }
 

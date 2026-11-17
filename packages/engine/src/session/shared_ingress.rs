@@ -13,6 +13,7 @@ pub struct SharedSessionIngress {
 
 struct IngressState {
     closed: bool,
+    suspended: bool,
     terminal: Option<StepFatal>,
     policy: crate::RuntimeSyncPolicy,
     runtime_tick: u64,
@@ -51,7 +52,7 @@ impl SharedSessionIngress {
     /// 账户已登记时显式拒绝（防御式，不静默覆盖）。
     pub(super) fn register_player(&self, account: AccountId) -> Result<(), SessionError> {
         let mut state = self.lock()?;
-        if state.closed || state.accounts.contains_key(&account) {
+        if state.closed || state.suspended || state.accounts.contains_key(&account) {
             // 1253：共享收件入口已关闭或新玩家账户身份已存在；ctx[0]=AccountId。
             return Err(SessionError::ResourceLimit(
                 crate::error::ValidationFault::new(1253, vec![account.0]),
@@ -90,6 +91,12 @@ impl SharedSessionIngress {
     ) -> Result<(), SessionError> {
         let mut state = self.lock()?;
         state.require_player_policy()?;
+        if state.suspended && !state.closed {
+            // 1291：权威当前拒绝业务写入；可恢复阻塞不永久关闭 generation。
+            return Err(SessionError::InvalidSave(
+                crate::error::ValidationFault::bare(1291),
+            ));
+        }
         if state.closed {
             // 1251：ingress 世代已关闭。
             return Err(SessionError::ResourceLimit(
@@ -135,6 +142,34 @@ impl SharedSessionIngress {
         state.closed = true;
     }
 
+    /// 暂停共享生产入口，不消费 receipt，也不销毁可恢复的会话。
+    pub fn suspend(&self) -> Result<(), SessionError> {
+        self.lock()?.suspended = true;
+        Ok(())
+    }
+
+    /// 仅明确解除权威阻塞时使用；永久关闭的 generation 不能被重开。
+    pub fn resume(&self) -> Result<(), SessionError> {
+        let mut state = self.lock()?;
+        if state.closed || state.terminal.is_some() {
+            return Err(SessionError::ResourceLimit(
+                crate::error::ValidationFault::bare(1251),
+            ));
+        }
+        state.suspended = false;
+        Ok(())
+    }
+
+    /// 替换提交的单向封口不读取业务数据，不允许旧锁中毒阻止新 owner 提交。
+    /// 不清除 poison：旧入口仍保留原始故障诊断，绝不重新放行。
+    pub(super) fn close_for_replacement(&self) {
+        let mut state = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        state.closed = true;
+    }
+
     pub fn close(&self) -> Result<(), SessionError> {
         match self.inner.lock() {
             Ok(mut state) => {
@@ -153,6 +188,12 @@ impl SharedSessionIngress {
         intent: Intent,
     ) -> Result<ReceiptBearingIntent, SessionError> {
         let mut state = self.lock()?;
+        if state.suspended && !state.closed {
+            // 1291：权威当前拒绝业务写入；可恢复阻塞不永久关闭 generation。
+            return Err(SessionError::InvalidSave(
+                crate::error::ValidationFault::bare(1291),
+            ));
+        }
         if state.closed {
             // 1251：ingress 世代已关闭。
             return Err(SessionError::ResourceLimit(
@@ -212,6 +253,7 @@ impl GameSession {
         let source = SharedSessionIngress {
             inner: Arc::new(Mutex::new(IngressState {
                 closed: false,
+                suspended: false,
                 terminal: self.poison_reason().cloned(),
                 policy: self.state.setup.runtime_sync_policy,
                 runtime_tick: self.tick(),
@@ -688,6 +730,42 @@ mod tests {
     }
 
     #[test]
+    fn replacement_seals_poisoned_ingress_without_losing_old_fault_or_new_generation() {
+        let mut old = game();
+        let mut new = game();
+        let source = old.shared_ingress();
+        let poisoned = source.clone();
+        assert!(std::thread::spawn(move || {
+            let _guard = poisoned.inner.lock().unwrap();
+            panic!("注入旧入口中毒");
+        })
+        .join()
+        .is_err());
+        let mut binding = (1, source.clone());
+        let plan = super::super::replacement::ReplacementPlan::prepare(1).unwrap();
+        plan.fence_retiring_ingress(1, &source).unwrap();
+        assert_eq!(binding.0, 1, "提前封口不能伪装已换代");
+        assert!(source.inner.is_poisoned());
+        assert!(source
+            .enqueue_player_intent(AccountId(0), buy(&old, 0))
+            .is_err());
+        super::super::replacement::ReplacementPlan::prepare(1)
+            .unwrap()
+            .install_ingress(&mut binding, new.shared_ingress())
+            .unwrap();
+        assert_eq!(binding.0, 2);
+        assert!(source.inner.is_poisoned());
+        assert!(source.inner.lock().err().unwrap().get_ref().closed);
+        assert!(source
+            .enqueue_player_intent(AccountId(0), buy(&old, 0))
+            .is_err());
+        assert!(binding
+            .1
+            .enqueue_player_intent(AccountId(0), buy(&new, 0))
+            .is_ok());
+    }
+
+    #[test]
     fn closed_generation_and_non_player_are_rejected_before_receipt_allocation() {
         let mut game =
             GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
@@ -885,5 +963,30 @@ mod tests {
         );
         let mut restored = GameSession::restore(&save).unwrap();
         assert_eq!(restored.step().unwrap().iter().filter(|event| matches!(event, crate::Event::OrderAccepted { account, .. } if *account == AccountId(0))).count(), 2);
+    }
+    #[test]
+    fn suspended_authority_rejects_direct_producers_before_receipt_and_does_not_reopen_closed_generation(
+    ) {
+        let mut game = game();
+        let source = game.shared_ingress();
+        let before = serde_json::to_value(source.receipts_probe()).unwrap();
+        source.suspend().unwrap();
+        assert!(source
+            .enqueue_player_intent(AccountId(0), buy(&game, 0))
+            .is_err());
+        assert!(source.receive_private(AccountId(0), buy(&game, 0)).is_err());
+        assert_eq!(
+            serde_json::to_value(source.receipts_probe()).unwrap(),
+            before
+        );
+        source.resume().unwrap();
+        source
+            .enqueue_player_intent(AccountId(0), buy(&game, 0))
+            .unwrap();
+        source.close().unwrap();
+        assert!(source.resume().is_err());
+        assert!(source
+            .enqueue_player_intent(AccountId(0), buy(&game, 0))
+            .is_err());
     }
 }

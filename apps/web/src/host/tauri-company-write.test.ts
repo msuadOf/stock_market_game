@@ -114,7 +114,7 @@ test("Tauri真正Step对象保原结构与cause，不能改成CompanyWriteReject
 
 
 const prepareRejection = {
-  code: "REPORT_CORRECTION_PREPARE_REJECTED", where: "desktop.actor.prepare_civil_updates", message: "报表更正未满足提交条件（内部详情已脱敏）",
+  code: "REPORT_CORRECTION_PREPARE_REJECTED", where: "session.authority.prepare_civil_updates", message: "报表更正未满足提交条件（内部详情已脱敏）",
   recoverable: true, context: { operation: "endCivilDay", tick: 2, seq: 0, day: 1, generation: "1" },
   cause: { code: "REPORT_CORRECTION_REJECTED", message: "报表更正未满足提交条件（内部详情已脱敏）", cause: null },
 };

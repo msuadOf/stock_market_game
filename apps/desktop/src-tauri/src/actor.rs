@@ -5,23 +5,20 @@
 //! Player 与 NPC 共用 ingress，控制命令用邮箱与 oneshot 传递结果。
 //! 本地模式的 Player 意图仍路由给 AccountId(0)。
 
+use engine::session::authority::{self, Authority as DesktopPacing, AuthorityPort};
 #[cfg(test)]
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use engine::session::checkpoint::{
-    CapturedCheckpoint, CheckpointKey, CheckpointOrder, ReceiptDisposition,
-};
+use engine::session::checkpoint::{ArchiveAuthority, CheckpointKey, ReceiptOutcome};
 use engine::session::protocol::{
     CivilUpdate, EngineUpdate, PausePreferences, PlayerWorkingOrder, ProtocolSession, TickBatch,
     TickFrame,
 };
 #[cfg(test)]
 use engine::session::runner::fixed_tick_duration as fixed_tick_interval;
-use engine::session::runner::{
-    apply_cycle_pacing, run_cycle, CycleError, DrivePort, Pacing as DesktopPacing, Permit, WakePlan,
-};
+use engine::session::runner::{DrivePort, Permit, WakePlan};
 pub use engine::session::runner::{SpeedMetrics, BASE_TICK_MS};
 use engine::{
     calendar::CivilDate,
@@ -42,6 +39,8 @@ mod delivery;
 use delivery::{AckRoute, Delivery, Packet};
 mod failure;
 pub(crate) use failure::HostFailure;
+#[cfg(all(test, feature = "host-parity"))]
+mod authority_trace_tests;
 #[cfg(test)]
 mod correction_recovery_tests;
 #[cfg(test)]
@@ -57,6 +56,7 @@ pub struct RestoreResult {
     pub snapshot: Snapshot,
     pub working_orders: Vec<PlayerWorkingOrder>,
     pub publication_ordinal: String,
+    pub observer_lease: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latest_checkpoint: Option<engine::session::protocol::SaveCandidateKey>,
     pub stock_catalog: Vec<engine::session::StockIdentityEntry>,
@@ -64,6 +64,8 @@ pub struct RestoreResult {
     pub civil_date: CivilDate,
     pub timeline_id: String,
     pub generation: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure: Option<HostFailure>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -180,6 +182,19 @@ pub struct ReportCorrectionResponse {
 /// `reply` 用 `Result` 而非裸值：engine 失败（`SessionError`）显式上抛，绝不静默吞（铁律二）。
 #[derive(Debug)]
 pub enum SessionCommand {
+    #[cfg(feature = "host-parity")]
+    ContractStep {
+        generation: u64,
+        id: String,
+        checkpoint: Option<serde_json::Value>,
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    #[cfg(feature = "host-parity")]
+    ContractSnapshot {
+        generation: u64,
+        id: String,
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
     SubscribeRightsOffering {
         generation: u64,
         event_id: String,
@@ -240,6 +255,7 @@ pub enum SessionCommand {
     },
     ResumeObserver {
         generation: u64,
+        lease: u64,
         ordinal: u64,
         reply: oneshot::Sender<Result<(), String>>,
     },
@@ -300,11 +316,11 @@ pub enum SessionCommand {
     /// 暂停或恢复步进，保留会话状态与事件订阅。
     SetRunning {
         running: bool,
-        reply: oneshot::Sender<()>,
+        reply: oneshot::Sender<Result<(), SessionError>>,
     },
     SetPausePreferences {
         preferences: PausePreferences,
-        reply: oneshot::Sender<()>,
+        reply: oneshot::Sender<Result<(), SessionError>>,
     },
     ArchiveWriteCompleted {
         key: CheckpointKey,
@@ -314,7 +330,9 @@ pub enum SessionCommand {
         reply: oneshot::Sender<Result<Option<SaveSlot>, StoreError>>,
     },
     /// 永久结束 actor；用于页面卸载/应用退出释放资源。
-    Shutdown { reply: oneshot::Sender<()> },
+    Shutdown {
+        reply: oneshot::Sender<Result<(), String>>,
+    },
 }
 
 /// 一个 session 的对外句柄：命令发送端（克隆廉价）。
@@ -327,12 +345,47 @@ pub enum SessionCommand {
 /// ```
 #[derive(Clone)]
 pub struct SessionHandles {
+    shutdown_result: Arc<std::sync::Mutex<Option<Result<(), String>>>>,
     cmd_tx: mpsc::UnboundedSender<SessionCommand>,
     ingress: Arc<RwLock<(u64, engine::SharedSessionIngress)>>,
     ack_route: AckRoute,
 }
 
 impl SessionHandles {
+    #[cfg(feature = "host-parity")]
+    pub async fn authority_contract_step(
+        &self,
+        generation: u64,
+        id: String,
+        checkpoint: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value, String> {
+        let (reply, result) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::ContractStep {
+                generation,
+                id,
+                checkpoint,
+                reply,
+            })
+            .map_err(|e| e.to_string())?;
+        result.await.map_err(|e| e.to_string())?
+    }
+    #[cfg(feature = "host-parity")]
+    pub async fn authority_contract_snapshot(
+        &self,
+        generation: u64,
+        id: String,
+    ) -> Result<serde_json::Value, String> {
+        let (reply, result) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::ContractSnapshot {
+                generation,
+                id,
+                reply,
+            })
+            .map_err(|e| e.to_string())?;
+        result.await.map_err(|e| e.to_string())?
+    }
     pub async fn subscribe_rights_offering(
         &self,
         generation: u64,
@@ -565,19 +618,35 @@ impl SessionHandles {
             .map_err(BaselineRequestError::Baseline)
     }
 
-    pub async fn acknowledge_observer(&self, generation: u64, ordinal: u64) -> Result<(), String> {
-        self.ack_route.acknowledge(generation, ordinal).await
+    pub async fn acknowledge_observer(
+        &self,
+        generation: u64,
+        lease: u64,
+        ordinal: u64,
+    ) -> Result<(), String> {
+        self.ack_route.acknowledge(generation, lease, ordinal).await
     }
 
-    pub async fn set_observer_held(&self, generation: u64, held: bool) -> Result<(), String> {
-        self.ack_route.set_held(generation, held).await
+    pub async fn set_observer_held(
+        &self,
+        generation: u64,
+        lease: u64,
+        held: bool,
+    ) -> Result<(), String> {
+        self.ack_route.set_held(generation, lease, held).await
     }
 
-    pub async fn resume_observer(&self, generation: u64, ordinal: u64) -> Result<(), String> {
+    pub async fn resume_observer(
+        &self,
+        generation: u64,
+        lease: u64,
+        ordinal: u64,
+    ) -> Result<(), String> {
         let (tx, rx) = oneshot::channel();
         self.cmd_tx
             .send(SessionCommand::ResumeObserver {
                 generation,
+                lease,
                 ordinal,
                 reply: tx,
             })
@@ -770,15 +839,36 @@ impl SessionHandles {
         self.cmd_tx
             .send(SessionCommand::SetRunning { running, reply })
             .map_err(|_| SendCommandError::ActorGone)?;
-        applied.await.map_err(|_| SendCommandError::ActorGone)
+        applied
+            .await
+            .map_err(|_| SendCommandError::ActorGone)?
+            .map_err(|error| SendCommandError::Rejected(error.to_string()))
     }
 
     pub async fn shutdown(&self) -> Result<(), SendCommandError> {
+        let confirmed = || {
+            self.shutdown_result
+                .lock()
+                .map(|result| result.clone())
+                .map_err(|_| SendCommandError::Rejected("关闭结果锁已中毒".into()))
+        };
+        if let Some(result) = confirmed()? {
+            return result.map_err(SendCommandError::Rejected);
+        }
         let (reply, applied) = oneshot::channel();
-        self.cmd_tx
+        if self
+            .cmd_tx
             .send(SessionCommand::Shutdown { reply })
-            .map_err(|_| SendCommandError::ActorGone)?;
-        applied.await.map_err(|_| SendCommandError::ActorGone)
+            .is_err()
+        {
+            return confirmed()?
+                .ok_or(SendCommandError::ActorGone)?
+                .map_err(SendCommandError::Rejected);
+        }
+        applied
+            .await
+            .map_err(|_| SendCommandError::ActorGone)?
+            .map_err(SendCommandError::Rejected)
     }
 
     pub async fn set_pause_preferences(
@@ -789,7 +879,10 @@ impl SessionHandles {
         self.cmd_tx
             .send(SessionCommand::SetPausePreferences { preferences, reply })
             .map_err(|_| SendCommandError::ActorGone)?;
-        applied.await.map_err(|_| SendCommandError::ActorGone)
+        applied
+            .await
+            .map_err(|_| SendCommandError::ActorGone)?
+            .map_err(|error| SendCommandError::Rejected(error.to_string()))
     }
 }
 
@@ -802,6 +895,12 @@ pub enum BaselineError {
     Archive(#[from] StoreError),
     #[error("公开公司身份目录构造失败")]
     Catalog(#[from] engine::session::CompanyCatalogViewError),
+    #[error("新时间线已提交，但基线交付失败")]
+    Committed {
+        failure: Box<HostFailure>,
+        replacement: engine::session::replacement::CommitReceipt,
+        timeline_id: String,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -903,6 +1002,7 @@ impl SessionManager {
         let session_id = uuid::Uuid::new_v4().to_string();
 
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
+        let shutdown_result = Arc::new(std::sync::Mutex::new(None));
         let ingress = Arc::new(RwLock::new((1, game.shared_ingress())));
         let ack_route = AckRoute::default();
         let archive_lane = archive.as_ref().map(|_| {
@@ -920,6 +1020,7 @@ impl SessionManager {
             })
         });
         let handles = Arc::new(SessionHandles {
+            shutdown_result: Arc::clone(&shutdown_result),
             cmd_tx,
             ingress: Arc::clone(&ingress),
             ack_route: ack_route.clone(),
@@ -932,6 +1033,9 @@ impl SessionManager {
             .insert(session_id.clone(), handles.clone());
 
         let actor = SessionActor {
+            shutdown_result: Arc::clone(&shutdown_result),
+            #[cfg(feature = "host-parity")]
+            contract_catalog_failure: false,
             ingress,
             #[cfg(test)]
             injected_step_failure: None,
@@ -945,7 +1049,7 @@ impl SessionManager {
             pause_preferences: PausePreferences::default(),
             archive,
             archive_lane,
-            archive_order: CheckpointOrder::new(1, 1),
+            archive_order: ArchiveAuthority::new(1, 1),
             archive_epoch: 1,
         };
         native_async::spawn(actor.run());
@@ -980,6 +1084,9 @@ struct StepFailureCapture {
 
 /// actor 独占 `ProtocolSession`；IPC 不在市场执行任务中运行。
 struct SessionActor<R: Runtime> {
+    shutdown_result: Arc<std::sync::Mutex<Option<Result<(), String>>>>,
+    #[cfg(feature = "host-parity")]
+    contract_catalog_failure: bool,
     ingress: Arc<RwLock<(u64, engine::SharedSessionIngress)>>,
     #[cfg(test)]
     injected_step_failure: Option<(
@@ -999,7 +1106,7 @@ struct SessionActor<R: Runtime> {
     pause_preferences: PausePreferences,
     archive: Option<(ArchiveWriter, NativeDatabase)>,
     archive_lane: Option<ArchiveLane>,
-    archive_order: CheckpointOrder,
+    archive_order: ArchiveAuthority,
     archive_epoch: u64,
 }
 
@@ -1023,7 +1130,11 @@ impl ActorHarness {
     ) -> Self {
         let app = tauri::test::mock_app();
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
+        let shutdown_result = Arc::new(std::sync::Mutex::new(None));
         let actor = SessionActor {
+            shutdown_result: Arc::clone(&shutdown_result),
+            #[cfg(feature = "host-parity")]
+            contract_catalog_failure: false,
             ingress: Arc::new(RwLock::new((1, game.shared_ingress()))),
             injected_step_failure: None,
             pacing: {
@@ -1045,7 +1156,7 @@ impl ActorHarness {
             pause_preferences,
             archive: None,
             archive_lane: None,
-            archive_order: CheckpointOrder::new(1, 1),
+            archive_order: ArchiveAuthority::new(1, 1),
             archive_epoch: 1,
         };
         Self {
@@ -1130,55 +1241,42 @@ impl<R: Runtime> SessionActor<R> {
                     if let Some(permit) = self.pacing.cadence.begin_turn(native_async::now()) {
                         self.drive_cycle(permit);
                     }
-                    if self.cmd_rx.is_closed() {
-                        break;
-                    }
                 }
                 None => break,
             }
         }
         self.finish_archive_lane().await;
-        self.delivery.finish().await;
+        if let Err(error) = self.delivery.finish().await {
+            eprintln!("{error}");
+        }
     }
 
     async fn finish_archive_lane(&mut self) {
-        if let Some(lane) = self.archive_lane.take() {
-            if let Err(error) = lane.finish().await {
-                eprintln!("桌面归档任务退出失败：{error}");
+        if self.archive_lane.is_some() {
+            if let Err(error) = self.shutdown_authority().await {
+                self.stop_after_host_failure(HostFailure::archive(&error));
             }
         }
     }
 
     fn stage_day_end(&mut self, update: &CivilUpdate) -> Result<(), Box<HostFailure>> {
         let Some((writer, _)) = self.archive.as_ref() else {
+            self.game.discard_pending_save_candidates();
             return Ok(());
         };
-        let fail =
-            |reason: &dyn std::fmt::Display| Box::new(HostFailure::archive(&reason.to_string()));
-        let Some(lane) = self.archive_lane.as_ref() else {
-            return Err(Box::new(HostFailure::archive("会话没有初始化存档任务")));
-        };
-        let checkpoint =
-            CapturedCheckpoint::take(&self.game, update, self.generation, self.archive_epoch)
-                .map_err(|error| fail(&error))?;
-        let key = checkpoint.key;
+        let lane = self.archive_lane.as_ref();
         self.archive_order
-            .can_stage(key)
-            .map_err(|error| fail(&error))?;
-        lane.stage(writer.clone(), checkpoint)
-            .map_err(|error| fail(&error))?;
-        self.archive_order
-            .staged(key)
-            .map_err(|error| fail(&error))?;
-        Ok(())
+            .stage(&self.game, update, |captured| {
+                lane.ok_or_else(|| "会话没有初始化存档任务".to_owned())?
+                    .stage(writer.clone(), captured)
+                    .map_err(|error| error.to_string())
+            })
+            .map_err(|error| Box::new(HostFailure::archive(&error)))
     }
 
     fn finish_archive_write(&mut self, key: CheckpointKey, result: Result<(), String>) {
-        if self.archive_order.accept_receipt(key) != ReceiptDisposition::Accepted {
-            return;
-        }
-        if let Err(error) = result {
-            let mut failure = HostFailure::archive(&error);
+        if let ReceiptOutcome::Failed { key, message } = self.archive_order.complete(key, result) {
+            let mut failure = HostFailure::archive(&message);
             failure.with_archive_key(key);
             self.stop_after_host_failure(failure);
         }
@@ -1201,41 +1299,8 @@ impl<R: Runtime> SessionActor<R> {
 
     fn drive_cycle(&mut self, permit: Permit) {
         let preferences = self.pause_preferences;
-        let result = run_cycle(self, permit, preferences);
-        match apply_cycle_pacing(
-            &mut self.pacing,
-            self.game.tick(),
-            native_async::now(),
-            result,
-        ) {
-            Ok(()) => {}
-            Err(CycleError::Advance {
-                source,
-                unpublished,
-            }) => {
-                let mut failure = HostFailure::civil(source);
-                if let Some(range) = unpublished {
-                    range.describe(&mut failure.message);
-                }
-                self.stop_after_host_failure(failure);
-            }
-            Err(CycleError::Batch {
-                source,
-                unpublished,
-            }) => {
-                let mut failure = HostFailure::step(source);
-                unpublished.describe(&mut failure.message);
-                self.stop_after_host_failure(failure);
-            }
-            Err(CycleError::Civil { source, retryable }) => {
-                let error = source.into_error();
-                self.stop_after_host_failure(if retryable {
-                    HostFailure::correction_prepare_rejected(&error)
-                } else {
-                    HostFailure::civil(error)
-                });
-            }
-            Err(CycleError::Stage(failure)) => self.stop_after_host_failure(*failure),
+        if let Some(failure) = authority::drive(self, permit, preferences) {
+            self.stop_after_host_failure(failure);
         }
     }
 
@@ -1295,11 +1360,68 @@ impl<R: Runtime> SessionActor<R> {
     }
 
     /// 处理单条命令。
-    async fn handle_command(&mut self, cmd: SessionCommand) {
-        if self.cmd_rx.is_closed() {
-            return;
+    async fn shutdown_authority(&mut self) -> Result<(), String> {
+        let ingress = self.pacing.begin_shutdown(&self.game, native_async::now());
+        let drained = if let Some(lane) = self.archive_lane.take() {
+            match native_async::timeout(authority::SHUTDOWN_DRAIN_TIMEOUT, lane.finish()).await {
+                Ok(result) => result.map_err(|error| error.to_string()),
+                Err(_) => Err("归档关闭超时；仍在途的写入结果未知，不能报告已耐久".into()),
+            }
+        } else {
+            Ok(())
+        };
+        self.cmd_rx.close();
+        while let Ok(command) = self.cmd_rx.try_recv() {
+            if let SessionCommand::ArchiveWriteCompleted { key, result } = command {
+                self.finish_archive_write(key, result);
+            }
         }
+        let receipts = self.archive_order.ensure_drained();
+        authority::finish_shutdown(ingress, drained, receipts)
+    }
+
+    /// 只有归档和实际观察通道都已收尾，才记录可供幂等清理使用的关闭结果。
+    async fn shutdown_complete(&mut self) -> Result<(), String> {
+        let result = self.shutdown_authority().await;
+        if let Err(error) = &result {
+            self.stop_after_host_failure(HostFailure::archive(error));
+        }
+        let result = match (result, self.delivery.finish().await) {
+            (Ok(()), delivery) => delivery,
+            (Err(archive), Ok(())) => Err(archive),
+            (Err(archive), Err(delivery)) => Err(format!("{archive}；{delivery}")),
+        };
+        match self.shutdown_result.lock() {
+            Ok(mut saved) => {
+                *saved = Some(result.clone());
+            }
+            Err(_) => return Err(format!("关闭结果锁已中毒；原关闭结果：{result:?}")),
+        }
+        result
+    }
+
+    async fn handle_command(&mut self, cmd: SessionCommand) {
+        // LibOS 仅在邮箱关闭且排空后结束；关闭前已接收的命令仍须处理。
         match cmd {
+            #[cfg(feature = "host-parity")]
+            SessionCommand::ContractStep {
+                generation,
+                id,
+                checkpoint,
+                reply,
+            } => {
+                let result = self.contract_step(generation, &id, checkpoint).await;
+                let _ = reply.send(result);
+            }
+            #[cfg(feature = "host-parity")]
+            SessionCommand::ContractSnapshot {
+                generation,
+                id,
+                reply,
+            } => {
+                let result = self.contract_snapshot(generation, &id).await;
+                let _ = reply.send(result);
+            }
             SessionCommand::SubscribeRightsOffering {
                 generation,
                 event_id,
@@ -1307,7 +1429,11 @@ impl<R: Runtime> SessionActor<R> {
                 reply,
             } => {
                 let result = self
-                    .generation_response(generation, Ok(()))
+                    .generation_response(
+                        generation,
+                        self.pacing
+                            .require_control(self.archive_order.blocked_reason()),
+                    )
                     .map_err(|error| CompanyWriteHostError::Session {
                         message: error.to_string(),
                     })
@@ -1334,7 +1460,11 @@ impl<R: Runtime> SessionActor<R> {
                 reply,
             } => {
                 let result = self
-                    .generation_response(generation, Ok(()))
+                    .generation_response(
+                        generation,
+                        self.pacing
+                            .require_control(self.archive_order.blocked_reason()),
+                    )
                     .map_err(|error| CompanyWriteHostError::Session {
                         message: error.to_string(),
                     })
@@ -1356,7 +1486,11 @@ impl<R: Runtime> SessionActor<R> {
                 reply,
             } => {
                 let result = self
-                    .generation_response(generation, Ok(()))
+                    .generation_response(
+                        generation,
+                        self.pacing
+                            .require_control(self.archive_order.blocked_reason()),
+                    )
                     .map_err(|error| CompanyWriteHostError::Session {
                         message: error.to_string(),
                     })
@@ -1380,7 +1514,11 @@ impl<R: Runtime> SessionActor<R> {
                 reply,
             } => {
                 let result = self
-                    .generation_response(generation, Ok(()))
+                    .generation_response(
+                        generation,
+                        self.pacing
+                            .require_control(self.archive_order.blocked_reason()),
+                    )
                     .map_err(|error| CompanyWriteHostError::Session {
                         message: error.to_string(),
                     })
@@ -1425,7 +1563,10 @@ impl<R: Runtime> SessionActor<R> {
                 intent,
                 reply,
             } => {
-                let res = self.game.enqueue_player_intent(player_id, intent);
+                let res = self
+                    .pacing
+                    .require_control(self.archive_order.blocked_reason())
+                    .and_then(|_| self.game.enqueue_player_intent(player_id, intent));
                 // reply 失败仅说明调用方已放弃等待——不属错误。
                 let _ = reply.send(res);
             }
@@ -1531,13 +1672,14 @@ impl<R: Runtime> SessionActor<R> {
             }
             SessionCommand::ResumeObserver {
                 generation,
+                lease,
                 ordinal,
                 reply,
             } => {
                 if generation != self.generation {
                     let _ = reply.send(Err("STALE_SESSION_GENERATION".into()));
                 } else {
-                    self.delivery.resume_after(ordinal, reply);
+                    self.delivery.resume_after(lease, ordinal, reply);
                 }
             }
             SessionCommand::RuntimeSnapshot { reply } => {
@@ -1610,50 +1752,33 @@ impl<R: Runtime> SessionActor<R> {
             },
             #[cfg(feature = "host-parity")]
             SessionCommand::AdvanceCivilDay { generation, reply } => {
-                use engine::session::runner::manual::{manual_civil, ManualCivilError};
-
-                let result = self.generation_response(generation, Ok(())).and_then(|_| {
-                    match manual_civil(&mut self.game, self.pause_preferences) {
-                        Ok((update, paused)) => {
-                            if paused {
-                                self.pacing
-                                    .pause_at_civil_boundary(self.game.tick(), native_async::now());
-                            }
-                            if let Err(failure) = self.stage_civil(update.clone(), paused) {
-                                self.stop_after_host_failure(*failure);
-                            }
-                            Ok(update)
-                        }
-                        Err(ManualCivilError::Rejected(error)) => Err(error),
-                        Err(ManualCivilError::Retryable(error)) => {
-                            self.stop_after_host_failure(HostFailure::correction_prepare_rejected(
-                                &error,
-                            ));
-                            Err(error)
-                        }
-                        Err(ManualCivilError::Fatal(error)) => {
-                            self.stop_after_host_failure(HostFailure::civil_ref(&error));
-                            Err(error)
-                        }
+                let result = if generation != self.generation {
+                    Err(SessionError::InvalidSave(
+                        engine::error::ValidationFault::bare(1290),
+                    ))
+                } else {
+                    let pause = self.pause_preferences;
+                    let outcome = authority::manual_civil(self, pause);
+                    if let Some(failure) = outcome.failure {
+                        self.stop_after_host_failure(failure);
                     }
-                });
+                    outcome.result
+                };
                 let _ = reply.send(result);
             }
             #[cfg(feature = "host-parity")]
             SessionCommand::Step { generation, reply } => {
-                use engine::session::runner::manual::{manual_tick, ManualStepError};
-
-                let result = self.generation_response(generation, Ok(())).and_then(|_| {
-                    manual_tick(&mut self.game, self.pacing.is_running())
-                        .map(|batch| EngineUpdate::TickBatch(Box::new(batch)))
-                        .map_err(ManualStepError::into_session_error)
-                });
-                if let Ok(update) = &result {
-                    self.emit_update(update.clone());
-                }
-                if let Err(SessionError::Step(fatal)) = &result {
-                    self.stop_after_step_failure(fatal.clone());
-                }
+                let result = if generation != self.generation {
+                    Err(SessionError::InvalidSave(
+                        engine::error::ValidationFault::bare(1290),
+                    ))
+                } else {
+                    let outcome = authority::manual_tick(self);
+                    if let Some(failure) = outcome.failure {
+                        self.stop_after_host_failure(failure);
+                    }
+                    outcome.result
+                };
                 let _ = reply.send(result);
             }
             SessionCommand::SetSpeed { speed, reply } => {
@@ -1661,13 +1786,19 @@ impl<R: Runtime> SessionActor<R> {
                 let _ = reply.send(result);
             }
             SessionCommand::SetRunning { running, reply } => {
-                self.pacing
-                    .set_running(running, self.game.tick(), native_async::now());
-                let _ = reply.send(());
+                let result = self.pacing.control_running(
+                    running,
+                    self.game.tick(),
+                    native_async::now(),
+                    self.archive_order.blocked_reason(),
+                );
+                let _ = reply.send(result);
             }
             SessionCommand::SetPausePreferences { preferences, reply } => {
-                self.pause_preferences = preferences;
-                let _ = reply.send(());
+                let result = self.pacing.control_pause(preferences).map(|preferences| {
+                    self.pause_preferences = preferences;
+                });
+                let _ = reply.send(result);
             }
             SessionCommand::ArchiveWriteCompleted { key, result } => {
                 self.finish_archive_write(key, result);
@@ -1686,28 +1817,20 @@ impl<R: Runtime> SessionActor<R> {
                 }
             },
             SessionCommand::Shutdown { reply } => {
-                if let Err(error) = self.game.shared_ingress().close() {
-                    self.stop_after_host_failure(failure::HostFailure::civil(error));
-                }
-                self.finish_archive_lane().await;
-                let _ = reply.send(());
+                let result = self.shutdown_complete().await;
+                let _ = reply.send(result);
             }
         }
     }
 
     /// 应用新倍速：固定倍率使用精确 Duration；Fastest 切到 CPU 时间片 tight-loop。
     fn apply_speed(&mut self, speed: f64) -> Result<(), SessionError> {
-        if self
-            .pacing
-            .apply_speed(speed, self.game.tick(), native_async::now())
-            .is_err()
-        {
-            // 1311：speed 档位非法；ctx[0]=speed 位模式（f64）。
-            return Err(SessionError::InvalidSave(
-                engine::error::ValidationFault::new(1311, vec![speed.to_bits()]),
-            ));
-        }
-        Ok(())
+        self.pacing.control_speed(
+            speed,
+            self.game.tick(),
+            native_async::now(),
+            self.archive_order.blocked_reason(),
+        )
     }
 
     fn generation_response<T>(
@@ -1734,10 +1857,13 @@ impl<R: Runtime> SessionActor<R> {
     ) -> Result<RestoreResult, BaselineError> {
         self.generation_response(generation, Ok(()))?;
         let restored = ProtocolSession::restore(&slot)?;
-        let next_generation = self.generation.checked_add(1).ok_or_else(|| {
-            // 1313：世代计数耗尽。
-            SessionError::InvalidSave(engine::error::ValidationFault::bare(1313))
-        })?;
+        let settings = engine::session::replacement::RestoreSettings::capture(
+            &self.pacing,
+            self.pause_preferences,
+        );
+        let replacement_plan =
+            engine::session::replacement::ReplacementPlan::prepare(self.generation)?;
+        let next_generation = replacement_plan.generation();
         let ingress = self.ingress.clone();
         let new_ingress = restored.shared_ingress();
         let install_ingress = move || -> Result<(), StoreError> {
@@ -1745,8 +1871,7 @@ impl<R: Runtime> SessionActor<R> {
                 // 1314：ingress 生命周期锁中毒。
                 SessionError::ResourceLimit(engine::error::ValidationFault::bare(1314))
             })?;
-            ingress.1.close()?;
-            *ingress = (next_generation, new_ingress);
+            replacement_plan.install_ingress(&mut ingress, new_ingress)?;
             Ok(())
         };
         let next_epoch = self
@@ -1770,18 +1895,36 @@ impl<R: Runtime> SessionActor<R> {
         }
         self.archive_epoch = next_epoch;
         self.archive_order.install(next_generation, next_epoch);
-        self.game = restored;
+        let retired = replacement_plan
+            .commit(&mut self.game, &mut self.generation, restored)
+            .expect("串行 authority 的已围栏计划不能过期");
+        libos::deferred_drop::defer(retired);
         self.game.prepare_public_baseline();
         self.timeline_id = uuid::Uuid::new_v4().to_string();
-        self.generation = next_generation;
         self.delivery.replace(
             self.session_id.clone(),
             self.timeline_id.clone(),
             next_generation,
         );
-        self.pacing
-            .reset_after_restore(self.game.tick(), native_async::now());
+        settings.install(&mut self.pacing, self.game.tick(), native_async::now());
+        self.pause_preferences = settings.pause;
         self.baseline_candidate("restore", "desktop.actor.restore")
+            .map_err(|error| {
+                let mut failure = match error {
+                    BaselineError::Catalog(source) => {
+                        HostFailure::catalog(&source, "restore", "desktop.actor.restore")
+                    }
+                    other => HostFailure::archive(&other.to_string()),
+                }
+                .at_session(&self.game);
+                failure.context.generation = Some(self.generation.to_string());
+                failure.recoverable = false;
+                BaselineError::Committed {
+                    failure: Box::new(failure),
+                    replacement: replacement_plan.receipt(),
+                    timeline_id: self.timeline_id.clone(),
+                }
+            })
     }
 
     fn baseline_candidate(
@@ -1789,6 +1932,18 @@ impl<R: Runtime> SessionActor<R> {
         operation: &'static str,
         location: &'static str,
     ) -> Result<RestoreResult, BaselineError> {
+        #[cfg(feature = "host-parity")]
+        if operation == "restore" && std::mem::take(&mut self.contract_catalog_failure) {
+            return self.finish_catalog_baseline(
+                Err(
+                    engine::session::CompanyCatalogViewError::UnknownListedStock {
+                        company: engine::company::CompanyId(7),
+                    },
+                ),
+                operation,
+                location,
+            );
+        }
         let catalog = self.game.company_catalog_view();
         self.finish_catalog_baseline(catalog, operation, location)
     }
@@ -1802,8 +1957,13 @@ impl<R: Runtime> SessionActor<R> {
         operation: &'static str,
         location: &'static str,
     ) -> Result<RestoreResult, BaselineError> {
-        let company_catalog = match catalog {
-            Ok(catalog) => catalog,
+        let captured = match engine::session::baseline::CapturedBaseline::with_catalog(
+            &self.game,
+            Some(engine::AccountId(0)),
+            self.pacing.latest_failure().cloned(),
+            catalog,
+        ) {
+            Ok(captured) => captured,
             Err(error) => {
                 self.stop_after_host_failure(failure::HostFailure::catalog(
                     &error, operation, location,
@@ -1811,19 +1971,24 @@ impl<R: Runtime> SessionActor<R> {
                 return Err(BaselineError::Catalog(error));
             }
         };
-        // 观察者恢复不得重置其他消费者的公开 delta 基线或丢弃待写存档。
-        let (snapshot, working_orders) = self.game.observer_baseline();
+        if captured.discovered_failure {
+            if let Some(failure) = captured.failure.clone() {
+                self.stop_after_host_failure(failure);
+            }
+        }
         let publication_ordinal = self.delivery.offer_baseline_fence().to_string();
         Ok(RestoreResult {
-            snapshot,
-            working_orders,
+            snapshot: captured.snapshot,
+            working_orders: captured.working_orders,
             publication_ordinal,
-            latest_checkpoint: self.game.latest_day_end_key(),
-            stock_catalog: self.game.stock_catalog_view(),
-            company_catalog,
-            civil_date: self.game.civil_date(),
+            observer_lease: self.delivery.observer_lease().to_string(),
+            latest_checkpoint: captured.latest_checkpoint,
+            stock_catalog: captured.stock_catalog,
+            company_catalog: captured.company_catalog,
+            civil_date: captured.civil_date,
             timeline_id: self.timeline_id.clone(),
             generation: self.generation.to_string(),
+            failure: self.pacing.latest_failure().cloned(),
         })
     }
 }
@@ -2333,4 +2498,21 @@ mod tests {
             Event::AuctionCompleted { seq: 4, .. }
         ));
     }
+}
+
+impl<R: Runtime> AuthorityPort for SessionActor<R> {
+    fn authority(&mut self) -> &mut DesktopPacing {
+        &mut self.pacing
+    }
+    fn archive_blocked(&self) -> bool {
+        self.archive_order.is_blocked()
+    }
+}
+
+#[cfg(feature = "host-parity")]
+mod authority_contract;
+
+#[cfg(feature = "host-parity")]
+pub fn authority_contract_capabilities() -> serde_json::Value {
+    authority_contract::capabilities()
 }

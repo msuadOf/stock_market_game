@@ -58,8 +58,8 @@ async function inWebView(input) {
         gapCount++;
         return;
       }
-      const { update, publication_ordinal: ordinal } = payload;
-      if (typeof ordinal !== "string") { error = "市场增量未使用有序发布"; return; }
+      const { update, publication_ordinal: ordinal, observer_lease: observerLease } = payload;
+      if (typeof ordinal !== "string" || typeof observerLease !== "string") { error = "市场增量缺少有序发布或 observer lease"; return; }
       const frames = update.TickBatch?.frames ?? [];
       ordinalCount++;
       if (frames.length > 0) {
@@ -70,7 +70,7 @@ async function inWebView(input) {
       else { error = "Desktop fixture 收到未知的发布消息"; return; }
       if (selected !== "stalled") {
         ack = ack.then(async () => {
-          await invoke("engine_ack_observer", { sessionId, generation, ordinal });
+          await invoke("engine_ack_observer", { sessionId, generation, observerLease, ordinal });
           acknowledged++;
         }).catch((failure) => { error = String(failure); });
       }

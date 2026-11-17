@@ -11,6 +11,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { verifySharedMemoryArtifact } from "./check-web-release-wasm.mjs";
 import { instrumentWindow } from "./performance/libos-performance-window.mjs";
 import { executeScenario, fixtureFacts, makeSetup, SCENARIO } from "./fixtures/libos-product-scenario.mjs";
+import { observeAuthorityPort } from "./fixtures/session-authority-happy-scenario.mjs";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const measurementModule = path.join(root, "scripts/performance/libos-performance-window.mjs");
@@ -244,10 +245,11 @@ async function native(base, serverPid, setup, { startupAt, warmupTicks, expected
       });
       metrics = { startupNs };
     }
-    const results = await executeScenario(measurement?.host ?? host, expectedGroups);
+    const observedAuthority = observeAuthorityPort(measurement?.host ?? host);
+    const results = await executeScenario(observedAuthority.host, expectedGroups);
     if (measurement !== undefined) Object.assign(metrics, measurement.results());
     const { groups, desks } = await observeTopology();
-    return { ...results, groups: groups.length, desks: desks.length, path: "server-http-ws", metrics };
+    return { ...results, authorityLifecycle: observedAuthority.evidence(), groups: groups.length, desks: desks.length, path: "server-http-ws", metrics };
   } catch (error) {
     scenarioError = error;
     throw error;
@@ -298,6 +300,7 @@ async function browserWorker(page, setup, { warmupTicks, expectedGroups, browser
     return await page.evaluate(async ({ setup, seed, fixtureModule, measurementModule, warmupTicks, expectedGroups }) => {
       if (!crossOriginIsolated || location.search !== "") throw new Error("真实 Worker 必须启用隔离且不携带 runtime override");
       const { demand, executeScenario, fixtureFacts, SCENARIO } = await import(fixtureModule);
+      const { observeAuthorityPort } = await import(fixtureModule.replace("libos-product-scenario.mjs", "session-authority-happy-scenario.mjs"));
       const { createWorkerHost } = await import("/src/host/worker-host.ts");
       const { normalizeSerdeValue } = await import("/src/host/protocol/guards.ts");
       let failure;
@@ -324,7 +327,7 @@ async function browserWorker(page, setup, { warmupTicks, expectedGroups, browser
           desks.join(",") === "rt-desk-0,rt-desk-1", "Browser 实际 Group/Desk 拓扑不符：" + [...spawnNames]);
         return { groups, desks };
       };
-      let result, metrics, groups, desks, scenarioError;
+      let result, metrics, groups, desks, scenarioError, authorityLifecycle;
       try {
         await host.start((update) => {
           if (update.type === "baseline") baseline = update;
@@ -372,7 +375,9 @@ async function browserWorker(page, setup, { warmupTicks, expectedGroups, browser
             start: window.__libosMeasurementStart, end: window.__libosMeasurementEnd,
           });
         }
-        result = await executeScenario(measurement?.host ?? scenarioHost, expectedGroups);
+        const observedAuthority = observeAuthorityPort(measurement?.host ?? scenarioHost);
+        result = await executeScenario(observedAuthority.host, expectedGroups);
+        authorityLifecycle = observedAuthority.evidence();
         if (measurement !== undefined) Object.assign(metrics, measurement.results());
         ({ groups, desks } = observeTopology());
       } catch (error) {
@@ -396,7 +401,7 @@ async function browserWorker(page, setup, { warmupTicks, expectedGroups, browser
           "Browser 没有 shared WASM 线性内存最终释放数据");
         metrics.memoryPeak = finalRelease.finalBytes / 65536;
       }
-      return { ...result, groups: groups.length, desks: desks.length, path: "browser-worker-shared-wasm", metrics };
+      return { ...result, authorityLifecycle, groups: groups.length, desks: desks.length, path: "browser-worker-shared-wasm", metrics };
     }, {
       setup, seed: SCENARIO.seed, fixtureModule: "/@fs" + fixture,
       measurementModule: "/@fs" + measurementModule, warmupTicks, expectedGroups,
@@ -527,7 +532,7 @@ export async function runLibosProductExperiment({
       }
       const summarize = ({ path, groups, desks, lastTick, lastSeq, playerTradeCount, npcTradeCount, npcGroupActivity }) =>
         ({ path, groups, desks, lastTick, lastSeq, playerTradeCount, npcTradeCount, npcGroupActivity });
-      const authority = ({ trace, inputs, checkpoint, freeRestart }) => ({ trace, inputs, checkpoint, freeRestart });
+      const authority = ({ trace, inputs, checkpoint, freeRestart, authorityLifecycle }) => ({ trace, inputs, checkpoint, freeRestart, authorityLifecycle });
       const traceDigests = (witness) => ({
         authority: hash(canonicalJson(authority(witness))),
         uninterrupted: hash(canonicalJson(witness.freeRestart.uninterrupted.frames)),
@@ -537,7 +542,7 @@ export async function runLibosProductExperiment({
         schema: "libos-product-parity/v1",
         fixtureSha256, contract, fixedAcceptedFacts,
         authorityTraceSha256: hash(canonicalJson({ trace: nativeWitness.trace, inputs: nativeWitness.inputs, checkpoint: nativeWitness.checkpoint })),
-        native: summarize(nativeWitness), wasm: summarize(wasmWitness), artifact,
+        native: { ...summarize(nativeWitness), authorityLifecycle: nativeWitness.authorityLifecycle }, wasm: { ...summarize(wasmWitness), authorityLifecycle: wasmWitness.authorityLifecycle }, artifact,
       } : {
         schema: "libos-product-free-restart/v1",
         fixtureSha256, contract, fixedAcceptedFacts, artifact,

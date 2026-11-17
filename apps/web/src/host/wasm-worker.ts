@@ -1,3 +1,6 @@
+import { closeCheckpointAndCleanup } from "./wasm-checkpoint-shutdown.ts";
+import { shutdownClock, WASM_SHUTDOWN_BUDGET_MS } from "./wasm-shutdown-budget.ts";
+import { authorityContractCleanupLease } from "./authority-contract-result.ts";
 import { parseVerifiedRestoreCapability } from "./wasm-restore-package-capability.ts";
 import { WasmRestartGate } from "./wasm-restart-gate.ts";
 import { prepareBaselineUpdate } from "./host-update.ts";
@@ -5,7 +8,7 @@ import { parseSaveSlot } from "../save/save-schema.ts";
 import { normalizePublicReportById, normalizePublicReportPage, normalizeSerdeMaps } from "./serde-normalize.ts";
 import { WASM_CREATE_ONCE_ERROR, WasmSessionSlot } from "./wasm-session-slot.ts";
 import { WasmAuthorityRuntime, type MarketBindings } from "./wasm-authority-runtime.ts";
-import { WasmCheckpointClient } from "./wasm-checkpoint-client.ts";
+import { CheckpointCloseError, WasmCheckpointClient } from "./wasm-checkpoint-client.ts";
 import { WorkerTaskScheduler } from "./worker-task-scheduler.ts";
 import { classifyWasmFailure, describeWasmFailure, describeReadFailureFields, type WasmFailureClassification } from "./wasm-failure.ts";
 import { parseHostFailure } from "./protocol-failure.ts";
@@ -115,19 +118,10 @@ function attachMarketRuntime(): Promise<void> | undefined {
 function attachCheckpoint(): Promise<void> | undefined {
   const [handle, wasm] = slot.requireHandle();
   const generation = slot.readGeneration();
-  return checkpoint.attach(handle, wasm, generation, engineInitializer.requireConfigured().substrate, (error, scope) => {
+  return checkpoint.attach(handle, wasm, generation, engineInitializer.requireConfigured().substrate, (_error, _scope) => {
     if (closingSession || generation !== slot.readGeneration()) return;
-    loop.stop();
-    postFailureDetails("wasm-worker.checkpoint", {
-      code: "DAY_END_ARCHIVE_FAILED",
-      where: "wasm-worker.checkpoint",
-      message: error.message,
-      context: { operation: "day_end_archive", generation: String(generation) },
-      recoverable: true,
-      recoveryActions: [scope === "item"
-        ? "检查浏览器存储空间和权限后恢复市场，下一次日结会重新存档"
-        : "检查浏览器存储空间和权限后重新打开会话", "保留上一份有效存档"],
-    });
+    // 归档客户端已将故障交回 Rust authority，并按发布序列交付；这里只取消 JS 唤醒。
+    loop.suspend();
   });
 }
 
@@ -138,6 +132,7 @@ function marketBaseline(snapshotOverride?: unknown) {
   if (typeof value.publicationOrdinal !== "string" || !/^(0|[1-9][0-9]*)$/.test(value.publicationOrdinal)) {
     throw new Error("观察基线发布序号无效");
   }
+  if (typeof value.civilDate !== "string" && value.civilDate !== null) throw new Error("观察基线自然日无效");
   const controlAddress = bindings.market_runner_control_signal(handle);
   if (!Number.isInteger(controlAddress) || controlAddress <= 0 || controlAddress % 4 !== 0) {
     throw new Error("共享控制通知地址无效");
@@ -146,10 +141,11 @@ function marketBaseline(snapshotOverride?: unknown) {
     publisherToken: handle, publicationOrdinal: value.publicationOrdinal, controlAddress,
     snapshot: snapshotOverride === undefined ? value.snapshot : snapshotOverride,
     workingOrders: value.workingOrders,
+    ...(Object.hasOwn(value, "failure") ? { failure: value.failure } : {}),
     ...(Object.hasOwn(value, "latestCheckpoint") ? { latestCheckpoint: value.latestCheckpoint } : {}),
-    stockCatalog: wasm.stock_catalog_view(handle),
-    companyCatalog: wasm.company_catalog_view(handle),
-    civilDate: wasm.civil_date(handle),
+    stockCatalog: value.stockCatalog,
+    companyCatalog: value.companyCatalog,
+    civilDate: value.civilDate,
   };
 }
 const engineInitializer = createFacadeEngineInitializer({
@@ -158,7 +154,7 @@ const engineInitializer = createFacadeEngineInitializer({
   isolated: () => self.crossOriginIsolated === true,
   environment: { bindFacadeThreadEnvironment, installFacadeSlotLayout, getArenaView },
   load: loadEngineModule,
-  onFailure(error) { loop.stop(); postFailure("wasm-worker.facade-control", error); },
+  onFailure(error) { loop.suspend(); postFailure("wasm-worker.facade-control", error); },
 });
 
 function bindEngineTransport(value: unknown): void {
@@ -445,8 +441,147 @@ function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
   let controlForActiveHandle: number | undefined;
   void (async () => {
     let initialCreateAttempt = false;
-    let restoreAttempt: { handle: number; generation: number; token: number; restartWanted: boolean } | null = null;
+    let restoreAttempt: { handle: number; generation: number; token: number; restartWanted: boolean; sinkRetired: boolean } | null = null;
     try {
+      const verificationRequest = message as unknown as { type: string; requestId?: number; generation?: number };
+      if (verificationRequest.type === "authorityContractExtension") {
+        if (!import.meta.env.DEV || !E2E_STEP_ENABLED || !engineInitializer.requireConfigured().substrate.diagnostics) throw new Error("authority扩展仅允许diagnostics E2E构建");
+        slot.requireGeneration(verificationRequest.generation);
+        loop.stop();
+        const { runBrowserAuthorityExtension } = await import("./wasm-authority-extensions.ts");
+        const id = message.id;
+        if (typeof id !== "string") throw new Error("authority扩展缺少场景id");
+        const current = () => {
+          const [handle, bindings] = slot.requireHandle();
+          const wasm = bindings as unknown as ReturnType<import("./wasm-authority-extensions.ts").BrowserExtensionRuntime["current"]>["wasm"];
+          if (typeof wasm.market_runner_contract_snapshot !== "function") throw new Error("扩展需要verification-harness产物");
+          return { handle, generation: slot.readGeneration(), wasm };
+        };
+        const extensionObservers = new Map<number, { lease: bigint; wasm: ReturnType<typeof current>["wasm"] }>();
+        const releaseExtensionObservers = () => {
+          for (const [handle, observer] of extensionObservers) {
+            observer.wasm.market_publisher_release(handle, observer.lease);
+            extensionObservers.delete(handle);
+          }
+        };
+        let extensionUnsafe = false;
+        let result: unknown;
+        let extensionError: string | undefined;
+        let extensionOwner: import("./authority-extension-result.ts").AuthorityExtensionOwner = { kind: "live" };
+        try {
+          result = await runBrowserAuthorityExtension({
+            current, checkpoint,
+            trackObserver(handle, lease) { extensionObservers.set(handle, { lease, wasm: current().wasm }); },
+            prepareInvalid(raw) {
+              const prepared = slot.prepareRestore(raw);
+              slot.discardPreparedRestore(prepared);
+              // 意外成功必须正常返回，由合同 driver 判失败，不能伪造预检拒绝。
+            },
+            async restore(raw, fault) {
+              const parsed = parseSaveSlot(normalizeSerdeMaps(raw));
+              const prepared = slot.prepareRestore(parsed);
+              slot.fencePreparedRestore(prepared);
+              try { await checkpoint.close(true); }
+              catch (error) {
+                if (error instanceof CheckpointCloseError && error.quiescence === "unknown") {
+                  extensionUnsafe = true;
+                  extensionOwner = { kind: "quiescence-unknown", message: describeWasmFailure(error) };
+                }
+                throw error;
+              }
+              releaseExtensionObservers();
+              let replacementError: unknown;
+              try { slot.restore(parsed, { wasRunning: false, stop: () => loop.stop(), restart: () => { throw new Error("验证替换不自动重启"); } }, prepared); }
+              catch (error) { replacementError = error; }
+              if (slot.readGeneration() !== prepared.generation) {
+                try {
+                  const next = current();
+                  extensionObservers.set(next.handle, { lease: next.wasm.market_publisher_bind(next.handle, BigInt(next.generation)), wasm: next.wasm });
+                } catch (cleanup) {
+                  if (replacementError !== undefined) throw new AggregateError([replacementError, cleanup], "替换失败且新观察流所有权登记失败", { cause: replacementError });
+                  throw cleanup;
+                }
+              }
+              if (replacementError !== undefined) throw replacementError;
+              if (fault === "postcommit-archive-attach") throw new Error("验证注入：commit成功后归档端点attach失败");
+              await attachMarketRuntime();
+              postIngressBridge();
+            },
+            forceArchiveWorkerExit: () => { checkpoint.forceUnknownExitForVerification(); extensionUnsafe = true; },
+            async tryReuseAfterUnknownExit() { await attachCheckpoint(); },
+            async shutdown() {
+              loop.suspend(); closingSession = true;
+              try {
+                const closed = await closeCheckpointAndCleanup(() => checkpoint.close(), () => { releaseExtensionObservers(); return shutdownSessionAndReclaimer(); });
+                extensionOwner = { kind: "consumed", report: closed.value, ...(closed.archiveFailure === undefined ? {} : { archiveFailure: closed.archiveFailure }) };
+                reportEngineQuiescence();
+                return { report: closed.value, ...(closed.archiveFailure === undefined ? {} : { archiveFailure: closed.archiveFailure }) };
+              } catch (error) {
+                extensionUnsafe = true;
+                extensionOwner = { kind: "quiescence-unknown", message: describeWasmFailure(error) };
+                throw error;
+              }
+            },
+          }, id);
+        } catch (error) { extensionError = describeWasmFailure(error); }
+        if (!extensionUnsafe) {
+          try { releaseExtensionObservers(); }
+          catch (error) {
+            const cleanup = `扩展真实观察租约清理失败：${describeWasmFailure(error)}`;
+            extensionError = extensionError === undefined ? cleanup : `${extensionError}；${cleanup}`;
+            extensionUnsafe = true;
+            extensionOwner = { kind: "quiescence-unknown", message: extensionError };
+          }
+        }
+        ctx.postMessage({ type: "authorityContractExtensionCompleted", requestId: verificationRequest.requestId, generation: verificationRequest.generation,
+          nextGeneration: slot.readGeneration(), id, result, owner: extensionOwner, ...(extensionError === undefined ? {} : { error: extensionError }) });
+        return;
+      }
+      if (verificationRequest.type === "authorityContract") {
+        if (!import.meta.env.DEV || !E2E_STEP_ENABLED || !engineInitializer.requireConfigured().substrate.diagnostics) throw new Error("authority合同仅允许diagnostics E2E构建");
+        slot.requireGeneration(verificationRequest.generation);
+        loop.stop();
+        const { runBrowserAuthorityContract, readAuthorityContractSnapshot } = await import("./wasm-authority-contract.ts");
+        const current = () => {
+          const [handle, bindings] = slot.requireHandle();
+          const wasm = bindings as unknown as import("./wasm-authority-contract.ts").ContractBindings;
+          if (typeof wasm.market_runner_contract_snapshot !== "function") throw new Error("需要verification-harness WASM产物");
+          return { handle, generation: slot.readGeneration(), wasm };
+        };
+        let rows: unknown[] = [];
+        let contractError: string | undefined;
+        try {
+        rows = await runBrowserAuthorityContract({
+          current, checkpoint,
+          rejectRestore: () => { slot.requireGeneration(slot.readGeneration() - 1); },
+          rejectGeneration: generation => { slot.requireGeneration(generation); },
+          async restore(raw) {
+            const parsed = parseSaveSlot(normalizeSerdeMaps(raw));
+            const prepared = slot.prepareRestore(parsed);
+            const retiring = current();
+            const retiringState = readAuthorityContractSnapshot(retiring.wasm, retiring.handle, "retire");
+            slot.fencePreparedRestore(prepared);
+            await checkpoint.close(true);
+            retiring.wasm.market_publisher_release(retiring.handle, BigInt(retiringState.observer.lease));
+            slot.restore(parsed, { wasRunning: false, stop: () => loop.stop(), restart: () => { throw new Error("暂停合同不能自动重启"); } }, prepared);
+            await attachMarketRuntime();
+            postIngressBridge();
+          },
+        });
+        } catch (error) { contractError = describeWasmFailure(error); }
+        try {
+          const final = current();
+          const finalLease = authorityContractCleanupLease(rows, contractError,
+            () => readAuthorityContractSnapshot(final.wasm, final.handle, "contract-cleanup").observer.lease);
+          final.wasm.market_publisher_release(final.handle, finalLease);
+        } catch (error) {
+          const cleanup = `合同发布器清理失败：${describeWasmFailure(error)}`;
+          contractError = contractError === undefined ? cleanup : `${contractError}；${cleanup}`;
+        }
+        ctx.postMessage({ type: "authorityContractCompleted", requestId: verificationRequest.requestId, generation: verificationRequest.generation,
+          nextGeneration: slot.readGeneration(), rows, ...(contractError === undefined ? {} : { error: contractError }) });
+        return;
+      }
       // 普通请求保留原对象；只在受保护的入口移除传输层的控制标记。
       if (Object.hasOwn(message, "controlHandle")) {
         const { controlHandle, ...request } = message;
@@ -512,7 +647,14 @@ function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
           // setup 已由首次 init 的唯一配置持有；create 只携带一次性种子，未知字段显式拒绝。
           exact({ ...message }, ["type", "seed"], "Worker create");
           // 只在通过 JS 校验并锁存创建权后、实际进入 Rust FFI 时标记退休责任。
-          slot.create(configured.setup, message.seed, () => { initialCreateAttempt = true; });
+          let createSetup: unknown = configured.setup;
+          if (import.meta.env.DEV && E2E_STEP_ENABLED && import.meta.env.VITE_SESSION_AUTHORITY_CONTRACT === "1") {
+            if (!configured.substrate.diagnostics) throw new Error("authority合同必须装载独立验证产物");
+            const contract = wasmModule as unknown as { market_runner_contract_setup?: () => unknown };
+            if (typeof contract.market_runner_contract_setup !== "function") throw new Error("验证产物缺少共享setup导出");
+            createSetup = contract.market_runner_contract_setup();
+          }
+          slot.create(createSetup, message.seed, () => { initialCreateAttempt = true; });
           const archiveReady = attachMarketRuntime();
           if (archiveReady !== undefined) await archiveReady;
           initialCreateAttempt = false;
@@ -632,21 +774,33 @@ function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
           const requestedGeneration = slot.requireGeneration(message.generation);
           const parsed = parseSaveSlot(message.slot);
           const restartToken = restoreRestart.begin();
-          restoreAttempt = { handle: slot.requireHandle()[0], generation: slot.readGeneration(), token: restartToken, restartWanted: false };
+          restoreAttempt = { handle: slot.requireHandle()[0], generation: slot.readGeneration(), token: restartToken, restartWanted: false, sinkRetired: false };
           const wasRunning = loop.isRunning();
-          loop.stop();
-          const archived = checkpoint.close();
-          if (archived !== undefined) await archived;
+          loop.suspend();
+          // 先验证 candidate，再撤销旧 writer；CONSUMER 只有一个，不能在 prepare 装第二份。
+          let prepared: ReturnType<typeof slot.prepareRestore>;
+          try { prepared = slot.prepareRestore(parsed); }
+          catch (error) { restoreAttempt.restartWanted = wasRunning; throw error; }
           let restoredSnapshot: unknown;
           try {
+            // 替换显式放弃旧时间线未耐久候选，不把它们冒充写入成功。
+            restoreAttempt.sinkRetired = true;
+            slot.fencePreparedRestore(prepared);
+            const archived = checkpoint.close(true);
+            if (archived !== undefined) await archived;
             restoredSnapshot = slot.restore(parsed, {
-              wasRunning, stop: () => loop.stop(), restart: () => { if (restoreAttempt !== null) restoreAttempt.restartWanted = true; },
-            });
+              wasRunning, stop: () => loop.suspend(), restart: () => { if (restoreAttempt !== null) restoreAttempt.restartWanted = true; },
+            }, prepared);
           } catch (error) {
-            if (slot.readGeneration() === restoreAttempt.generation && slot.requireHandle()[0] === restoreAttempt.handle) {
-              const reopened = attachCheckpoint();
-              if (reopened !== undefined) await reopened;
-            }
+            restoreAttempt.restartWanted = false;
+            fatalSession = true;
+            // 未知物理退出时，不在同一 Memory 上调用 candidate/drop/reclaimer。
+            if (error instanceof CheckpointCloseError && error.quiescence === "unknown") throw error;
+            try { slot.discardPreparedRestore(prepared); }
+            catch (cleanup) { throw new AggregateError([error, cleanup], "恢复失败并且候选清理失败", { cause: error }); }
+            // 撤销旧 sink 是不可逆 fence；失败后不可重挂以伪装旧会话可运行。
+            restoreAttempt.restartWanted = false;
+            fatalSession = true;
             throw error;
           }
           const archiveReady = attachMarketRuntime();
@@ -865,27 +1019,32 @@ function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
           return;
         }
         case "shutdown": {
-          if (Object.keys(message).sort().join(",") !== "generation,requestId,type" || !Number.isSafeInteger(message.requestId) || Number(message.requestId) < 1) throw new Error("Worker shutdown 需要唯一正 safe requestId 与 exact 字段");
+          if (!["generation,requestId,type", "generation,requestId,shutdownDeadline,type"].includes(Object.keys(message).sort().join(",")) || !Number.isSafeInteger(message.requestId) || Number(message.requestId) < 1) throw new Error("Worker shutdown 需要唯一正 safe requestId 与 exact 字段");
           const requestedGeneration = slot.requireGeneration(message.generation);
           if (closingSession) throw new Error("Worker shutdown 不能重复消费会话");
           closingSession = true;
           restoreRestart.invalidate();
-          loop.stop();
+          loop.suspend();
           // 已入队日终先提交存储；观察者和 ingress 的关闭不承担这个围栏。
-          const archived = checkpoint.close();
-          if (archived !== undefined) await archived;
-          const report = shutdownSessionAndReclaimer();
-          ctx.postMessage({ type: "shutdownCompleted", requestId: message.requestId, generation: requestedGeneration, report });
+          const suppliedDeadline = (message as unknown as { shutdownDeadline?: unknown }).shutdownDeadline;
+          if (suppliedDeadline !== undefined && (typeof suppliedDeadline !== "number" || !Number.isFinite(suppliedDeadline))) throw new Error("shutdown deadline 无效");
+          const until = Math.min(typeof suppliedDeadline === "number" ? suppliedDeadline : Infinity, shutdownClock() + WASM_SHUTDOWN_BUDGET_MS);
+          const archived = checkpoint.close(false, until);
+          const { value: report, archiveFailure } = archived === undefined
+            ? { value: shutdownSessionAndReclaimer(), archiveFailure: undefined }
+            : await closeCheckpointAndCleanup(() => archived, shutdownSessionAndReclaimer);
+          ctx.postMessage({ type: "shutdownCompleted", requestId: message.requestId, generation: requestedGeneration, report, ...(archiveFailure === undefined ? {} : { archiveFailure }) });
           reportEngineQuiescence();
           return;
         }
         case "drop": {
           restoreRestart.invalidate();
-          loop.stop();
+          loop.suspend();
           closingSession = true;
           const archived = checkpoint.close();
-          if (archived !== undefined) await archived;
-          dropSessionAndReclaimer();
+          const closed = archived === undefined ? { value: dropSessionAndReclaimer(), archiveFailure: undefined } : await closeCheckpointAndCleanup(() => archived, dropSessionAndReclaimer);
+          reportEngineQuiescence();
+          if (closed.archiveFailure !== undefined) throw new Error(closed.archiveFailure.message, { cause: closed.archiveFailure });
           return;
         }
         default:
@@ -897,18 +1056,11 @@ function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
       if (message.type === "init" || message.type === "restoreInitial" || initialCreateAttempt) {
         if (initialCreateAttempt) closedAfterCreateFailure = true;
         closingSession = true;
-        restoreRestart.invalidate(); loop.stop();
+        restoreRestart.invalidate(); loop.suspend();
         try {
           const archived = checkpoint.close();
-          if (archived !== undefined) await archived;
-          let dropped: { error: unknown } | undefined;
-          try { slot.drop(); } catch (error) { dropped = { error }; }
-          try { closeReclaimer(); }
-          catch (error) {
-            if (dropped === undefined) throw error;
-            throw new AggregateError([dropped.error, error], `会话与析构队列均未完成清理：${describeWasmFailure(dropped.error)}；${describeWasmFailure(error)}`);
-          }
-          if (dropped !== undefined) throw dropped.error;
+          const closed = archived === undefined ? { value: dropSessionAndReclaimer(), archiveFailure: undefined } : await closeCheckpointAndCleanup(() => archived, dropSessionAndReclaimer);
+          if (closed.archiveFailure !== undefined) failureError = new AggregateError([error, new Error(closed.archiveFailure.message)], "初始化失败且归档未耐久，清理已完成", { cause: error });
           engineInitializer.dispose(); verifiedRestoreModule = undefined;
           initializationClosed = true;
         } catch (cleanupError) {
@@ -916,38 +1068,54 @@ function handleBusinessMessage(event: MessageEvent<WorkerMessage>): void {
         }
       }
       const attempt = restoreAttempt;
-      const committed = attempt !== null && (slot.readGeneration() !== attempt.generation || slot.requireHandle()[0] !== attempt.handle);
+      const replacementCommitted = attempt !== null && (slot.readGeneration() !== attempt.generation || slot.requireHandle()[0] !== attempt.handle);
+      const committed = attempt !== null && (attempt.sinkRetired || replacementCommitted);
       const classified = classifyWasmFailure(failureError);
-      if (attempt !== null && !committed && classified.kind === "unstructured" && attempt.restartWanted) {
+      const failureDescription = classified.kind === "structured" ? classified.message
+        : classified.kind === "access-error" ? `读取错误字段 ${classified.field} 失败：${classified.reason}${describeReadFailureFields(classified.cause)}`
+        : classified.description;
+      const failureCause = classified.kind === "structured" ? { code: classified.code, message: classified.message } : classified.cause;
+      if (attempt !== null && !committed && attempt.restartWanted) {
         restoreRestart.schedule(attempt.token,
           () => !fatalSession && slot.readGeneration() === attempt.generation && slot.requireHandle()[0] === attempt.handle,
           () => loop.start());
       } else restoreRestart.invalidate();
-      if (committed || classified.kind !== "unstructured") {
-        const closeAuthority = committed || (classified.kind === "structured" && classified.code === "CATALOG_BASELINE_FAILED");
+      if (!committed && !initializationClosed && !initialCreateAttempt && message.type !== "restoreInitial" && attempt === null && classified.kind === "structured" && classified.code === "CATALOG_BASELINE_FAILED" && typeof message.requestId === "number") {
+        // Rust 已锁存并有序发布此业务故障；取消剩余唤醒并结束请求，保留查询/恢复 owner。
+        loop.suspend();
+        respondOperationError(message, failureDescription);
+        return;
+      }
+      if (committed || (attempt === null && classified.kind !== "unstructured")) {
+        const closeAuthority = committed;
+        let retiredQuiescent = false;
         if (closeAuthority) fatalSession = true;
-        loop.stop();
+        loop.suspend();
         let failure: WorkerFailureDetails = classified.kind === "unstructured"
-          ? { code: "WASM_RESTORE_COMMITTED_FAILED", where: "wasm-worker.restore",
-              message: "恢复已替换实际会话，后续准备或清理失败，必须重建有效会话", context: { operation: "restore", generation: String(slot.readGeneration()) }, recoverable: false,
-              recoveryActions: ["重新加载有效日终档或新建会话", "复制错误详情反馈"], cause: { message: classified.description } }
+          ? { code: replacementCommitted ? "WASM_RESTORE_COMMITTED_FAILED" : "WASM_RESTORE_RETIREMENT_FAILED", where: "wasm-worker.restore",
+              message: "恢复已撤销旧存档端点或替换会话，失败后不可回滚，必须重建有效会话", context: { operation: "restore", generation: String(slot.readGeneration()) }, recoverable: false,
+              recoveryActions: ["重新加载有效日终档或新建会话", "复制错误详情反馈"], cause: { message: classified.description, replacement: { kind: replacementCommitted ? "committed" : "retirement-fenced", previousGeneration: attempt?.generation, currentGeneration: slot.readGeneration() } } }
           : structuredHostFailure(failureError, `wasm-worker.${message.type}`, classified);
+        if (closeAuthority) failure = {
+          ...failure, code: replacementCommitted ? "WASM_RESTORE_COMMITTED_FAILED" : "WASM_RESTORE_RETIREMENT_FAILED", recoverable: false,
+          cause: { primary: failure.cause, replacement: { kind: replacementCommitted ? "committed" : "retirement-fenced", previousGeneration: attempt?.generation, currentGeneration: slot.readGeneration() } },
+        };
         // drop_session 同时撤销 SessionRegistry 的 ingress token，阻止独立 intake 继续入队。
-        if (closeAuthority) {
+        if (closeAuthority && !(failureError instanceof CheckpointCloseError && failureError.quiescence === "unknown")) {
           try {
             const archived = checkpoint.close();
-            if (archived !== undefined) await archived;
-            slot.drop();
+            const closed = archived === undefined ? { value: dropSessionAndReclaimer(), archiveFailure: undefined } : await closeCheckpointAndCleanup(() => archived, dropSessionAndReclaimer);
+            retiredQuiescent = true;
+            if (closed.archiveFailure !== undefined) throw new Error(closed.archiveFailure.message, { cause: closed.archiveFailure });
           }
           catch (cleanupError) { failure = { ...failure, cause: { primary: failure.cause, cleanup: describeWasmFailure(cleanupError) } }; }
-          try { closeReclaimer(); }
-          catch (cleanupError) { failure = { ...failure, cause: { primary: failure.cause, reclaimer: describeWasmFailure(cleanupError) } }; }
         }
         postFailureDetails(`wasm-worker.${message.type}`, failure, initializationClosed ? message.type === "restoreInitial" ? "initial-session-failed" : "initialization-failed" : false, initializationClosed && message.type === "init" && !memoryInitializationStarted);
-        if (initializationClosed) reportEngineQuiescence(message.type === "init" && !memoryInitializationStarted ? "unallocated" : "quiescent");
-      } else if (typeof message.requestId === "number") respondOperationError(message, classified.description);
+        if (retiredQuiescent) reportEngineQuiescence();
+        else if (initializationClosed) reportEngineQuiescence(message.type === "init" && !memoryInitializationStarted ? "unallocated" : "quiescent");
+      } else if (typeof message.requestId === "number") respondOperationError(message, failureDescription);
       else {
-        postFailureDetails("wasm-worker.message", unstructuredFailureDetails(classified.description, "wasm-worker.message", classified.cause), initializationClosed ? message.type === "restoreInitial" ? "initial-session-failed" : "initialization-failed" : false, initializationClosed && message.type === "init" && !memoryInitializationStarted);
+        postFailureDetails("wasm-worker.message", unstructuredFailureDetails(failureDescription, "wasm-worker.message", failureCause), initializationClosed ? message.type === "restoreInitial" ? "initial-session-failed" : "initialization-failed" : false, initializationClosed && message.type === "init" && !memoryInitializationStarted);
         if (initializationClosed) reportEngineQuiescence(message.type === "init" && !memoryInitializationStarted ? "unallocated" : "quiescent");
       }
     } finally {

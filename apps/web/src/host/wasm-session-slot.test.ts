@@ -8,6 +8,9 @@ async function fixture() {
   let failure: "create" | "snapshot" | "drop" | "prepare" | null = null;
   const bindings = {
     create_session: (_setup: unknown, seed: bigint) => { calls.push(`create:${seed}`); if (failure === "create") throw new Error("create failed"); return candidate; },
+    fence_session_replacement: (previous: number, candidate: number, generation: bigint) => { calls.push(`fence:${previous}:${candidate}:${generation}`); },
+    prepare_session_replacement: (_previous: number, _candidate: number, _generation: bigint) => {},
+    commit_session_replacement: (_previous: number, _candidate: number, generation: bigint) => generation + 1n,
     restore_json: (encoded: string) => { calls.push(`restore:${encoded}`); return candidate; },
     snapshot: (handle: number) => { calls.push(`snapshot:${handle}`); if (failure === "snapshot") throw new Error("snapshot failed"); return { handle }; },
     drop_session: (handle: number) => { calls.push(`drop:${handle}`); if (failure === "drop") throw new Error("drop failed"); },
@@ -96,7 +99,7 @@ test("WasmSessionSlot restore 先 snapshot、交换 authority 并推进 generati
   assert.deepEqual(restored, { handle: 9 });
   assert.equal(f.slot.requireHandle()[0], 9);
   assert.equal(f.slot.readGeneration(), 2);
-  assert.deepEqual(f.calls, ['stop', 'restore:{"saved":true}', 'snapshot:9', 'drop:7', 'restart', 'prepare:9']);
+  assert.deepEqual(f.calls, ['stop', 'restore:{"saved":true}', 'snapshot:9', 'drop:7', 'prepare:9', 'restart']);
 });
 
 test("WasmSessionSlot restore 旧 drop 失败仍保留已提交新 handle 与新 generation", async () => {
@@ -108,7 +111,7 @@ test("WasmSessionSlot restore 旧 drop 失败仍保留已提交新 handle 与新
   assert.throws(() => f.slot.restore({}, f.hooks), /drop failed/);
   assert.equal(f.slot.requireHandle()[0], 9);
   assert.equal(f.slot.readGeneration(), 2);
-  assert.deepEqual(f.calls, ['stop', 'restore:{}', 'snapshot:9', 'drop:7', 'restart']);
+  assert.deepEqual(f.calls, ['stop', 'restore:{}', 'snapshot:9', 'drop:7']);
 });
 
 test("WasmSessionSlot restore prepare 失败保留新 handle 与新 generation", async () => {
@@ -160,4 +163,17 @@ test("WasmSessionSlot restore 构造失败不清未创建的 candidate，仍恢�
   assert.equal(f.slot.requireHandle()[0], 7);
   assert.equal(f.slot.readGeneration(), 1);
   assert.deepEqual(f.calls, ["stop", "restart"]);
+});
+
+test("恢复 fence 在候选准备后才撤旧 ingress，且不冒充 generation commit", async () => {
+  const f = await fixture();
+  f.slot.create({}, 1n);
+  f.candidate(9);
+  const prepared = f.slot.prepareRestore({});
+  assert.equal(f.calls.some(call => call.startsWith("fence:")), false);
+  f.slot.fencePreparedRestore(prepared);
+  assert.ok(f.calls.includes("fence:7:9:1"));
+  assert.equal(f.slot.readGeneration(), 1);
+  assert.equal(f.slot.requireHandle()[0], 7);
+  assert.throws(() => f.slot.fencePreparedRestore(prepared), /已经封口/);
 });

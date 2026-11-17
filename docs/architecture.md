@@ -25,7 +25,7 @@ React UI / Redux
 |------|-------------|------|--------|
 | 浏览器本地局 | Web Worker 中的 Rust/WASM | `postMessage` | IndexedDB 日终快速槽及 JSON 导入/导出 |
 | 远程局 | server 的 Rust actor | REST 和 WebSocket | server 的 SQLite 数据库 |
-| 桌面本地局 | Tauri 的 Rust actor | Tauri IPC | 前端快速槽及 JSON 导入/导出 |
+| 桌面本地局 | Tauri 的 Rust actor | Tauri IPC | 本机 SQLite 日终快速槽及 JSON 导入/导出 |
 
 Web UI 和 desktop 可在启动时选择本地或远程宿主；静态 WebUI 服务不运行浏览器本地局。部署入口和构建目标见 [ADR-0027](decisions/0027-runtime-deployment-and-build-targets.md)，原生数据库与浏览器存储方向见 [ADR-0033](decisions/0033-day-end-database-and-browser-storage.md)。
 
@@ -35,7 +35,7 @@ React 应用通过 `EngineHost` 提交命令，消费统一的 `HostUpdate`：�
 
 Server、Desktop 与浏览器产品只使用 [ADR-0043](decisions/0043-std-thread-ownership-runtime.md) 的所有权转移 World：NPC 分组和各股票交易部处理决策与撮合，协调者收敛并提交 tick。Native 启动拒绝旧配置 `ENGINE_STEP_RUNTIME=0`；旧管线仅用于具名验证入口或专用 engine 单测进程。浏览器宿主校验 World ABI、等待设置和线程门面后才建立会话，底座未就绪立即报错，不回退串行。路径存在不代表完整验收已经通过。
 
-`packages/libos` 提供分配器选型、线程创建与回收、单调时钟、阻塞等待、worker 死亡通知及有界后台析构，不依赖 engine 或产品宿主。Native 使用 OS 线程，Browser 使用 `packages/libos/browser` 内的共享内存、Worker 槽协议和 supervisor。engine 决定交易相位、正常日结、可重试 Abort 和永久停止等业务顺序，不检测宿主。各宿主仍负责 UI、传输、存档与业务错误映射，例如 Axum HTTP/WS、Browser postMessage 装配和 IndexedDB。底座返回的 Worker death 不是可重抛的 Rust panic payload，不能伪造；保留清理次错不覆盖主错。
+`packages/libos` 提供分配器选型、线程创建与回收、单调时钟、阻塞等待、worker 死亡通知及有界后台析构，不依赖 engine 或产品宿主。Native 使用 OS 线程，Browser 使用 `packages/libos/browser` 内的共享内存、Worker 槽协议和 supervisor。engine 决定交易相位、正常日结、可重试 Abort 和永久停止等业务顺序，不检测宿主。共享会话 authority 统一业务错误语义与运行时转移；各宿主负责 UI、传输、实际存储与底座错误上下文，例如 Axum HTTP/WS、Browser postMessage 装配和 IndexedDB。底座返回的 Worker death 不是可重抛的 Rust panic payload，不能伪造；保留清理次错不覆盖主错。
 
 LibOS 收件合同：协调者有相位 deadline；worker 正常空闲没有自退出时限，消息与普通断连按 FIFO 交付缓冲。永久停止优先于业务交付，必须同时发送唤醒哨兵；正常 `Drain → Shutdown → Final` 与可重试 tick Abort 不置永久停止标记。时钟逆序差值饱和为零，严格顺序检查用 `checked_duration_since`。相同合同不等于同一 OS 原语、时钟原点或诊断精度。两个宿主的 `deferred_drop` 在正常和拥塞时共用同一有界队列策略，满队列只允许显式内联。Native owner 随进程存活，Browser owner 随共享 Memory 存活；在会话关闭后停止提交、排空并 join，再由 supervisor 验证真实 Worker 退出。Rust join 已取结果并不等同于物理退出。启动和死亡诊断因底座而不同；性能需按同底座对照独立验证。
 
@@ -48,6 +48,14 @@ Web WASM 的 panic 早期死亡通知与有界 tombstone 采用受控 std 构建
 每个 tick 的失败须显式报告，不能发布部分结果；自然日更新是独立事务。并发受理顺序和重放边界见 [ADR-0017](decisions/0017-escrow-parallel-tick.md) 与 [testing.md](testing.md)。不以固定 seed 承诺不同并发到达轨迹产生相同成交结果。
 
 `SaveSlot` 保存恢复所需的权威事实，仅成功自然日日结产生持久存档候选；恢复时重建 runtime。输入在宿主边界及 engine 中校验，不兼容或损坏的存档显式报错。`Money` 在 engine 内以分为单位，跨 JSON、WASM 和宿主边界使用十进制分字符串；Web 用 `BigInt` 计算，但不将其存入 Redux。具体契约见 [ADR-0025](decisions/0025-day-end-only-persistence.md)、[ADR-0029](decisions/0029-responsibility-names-and-contract-versions.md) 和 [ADR-0031](decisions/0031-money-decimal-cents-wire.md)。
+
+## 共享会话运行时
+
+[ADR-0046](decisions/0046-shared-session-authority.md) 规定同一 Rust session authority 拥有自动与手动推进、暂停、故障锁存、归档顺序、replacement 提交及 observer 生命周期。宿主入口只实施命令解码、部署权限、ABI 和副作用，不因运行在 Server、WASM 或 Desktop 而选择另一套恢复策略。完整实现与各端实跑结果须另外核验，不能从共享函数存在推断全部接线已通过。
+
+权威线程将不可变输出交给独立 publisher；归档使用独立非阻塞通道。观察者不接收或不 ACK 不会挡住跨日或保存；真实存储失败则显式进入 blocked，保留失败的 sealed checkpoint，不回滚已提交日界、不把 queued 当 durable。shutdown 须报告未确认归档。日内数据清理和日K形成仍属于 engine 日结，与观察端无关。
+
+恢复分 prepare 与 commit。prepare 拒绝保留旧局，commit 后的失败带新 generation，旧 ingress、writer lease 和观察流失效。同一 generation 内重新挂接观察者也须更新 observer lease，以拒绝迟到旧 ACK/release/cut。传输发送或 flush 与应用 accepted cursor 各自记录；WS、Worker 和 Tauri 不强求同一 ACK 物理时机。
 
 ## 目录和 workspace
 

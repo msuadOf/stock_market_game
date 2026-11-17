@@ -137,6 +137,11 @@ async fn snapshot(state: State<'_, DesktopState>, session_id: String) -> Result<
 #[derive(Debug, serde::Serialize)]
 #[serde(untagged)]
 enum BaselineIpcError {
+    Committed {
+        failure: actor::HostFailure,
+        replacement: engine::session::replacement::CommitReceipt,
+        timeline_id: String,
+    },
     Catalog(actor::HostFailure),
     Existing(String),
 }
@@ -153,6 +158,15 @@ fn map_baseline_error(
     location: &'static str,
 ) -> BaselineIpcError {
     match error {
+        actor::BaselineRequestError::Baseline(actor::BaselineError::Committed {
+            failure,
+            replacement,
+            timeline_id,
+        }) => BaselineIpcError::Committed {
+            failure: *failure,
+            replacement,
+            timeline_id,
+        },
         actor::BaselineRequestError::Baseline(actor::BaselineError::Catalog(error)) => {
             BaselineIpcError::Catalog(actor::HostFailure::catalog(&error, operation, location))
         }
@@ -192,11 +206,16 @@ async fn engine_ack_observer(
     state: State<'_, DesktopState>,
     session_id: String,
     generation: String,
+    observer_lease: String,
     ordinal: String,
 ) -> Result<(), String> {
     let handles = lookup_handles(&state, &session_id).await?;
     handles
-        .acknowledge_observer(parse_generation(generation)?, parse_generation(ordinal)?)
+        .acknowledge_observer(
+            parse_generation(generation)?,
+            parse_generation(observer_lease)?,
+            parse_generation(ordinal)?,
+        )
         .await
 }
 
@@ -205,11 +224,16 @@ async fn engine_hold_observer(
     state: State<'_, DesktopState>,
     session_id: String,
     generation: String,
+    observer_lease: String,
     held: bool,
 ) -> Result<(), String> {
     lookup_handles(&state, &session_id)
         .await?
-        .set_observer_held(parse_generation(generation)?, held)
+        .set_observer_held(
+            parse_generation(generation)?,
+            parse_generation(observer_lease)?,
+            held,
+        )
         .await
 }
 
@@ -218,11 +242,16 @@ async fn engine_resume_observer(
     state: State<'_, DesktopState>,
     session_id: String,
     generation: String,
+    observer_lease: String,
     ordinal: String,
 ) -> Result<(), String> {
     let handles = lookup_handles(&state, &session_id).await?;
     handles
-        .resume_observer(parse_generation(generation)?, parse_generation(ordinal)?)
+        .resume_observer(
+            parse_generation(generation)?,
+            parse_generation(observer_lease)?,
+            parse_generation(ordinal)?,
+        )
         .await
 }
 
@@ -541,6 +570,39 @@ async fn restore_session(
 
 #[cfg(feature = "host-parity")]
 #[tauri::command]
+fn authority_contract_setup() -> serde_json::Value {
+    actor::authority_contract_capabilities()
+}
+#[cfg(feature = "host-parity")]
+#[tauri::command]
+async fn authority_contract_step(
+    state: State<'_, DesktopState>,
+    session_id: String,
+    generation: String,
+    id: String,
+    checkpoint: Option<serde_json::Value>,
+) -> Result<serde_json::Value, String> {
+    lookup_handles(&state, &session_id)
+        .await?
+        .authority_contract_step(parse_generation(generation)?, id, checkpoint)
+        .await
+}
+#[cfg(feature = "host-parity")]
+#[tauri::command]
+async fn authority_contract_snapshot(
+    state: State<'_, DesktopState>,
+    session_id: String,
+    generation: String,
+    id: String,
+) -> Result<serde_json::Value, String> {
+    lookup_handles(&state, &session_id)
+        .await?
+        .authority_contract_snapshot(parse_generation(generation)?, id)
+        .await
+}
+
+#[cfg(feature = "host-parity")]
+#[tauri::command]
 async fn host_parity_advance_civil_day(
     state: State<'_, DesktopState>,
     session_id: String,
@@ -774,6 +836,9 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
             save_session,
             load_desktop_archive,
             restore_session,
+            authority_contract_setup,
+            authority_contract_step,
+            authority_contract_snapshot,
             host_parity_advance_civil_day,
             host_parity_step,
             set_speed,

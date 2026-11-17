@@ -311,9 +311,10 @@ async fn host_parity_ipc_advances_one_closed_civil_day_through_the_actor() {
         json!({ "sessionId": session_id, "generation": "1" }),
     )
     .unwrap();
-    assert!(report["events"].as_array().is_some_and(|events| events
-        .iter()
-        .any(|event| event.get("CivilDateAdvanced").is_some())));
+    let update: engine::session::protocol::CivilUpdate = serde_json::from_value(report).unwrap();
+    assert!(update
+        .events()
+        .any(|event| matches!(event, engine::Event::CivilDateAdvanced { .. })));
 }
 
 #[cfg(feature = "host-parity")]
@@ -352,9 +353,10 @@ async fn host_parity_ipc_steps_a_normal_market_day_before_civil_settlement() {
     )
     .unwrap();
 
-    assert!(report["events"].as_array().is_some_and(|events| events
-        .iter()
-        .any(|event| event.get("CivilDateAdvanced").is_some())));
+    let update: engine::session::protocol::CivilUpdate = serde_json::from_value(report).unwrap();
+    assert!(update
+        .events()
+        .any(|event| matches!(event, engine::Event::CivilDateAdvanced { .. })));
 }
 
 #[tokio::test]
@@ -544,4 +546,34 @@ async fn history_query_ipc_checks_generation_and_registers_commands() {
     body["query"]["data"]["before_receipt"] = json!("01");
     assert!(invoke_json(&webview, "host_history_query", body).is_err());
     invoke_json(&webview, "stop_session", json!({"sessionId":session_id})).unwrap();
+}
+
+#[test]
+fn committed_baseline_failure_keeps_the_shared_receipt_and_new_generation() {
+    let source = engine::session::CompanyCatalogViewError::UnknownListedStock {
+        company: engine::company::CompanyId(7),
+    };
+    let mut failure =
+        crate::actor::HostFailure::catalog(&source, "restore", "desktop.actor.restore");
+    failure.context.generation = Some("2".into());
+    let error =
+        crate::actor::BaselineRequestError::Baseline(crate::actor::BaselineError::Committed {
+            failure: Box::new(failure),
+            replacement: engine::session::replacement::ReplacementPlan::prepare(1)
+                .unwrap()
+                .receipt(),
+            timeline_id: "new-timeline".into(),
+        });
+    let wire = serde_json::to_value(crate::map_baseline_error(
+        error,
+        "restore",
+        "desktop.actor.restore",
+    ))
+    .unwrap();
+    assert_eq!(
+        wire["replacement"],
+        serde_json::json!({ "previous_generation": "1", "generation": "2" })
+    );
+    assert_eq!(wire["failure"]["context"]["generation"], "2");
+    assert_eq!(wire["timeline_id"], "new-timeline");
 }

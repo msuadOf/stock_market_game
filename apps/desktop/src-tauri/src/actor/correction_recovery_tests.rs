@@ -157,7 +157,7 @@ async fn correction_business_rejection_keeps_installed_close_and_contiguous_canc
     let payload = harness.failures_rx.as_mut().unwrap().try_recv().unwrap();
     let failure: serde_json::Value = serde_json::from_str(&payload).unwrap();
     assert_eq!(failure["code"], "REPORT_CORRECTION_PREPARE_REJECTED");
-    assert_eq!(failure["where"], "desktop.actor.prepare_civil_updates");
+    assert_eq!(failure["where"], "session.authority.prepare_civil_updates");
     assert_eq!(failure["cause"]["code"], "REPORT_CORRECTION_REJECTED");
     assert_eq!(
         failure["recoverable"], true,
@@ -231,7 +231,7 @@ async fn correction_business_rejection_keeps_installed_close_and_contiguous_canc
             reply,
         })
         .await;
-    received.await.unwrap();
+    received.await.unwrap().unwrap();
     assert!(actor.pacing.is_running());
     actor.run_cycle(0);
     let payload = harness.events_rx.as_mut().unwrap().try_recv().unwrap();
@@ -392,7 +392,10 @@ fn correction_real_accounting_overflow_keeps_fatal_actor_and_closed_ingress() {
     assert!(harness.events_rx.as_mut().unwrap().try_recv().is_err());
     assert!(harness.failures_rx.as_mut().unwrap().try_recv().is_err());
     assert!(!harness.actor.pacing.is_running());
-    assert!(harness.cmd_tx.is_closed());
+    assert!(
+        !harness.cmd_tx.is_closed(),
+        "terminal 保留查询、恢复与关闭控制通道"
+    );
     let before_rejected_ingress = harness.actor.game.business_state_hash().unwrap();
     assert!(matches!(
         harness.actor.game.shared_ingress().enqueue_player_intent(
@@ -554,6 +557,7 @@ async fn target_day_not_ready_uses_the_actual_save_error_conversion() {
     let error = game.save_current_day(game.civil_date()).unwrap_err();
     let (cmd_tx, mut commands) = mpsc::unbounded_channel();
     let handles = SessionHandles {
+        shutdown_result: Default::default(),
         ack_route: AckRoute::default(),
         cmd_tx,
         ingress: Arc::new(RwLock::new((1, game.shared_ingress()))),

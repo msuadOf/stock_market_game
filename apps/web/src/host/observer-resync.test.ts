@@ -32,3 +32,18 @@ describe("shared observer resynchronization", () => {
     assert.deepEqual(log, []);
   });
 });
+
+it("同 generation 新 lease 使等待中的旧 release 与 cut 失效", { timeout: 10000 }, async () => {
+  const { ObserverLease } = await import("./observer-resync.ts");
+  const owner = new ObserverLease();
+  const first = owner.replace("7");
+  let installed = false;
+  await assert.rejects(runObserverResync({
+    lease: first,
+    assertCurrent() {}, hold() {}, floor: () => null,
+    capture: () => ({ ordinal: "1", value: null }),
+    fence: () => { owner.replace("7"); return true; },
+    install: () => { installed = true; }, release() { throw new Error("旧 release 不应执行"); },
+  }), /lease/);
+  assert.equal(installed, false);
+});

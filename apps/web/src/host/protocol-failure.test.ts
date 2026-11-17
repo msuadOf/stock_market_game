@@ -36,3 +36,13 @@ test("投递失败不等于市场暂停；带 recoverable 的日界失败仍由�
   assert.equal(isObserverOnlyFailure({ code: "OBSERVER_ACK_FAILED", where: "server.actor", message: "其他错误" }), false);
   assert.equal(isObserverOnlyFailure("未知故障"), false);
 });
+
+test("三端同一归档故障只暂停权威，不因存储失败重连观察者", { timeout: 10000 }, async () => {
+  const { isRecoverableAuthorityFailure } = await import("./protocol-failure.ts");
+  const failure = { code: "DAY_END_ARCHIVE_FAILED", where: "session.authority.save_day_end", message: "保存失败", recoverable: true,
+    context: { operation: "saveDayEnd", generation: "2", tick: 1, seq: 3, day: 1 } };
+  assert.equal(isRecoverableAuthorityFailure(failure, "2"), true);
+  assert.equal(isRecoverableAuthorityFailure(failure, "3"), false);
+  assert.equal(isRecoverableAuthorityFailure({ ...failure, where: "socket" }, "2"), false);
+  assert.equal(isRecoverableAuthorityFailure({ ...failure, recoverable: false }, "2"), false);
+});

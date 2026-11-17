@@ -3,6 +3,18 @@ export interface ObserverCut<T> {
   readonly value: T;
 }
 
+/** 每次挂接的身份独立于 generation；旧异步 continuation 不能解锁新观察者。 */
+export class ObserverLease {
+  private current: object | null = null;
+  replace(generation: string): { assertCurrent(): void } {
+    observerOrdinal(generation);
+    const token = {};
+    this.current = token;
+    return { assertCurrent: () => { if (this.current !== token) throw new Error("观察者 lease 已失效"); } };
+  }
+  invalidate(): void { this.current = null; }
+}
+
 type MaybePromise<T> = T | Promise<T>;
 
 export function observerOrdinal(value: unknown): string {
@@ -22,6 +34,7 @@ export function isNewObserverDelivery(ordinal: string, floor: string | null): bo
 }
 
 export async function runObserverResync<T>(port: {
+  lease?: { assertCurrent(): void };
   assertCurrent(): void;
   hold(): MaybePromise<void>;
   capture(attempt: number): MaybePromise<ObserverCut<T>>;
@@ -31,19 +44,20 @@ export async function runObserverResync<T>(port: {
   install(cut: ObserverCut<T>): MaybePromise<void>;
   release(): MaybePromise<void | boolean>;
 }): Promise<void> {
-  port.assertCurrent();
+  const assertCurrent = () => { port.lease?.assertCurrent(); port.assertCurrent(); };
+  assertCurrent();
   await port.hold();
   for (let attempt = 0; attempt < 4; attempt++) {
-    port.assertCurrent();
+    assertCurrent();
     const cut = await port.capture(attempt);
-    port.assertCurrent();
+    assertCurrent();
     if (!canInstallObserverCut(cut.ordinal, port.floor()) || port.canUse?.(cut) === false) continue;
     if (!(await port.fence(cut))) continue;
-    port.assertCurrent();
+    assertCurrent();
     await port.install(cut);
-    port.assertCurrent();
+    assertCurrent();
     if ((await port.release()) !== false) return;
-    port.assertCurrent();
+    assertCurrent();
     await port.hold();
   }
   throw new Error("观察流连续四次基线已过期，请重新连接观察者");

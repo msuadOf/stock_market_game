@@ -97,3 +97,138 @@ fn worker_sequence_receipt_only_releases_its_exact_head() {
     assert_eq!(order.accept_pending_seq(2, 3, 42), Accepted);
     assert_eq!(order.accept_pending_seq(2, 3, 43), OutOfOrder);
 }
+
+fn captured_days() -> (ProtocolSession, CivilUpdate, CapturedCheckpoint) {
+    let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
+    setup.start_date = CivilDate::from_iso("2030-01-05").unwrap();
+    let mut session = ProtocolSession::new(setup, 77).unwrap();
+    let update = session.end_civil_day_update().unwrap();
+    let capture = CapturedCheckpoint::take(&session, &update, 1, 1).unwrap();
+    (session, update, capture)
+}
+
+#[test]
+fn archive_rejection_retains_sealed_candidate_and_blocks_next_boundary() {
+    let (_, _, capture) = captured_days();
+    let key = capture.key;
+    let slot = Arc::clone(&capture.slot);
+    let mut authority = ArchiveAuthority::new(1, 1);
+    assert!(authority
+        .stage_captured(capture, |_| Err("队列满".into()))
+        .is_err());
+    assert!(authority.is_blocked());
+    assert_eq!(authority.durable(), None);
+    assert_eq!(authority.pending_count(), 1);
+    assert_eq!(authority.retained.front().unwrap().key, key);
+    assert!(Arc::ptr_eq(
+        &authority.retained.front().unwrap().slot,
+        &slot
+    ));
+    assert!(authority.ensure_drained().is_err());
+}
+
+#[test]
+fn archive_failed_receipt_does_not_release_sealed_checkpoint_or_mark_durable() {
+    let (_, _, capture) = captured_days();
+    let key = capture.key;
+    let mut authority = ArchiveAuthority::new(1, 1);
+    authority.stage_captured(capture, |_| Ok(())).unwrap();
+    assert!(matches!(
+        authority.complete(key, Err("写盘失败".into())),
+        ReceiptOutcome::Failed { .. }
+    ));
+    assert_eq!(authority.pending_count(), 1);
+    assert_eq!(authority.durable(), None);
+    assert!(authority.is_blocked());
+    // 同一失败不能被迟到的成功包解锁；必须明确建立新会话。
+    assert!(matches!(
+        authority.complete(key, Ok(())),
+        ReceiptOutcome::Failed { .. }
+    ));
+    assert_eq!(authority.durable(), None);
+}
+
+#[test]
+fn archive_receipts_distinguish_stale_bad_and_durable() {
+    let (_, _, capture) = captured_days();
+    let key = capture.key;
+    let mut authority = ArchiveAuthority::new(1, 1);
+    authority.stage_captured(capture, |_| Ok(())).unwrap();
+    let mut stale = key;
+    stale.writer_epoch = 0;
+    assert!(matches!(
+        authority.complete(stale, Err("旧 writer".into())),
+        ReceiptOutcome::Stale
+    ));
+    assert!(!authority.is_blocked());
+    assert!(matches!(
+        authority.complete(key, Ok(())),
+        ReceiptOutcome::Durable
+    ));
+    assert_eq!(authority.durable(), Some(key));
+    assert!(authority.ensure_drained().is_ok());
+    assert!(matches!(
+        authority.complete(key, Ok(())),
+        ReceiptOutcome::Stale
+    ));
+    let mut bad = key;
+    bad.tick += 1;
+    assert!(matches!(
+        authority.complete(bad, Ok(())),
+        ReceiptOutcome::Failed { .. }
+    ));
+    assert!(authority.is_blocked());
+}
+
+#[test]
+fn archive_replacement_fences_old_receipts_and_releases_old_blocked_state() {
+    let (_, _, capture) = captured_days();
+    let key = capture.key;
+    let mut authority = ArchiveAuthority::new(1, 1);
+    authority.stage_captured(capture, |_| Ok(())).unwrap();
+    authority.complete(key, Err("写盘失败".into()));
+    authority.install(2, 2);
+    assert!(matches!(
+        authority.complete(key, Ok(())),
+        ReceiptOutcome::Stale
+    ));
+    assert!(!authority.is_blocked());
+    assert_eq!(authority.pending_count(), 0);
+    assert_eq!(authority.durable(), None);
+}
+
+#[test]
+fn storage_fence_stops_later_writes_after_first_failure_until_new_binding() {
+    let mut fence = ArchiveWriteFence::default();
+    let first = key(2, 3, 40, 8);
+    let second = key(2, 3, 42, 9);
+    assert!(fence.begin(first).is_ok());
+    fence.finish(first, &Err("磁盘故障".into()));
+    assert!(fence.begin(second).is_err());
+    assert!(fence.ensure_finished().is_err());
+    let replacement = key(3, 4, 10, 2);
+    assert!(fence.begin(replacement).is_ok());
+    fence.finish(replacement, &Ok(()));
+    assert!(fence.ensure_finished().is_ok());
+    assert!(fence.begin(second).is_err());
+}
+
+#[test]
+fn earlier_success_remains_durable_when_a_later_enqueue_is_blocked() {
+    let (mut session, _, first) = captured_days();
+    let first_key = first.key;
+    let mut authority = ArchiveAuthority::new(1, 1);
+    authority.stage_captured(first, |_| Ok(())).unwrap();
+    let update = session.end_civil_day_update().unwrap();
+    assert!(authority
+        .stage(&session, &update, |_| Err("队列满".into()))
+        .is_err());
+    assert!(matches!(
+        authority.complete(first_key, Ok(())),
+        ReceiptOutcome::Durable
+    ));
+    assert_eq!(authority.durable(), Some(first_key));
+    assert_eq!(authority.pending_count(), 1);
+    assert!(authority.is_blocked());
+    assert!(authority.ensure_drained().is_err());
+}

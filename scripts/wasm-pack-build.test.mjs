@@ -25,7 +25,7 @@ const command = (root, outDir) => ({ command: "wasm-pack", args: ["build", "apps
 const api = () => import("./wasm-pack-build.mjs");
 
 function wasmPackageFixture(omit) {
-  const names = ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "world_runtime_abi_version", "init_wasm_wait", "wasm_wait_abort_layout", "shutdown_session", "start_wasm_reclaimer", "close_wasm_reclaimer", "wasm_tombstone_bind_ingress", "wasm_tombstone_bind_publisher", "market_publisher_signal", "market_publisher_take", "market_publisher_resume", "market_publisher_ack", "market_publisher_release", "market_runner_enable", "market_runner_set_running", "market_runner_set_speed", "market_runner_set_pause", "market_runner_turn", "market_runner_speed_metrics", "market_runner_step_once", "market_runner_end_civil", "market_runner_observer_baseline", "market_runner_control_signal", "market_runner_command_consumed", "wasm_tombstone_init_primary", "wasm_wait_death_layout"].filter((name) => name !== omit);
+  const names = ["prepare_session_replacement", "fence_session_replacement", "commit_session_replacement", "market_publisher_bind", "market_publisher_hold", "market_publisher_start", "market_publisher_flushed", "market_archive_attach", "market_archive_detach", "market_archive_latest", "market_archive_receipt", "market_archive_failed", "market_archive_finish", "market_archive_tombstone", "market_archive_bind_tombstone", "market_archive_signal", "market_archive_take", "market_archive_write_result", "market_archive_release", "restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "world_runtime_abi_version", "init_wasm_wait", "wasm_wait_abort_layout", "shutdown_session", "start_wasm_reclaimer", "close_wasm_reclaimer", "wasm_tombstone_bind_ingress", "wasm_tombstone_bind_publisher", "market_publisher_signal", "market_publisher_take", "market_publisher_resume", "market_publisher_ack", "market_publisher_release", "market_runner_enable", "market_runner_set_running", "market_runner_set_speed", "market_runner_set_pause", "market_runner_turn", "market_runner_speed_metrics", "market_runner_step_once", "market_runner_end_civil", "market_runner_observer_baseline", "market_runner_control_signal", "market_runner_command_consumed", "wasm_tombstone_init_primary", "wasm_wait_death_layout"].filter((name) => name !== omit);
   const uleb = (value) => { const bytes = []; do { let byte = value & 0x7f; value >>>= 7; if (value !== 0) byte |= 0x80; bytes.push(byte); } while (value !== 0); return bytes; };
   const section = (id, payload) => [id, ...uleb(payload.length), ...payload];
   const type = section(1, [1, 0x60, 0, 0]);
@@ -60,7 +60,7 @@ test("成功的默认 release wasm-pack 构建生成精确绑定实际 pkg bytes
   assert.equal(capability.buildManifestSha256, createHash("sha256").update(provenanceBytes).digest("hex"));
   assert.equal(capability.wasmSha256, createHash("sha256").update(wasm).digest("hex"));
   assert.equal(capability.glueSha256, createHash("sha256").update(glue).digest("hex"));
-  assert.deepEqual(capability.exports, ["clear_prepared_restore", "close_wasm_reclaimer", "facade_slot_init_for_restore_json", "init_wasm_wait", "restore_json", "restore_prepared", "shutdown_session", "start_wasm_reclaimer", "wasm_tombstone_bind_ingress", "wasm_tombstone_init_primary", "wasm_wait_abort_layout", "wasm_wait_death_layout", "world_runtime_abi_version"]);
+  assert.deepEqual(capability.exports, WebAssembly.Module.exports(new WebAssembly.Module(wasm)).map(({ name }) => name).sort());
   assert.ok(provenanceBytes.toString("utf8").endsWith("\n"));
   assert.ok(capabilityBytes.toString("utf8").endsWith("\n"));
 }));
@@ -335,4 +335,20 @@ test("release 命令的 source pre/post 漂移会阻止 metadata 发布", { time
     await writeFile(path.join(outDir, "web_wasm.js"), glue);
   }), /source closure changed/);
   await assert.rejects(readFile(path.join(outDir, "wasm-build-provenance.json")), { code: "ENOENT" });
+}));
+
+test("verification构建只写独立receipt，不冒充production capability", { timeout: 10000 }, async () => fixture(async root => {
+  const { executeWasmPackBuild } = await api();
+  const outDir = path.join(root, "safe/wasm/verification");
+  const build = command(root, outDir); build.args.push("--features", "verification-harness");
+  const { wasm, glue } = wasmPackageFixture();
+  await executeWasmPackBuild(root, build, async () => {
+    await writeFile(path.join(outDir, "web_wasm_bg.wasm"), wasm);
+    await writeFile(path.join(outDir, "web_wasm.js"), glue);
+  });
+  const receipt = JSON.parse(await readFile(path.join(outDir, "wasm-verification-receipt.json"), "utf8"));
+  assert.equal(receipt.kind, "wasm-verification-build");
+  assert.equal(receipt.wasmSha256, createHash("sha256").update(wasm).digest("hex"));
+  assert.deepEqual(receipt.args, build.args);
+  await assert.rejects(readFile(path.join(outDir, "verified-restore-capability.json")), { code: "ENOENT" });
 }));

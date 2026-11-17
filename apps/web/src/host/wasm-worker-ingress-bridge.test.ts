@@ -94,7 +94,7 @@ async function createFixture(
     market_runner_turn: () => ({ running: false, delayMs: null, committedTicks: 0 }),
     market_runner_step_once: () => {},
     market_runner_end_civil: () => {},
-    market_runner_observer_baseline: (current: number) => ({ snapshot: { handle: current }, publicationOrdinal: "0", workingOrders: [] }),
+    market_runner_observer_baseline: (current: number) => ({ snapshot: { handle: current }, publicationOrdinal: "0", workingOrders: [], stockCatalog: [], companyCatalog: [], civilDate: `2030-01-0${current}` }),
     market_runner_control_signal: () => 65008,
     market_runner_command_consumed: () => {},
   });

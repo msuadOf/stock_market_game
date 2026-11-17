@@ -139,6 +139,7 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
       : value;
   }
   class FixtureWorker extends WorkerHandle {
+    private observerLease = 1n;
     readonly kind: "engine" | "ingress" | "child" | "publisher";
     constructor(url: URL) {
       super();
@@ -166,11 +167,12 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
           this.emit({ type: "ingressLifecycle", instanceId: this.instanceId, state: "quiescent" });
         });
         if (request.type === "bindPublisher") workerQueueMicrotask(() => {
-          this.dataPort!.postMessage({ type: "publisherBound", requestId: request.requestId, generation: request.generation });
+          this.dataPort!.postMessage({ type: "publisherBound", observerLease: this.observerLease.toString(), requestId: request.requestId, generation: request.generation });
           this.emit({ type: "publisherLifecycle", instanceId: this.instanceId, state: "configured", generation: request.generation, token: request.token });
         });
         if ((request.type === "pausePublisher" && !options.manualPublisherFence) || request.type === "startPublisher") workerQueueMicrotask(() => {
-          this.dataPort!.postMessage({ type: request.type === "pausePublisher" ? "publisherPaused" : "publisherStarted", requestId: request.requestId, generation: request.generation });
+          if (request.type === "pausePublisher") this.observerLease += 1n;
+          this.dataPort!.postMessage({ observerLease: this.observerLease.toString(), type: request.type === "pausePublisher" ? "publisherPaused" : "publisherStarted", requestId: request.requestId, generation: request.generation });
         });
         if (request.type === "resumePublisher" && !options.manualPublisherFence) workerQueueMicrotask(() => {
           this.dataPort!.postMessage({ type: "publisherResumed", requestId: request.requestId, generation: request.generation, accepted: true });
@@ -240,6 +242,11 @@ export function fixture(options: { initError?: unknown; initAfterMemoryFailure?:
       };
     }
     override emit(value: unknown) {
+      if (this.kind === "publisher" && value !== null && typeof value === "object") {
+        const packet = value as Record<string, unknown>;
+        if (packet.type === "publisherPaused" && typeof packet.observerLease === "string") this.observerLease = BigInt(packet.observerLease);
+        if (["protocol", "publicationFailure", "publicationGap", "barrierPaused"].includes(String(packet.type))) value = { observerLease: this.observerLease.toString(), ...packet };
+      }
       const type = value !== null && typeof value === "object" ? (value as { type?: unknown }).type : undefined;
       if (this.dataPort !== undefined && typeof type === "string" && type !== "engineLifecycle" && type !== "ingressLifecycle" && type !== "publisherLifecycle" && !type.startsWith("facade")) this.dataPort.postMessage(withPublicationFence(value));
       else super.emit(value);

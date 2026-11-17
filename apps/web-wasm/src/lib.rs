@@ -137,16 +137,18 @@ pub fn subscribe_rights_offering(
     event_id: String,
     requested_shares: String,
 ) -> Result<JsValue, JsValue> {
+    market_runner::require_write(handle)?;
     let shares = parse_rights_shares(&requested_shares).map_err(JsValue::from_str)?;
     with_session(handle, |session| {
         match subscribe_rights(session, &event_id, shares) {
             Ok(receipt) => public_dto_to_js(&receipt),
-            Err(error) => company_write_error_to_js(error, session),
+            Err(error) => company_write_error_to_js(handle, error, session),
         }
     })
 }
 
 fn company_write_error_to_js(
+    handle: u32,
     error: engine::session::protocol::CompanyWriteError,
     session: &ProtocolSession,
 ) -> Result<JsValue, JsValue> {
@@ -157,8 +159,14 @@ fn company_write_error_to_js(
         .err()
         .or_else(|| error.step_fatal().cloned())
     {
+        let failure = HostFailure::step(fatal).at_session(session);
+        let message = failure.message.clone();
+        if market_runner::report_operation_failure(handle, session, failure.clone())? {
+            // 控制端只结束请求；结构化首错已由发布者排在成功前缀之后。
+            return Err(JsValue::from_str(&message));
+        }
         return Err(step_update_error_to_js(StepUpdateError::Fatal(Box::new(
-            HostFailure::step(fatal).at_session(session),
+            failure,
         ))));
     }
     Err(public_dto_to_js(&error.public_failure())?)
@@ -180,32 +188,35 @@ fn log_company_write_error(error: &engine::session::protocol::CompanyWriteError)
 
 #[wasm_bindgen]
 pub fn propose_player_company_action(handle: u32, proposal: JsValue) -> Result<JsValue, JsValue> {
+    market_runner::require_write(handle)?;
     let proposal = serde_wasm_bindgen::from_value(proposal)?;
     with_session(handle, |session| {
         match propose_company_action(session, proposal) {
             Ok(receipt) => public_dto_to_js(&serde_json::json!({ "receipt": receipt })),
-            Err(error) => company_write_error_to_js(error, session),
+            Err(error) => company_write_error_to_js(handle, error, session),
         }
     })
 }
 
 #[wasm_bindgen]
 pub fn enqueue_report_correction(handle: u32, request: JsValue) -> Result<JsValue, JsValue> {
+    market_runner::require_write(handle)?;
     let request = serde_wasm_bindgen::from_value(request)?;
     with_session(handle, |session| {
         match enqueue_correction(session, request) {
             Ok(acknowledgement) => public_dto_to_js(&acknowledgement),
-            Err(error) => company_write_error_to_js(error, session),
+            Err(error) => company_write_error_to_js(handle, error, session),
         }
     })
 }
 
 #[wasm_bindgen]
 pub fn cancel_report_correction(handle: u32, operation_id: String) -> Result<JsValue, JsValue> {
+    market_runner::require_write(handle)?;
     with_session(handle, |session| {
         match cancel_correction(session, &operation_id) {
             Ok(acknowledgement) => public_dto_to_js(&acknowledgement),
-            Err(error) => company_write_error_to_js(error, session),
+            Err(error) => company_write_error_to_js(handle, error, session),
         }
     })
 }
@@ -329,6 +340,8 @@ fn reserve_session_handle(next: &AtomicU32) -> Result<u32, SessionError> {
 #[derive(Default)]
 struct SessionRegistry {
     sessions: HashMap<u32, ProtocolSession>,
+    generations: HashMap<u32, u64>,
+    prepared_replacements: HashMap<u32, engine::session::replacement::ReplacementPlan>,
     runtime_topology: HostRuntimeTopology,
 }
 
@@ -359,6 +372,7 @@ impl SessionRegistry {
                     Ok(())
                 })?;
                 entry.insert(session);
+                self.generations.insert(id, 1);
                 Ok(id)
             }
             Entry::Occupied(_) => Err(SessionError::Step(
@@ -393,6 +407,38 @@ impl SessionRegistry {
             .ok_or_else(|| format!("invalid session handle: {handle}"))
     }
 
+    /// prepare 成功后才能进入单向退役：关闭共享 producer 并撤销查找 token，尚未换代。
+    fn fence_replacement(
+        &mut self,
+        previous: u32,
+        candidate: u32,
+        generation: u64,
+    ) -> Result<(), SessionError> {
+        let reject = || SessionError::InvalidSave(engine::ValidationFault::bare(1290));
+        if previous == candidate
+            || self.generations.get(&previous) != Some(&generation)
+            || !self.sessions.contains_key(&candidate)
+        {
+            return Err(reject());
+        }
+        self.prepared_replacements
+            .get(&candidate)
+            .ok_or_else(reject)?
+            .require_current(generation)?;
+        let old = self
+            .sessions
+            .get(&previous)
+            .ok_or_else(reject)?
+            .shared_ingress();
+        // close 与 enqueue 共用锁；返回后已获取 capability 的独立 intake 也不能再接纳命令。
+        self.prepared_replacements[&candidate].fence_retiring_ingress(generation, &old)?;
+        ingress_operation(|registry| {
+            registry.remove(&previous);
+            Ok(())
+        })?;
+        Ok(())
+    }
+
     fn remove(&mut self, handle: u32) -> Result<(), SessionError> {
         if !self.sessions.contains_key(&handle) {
             return Ok(());
@@ -404,6 +450,10 @@ impl SessionRegistry {
             Ok(())
         })?;
         self.sessions.remove(&handle);
+        self.generations.remove(&handle);
+        if self.prepared_replacements.remove(&handle).is_some() {
+            market_runner::discard_prepared_drive(handle)?;
+        }
         market_runner::drop_drive(handle);
         Ok(())
     }
@@ -431,234 +481,8 @@ impl SessionRegistry {
     }
 }
 
-/// Fatal engine failure delivered across the WASM boundary.
-///
-/// This deliberately mirrors ADR-0010's host-level contract instead of exposing a
-/// Rust display string that JavaScript would have to classify heuristically.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct HostFailure {
-    pub code: &'static str,
-    pub message: String,
-    pub r#where: String,
-    pub cause: Option<Box<FailureCause>>,
-    pub context: FailureContext,
-    pub recoverable: bool,
-    #[serde(rename = "recoveryActions")]
-    pub recovery_actions: Vec<&'static str>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct FailureContext {
-    pub operation: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fault: Option<engine::ValidationFault>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tick: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub seq: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub day: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub generation: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct FailureCause {
-    code: &'static str,
-    message: String,
-    cause: Option<Box<FailureCause>>,
-}
-
-fn failure_description(error: &(dyn std::error::Error + 'static)) -> (&'static str, &'static str) {
-    if let Some(error) = error.downcast_ref::<SessionError>() {
-        return match error {
-            SessionError::ReportCorrectionDayEnd(source) => failure_description(source),
-            SessionError::CivilInformation(_) => (
-                "CIVIL_INFORMATION_FAILED",
-                "自然日信息事务失败（内部详情已脱敏）",
-            ),
-            SessionError::Closing(_) => (
-                "SESSION_CLOSING_FAILED",
-                "自然日日终封账失败（私有详情已脱敏）",
-            ),
-            SessionError::ReportCorrectionRestore(_) => (
-                "SESSION_STATE_INVALID",
-                "更正完成事实与真实会计和公开版本不一致（原始详情已脱敏）",
-            ),
-            SessionError::InvalidSave(fault)
-                if fault.code == engine::error::SAVE_TARGET_DAY_NOT_READY =>
-            {
-                (
-                    "SAVE_TARGET_DAY_NOT_READY",
-                    "目标自然日尚未完成日终，当前日存档不可用（原始详情已脱敏）",
-                )
-            }
-            SessionError::InvalidSave(_) => (
-                "SESSION_STATE_INVALID",
-                "日终存档或协议状态校验失败（原始详情已脱敏）",
-            ),
-            SessionError::Step(_) => (
-                "INVARIANT_VIOLATION",
-                "引擎不变量校验失败（原始详情已脱敏）",
-            ),
-            _ => ("SESSION_OPERATION_FAILED", "会话操作失败（原始详情已脱敏）"),
-        };
-    }
-    if let Some(error) = error.downcast_ref::<engine::session::ReportCorrectionDayEndError>() {
-        return if error.classification() == engine::company::CompanyErrorClass::SystemState {
-            (
-                "REPORT_CORRECTION_FAILED",
-                "报表更正日终准备失败（内部详情已脱敏）",
-            )
-        } else {
-            (
-                "REPORT_CORRECTION_REJECTED",
-                "报表更正未满足提交条件（内部详情已脱敏）",
-            )
-        };
-    }
-    if error.is::<engine::session::CivilInformationError>() {
-        return (
-            "CIVIL_INFORMATION_FAILED",
-            "自然日信息事务失败（内部详情已脱敏）",
-        );
-    }
-    if let Some(error) = error.downcast_ref::<engine::accounting::closing::ClosingError>() {
-        return match error {
-            engine::accounting::closing::ClosingError::Accounting(_) => (
-                "CLOSING_ACCOUNTING_FAILED",
-                "日终封账的会计处理失败（私有详情已脱敏）",
-            ),
-            engine::accounting::closing::ClosingError::Report(_) => (
-                "CLOSING_REPORT_FAILED",
-                "日终封账的报表处理失败（私有详情已脱敏）",
-            ),
-            _ => (
-                "CLOSING_VALIDATION_FAILED",
-                "日终封账校验失败（私有详情已脱敏）",
-            ),
-        };
-    }
-    if let Some(error) = error.downcast_ref::<engine::accounting::AccountingError>() {
-        return match error {
-            engine::accounting::AccountingError::AmountOverflow { .. } => (
-                "ACCOUNTING_AMOUNT_OVERFLOW",
-                "公司会计金额运算溢出（操作数已脱敏）",
-            ),
-            _ => (
-                "ACCOUNTING_VALIDATION_FAILED",
-                "公司会计校验失败（私有详情已脱敏）",
-            ),
-        };
-    }
-    if error.is::<engine::session::StepFatal>() {
-        return (
-            "INVARIANT_VIOLATION",
-            "引擎不变量校验失败（原始详情已脱敏）",
-        );
-    }
-    if error.is::<engine::session::ReportCorrectionRestoreError>() {
-        return (
-            "REPORT_CORRECTION_RESTORE_FAILED",
-            "报表更正存档关联校验失败（原始详情已脱敏）",
-        );
-    }
-    ("ERROR_DETAILS_REDACTED", "原始错误类型未识别，详情未公开")
-}
-
-fn failure_cause(error: &(dyn std::error::Error + 'static)) -> Option<Box<FailureCause>> {
-    error.source().map(|source| {
-        let (code, message) = failure_description(source);
-        Box::new(FailureCause {
-            code,
-            message: message.to_owned(),
-            cause: failure_cause(source),
-        })
-    })
-}
-
-impl FailureContext {
-    fn new(operation: &'static str) -> Self {
-        Self {
-            operation,
-            fault: None,
-            tick: None,
-            seq: None,
-            day: None,
-            generation: None,
-        }
-    }
-}
-
-impl From<engine::session::StepFatal> for HostFailure {
-    fn from(error: engine::session::StepFatal) -> Self {
-        Self::step(error)
-    }
-}
-
-impl HostFailure {
-    pub(crate) fn catalog(
-        error: &engine::session::CompanyCatalogViewError,
-        operation: &'static str,
-        location: &'static str,
-    ) -> Self {
-        let mut context = FailureContext::new(operation);
-        context.fault = Some(engine::session::company_catalog_fault(error));
-        Self {
-            code: "CATALOG_BASELINE_FAILED",
-            message: "公开公司身份目录构造失败".to_owned(),
-            r#where: location.to_owned(),
-            cause: None,
-            context,
-            recoverable: false,
-            recovery_actions: vec![
-                "停止当前提交并重新同步权威会话；仍失败则重开有效日终档或新局",
-                "复制错误详情反馈",
-            ],
-        }
-    }
-
-    fn at_session(mut self, session: &ProtocolSession) -> Self {
-        self.context.tick = Some(session.tick());
-        self.context.seq = Some(session.seq());
-        self.context.day = Some(session.day());
-        self
-    }
-
-    fn step(error: engine::session::StepFatal) -> Self {
-        let engine::session::StepFatal::InvariantViolation { ref location, .. } = error;
-        Self {
-            code: "STEP_FATAL",
-            message: failure_description(&error).1.to_owned(),
-            r#where: location.clone(),
-            cause: failure_cause(&error),
-            context: FailureContext::new("step"),
-            recoverable: false,
-            recovery_actions: vec![
-                "停止当前会话；重新打开上一份有效日终存档或新局",
-                "复制脱敏错误详情反馈",
-            ],
-        }
-    }
-
-    fn civil(error: SessionError) -> Self {
-        match error {
-            SessionError::Step(fatal) => Self::step(fatal),
-            other => Self {
-                code: "CIVIL_DAY_SETTLEMENT_FAILED",
-                message: failure_description(&other).1.to_owned(),
-                r#where: "web-wasm.end_civil_day_update".into(),
-                cause: failure_cause(&other),
-                context: FailureContext::new("endCivilDay"),
-                recoverable: false,
-                recovery_actions: vec![
-                    "停止当前会话；重新打开上一份有效日终存档或新局",
-                    "复制脱敏错误详情反馈",
-                ],
-            },
-        }
-    }
-}
+use engine::session::authority::{failure_cause, failure_description};
+pub use engine::session::authority::{FailureCause, FailureContext, HostFailure};
 
 #[derive(Debug, PartialEq, Eq)]
 enum StepUpdateError {
@@ -728,6 +552,7 @@ pub fn create_session(setup: JsValue, seed: u64) -> Result<u32, JsValue> {
 /// validated one-frame `TickBatch`.
 #[wasm_bindgen]
 pub fn step(handle: u32) -> Result<JsValue, JsValue> {
+    market_runner::require_compatibility_entry(handle).map_err(JsValue::from_str)?;
     let update = step_update(handle).map_err(step_update_error_to_js)?;
     to_js(&update)
 }
@@ -739,6 +564,7 @@ fn step_update(handle: u32) -> Result<EngineUpdate, StepUpdateError> {
 /// 显式安装当前 runtime 来源，并返回同步后的快照。
 #[wasm_bindgen]
 pub fn flush_runtime_sync(handle: u32) -> Result<JsValue, JsValue> {
+    market_runner::require_compatibility_entry(handle).map_err(JsValue::from_str)?;
     with_session(handle, |session| {
         session.flush_now().map_err(|error| {
             step_update_error_to_js(StepUpdateError::Fatal(Box::new(error.into())))
@@ -831,6 +657,7 @@ pub fn civil_date(handle: u32) -> Result<String, JsValue> {
 /// Completes the current civil day and returns its ordered public events.
 #[wasm_bindgen]
 pub fn end_civil_day(handle: u32) -> Result<JsValue, JsValue> {
+    market_runner::require_compatibility_entry(handle).map_err(JsValue::from_str)?;
     with_session(handle, |sess| {
         let report = sess.end_civil_day_update().map_err(|error| {
             step_update_error_to_js(StepUpdateError::Fatal(Box::new(
@@ -1023,6 +850,7 @@ pub fn npc_decision_trace(handle: u32, account: u64) -> Result<JsValue, JsValue>
 /// 玩家入队意图（player 固定 AccountId(0)，单机纯前端）。intent 为 Intent 的 JS 对象。
 #[wasm_bindgen]
 pub fn enqueue(handle: u32, intent: JsValue) -> Result<(), JsValue> {
+    market_runner::require_write(handle)?;
     let intent: Intent = serde_wasm_bindgen::from_value(intent)?;
     with_session(handle, |sess| {
         sess.enqueue_player_intent(AccountId(0), intent)
@@ -1120,6 +948,103 @@ pub fn restore_json(save_json: String) -> Result<u32, JsValue> {
     REGISTRY
         .with(|registry| registry.borrow_mut().restore(&slot))
         .map_err(host_session_init_error_to_js)
+}
+
+/// 可失败的 Drive/发布端准备必须先于旧 writer 的撤销，尚不改变旧 authority。
+#[wasm_bindgen]
+pub fn prepare_session_replacement(
+    previous: u32,
+    candidate: u32,
+    generation: u64,
+) -> Result<(), JsValue> {
+    let plan = REGISTRY.with(|registry| {
+        let registry = registry.borrow();
+        if generation >= 9_007_199_254_740_991
+            || previous == candidate
+            || registry.generations.get(&previous) != Some(&generation)
+            || !registry.sessions.contains_key(&candidate)
+        {
+            return Err(session_error_to_js(SessionError::InvalidSave(
+                engine::ValidationFault::bare(1290),
+            )));
+        }
+        engine::session::replacement::ReplacementPlan::prepare(generation)
+            .map_err(session_error_to_js)
+    })?;
+    market_runner::prepare_replacement_drive(previous, candidate)?;
+    REGISTRY.with(|registry| {
+        registry
+            .borrow_mut()
+            .prepared_replacements
+            .insert(candidate, plan);
+    });
+    Ok(())
+}
+
+/// 撤销旧归档之前的不可逆 fence；独立 intake 旧 capability 同时失效。
+#[wasm_bindgen]
+pub fn fence_session_replacement(
+    previous: u32,
+    candidate: u32,
+    generation: u64,
+) -> Result<(), JsValue> {
+    REGISTRY
+        .with(|registry| {
+            registry
+                .borrow_mut()
+                .fence_replacement(previous, candidate, generation)
+        })
+        .map_err(session_error_to_js)?;
+    market_runner::fence_replacement_drive(previous)
+}
+
+/// Browser 只搬运已准备的句柄；换代与旧入口失效由共享 Rust 围栏决定。
+#[wasm_bindgen]
+pub fn commit_session_replacement(
+    previous: u32,
+    candidate: u32,
+    generation: u64,
+) -> Result<u64, JsValue> {
+    REGISTRY.with(|registry| {
+        let mut registry = registry.borrow_mut();
+        let reject = || SessionError::InvalidSave(engine::ValidationFault::bare(1290));
+        // JS number 是本地 handle 槽的编码边界，拒绝不可精确返回的下一代。
+        if generation >= 9_007_199_254_740_991
+            || previous == candidate
+            || registry.generations.get(&previous) != Some(&generation)
+        {
+            return Err(session_error_to_js(reject()));
+        }
+        let plan = registry
+            .prepared_replacements
+            .get(&candidate)
+            .copied()
+            .ok_or_else(|| session_error_to_js(reject()))?;
+        plan.require_current(generation)
+            .map_err(session_error_to_js)?;
+        let next_ingress = registry
+            .sessions
+            .get(&candidate)
+            .ok_or_else(|| session_error_to_js(reject()))?
+            .shared_ingress();
+        let old_ingress = registry
+            .sessions
+            .get(&previous)
+            .ok_or_else(|| session_error_to_js(reject()))?
+            .shared_ingress();
+        let mut binding = (generation, old_ingress);
+        plan.install_ingress(&mut binding, next_ingress)
+            .map_err(session_error_to_js)?;
+        let mut current = previous;
+        let mut current_generation = generation;
+        plan.commit(&mut current, &mut current_generation, candidate)
+            .expect("同一 registry 借用中的计划不能过期");
+        registry.generations.remove(&previous);
+        registry.prepared_replacements.remove(&candidate);
+        registry.generations.insert(current, current_generation);
+        market_runner::commit_replacement_generation(current, current_generation);
+        Ok(current_generation)
+    })
 }
 
 /// 消费初始化时已解码并预检的唯一完整存档。

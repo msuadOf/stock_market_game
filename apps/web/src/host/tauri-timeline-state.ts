@@ -12,7 +12,9 @@ export type TauriBaselineResponse = {
   readonly civil_date: unknown;
   readonly working_orders?: unknown;
   readonly publication_ordinal?: string;
+  readonly observer_lease?: string;
   readonly latest_checkpoint?: unknown;
+  readonly failure?: import("./host-update.ts").HostFailure;
 };
 
 type QueryCursor = { readonly generation: string; readonly baselineEpoch: number };
@@ -82,6 +84,14 @@ export class TauriTimelineState {
   replaceRestoredBaseline(response: TauriBaselineResponse): Baseline {
     if (response.generation !== nextTauriGeneration(this.generation)) throw new Error("Tauri 恢复响应没有递增 generation");
     return this.installSnapshot(response, "Tauri restore snapshot");
+  }
+
+  acceptCommittedReplacement(previous: string, next: string, timelineId: string): void {
+    if (previous !== this.generation || next !== nextTauriGeneration(previous) || timelineId.length === 0) throw new Error("Tauri commit 回执属于过期或非法替换");
+    this.generation = next;
+    this.timelineId = timelineId;
+    this.cachedBaseline = null;
+    this.baselineEpoch += 1;
   }
 
   clearForDispose(): void {

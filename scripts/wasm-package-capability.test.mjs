@@ -12,7 +12,7 @@ import {
 } from "./wasm-package-capability.mjs";
 
 const hash = (value) => createHash("sha256").update(value).digest("hex");
-const required = ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "world_runtime_abi_version", "init_wasm_wait", "wasm_wait_abort_layout", "shutdown_session", "start_wasm_reclaimer", "close_wasm_reclaimer", "wasm_tombstone_bind_ingress", "wasm_tombstone_bind_publisher", "market_publisher_signal", "market_publisher_take", "market_publisher_resume", "market_publisher_ack", "market_publisher_release", "market_runner_enable", "market_runner_set_running", "market_runner_set_speed", "market_runner_set_pause", "market_runner_turn", "market_runner_speed_metrics", "market_runner_step_once", "market_runner_end_civil", "market_runner_observer_baseline", "market_runner_control_signal", "market_runner_command_consumed", "wasm_tombstone_init_primary", "wasm_wait_death_layout"];
+const required = ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "commit_session_replacement", "prepare_session_replacement", "fence_session_replacement", "market_publisher_bind", "market_publisher_hold", "market_publisher_start", "market_publisher_flushed", "market_archive_attach", "market_archive_detach", "market_archive_latest", "market_archive_receipt", "market_archive_failed", "market_archive_finish", "market_archive_tombstone", "market_archive_bind_tombstone", "market_archive_signal", "market_archive_take", "market_archive_write_result", "market_archive_release", "world_runtime_abi_version", "init_wasm_wait", "wasm_wait_abort_layout", "shutdown_session", "start_wasm_reclaimer", "close_wasm_reclaimer", "wasm_tombstone_bind_ingress", "wasm_tombstone_bind_publisher", "market_publisher_signal", "market_publisher_take", "market_publisher_resume", "market_publisher_ack", "market_publisher_release", "market_runner_enable", "market_runner_set_running", "market_runner_set_speed", "market_runner_set_pause", "market_runner_turn", "market_runner_speed_metrics", "market_runner_step_once", "market_runner_end_civil", "market_runner_observer_baseline", "market_runner_control_signal", "market_runner_command_consumed", "wasm_tombstone_init_primary", "wasm_wait_death_layout"];
 const wasm = Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]);
 const glue = Buffer.from("export function restore_json() {}\n");
 function bytesFor(provenance = {}) {
@@ -76,3 +76,11 @@ for (const featureArgs of [["--features", "simulation-diagnostics"], ["--feature
     await assert.rejects(produceWasmPackageMetadata({ root: path.resolve("."), outDir: path.resolve("."), command: { command: "wasm-pack", args: ["build", "--release", ...featureArgs], env: { RUSTUP_TOOLCHAIN: "nightly-2026-09-05" } }, sourceSnapshot: [{ path: "Cargo.lock", sha256: "a".repeat(64) }] }), /release builds with default features/);
   });
 }
+
+
+test("缺少共享 replacement ABI 的旧产物必须被拒绝", { timeout: 10000 }, () => {
+  const [provenance, bytes] = bytesFor();
+  const capability = JSON.parse(bytes);
+  capability.exports = capability.exports.filter((name) => name !== "commit_session_replacement");
+  assert.throws(() => parseWasmPackageMetadata(provenance, Buffer.from(JSON.stringify(capability))), /missing required public functions/);
+});

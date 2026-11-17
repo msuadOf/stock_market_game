@@ -5,6 +5,13 @@ const root = document.getElementById("root");
 if (!root) throw new Error("游戏启动失败：缺少 root 页面容器。");
 
 async function start(): Promise<void> {
+  // 独立e2e前端产物才提供真实窗口合同桥；默认production/dev页面不分发此入口。
+  if (import.meta.env.MODE === "e2e" && import.meta.env.VITE_SESSION_AUTHORITY_CONTRACT === "1" && "__TAURI_INTERNALS__" in globalThis) {
+    const { installTauriAuthorityContractBridge } = await import("./host/tauri-authority-contract.ts");
+    await installTauriAuthorityContractBridge();
+    root!.textContent = "Desktop独立验证入口已就绪；会话由真实tauri-host产品合同驱动。";
+    return;
+  }
   if (import.meta.env.MODE === "pages") {
     root!.textContent = "正在准备静态网页的多线程运行环境；首次访问将在游戏载入前刷新一次。";
     const ready = await ensurePagesIsolation(import.meta.env.BASE_URL, {

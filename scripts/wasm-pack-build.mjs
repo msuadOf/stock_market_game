@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { copyFile, lstat, mkdir, readFile, realpath, stat } from "node:fs/promises";
+import { copyFile, lstat, mkdir, readFile, realpath, stat, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { captureWasmBuildSourceIdentity, invalidateWasmPackageMetadata, isDefaultFeaturesRelease, produceWasmPackageMetadata } from "./wasm-package-capability.mjs";
+import { captureWasmBuildSourceIdentity, invalidateWasmPackageMetadata, isDefaultFeaturesRelease, produceWasmPackageMetadata, wasmBuildSourceSha256 } from "./wasm-package-capability.mjs";
 
 async function licenseSnapshot(filename) {
   try {
@@ -51,12 +51,19 @@ export async function executeWasmPackBuild(root, command, commandRunner) {
   const packageLicense = path.join(outDir, "LICENSE");
   const releaseDefaultFeatures = isDefaultFeaturesRelease(command);
   const producesCapability = releaseDefaultFeatures && command.env?.RUSTUP_TOOLCHAIN === "nightly-2026-09-05";
-  const sourceSnapshot = producesCapability ? await captureWasmBuildSourceIdentity(root) : undefined;
+  const verificationBuild = command.args.some((arg, index) => (arg === "--features" && command.args[index + 1]?.split(/[ ,]+/).includes("verification-harness")) || (arg.startsWith("--features=") && arg.slice(11).split(/[ ,]+/).includes("verification-harness")));
+  const receiptPath = path.join(outDir, "wasm-verification-receipt.json");
+  const sourceSnapshot = (producesCapability || verificationBuild) ? await captureWasmBuildSourceIdentity(root) : undefined;
   const before = await licenseSnapshot(sourceFile);
   await mkdir(outDir, { recursive: true });
   await assertLicenseTarget(before, await wasmPackLicense());
   await assertLicenseTarget(before, packageLicense);
   await invalidateWasmPackageMetadata(outDir);
+  try {
+    const stale = await lstat(receiptPath);
+    if (!stale.isFile() || stale.isSymbolicLink() || stale.nlink !== 1) throw new Error("验证receipt不能为别名文件");
+    await rm(receiptPath);
+  } catch (error) { if (error.code !== "ENOENT") throw error; }
   if (releaseDefaultFeatures && !producesCapability) throw new Error("WASM package metadata requires the actual release command to pin RUSTUP_TOOLCHAIN=nightly-2026-09-05.");
   let buildError;
   try { await commandRunner(command); } catch (error) { buildError = error; }
@@ -74,4 +81,12 @@ export async function executeWasmPackBuild(root, command, commandRunner) {
   if (packaged.hash !== before.hash) throw new Error(`LICENSE package content mismatch at ${packageLicense}; no artifact may be published.`);
   await assertUnchanged(sourceFile, before);
   if (producesCapability) await produceWasmPackageMetadata({ root, outDir, command, sourceSnapshot });
+  if (verificationBuild) {
+    const after = await captureWasmBuildSourceIdentity(root);
+    if (JSON.stringify(after) !== JSON.stringify(sourceSnapshot)) throw new Error("验证构建期间源码改变");
+    const digest = bytes => createHash("sha256").update(bytes).digest("hex");
+    const [wasm, glue] = await Promise.all([readFile(path.join(outDir, "web_wasm_bg.wasm")), readFile(path.join(outDir, "web_wasm.js"))]);
+    if (!wasm.length || !glue.length) throw new Error("验证构建缺少实际产物");
+    await writeFile(receiptPath, JSON.stringify({ kind: "wasm-verification-build", sourceSha256: wasmBuildSourceSha256(sourceSnapshot), wasmSha256: digest(wasm), glueSha256: digest(glue), args: command.args, toolchain: command.env?.RUSTUP_TOOLCHAIN ?? null }, null, 2) + "\n", { flag: "wx" });
+  }
 }

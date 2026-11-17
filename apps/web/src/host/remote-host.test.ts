@@ -439,3 +439,73 @@ test("negotiated remote resync rejects stale or unfenced cuts and releases only 
     await host.dispose();
   }
 });
+
+test("远程有序发布保留真实 lease/ordinal，release 有独立确认", { timeout: 10000 }, () => {
+  const parsed = parseRemoteMessage(JSON.stringify({ PublisherFrame: { timeline_generation: 1,
+    observer_lease: "3", publication_ordinal: "8", update: { TickBatch: {} }, civil_date: "2030-01-02", public_revision: 7 } }));
+  assert.equal(parsed.kind, "protocol");
+  if (parsed.kind === "protocol") { assert.equal(parsed.lease, "3"); assert.equal(parsed.ordinal, "8"); }
+  assert.deepEqual(parseRemoteMessage(JSON.stringify({ ObserverReleased: { capture_id: "4", timeline_generation: "1", observer_lease: "3", publication_ordinal: "0", accepted: false } })),
+    { kind: "observer-released", captureId: "4", generation: "1", lease: "3", ordinal: "0", accepted: false });
+});
+
+test("V2重同步等待匹配的release回执，旧lease包不被接纳或确认", { timeout: 10000 }, async () => {
+  const { setImmediate } = await import("node:timers/promises");
+  let socket: WebSocket;
+  const sent: Record<string, unknown>[] = [];
+  let deltas = 0;
+  const wire = { ...catalogWireFixture(snapshot), timeline_generation: 1, snapshot, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [] };
+  const host = await createRemoteHost({} as SessionSetup, 1n, {
+    fetchFn: (async input => new Response(JSON.stringify(String(input).endsWith("/api/new")
+      ? {session_id:"session-1",session_token:"token-1"} : {npcDecisionDiagnostics:false}))) as typeof fetch,
+    webSocketFactory: () => socket = {readyState:1,close(){},send(raw:string){sent.push(JSON.parse(raw));},onmessage:null,onerror:null,onclose:null} as unknown as WebSocket,
+  });
+  const message = (value: unknown) => socket.onmessage!({data:JSON.stringify(value)} as MessageEvent);
+  try {
+    await host.start(update => { if (update.type === "protocol") deltas++; });
+    message({Baseline:{...wire,observer_fencing:true,observer_protocol:2,observer_lease:"1"}});
+    let completed = false;
+    const refreshed = host.refreshBaseline().then(() => { completed = true; });
+    await setImmediate();
+    message({ObserverCut:{...wire,capture_id:"1",publication_ordinal:"0",observer_protocol:2,observer_lease:"2"}});
+    await setImmediate();
+    message({ObserverFenced:{capture_id:"1",accepted:true}});
+    await setImmediate();
+    assert.equal(completed,false);
+    assert.deepEqual(sent.at(-1),{ReleaseObserverV2:{capture_id:"1",timeline_generation:"1",observer_lease:"2",publication_ordinal:"0"}});
+    message({ObserverReleased:{capture_id:"1",timeline_generation:"1",observer_lease:"2",publication_ordinal:"0",accepted:true}});
+    await refreshed;
+    const before = sent.length;
+    message({PublisherFrame:{timeline_generation:1,observer_lease:"1",publication_ordinal:"1",update:{TickBatch:{}},civil_date:"2030-01-02",public_revision:0}});
+    assert.equal(deltas,0); assert.equal(sent.length,before);
+    message({PublisherFrame:{timeline_generation:1,observer_lease:"2",publication_ordinal:"1",update:{TickBatch:{}},civil_date:"2030-01-02",public_revision:0}});
+    assert.equal(deltas,1);
+    assert.deepEqual(sent.at(-1),{AcceptPublication:{timeline_generation:"1",observer_lease:"2",publication_ordinal:"1"}});
+  } finally { await host.dispose(); }
+});
+
+test("unknown读档的新代基线被应用拒绝时仍保留写入和再次读档围栏", { timeout: 10000 }, async () => {
+  let socket!: WebSocket;
+  let loads = 0;
+  const host = await createRemoteHost({} as SessionSetup, 1n, {
+    fetchFn: (async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith("/api/new")) return new Response(JSON.stringify({session_id:"session-1",session_token:"token-1"}));
+      if (url.includes("host-capabilities")) return new Response(JSON.stringify({npcDecisionDiagnostics:false,restoreOutcome:"commit-receipt-v1"}));
+      if (url.endsWith("/api/load")) { loads++; return new Response('{"code":"ACTOR_GONE","message":"unknown"}',{status:500,headers:{"x-session-restore-outcome":"unknown"}}); }
+      return new Response(null);
+    }) as typeof fetch,
+    webSocketFactory: () => socket = {readyState:1,close(){},send(){},onmessage:null,onerror:null,onclose:null} as unknown as WebSocket,
+  });
+  const baseline = (generation: number) => socket.onmessage!({data:JSON.stringify({Baseline:{...catalogWireFixture(snapshot),timeline_generation:generation,
+    snapshot,civil_date:"2030-01-02",public_revision:0,public_report_ids:[]}})} as MessageEvent);
+  try {
+    await host.start(update => update.generation !== "2");
+    baseline(1);
+    await assert.rejects(host.load({}), /unknown/);
+    baseline(2);
+    await assert.rejects(host.setSpeed(10), /读档尚未/);
+    await assert.rejects(host.load({}), /上一项远程读档尚未确认/);
+    assert.equal(loads,1);
+  } finally { await host.dispose(); }
+});

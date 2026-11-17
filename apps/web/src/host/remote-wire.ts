@@ -3,11 +3,15 @@ import { prepareBaselineUpdate, createProtocolUpdate, type HostFailure, type Hos
 import { parseHostFailure } from "./protocol-failure.ts";
 
 export type RemoteMessage =
-  | { readonly kind: "baseline"; readonly fencing: boolean; readonly update: Extract<HostUpdate, { type: "baseline" }> }
-  | { readonly kind: "observer-cut"; readonly captureId: string; readonly ordinal: string; readonly update: Extract<HostUpdate, { type: "baseline" }> }
+  | { readonly kind: "baseline"; readonly fencing: boolean; readonly protocol: 1 | 2; readonly lease: string | null; readonly failure?: HostFailure; readonly update: Extract<HostUpdate, { type: "baseline" }> }
+  | { readonly kind: "observer-cut"; readonly captureId: string; readonly ordinal: string; readonly lease: string | null; readonly failure?: HostFailure; readonly update: Extract<HostUpdate, { type: "baseline" }> }
   | { readonly kind: "observer-fenced"; readonly captureId: string; readonly accepted: boolean }
-  | { readonly kind: "protocol"; readonly update: Extract<HostUpdate, { type: "protocol" }> }
+  | { readonly kind: "observer-released"; readonly captureId: string; readonly accepted: boolean; readonly generation: string; readonly lease: string; readonly ordinal: string }
+  | { readonly kind: "publication-accepted"; readonly accepted: boolean; readonly generation: string; readonly lease: string; readonly ordinal: string }
+  | { readonly kind: "terminal"; readonly generation: string; readonly lease: string; readonly missing: { from: string; through: string } | null; readonly failure: HostFailure }
+  | { readonly kind: "protocol"; readonly lease: string | null; readonly ordinal: string | null; readonly update: Extract<HostUpdate, { type: "protocol" }> }
   | { readonly kind: "failure"; readonly failure: HostFailure }
+  | { readonly kind: "publication-failure"; readonly generation: string; readonly lease: string; readonly ordinal: string; readonly failure: HostFailure }
   | { readonly kind: "resync"; readonly message: string }
   | { readonly kind: "empty" }
   | { readonly kind: "queued"; readonly requestId: number }
@@ -44,11 +48,15 @@ function failure(value: unknown, where: string): HostFailure {
 }
 
 function baseline(source: Readonly<Record<string, unknown>>): Extract<RemoteMessage, { kind: "baseline" }> {
-  optionalExact(source, ["timeline_generation", "snapshot", "civil_date", "public_revision", "public_report_ids", "stock_catalog", "company_catalog"], ["observer_fencing"], "远程 Baseline");
+  optionalExact(source, ["timeline_generation", "snapshot", "civil_date", "public_revision", "public_report_ids", "stock_catalog", "company_catalog"], ["observer_fencing", "observer_protocol", "observer_lease", "failure"], "远程 Baseline");
   if (source.observer_fencing !== undefined && source.observer_fencing !== true) throw new Error("远程观察能力无效");
   if (!Array.isArray(source.public_report_ids) || source.public_report_ids.some((id) => typeof id !== "string" || !/^(0|[1-9]\d*)$/.test(id))) throw new Error("远程 Baseline.public_report_ids 无效");
+  if (source.observer_protocol !== undefined && source.observer_protocol !== 2) throw new Error("远程观察协议版本无效");
+  const lease = source.observer_protocol === 2 ? observerOrdinal(source.observer_lease) : null;
+  if (source.observer_protocol === undefined && source.observer_lease !== undefined) throw new Error("旧观察协议不得携带未协商租约");
   return {
-    kind: "baseline",
+    kind: "baseline", protocol: source.observer_protocol === 2 ? 2 : 1, lease,
+    ...(source.failure == null ? {} : { failure: failure(source.failure, "远程基线故障") }),
     fencing: source.observer_fencing === true,
     update: prepareBaselineUpdate(generation(source.timeline_generation, "远程 Baseline.timeline_generation"), source.snapshot, source.stock_catalog, source.company_catalog, metadata(source, "远程 Baseline"), [], source.public_report_ids),
   };
@@ -66,7 +74,9 @@ export function parseRemoteMessage(raw: string, activeGeneration: string | null 
   if (Object.hasOwn(envelope, "Baseline")) return baseline(record(envelope.Baseline, "远程 Baseline"));
   if (Object.hasOwn(envelope, "ObserverCut")) {
     const { capture_id, publication_ordinal, ...snapshot } = record(envelope.ObserverCut, "远程 ObserverCut");
-    return { kind: "observer-cut", captureId: observerOrdinal(capture_id), ordinal: observerOrdinal(publication_ordinal), update: baseline(snapshot).update };
+    const parsedBaseline = baseline(snapshot);
+    return { kind: "observer-cut", captureId: observerOrdinal(capture_id), ordinal: observerOrdinal(publication_ordinal), lease: parsedBaseline.lease,
+      ...(parsedBaseline.failure === undefined ? {} : { failure: parsedBaseline.failure }), update: parsedBaseline.update };
   }
   if (Object.hasOwn(envelope, "ObserverFenced")) {
     const source = record(envelope.ObserverFenced, "远程 ObserverFenced");
@@ -74,12 +84,39 @@ export function parseRemoteMessage(raw: string, activeGeneration: string | null 
     if (typeof source.accepted !== "boolean") throw new Error("远程 ObserverFenced.accepted 无效");
     return { kind: "observer-fenced", captureId: observerOrdinal(source.capture_id), accepted: source.accepted };
   }
+  if (Object.hasOwn(envelope, "ObserverReleased") || Object.hasOwn(envelope, "PublicationAccepted")) {
+    const released = Object.hasOwn(envelope, "ObserverReleased");
+    const source = record(released ? envelope.ObserverReleased : envelope.PublicationAccepted, "远程观察确认");
+    exact(source, [...(released ? ["capture_id"] : []), "timeline_generation", "observer_lease", "publication_ordinal", "accepted"], "远程观察确认");
+    if (typeof source.accepted !== "boolean") throw new Error("远程观察确认 accepted 无效");
+    const identity = { generation: observerOrdinal(source.timeline_generation), lease: observerOrdinal(source.observer_lease), ordinal: observerOrdinal(source.publication_ordinal), accepted: source.accepted };
+    return released ? { kind: "observer-released", captureId: observerOrdinal(source.capture_id), ...identity } : { kind: "publication-accepted", ...identity };
+  }
+  if (Object.hasOwn(envelope, "PublicationFailure")) {
+    const source = record(envelope.PublicationFailure, "远程有序故障");
+    exact(source, ["timeline_generation", "observer_lease", "publication_ordinal", "failure"], "远程有序故障");
+    return { kind: "publication-failure", generation: observerOrdinal(source.timeline_generation), lease: observerOrdinal(source.observer_lease),
+      ordinal: observerOrdinal(source.publication_ordinal), failure: failure(source.failure, "远程有序故障") };
+  }
+  if (Object.hasOwn(envelope, "ObserverTerminal")) {
+    const source = record(envelope.ObserverTerminal, "远程 terminal");
+    exact(source, ["timeline_generation", "observer_lease", "missing", "failure"], "远程 terminal");
+    let missing: { from: string; through: string } | null = null;
+    if (source.missing !== null) {
+      const range = record(source.missing, "terminal 缺口"); exact(range, ["from", "through"], "terminal 缺口");
+      missing = { from: observerOrdinal(range.from), through: observerOrdinal(range.through) };
+      if (BigInt(missing.from) > BigInt(missing.through)) throw new Error("terminal 缺口范围回卷");
+    }
+    return { kind: "terminal", generation: observerOrdinal(source.timeline_generation), lease: observerOrdinal(source.observer_lease), missing, failure: failure(source.failure, "远程 terminal") };
+  }
   if (Object.hasOwn(envelope, "PublisherFrame")) {
     const source = record(envelope.PublisherFrame, "远程 PublisherFrame");
-    optionalExact(source, ["timeline_generation", "update", "civil_date", "public_revision"], ["failure"], "远程 PublisherFrame");
+    optionalExact(source, ["timeline_generation", "update", "civil_date", "public_revision"], ["failure", "observer_lease", "publication_ordinal"], "远程 PublisherFrame");
     if (source.failure !== undefined && source.failure !== null) throw new Error("远程 PublisherFrame 不得混入 HostFailure");
     if (source.update === null || source.update === undefined) throw new Error("远程 PublisherFrame 必须包含完整 EngineUpdate");
-    return { kind: "protocol", update: createProtocolUpdate(generation(source.timeline_generation, "远程 PublisherFrame.timeline_generation"), source.update, metadata(source, "远程 PublisherFrame")) };
+    if (Object.hasOwn(source, "observer_lease") !== Object.hasOwn(source, "publication_ordinal")) throw new Error("发布租约和序号必须同时存在");
+    return { kind: "protocol", lease: source.observer_lease === undefined ? null : observerOrdinal(source.observer_lease),
+      ordinal: source.publication_ordinal === undefined ? null : observerOrdinal(source.publication_ordinal), update: createProtocolUpdate(generation(source.timeline_generation, "远程 PublisherFrame.timeline_generation"), source.update, metadata(source, "远程 PublisherFrame")) };
   }
   if (Object.hasOwn(envelope, "HostFailure")) return { kind: "failure", failure: failure(envelope.HostFailure, "远程 HostFailure") };
   if (Object.hasOwn(envelope, "ResyncRequired")) {

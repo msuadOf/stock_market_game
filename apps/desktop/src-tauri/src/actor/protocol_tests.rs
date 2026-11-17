@@ -128,6 +128,7 @@ async fn shared_ingress_receives_player_without_actor_command_polling() {
     let mut game = ProtocolSession::new(setup, 7).unwrap();
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
     let handles = SessionHandles {
+        shutdown_result: Default::default(),
         ack_route: AckRoute::default(),
         cmd_tx,
         ingress: Arc::new(RwLock::new((1, game.shared_ingress()))),
@@ -181,6 +182,7 @@ async fn restore_rebinds_host_ingress_and_closes_previous_generation() {
         "restore-timeline",
     );
     let handles = SessionHandles {
+        shutdown_result: Arc::clone(&harness.actor.shutdown_result),
         ack_route: AckRoute::default(),
         cmd_tx: harness.cmd_tx.clone(),
         ingress: Arc::clone(&harness.actor.ingress),
@@ -210,7 +212,7 @@ async fn restore_rebinds_host_ingress_and_closes_previous_generation() {
         .actor
         .handle_command(SessionCommand::Shutdown { reply })
         .await;
-    applied.await.unwrap();
+    applied.await.unwrap().unwrap();
     assert!(handles
         .ingress
         .read()
@@ -318,7 +320,7 @@ async fn capture(fastest: bool, preferences: PausePreferences) {
                             reply,
                         })
                         .await;
-                    applied.await.unwrap();
+                    applied.await.unwrap().unwrap();
                     actor.tick_and_emit().await;
                     let next: serde_json::Value =
                         serde_json::from_str(&receiver.try_recv().unwrap()).unwrap();
@@ -397,7 +399,7 @@ fn baseline_catalogs_match_actual_desktop_session() {
 }
 
 #[tokio::test]
-async fn committed_restore_catalog_failure_keeps_generation_and_closes_desktop_actor() {
+async fn committed_restore_catalog_failure_keeps_generation_and_recovery_control() {
     let mut setup = super::tests::diagnostic_setup();
     setup.npcs.inst_count = 0;
     setup.history_len = 1;
@@ -425,7 +427,10 @@ async fn committed_restore_catalog_failure_keeps_generation_and_closes_desktop_a
     assert!(matches!(result, Err(BaselineError::Catalog(_))));
     assert_eq!(harness.actor.generation, 2);
     assert_eq!(harness.actor.timeline_id, new_timeline);
-    assert!(harness.cmd_tx.is_closed());
+    assert!(
+        !harness.cmd_tx.is_closed(),
+        "terminal 保留查询、恢复与关闭控制通道"
+    );
     assert!(ingress
         .enqueue_player_intent(
             AccountId(0),

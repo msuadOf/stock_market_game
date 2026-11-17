@@ -4,7 +4,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { mockIPC, clearMocks } from "@tauri-apps/api/mocks";
-import { emit } from "@tauri-apps/api/event";
+import { emit as emitNative } from "@tauri-apps/api/event";
+let fixtureObserverLease = "1";
+function emit(event: string, payload: Record<string, unknown>): Promise<void> {
+  // 模拟真实发送端在交接时绑定 lease，显式注入的旧 lease 必须保持原样。
+  const ordered = Object.hasOwn(payload, "publication_ordinal") || Object.hasOwn(payload, "gap");
+  return emitNative(event, ordered ? { observer_lease: fixtureObserverLease, ...payload } : payload);
+}
 import { setImmediate } from "node:timers/promises";
 import { createTauriHost } from "./tauri-host.ts";
 import type { SessionSetup } from "../types/engine.ts";
@@ -53,10 +59,14 @@ async function withTauriHost(run: (host: Awaited<ReturnType<typeof createTauriHo
   const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
   Object.defineProperty(globalThis, "window", { configurable: true, value: { crypto: globalThis.crypto } });
   const calls: string[] = [];
+  fixtureObserverLease = "1";
   mockIPC((command, args) => {
     calls.push(command);
+    if (command === "engine_hold_observer" && (args as Record<string, unknown>).held === true) fixtureObserverLease = String((args as Record<string, unknown>).observerLease);
     const response = handler(command, args);
-    if (response !== undefined) return response;
+    const withLease = (value: unknown): unknown => value !== null && typeof value === "object" && Object.hasOwn(value, "working_orders")
+      ? { observer_lease: fixtureObserverLease, ...value } : value;
+    if (response !== undefined) return response instanceof Promise ? response.then(withLease) : withLease(response);
     if (command === "create_session") return "session-1";
     if (command === "host_capabilities") return { npcDecisionDiagnostics: true };
     if (command === "engine_baseline") return { ...catalogWireFixture(snapshot), snapshot, generation: "1", timeline_id: "timeline-1", civil_date: "2030-01-01" };
@@ -100,7 +110,7 @@ test("Tauri enqueue 严格携带当前 generation，restore 后旧入队确认�
   });
 });
 
-test("Tauri restore 切换 timeline 后过滤旧 event，并在新 baseline callback 后 resume", async () => {
+test("Tauri restore 切换 timeline 后过滤旧 event，baseline 接纳不控制 owner 运行", async () => {
   await withTauriHost(async (host, calls) => {
     const updates: unknown[] = [];
     const failures: unknown[] = [];
@@ -108,7 +118,7 @@ test("Tauri restore 切换 timeline 后过滤旧 event，并在新 baseline call
     await setImmediate();
     calls.length = 0;
     await host.load({});
-    assert.deepEqual(calls, ["pause_session", "restore_session", "callback:2", "resume_session"]);
+    assert.deepEqual(calls, ["restore_session", "callback:2"]);
     const update = { stale: true };
     await emit("engine-event", { session_id: "session-1", timeline_id: "timeline-1", update });
     await emit("engine-failure", { session_id: "session-1", timeline_id: "timeline-1", code: "OLD", message: "旧错误", events: [] });
@@ -163,7 +173,7 @@ test("Tauri restore snapshot 解析失败保留可见 generation/timeline 与旧
     await setImmediate();
     calls.length = 0;
     await assert.rejects(host.load({}), /baseline.snapshot/);
-    assert.deepEqual(calls, ["pause_session", "restore_session"]);
+    assert.deepEqual(calls, ["restore_session"]);
     assert.equal(host.tick(), 0);
     await emit("engine-event", { session_id: "session-1", timeline_id: "timeline-2", update: {} });
     assert.equal((updates.at(-1) as { generation: string }).generation, "1");
@@ -176,7 +186,7 @@ test("Tauri baseline callback 抛错保留已安装状态，并阻止 restore �
     await setImmediate();
     calls.length = 0;
     await assert.rejects(host.load({}), /callback 失败/);
-    assert.deepEqual(calls, ["pause_session", "restore_session"]);
+    assert.deepEqual(calls, ["restore_session"]);
     assert.equal(host.tick(), 2);
   });
 });
@@ -189,7 +199,7 @@ test("Tauri restore 失败后保留已确认暂停，不冒充 running", async (
     await setImmediate();
     calls.length = 0;
     await assert.rejects(host.load({}), /restore 失败/);
-    assert.deepEqual(calls, ["pause_session", "restore_session"]);
+    assert.deepEqual(calls, ["restore_session"]);
     assert.equal(host.tick(), 0);
     rejectResume = true;
     calls.length = 0;
@@ -343,8 +353,8 @@ test("Tauri 派发后按观察序号提交独立 ACK，旧时间线不确认", {
     release();
     await setImmediate();
     assert.deepEqual(acknowledgements, [
-      { sessionId: "session-1", generation: "1", ordinal: "1" },
-      { sessionId: "session-1", generation: "1", ordinal: "2" },
+      { sessionId: "session-1", generation: "1", observerLease: "1", ordinal: "1" },
+      { sessionId: "session-1", generation: "1", observerLease: "1", ordinal: "2" },
     ]);
     assert.ok(!calls.includes("pause_session"));
   }, (command, args) => {
@@ -406,7 +416,7 @@ test("Tauri 观察流缺口使用准确基线恢复，不暂停或恢复权威�
     assert.deepEqual(failures, []);
     assert.deepEqual(checkpoints, [undefined, { seq: 41, settledDate: "2029-12-31" }]);
     assert.deepEqual(calls, ["engine_hold_observer", "engine_baseline", "engine_resume_observer", "baseline-delivered", "engine_hold_observer"]);
-    assert.deepEqual(fences, [{ sessionId: "session-1", generation: "1", ordinal: "8" }]);
+    assert.deepEqual(fences, [{ sessionId: "session-1", generation: "1", observerLease: "2", ordinal: "8" }]);
   }, (command, args) => {
     if (command === "engine_baseline") {
       if (initial) { initial = false; return undefined; }
@@ -424,14 +434,14 @@ test("Tauri 基线覆盖旧更正拒绝，但不吞独立归档失败", { timeou
     await host.start(() => true, failure => { seen.push(failure.code); });
     await host.refreshBaseline();
     await emit("engine-failure", {
-      ...envelope, code: "REPORT_CORRECTION_PREPARE_REJECTED", where: "desktop.actor.prepare_civil_updates",
+      ...envelope, code: "REPORT_CORRECTION_PREPARE_REJECTED", where: "session.authority.prepare_civil_updates",
       message: "过期更正", recoverable: true,
       context: { operation: "endCivilDay", generation: "1", tick: 0, seq: 42, day: 1 },
       cause: { code: "REPORT_CORRECTION_REJECTED", message: "旧请求", cause: null },
     });
     assert.deepEqual(seen, []);
     await emit("engine-failure", {
-      ...envelope, code: "DAY_END_ARCHIVE_FAILED", where: "desktop.actor.save_day_end",
+      ...envelope, code: "DAY_END_ARCHIVE_FAILED", where: "session.authority.save_day_end",
       message: "归档失败", recoverable: true,
     });
     assert.deepEqual(seen, ["DAY_END_ARCHIVE_FAILED"]);
@@ -441,12 +451,12 @@ test("Tauri 基线覆盖旧更正拒绝，但不吞独立归档失败", { timeou
   } : undefined);
 });
 
-test("Tauri restore baseline 被拒绝时不恢复 actor，并在重启时重新交付", { timeout: 10000 }, async () => {
+test("Tauri restore baseline 被拒绝不改变已提交 owner 的运行意图，并在重订阅时重新交付", { timeout: 10000 }, async () => {
   await withTauriHost(async (host, calls) => {
     await host.start((update) => update.generation !== "2");
     calls.length = 0;
     await assert.rejects(host.load({}), /消费者拒绝.*baseline/);
-    assert.deepEqual(calls, ["pause_session", "restore_session"]);
+    assert.deepEqual(calls, ["restore_session"]);
     assert.equal(host.tick(), 2);
     const updates: unknown[] = [];
     await host.start((update) => { updates.push(update); return true; });
@@ -490,15 +500,15 @@ test("Tauri dispose 后晚到 load 拒绝且不安装 restore baseline", async (
 });
 
 
-test("Tauri 恢复提交在 baseline/恢复运行前通知，恢复运行失败仍保留提交通知", { timeout: 10000 }, async () => {
+test("Tauri 恢复提交在 baseline 前通知，运行意图由 Rust 恢复合同保留", { timeout: 10000 }, async () => {
   let restored = false, refuseResume = false;
   await withTauriHost(async (host, calls) => {
     await host.start(update => { if (update.generation === "2") assert.equal(restored, true); });
     calls.length = 0;
     refuseResume = true;
-    await assert.rejects(host.load({}, () => { restored = true; calls.push("restored-setup"); }), /恢复运行失败/);
+    await host.load({}, () => { restored = true; calls.push("restored-setup"); });
     assert.equal(restored, true);
-    assert.deepEqual(calls, ["pause_session", "restore_session", "restored-setup", "resume_session"]);
+    assert.deepEqual(calls, ["restore_session", "restored-setup"]);
     assert.equal(host.tick(), 2);
   }, command => command === "resume_session" && refuseResume ? Promise.reject(new Error("恢复运行失败")) : undefined);
 });
@@ -722,4 +732,83 @@ test("Tauri 查询能力通过应用层门禁", { timeout: 10000 }, async () => 
     if (command === "calculate_intraday_average") return { turnover_cents: "1000", volume_shares: 10 };
     return undefined;
   });
+});
+
+test("Tauri 同代旧 lease 的延迟包不按当前 lease 确认", { timeout: 10000 }, async () => {
+  const acknowledgements: unknown[] = [];
+  const baseline = { ...catalogWireFixture(snapshot), snapshot, generation: "1", timeline_id: "timeline-1", civil_date: "2030-01-01", working_orders: [], publication_ordinal: "0" };
+  await withTauriHost(async host => {
+    const updates: unknown[] = [];
+    await host.start(update => { updates.push(update); });
+    await host.refreshBaseline();
+    const count = updates.length;
+    await emit("engine-event", { session_id: "session-1", timeline_id: "timeline-1", observer_lease: "1", publication_ordinal: "100", update: {} });
+    await setImmediate();
+    assert.equal(updates.length, count);
+    assert.deepEqual(acknowledgements, []);
+  }, (command, args) => {
+    if (command === "engine_baseline") return baseline;
+    if (command === "engine_ack_observer") acknowledgements.push(args);
+    return undefined;
+  });
+});
+
+test("Tauri 重同步基线保留已丢包的归档 blocked 故障", { timeout: 10000 }, async () => {
+  let reads = 0;
+  const failure = { code: "DAY_END_ARCHIVE_FAILED", where: "session.authority.save_day_end", message: "日界已提交，归档阻塞", recoverable: true,
+    context: { operation: "saveDayEnd", generation: "1", tick: 1, seq: 42, day: 1 } };
+  await withTauriHost(async host => {
+    const failures: string[] = [];
+    await host.start(() => {}, value => { failures.push(value.message); });
+    await host.refreshBaseline();
+    assert.deepEqual(failures, [failure.message]);
+  }, command => {
+    if (command !== "engine_baseline") return undefined;
+    reads += 1;
+    return { ...catalogWireFixture(snapshot), snapshot, generation: "1", timeline_id: "timeline-1", civil_date: "2030-01-01", working_orders: [], publication_ordinal: "0", ...(reads > 1 ? { failure } : {}) };
+  });
+});
+
+ test("已提交恢复回执损坏也必须阻断旧代写入", { timeout: 10000 }, async () => {
+  const enqueues: unknown[] = [];
+  await withTauriHost(async host => {
+    await assert.rejects(host.load({}));
+    await assert.rejects(host.submitIntent({ Cancel: { code: "600101", id: 7 } }), /baseline.*失效/);
+    assert.equal(enqueues.length, 0);
+  }, (command, args) => {
+    if (command === "restore_session") return Promise.reject({ replacement: {}, failure: {}, timeline_id: "timeline-2" });
+    if (command === "enqueue") enqueues.push(args);
+    return undefined;
+  });
+});
+
+
+test("Tauri 运行中的 restore prepare 拒绝不暂停旧 owner，也不补发恢复命令", { timeout: 10000 }, async () => {
+  await withTauriHost(async (host, calls) => {
+    await host.start(() => true);
+    const visible = host.snapshot();
+    calls.length = 0;
+    await assert.rejects(host.load({}), /候选校验失败/);
+    assert.equal(host.snapshot(), visible);
+    assert.deepEqual(calls, ["restore_session"]);
+    await host.stop();
+    assert.deepEqual(calls, ["restore_session", "pause_session"]);
+  }, command => command === "restore_session" ? Promise.reject("候选校验失败") : undefined);
+});
+
+
+test("Tauri restore 的新故障状态在消费者拒绝之前安装，重订阅不重放旧代故障", { timeout: 10000 }, async () => {
+  await withTauriHost(async (host, calls) => {
+    const seen: string[] = [];
+    await host.start(update => update.generation !== "2", failure => seen.push(failure.code));
+    assert.deepEqual(seen, ["DAY_END_ARCHIVE_FAILED"]);
+    await assert.rejects(host.load({}), /消费者拒绝/);
+    const previous = seen.length;
+    await host.start(() => true, failure => seen.push(failure.code));
+    assert.equal(seen.length, previous);
+    assert.equal(calls.filter(command => command === "pause_session").length, 0);
+  }, command => command === "engine_baseline" ? {
+    ...catalogWireFixture(snapshot), snapshot, generation: "1", timeline_id: "timeline-1", civil_date: "2030-01-01",
+    failure: { code: "DAY_END_ARCHIVE_FAILED", where: "session.authority.save_day_end", message: "旧代归档失败", recoverable: true, context: {operation:"saveDayEnd",generation:"1",tick:0,seq:42,day:0} },
+  } : undefined);
 });

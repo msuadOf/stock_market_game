@@ -91,7 +91,7 @@ fn correction_actor(
         archive: None,
         archive_lane: None,
         archive_epoch: 1,
-        archive_order: CheckpointOrder::new(1, 1),
+        archive_order: ArchiveAuthority::new(1, 1),
         injected_step_failure: None,
         pacing,
         game,
@@ -177,7 +177,7 @@ async fn correction_business_rejection_keeps_installed_close_and_contiguous_canc
     }
     let failure = failure.expect("真实更正业务拒绝必须通知用户");
     assert_eq!(failure.code, "REPORT_CORRECTION_PREPARE_REJECTED");
-    assert_eq!(failure.r#where, "server.actor.prepare_civil_updates");
+    assert_eq!(failure.r#where, "session.authority.prepare_civil_updates");
     assert_eq!(
         failure.cause.as_ref().unwrap().code,
         "REPORT_CORRECTION_REJECTED"
@@ -533,7 +533,7 @@ async fn company_writes_after_fatal_preserve_first_failure_and_stale_generation(
             Err(SendCommandError::Rejected(actual)) if actual.contains(reason))
         );
     }
-    // 五个必要只读／公司写例外不能移除其他Member请求原有的终态门。
+    // 终态保留只读快照；读取不得清除首错或改变业务事实。
     assert!(matches!(
         dispatch(
             &mut actor,
@@ -542,7 +542,7 @@ async fn company_writes_after_fatal_preserve_first_failure_and_stale_generation(
             MemberRequest::Snapshot
         )
         .await,
-        Err(SendCommandError::Rejected(_))
+        Ok(MemberResponse::Snapshot(_))
     ));
     assert_eq!(actor.fatal_failure.as_ref(), Some(&first_failure));
     assert_eq!(actor.game.business_state_hash().unwrap(), first_business);
@@ -786,31 +786,28 @@ async fn target_day_not_ready_uses_the_actual_save_error_conversion() {
 }
 
 // 只供接收端状态机测试使用：真实 typed cause 来自 engine，wire 身份按 publisher fixture 显式绑定。
-impl HostFailure {
-    pub(crate) fn correction_prepare_rejection_fixture() -> Self {
-        let (mut game, mut request) = correction_game("2030-06-08");
-        request.entries[0].lines[1].account = LedgerAccountId("不存在的科目".into());
-        let epoch = game.report_correction_epoch();
-        game.enqueue_report_correction(&epoch, request).unwrap();
-        let error = game.end_civil_day_update().unwrap_err();
-        assert!(game.require_healthy().is_ok());
-        let mut failure = HostFailure::civil(&error);
-        failure.code = "REPORT_CORRECTION_PREPARE_REJECTED";
-        failure.r#where = "server.actor.prepare_civil_updates".into();
-        failure.recoverable = true;
-        failure.context.operation = "endCivilDay";
-        failure.context.tick = Some(6);
-        failure.context.seq = Some(4);
-        failure.context.day = Some(1);
-        failure.context.generation = Some("7".into());
-        assert_eq!(
-            failure.cause.as_ref().unwrap().code,
-            "REPORT_CORRECTION_REJECTED"
-        );
-        failure
-    }
+pub(crate) fn correction_prepare_rejection_fixture() -> HostFailure {
+    let (mut game, mut request) = correction_game("2030-06-08");
+    request.entries[0].lines[1].account = LedgerAccountId("不存在的科目".into());
+    let epoch = game.report_correction_epoch();
+    game.enqueue_report_correction(&epoch, request).unwrap();
+    let error = game.end_civil_day_update().unwrap_err();
+    assert!(game.require_healthy().is_ok());
+    let mut failure = HostFailure::civil(&error);
+    failure.code = "REPORT_CORRECTION_PREPARE_REJECTED";
+    failure.r#where = "session.authority.prepare_civil_updates".into();
+    failure.recoverable = true;
+    failure.context.operation = "endCivilDay";
+    failure.context.tick = Some(6);
+    failure.context.seq = Some(4);
+    failure.context.day = Some(1);
+    failure.context.generation = Some("7".into());
+    assert_eq!(
+        failure.cause.as_ref().unwrap().code,
+        "REPORT_CORRECTION_REJECTED"
+    );
+    failure
 }
-
 fn poisoned_actor_for_command_boundaries() -> (SessionActor, engine::session::StepFatal) {
     let (mut game, mut request) = correction_game("2030-06-08");
     for line in &mut request.entries[0].lines {

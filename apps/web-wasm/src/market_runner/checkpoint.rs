@@ -2,7 +2,8 @@
 use super::{error, to_js};
 use engine::session::{
     checkpoint::{
-        CapturedCheckpoint, CheckpointOrder, ReceiptDisposition, MAX_PENDING_CHECKPOINTS,
+        ArchiveAuthority, ArchiveWriteFence, CapturedCheckpoint, CheckpointKey, ReceiptOutcome,
+        MAX_PENDING_CHECKPOINTS,
     },
     protocol::{CivilUpdate, ProtocolSession},
 };
@@ -12,7 +13,6 @@ use libos::{
 };
 use serde::Serialize;
 use std::{
-    cell::Cell,
     num::NonZeroUsize,
     sync::{Arc, Mutex},
 };
@@ -20,17 +20,19 @@ use wasm_bindgen::prelude::*;
 
 struct Consumer {
     rx: Receiver<CapturedCheckpoint>,
+    fence: ArchiveWriteFence,
+    writing: Option<CheckpointKey>,
     wake: Arc<WakeEpoch>,
 }
 static CONSUMER: Mutex<Option<Consumer>> = Mutex::new(None);
-
 pub(super) struct ArchivePort {
     tx: Sender<CapturedCheckpoint>,
     wake: Arc<WakeEpoch>,
     pub generation: u64,
     pub writer_epoch: u64,
-    staged: Cell<Option<u64>>,
-    order: CheckpointOrder,
+    order: ArchiveAuthority,
+    #[cfg(feature = "verification-harness")]
+    reject_next: bool,
 }
 
 impl ArchivePort {
@@ -45,6 +47,8 @@ impl ArchivePort {
         let wake = Arc::new(WakeEpoch::new());
         *consumer = Some(Consumer {
             rx,
+            fence: ArchiveWriteFence::default(),
+            writing: None,
             wake: Arc::clone(&wake),
         });
         Ok(Self {
@@ -52,23 +56,47 @@ impl ArchivePort {
             wake,
             generation,
             writer_epoch,
-            staged: Cell::new(None),
-            order: CheckpointOrder::new(generation, writer_epoch),
+            order: ArchiveAuthority::new(generation, writer_epoch),
+            #[cfg(feature = "verification-harness")]
+            reject_next: false,
         })
     }
 
-    pub fn latest_staged(&self) -> Option<u64> {
-        self.staged.get()
+    #[cfg(feature = "verification-harness")]
+    pub fn reject_next_enqueue(&mut self) {
+        self.reject_next = true;
     }
 
-    pub fn receive(&mut self, sequence: u64) -> Result<(), JsValue> {
-        match self
-            .order
-            .accept_pending_seq(self.generation, self.writer_epoch, sequence)
-        {
-            ReceiptDisposition::Accepted | ReceiptDisposition::Stale => Ok(()),
-            ReceiptDisposition::OutOfOrder => Err(error("归档任务返回非 FIFO 收据")),
-        }
+    pub fn latest_staged(&self) -> Option<u64> {
+        self.order.latest_staged().map(|key| key.seq)
+    }
+    #[cfg(feature = "verification-harness")]
+    pub fn trace(&self) -> engine::session::checkpoint::ArchiveTrace {
+        self.order.trace()
+    }
+    pub fn is_blocked(&self) -> bool {
+        self.order.is_blocked()
+    }
+    pub fn blocked_reason(&self) -> Option<&str> {
+        self.order.blocked_reason()
+    }
+    pub fn block(&mut self, reason: String) {
+        self.order.block(reason);
+    }
+    pub fn close(&self) {
+        self.wake.close();
+    }
+    pub fn ensure_drained(&self) -> Result<(), String> {
+        self.order.ensure_drained()
+    }
+
+    pub fn receive(
+        &mut self,
+        sequence: u64,
+        result: Result<(), String>,
+    ) -> Result<ReceiptOutcome, String> {
+        self.order
+            .complete_sequence(self.generation, self.writer_epoch, sequence, result)
     }
 
     pub fn try_stage(
@@ -76,21 +104,16 @@ impl ArchivePort {
         session: &ProtocolSession,
         update: &CivilUpdate,
     ) -> Result<(), String> {
-        let value = CapturedCheckpoint::take(session, update, self.generation, self.writer_epoch)
-            .map_err(|error| error.to_string())?;
-        let key = value.key;
-        self.order
-            .can_stage(key)
-            .map_err(|error| error.to_string())?;
-        let result = self.tx.try_send(value);
-        match result {
-            Ok(()) => {
-                self.order.staged(key).map_err(|error| error.to_string())?;
-                self.staged.set(Some(key.seq));
-                self.wake.notify();
-                Ok(())
+        let tx = &self.tx;
+        let wake = &self.wake;
+        #[cfg(feature = "verification-harness")]
+        let reject = std::mem::take(&mut self.reject_next);
+        self.order.stage(session, update, |value| {
+            #[cfg(feature = "verification-harness")]
+            if reject {
+                return Err("验收注入：归档传输队列满".into());
             }
-            Err(error) => {
+            tx.try_send(value).map_err(|error| {
                 let (description, rejected) = match error {
                     observer_mailbox::TrySendError::Full(value) => {
                         ("日终归档队列已满，当前候选未写入", value)
@@ -99,11 +122,12 @@ impl ArchivePort {
                         ("日终归档任务已退出，当前候选未写入", value)
                     }
                 };
-                // 最新归档仍由会话保有；落后任务失败不能冒充已耐久。
                 libos::deferred_drop::defer(rejected);
-                Err(description.into())
-            }
-        }
+                description.to_owned()
+            })?;
+            wake.notify();
+            Ok(())
+        })
     }
 }
 
@@ -117,6 +141,10 @@ impl Drop for ArchivePort {
 #[serde(tag = "kind", rename_all = "camelCase")]
 enum WireCheckpoint<'a> {
     Closed,
+    Skipped {
+        seq: String,
+        message: String,
+    },
     #[serde(rename_all = "camelCase")]
     Checkpoint {
         generation: String,
@@ -138,23 +166,49 @@ pub fn market_archive_signal() -> Result<u32, JsValue> {
 #[wasm_bindgen]
 pub fn market_archive_take() -> Result<JsValue, JsValue> {
     let value = {
-        let consumer = CONSUMER.lock().map_err(|_| error("归档邮箱锁损坏"))?;
-        let consumer = consumer.as_ref().ok_or_else(|| error("归档邮箱尚未安装"))?;
+        let mut consumer = CONSUMER.lock().map_err(|_| error("归档邮箱锁损坏"))?;
+        let consumer = consumer.as_mut().ok_or_else(|| error("归档邮箱尚未安装"))?;
+        if consumer.writing.is_some() {
+            return Err(error("上一份归档尚未报告存储结果"));
+        }
         match consumer.rx.try_recv() {
-            Ok(value) => value,
+            Ok(value) => {
+                if let Err(message) = consumer.fence.begin(value.key) {
+                    let seq = value.key.seq.to_string();
+                    libos::deferred_drop::defer(value);
+                    return to_js(&WireCheckpoint::Skipped { seq, message });
+                }
+                consumer.writing = Some(value.key);
+                value
+            }
             Err(TryRecvError::Empty) if !consumer.wake.is_closed() => return Ok(JsValue::NULL),
             Err(TryRecvError::Empty | TryRecvError::Disconnected) => {
                 return to_js(&WireCheckpoint::Closed)
             }
         }
     };
-    // 只在归档 Worker 上克隆到 JS；锁不跨编码或持久化。
+    // 只在归档 Worker 上编码；锁不跨序列化或持久化。
     to_js(&WireCheckpoint::Checkpoint {
         generation: value.key.generation.to_string(),
         writer_epoch: value.key.writer_epoch.to_string(),
         seq: value.key.seq.to_string(),
         slot: &value.slot,
     })
+}
+
+/// 存储副实例先记录本地顺序围栏，再通知权威线程；不依赖控制消息传送速度。
+#[wasm_bindgen]
+pub fn market_archive_write_result(sequence: u64, failure: Option<String>) -> Result<(), JsValue> {
+    let mut consumer = CONSUMER.lock().map_err(|_| error("归档邮箱锁损坏"))?;
+    let consumer = consumer.as_mut().ok_or_else(|| error("归档邮箱尚未安装"))?;
+    let key = consumer.writing.ok_or_else(|| error("没有在途归档写入"))?;
+    if key.seq != sequence {
+        return Err(error("归档写入结果不属于在途候选"));
+    }
+    consumer.writing = None;
+    let result = failure.map_or(Ok(()), Err);
+    consumer.fence.finish(key, &result);
+    Ok(())
 }
 
 #[wasm_bindgen]

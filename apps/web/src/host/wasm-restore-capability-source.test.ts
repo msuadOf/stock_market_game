@@ -28,7 +28,7 @@ for (const scenario of ["valid", "missing", "bad-provenance", "wrong-package", "
           "init_wasm_wait", "wasm_wait_abort_layout", "wasm_wait_death_layout", "shutdown_session"]
       : scenario === "false-with-abi" ? ["world_runtime_abi_version"] : [];
     const capability = { kind: "verified-package", wasmSha256: provenance.wasmSha256, glueSha256: provenance.glueSha256, sourceSha256: provenance.sourceSha256,
-      buildManifestSha256: scenario === "bad-provenance" ? "f".repeat(64) : manifestHash, exports: ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "wasm_tombstone_init_primary", "wasm_tombstone_bind_ingress", "start_wasm_reclaimer", "close_wasm_reclaimer", ...runtimeExports] };
+      buildManifestSha256: scenario === "bad-provenance" ? "f".repeat(64) : manifestHash, exports: ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "commit_session_replacement", "prepare_session_replacement", "fence_session_replacement", "wasm_tombstone_init_primary", "wasm_tombstone_bind_ingress", "start_wasm_reclaimer", "close_wasm_reclaimer", ...runtimeExports] };
     const urls: string[] = [];
     const read = async (input: string | URL | Request): Promise<Response> => {
       const url = String(input); urls.push(url);

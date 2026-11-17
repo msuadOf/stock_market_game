@@ -126,7 +126,7 @@ fn production_actor_steps_and_delivers_tick_batches() {
         archive: None,
         archive_lane: None,
         archive_epoch: 1,
-        archive_order: CheckpointOrder::new(1, 1),
+        archive_order: ArchiveAuthority::new(1, 1),
         injected_step_failure: None,
         pacing: ServerPacing::new(1, game.tick(), native_async::now()),
         game,
@@ -163,21 +163,28 @@ fn archived_failure_from_retired_writer_cannot_pause_a_live_timeline() {
         .pacing
         .set_running(true, actor.game.tick(), native_async::now());
     actor.archive_order.install(2, 5);
-    let common = CheckpointKey {
-        generation: 2,
-        writer_epoch: 5,
-        tick: 17,
-        seq: 31,
-        day: 1,
-        settled_date: engine::CivilDate::from_iso("2030-01-02").unwrap(),
-    };
-    let prior = CheckpointKey {
-        seq: 30,
-        settled_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
-        ..common
-    };
-    actor.archive_order.staged(prior).unwrap();
-    actor.archive_order.staged(common).unwrap();
+    // 捕获两个真实已提交日界；本测试只注入收据，不将其称为落盘证据。
+    let mut setup = actor.game.export_setup_for_runtime();
+    setup.start_date = engine::CivilDate::from_iso("2030-01-05").unwrap();
+    let mut capture_session = ProtocolSession::new(setup, 7).unwrap();
+    let first = capture_session.end_civil_day_update().unwrap();
+    let prior_capture =
+        engine::session::checkpoint::CapturedCheckpoint::take(&capture_session, &first, 2, 5)
+            .unwrap();
+    let second = capture_session.end_civil_day_update().unwrap();
+    let common_capture =
+        engine::session::checkpoint::CapturedCheckpoint::take(&capture_session, &second, 2, 5)
+            .unwrap();
+    let prior = prior_capture.key;
+    let common = common_capture.key;
+    actor
+        .archive_order
+        .stage_captured(prior_capture, |_| Ok(()))
+        .unwrap();
+    actor
+        .archive_order
+        .stage_captured(common_capture, |_| Ok(()))
+        .unwrap();
 
     actor.finish_archive_write(
         CheckpointKey {
@@ -195,7 +202,10 @@ fn archived_failure_from_retired_writer_cannot_pause_a_live_timeline() {
     );
     actor.finish_archive_write(prior, Ok(()));
     actor.finish_archive_write(
-        CheckpointKey { seq: 29, ..common },
+        CheckpointKey {
+            seq: prior.seq - 1,
+            ..common
+        },
         Err("较旧存档写入".into()),
     );
     assert!(actor.pacing.is_running());
@@ -205,8 +215,8 @@ fn archived_failure_from_retired_writer_cannot_pause_a_live_timeline() {
     assert!(!actor.pacing.is_running());
     let failure = events.try_recv().unwrap().failure.unwrap();
     assert_eq!(failure.code, "DAY_END_ARCHIVE_FAILED");
-    assert_eq!(failure.context.tick, Some(17));
-    assert_eq!(failure.context.seq, Some(31));
+    assert_eq!(failure.context.tick, Some(common.tick));
+    assert_eq!(failure.context.seq, Some(common.seq));
     assert_eq!(failure.context.generation.as_deref(), Some("2"));
     assert!(actor.fatal_failure.is_none());
 }
@@ -452,7 +462,7 @@ async fn capture(successful_steps: usize) {
         archive: None,
         archive_lane: None,
         archive_epoch: 1,
-        archive_order: CheckpointOrder::new(1, 1),
+        archive_order: ArchiveAuthority::new(1, 1),
         injected_step_failure: Some((successful_steps, fatal.clone(), Arc::clone(&capture))),
         pacing: {
             let mut pacing = ServerPacing::new(1, game.tick(), native_async::now());
@@ -610,18 +620,6 @@ async fn capture(successful_steps: usize) {
 
     let (reply, response) = oneshot::channel();
     actor
-        .handle_command(SessionCommand::Restore {
-            slot: Box::new(slot_before),
-            reply,
-        })
-        .await;
-    match response.await.unwrap().unwrap_err() {
-        RestoreSessionError::Engine(error) => assert_fatal_rejection(error),
-        error => panic!("宿主 fatal 应保留引擎错误码：{error}"),
-    }
-
-    let (reply, response) = oneshot::channel();
-    actor
         .handle_command(SessionCommand::SetSpeed { speed: 2.0, reply })
         .await;
     assert_fatal_rejection(response.await.unwrap().unwrap_err());
@@ -681,6 +679,20 @@ async fn capture(successful_steps: usize) {
         serde_json::to_value(expected_prefix).unwrap(),
         "日终 retained 必须保留失败前全部真实帧"
     );
+    let previous_generation = actor.timeline_generation;
+    let (reply, response) = oneshot::channel();
+    actor
+        .handle_command(SessionCommand::Restore {
+            // 恢复使用已完成真实日界的公共档，而非失败前的日内核对快照。
+            slot: Box::new(verification.save().unwrap()),
+            reply,
+        })
+        .await;
+    response.await.unwrap().unwrap();
+    assert_eq!(actor.timeline_generation, previous_generation + 1);
+    assert!(actor.fatal_failure.is_none());
+    assert!(actor.pacing.fatal_failure().is_none());
+    assert!(actor.game.require_healthy().is_ok());
     println!("server failed after {successful_steps} successful steps; committed tick={} seq={}; host_stopped=1; {}", before.0, before.1, serde_json::to_string(&failure).unwrap());
 }
 
@@ -790,7 +802,7 @@ async fn authority_reads_reject_stale_generations() {
         archive: None,
         archive_lane: None,
         archive_epoch: 1,
-        archive_order: CheckpointOrder::new(1, 1),
+        archive_order: ArchiveAuthority::new(1, 1),
         #[cfg(test)]
         injected_step_failure: None,
         pacing: ServerPacing::new(1, game.tick(), native_async::now()),
@@ -875,7 +887,7 @@ async fn command_burst_keeps_submission_order_after_callers_stop_waiting() {
         archive: None,
         archive_lane: None,
         archive_epoch: 1,
-        archive_order: CheckpointOrder::new(1, 1),
+        archive_order: ArchiveAuthority::new(1, 1),
         injected_step_failure: None,
         pacing: ServerPacing::new(10_000, game.tick(), native_async::now()),
         game,
@@ -1014,7 +1026,7 @@ fn zero_step_batch_keeps_progress_origin_and_ingress_facts() {
         archive: None,
         archive_lane: None,
         archive_epoch: 1,
-        archive_order: CheckpointOrder::new(1, 1),
+        archive_order: ArchiveAuthority::new(1, 1),
         injected_step_failure: None,
         pacing: {
             let mut pacing = ServerPacing::new(1, game.tick(), native_async::now());
@@ -1067,7 +1079,7 @@ fn catalog_actor_fixture() -> (SessionActor, broadcast::Receiver<EngineUpdate>) 
             archive: None,
             archive_lane: None,
             archive_epoch: 1,
-            archive_order: CheckpointOrder::new(1, 1),
+            archive_order: ArchiveAuthority::new(1, 1),
             injected_step_failure: None,
             pacing: ServerPacing::new(1, game.tick(), native_async::now()),
             game,
@@ -1133,4 +1145,47 @@ fn catalog_failure_has_no_baseline_and_stops_actual_actor_ingress() {
     let frame = receiver.try_recv().unwrap();
     assert!(frame.update.is_none());
     assert_eq!(frame.failure.unwrap().code, "CATALOG_BASELINE_FAILED");
+}
+
+#[test]
+fn saturated_observer_keeps_terminal_outside_queue_and_first_failure_once() {
+    let (mut actor, _) = catalog_actor_fixture();
+    let (producer, mut observer) = publication::channel(NonZeroUsize::MIN);
+    let terminal = Arc::new(OnceLock::new());
+    actor.observers.push(ScopedObserver {
+        account: None,
+        producer,
+        terminal: terminal.clone(),
+    });
+    for _ in 0..2 {
+        actor.publish_observation(
+            EngineUpdate {
+                timeline_generation: actor.timeline_generation,
+                update: None,
+                civil_date: actor.game.civil_date().to_iso(),
+                public_revision: 0,
+                failure: None,
+            },
+            false,
+        );
+    }
+    let first = HostFailure::step(&engine::session::StepFatal::InvariantViolation {
+        location: "test.prefix".into(),
+        description: "first terminal".into(),
+    });
+    actor.broadcast_failure(first.clone());
+    assert_eq!(terminal.get().unwrap().through, 2);
+    assert_eq!(terminal.get().unwrap().failure.message, first.message);
+    assert!(matches!(
+        observer.poll(),
+        publication::Read::NeedsBaseline { through: 2 }
+    ));
+    actor.broadcast_failure(HostFailure::step(
+        &engine::session::StepFatal::InvariantViolation {
+            location: "test.second".into(),
+            description: "second terminal".into(),
+        },
+    ));
+    assert_eq!(terminal.get().unwrap().failure.message, first.message);
+    assert_eq!(terminal.get().unwrap().through, 2);
 }

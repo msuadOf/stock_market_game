@@ -695,6 +695,18 @@ export function createEngineSupervisor(options: EngineSupervisorOptions) {
       return substrate;
     },
     attachPublisher(worker: Worker): void { assertConfigured(); attach(worker, "publisher"); },
+    /** 只有真实协作退出且共享故障记录为空，才允许复用该传输角色的物理记录。 */
+    retireQuiescentPublisher(worker: Worker): void {
+      const resource = resources.get(worker);
+      if (disposed || resource === undefined || resource.role !== "publisher" || resource.quiescent !== true)
+        throw new Error("publisher退役必须有本人真实quiescence证明");
+      if (substrate === undefined || primary === undefined || pendingFailure !== undefined)
+        throw new Error("publisher退役缺少健康共享底座");
+      if (readWasmTombstone(substrate.memory, primary.publisher.address, primary.publisher.workerId).state !== "absent"
+        || Atomics.load(new Int32Array(substrate.memory.buffer, primary.death.address, 1), 0) !== 0)
+        throw new Error("publisher共享故障记录非空，禁止清除诊断或复用Memory");
+      cleanup(resource, true);
+    },
     observePublisherConfigured(worker: Worker): void {
       const resource = resources.get(worker);
       if (disposed || resource === undefined || resource.role !== "publisher") throw new Error("publisher configured 观察必须属于本人活跃 publisher");

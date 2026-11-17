@@ -153,6 +153,10 @@ impl Drop for VerificationActorGuard {
         verify_metrics::METRICS.producer_exit();
     }
 }
+pub mod authority;
+#[cfg(feature = "verification-harness")]
+pub mod authority_contract;
+pub mod baseline;
 pub mod checkpoint;
 pub(crate) mod information_anchor;
 mod initial_allocation;
@@ -172,6 +176,7 @@ mod plan_identity_runtime_tests;
 mod player_candidates;
 pub mod protocol;
 pub mod publication;
+pub mod replacement;
 pub mod runner;
 mod self_views;
 mod simple_preferences;

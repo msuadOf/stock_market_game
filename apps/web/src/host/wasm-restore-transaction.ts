@@ -9,6 +9,7 @@ export interface WasmRestoreTransaction<TSnapshot> {
   readonly wasRunning: boolean;
   readonly stop: () => void;
   readonly restart: () => void;
+  readonly afterCommit?: () => void;
 }
 
 export function restoreWasmSession<TSnapshot>(
@@ -16,6 +17,7 @@ export function restoreWasmSession<TSnapshot>(
 ): TSnapshot {
   if (transaction.wasRunning) transaction.stop();
   let candidate: number | null = null;
+  let committed = false;
   let primaryFailed = false;
   let primaryError: unknown;
   let restoredSnapshot: TSnapshot | undefined;
@@ -24,9 +26,16 @@ export function restoreWasmSession<TSnapshot>(
     restoredSnapshot = transaction.snapshot(candidate);
     const previous = transaction.currentHandle();
     transaction.replaceHandle(candidate);
+    committed = true;
     candidate = null;
     if (previous !== null) transaction.drop(previous);
+    transaction.afterCommit?.();
   } catch (error) {
+    // ABI 提交后本地校验仍可能失败；绝不把已安装 owner 当未提交 candidate 销毁。
+    if (candidate !== null && transaction.currentHandle() === candidate) {
+      committed = true;
+      candidate = null;
+    }
     primaryFailed = true;
     primaryError = error;
   }
@@ -35,7 +44,7 @@ export function restoreWasmSession<TSnapshot>(
     try { transaction.drop(candidate); }
     catch (error) { cleanupErrors.push(error); }
   }
-  if (transaction.wasRunning) {
+  if (transaction.wasRunning && (!committed || !primaryFailed)) {
     try { transaction.restart(); }
     catch (error) { cleanupErrors.push(error); }
   }

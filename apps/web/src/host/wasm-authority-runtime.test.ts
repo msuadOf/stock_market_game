@@ -88,3 +88,15 @@ test("手工控制和改速交给 Rust，过期会话控制不得推进序号", 
   assert.throws(() => f.runtime.confirmControl(8), /过期/);
   assert.deepEqual(f.controls.slice(-5), ["speed:7:Infinity", "pause:7:true:true", "step:7", "civil:7", "admitted:7"]);
 });
+
+test("换代仅暂停JS唤醒，不改旧Rust运行意图或覆盖新authority设置", { timeout: 10000 }, () => {
+  const f = fixture();
+  f.runtime.setSpeed(64);
+  f.runtime.start();
+  f.controls.length = 0;
+  f.runtime.suspend();
+  assert.equal(f.work.size, 0);
+  assert.deepEqual(f.controls, []);
+  f.runtime.bind(8, f.bindings);
+  assert.deepEqual(f.controls, ["bind:8"]);
+});

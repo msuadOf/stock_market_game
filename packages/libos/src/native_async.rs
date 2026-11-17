@@ -7,7 +7,9 @@ pub use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 
 /// 独立提交通用执行任务；由调用方管理 JoinHandle，不附加业务调度策略。
 pub use tokio::spawn;
+// 通用 Future deadline；超时结果由调用方解释，不包含业务策略。
 pub use tokio::task::{spawn_blocking, JoinHandle};
+pub use tokio::time::timeout;
 
 /// 提交包含同步 I/O 的长寿命任务，不占用普通 async executor worker。
 /// 调用方必须通过关闭信号使 Future 结束，不能依赖 abort 取消已开始的阻塞任务。

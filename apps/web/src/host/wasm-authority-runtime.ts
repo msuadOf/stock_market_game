@@ -23,8 +23,6 @@ export class WasmAuthorityRuntime {
   private timerEpoch = 0;
   private running = false; // Rust 在当前 Worker 的最近一次回执，不参与计算节奏。
   private current: BoundMarket | null = null;
-  private speed = 1;
-  private pause: PausePreferences = { pause_after_close: false, pause_before_open: false };
 
   private readonly scheduler: Pick<WorkerTaskScheduler, "schedule" | "cancel">;
   private readonly failure: (where: string, error: unknown) => void;
@@ -35,10 +33,8 @@ export class WasmAuthorityRuntime {
   }
 
   bind(handle: number, wasm: MarketBindings): void {
-    this.stop();
+    this.suspend();
     wasm.market_runner_enable(handle);
-    wasm.market_runner_set_speed(handle, this.speed);
-    wasm.market_runner_set_pause(handle, this.pause.pause_after_close, this.pause.pause_before_open);
     this.current = [handle, wasm];
   }
 
@@ -59,14 +55,12 @@ export class WasmAuthorityRuntime {
   setSpeed(speed: number): void {
     const [handle, wasm] = this.requireMarket();
     wasm.market_runner_set_speed(handle, speed);
-    this.speed = speed;
     this.wake();
   }
 
   setPausePreferences(preferences: PausePreferences): void {
     const [handle, wasm] = this.requireMarket();
     wasm.market_runner_set_pause(handle, preferences.pause_after_close, preferences.pause_before_open);
-    this.pause = preferences;
   }
 
   start(): void {
@@ -75,6 +69,12 @@ export class WasmAuthorityRuntime {
     wasm.market_runner_set_running(handle, true);
     this.running = true;
     this.wake();
+  }
+
+  /** 仅撤销宿主定时任务；故障/恢复的业务状态由 Rust authority 决定。 */
+  suspend(): void {
+    this.cancelPending();
+    this.running = false;
   }
 
   stop(): void {

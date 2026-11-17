@@ -19,8 +19,8 @@ export function isObserverOnlyFailure(failure: HostFailure | string): boolean {
 }
 
 /** 只消费可信 Host 本次真实 prepare 拒绝的专属契约；普通 recoverable 不授予继续写权限。 */
-export function isReportCorrectionPrepareRejection(failure: HostFailure, host: "server" | "desktop", generation: string): boolean {
-  if (failure.code !== "REPORT_CORRECTION_PREPARE_REJECTED" || failure.where !== `${host}.actor.prepare_civil_updates` || failure.recoverable !== true) return false;
+export function isReportCorrectionPrepareRejection(failure: HostFailure, _host: "server" | "desktop", generation: string): boolean {
+  if (failure.code !== "REPORT_CORRECTION_PREPARE_REJECTED" || failure.where !== "session.authority.prepare_civil_updates" || failure.recoverable !== true) return false;
   if (failure.context === null || typeof failure.context !== "object" || Array.isArray(failure.context)) return false;
   const context = failure.context as Record<string, unknown>;
   const fields = ["operation", "tick", "seq", "day", "generation"];
@@ -43,6 +43,16 @@ export function isReportCorrectionPrepareRejection(failure: HostFailure, host: "
     cause = item.cause;
   }
   return seen.size > 0;
+}
+
+/** 可恢复权威暂停与观察连接失效是不同状态；不接受仅标 recoverable 的任意错误。 */
+export function isRecoverableAuthorityFailure(failure: HostFailure, generation: string): boolean {
+  if (isReportCorrectionPrepareRejection(failure, "server", generation)) return true;
+  if (failure.code !== "DAY_END_ARCHIVE_FAILED" || failure.where !== "session.authority.save_day_end" || failure.recoverable !== true) return false;
+  if (failure.context === null || typeof failure.context !== "object" || Array.isArray(failure.context)) return false;
+  const context = failure.context as Record<string, unknown>;
+  return context.operation === "saveDayEnd" && context.generation === generation
+    && [context.tick, context.seq, context.day].every(value => Number.isSafeInteger(value) && Number(value) >= 0);
 }
 
 export function parseHostFailure(value: unknown, transportWhere?: string): HostFailure {

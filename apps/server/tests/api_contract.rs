@@ -1779,3 +1779,94 @@ async fn rights_subscription_wire_requires_canonical_decimal_string() {
         assert_eq!(response.status(), expected, "输入 {value}");
     }
 }
+
+// 恢复结果由显式能力与回执确认，不依赖 WS 新代消息恰好先到。
+#[tokio::test]
+async fn restore_outcome_protocol_reports_rejection_before_actor_dispatch() {
+    let response = app_router()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/load")
+                .header("x-session-restore-outcome", "commit-receipt-v1")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from("{"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.headers()["x-session-restore-outcome"], "rejected");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn restore_outcome_protocol_returns_committed_generation() {
+    let manager = server::SessionManager::default();
+    let app = server::app_router_with_manager(manager.clone());
+    let (session_id, token) = new_session_credentials(app.clone()).await;
+    let mut setup: engine::SessionSetup = serde_json::from_value(sample_setup_json()).unwrap();
+    setup.start_date = engine::CivilDate::from_iso("2030-01-05").unwrap();
+    let mut game = engine::session::protocol::ProtocolSession::new(setup, 42).unwrap();
+    game.end_civil_day_update().unwrap();
+    let slot = game.save().unwrap();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/load")
+                .header("authorization", format!("Bearer {token}"))
+                .header("x-session-restore-outcome", "commit-receipt-v1")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    serde_json::to_vec(&json!({"session_id":session_id,"slot":slot})).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.headers()["x-session-restore-outcome"], "committed");
+    let (status, body) = response_json(response).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["outcome"], "committed");
+    assert_eq!(body["replacement"]["previous_generation"], "1");
+    assert_eq!(body["replacement"]["generation"], "2");
+    assert!(body["snapshot"].is_object());
+}
+
+// 这些回归仅写入；用户要求本轮不运行任何测试。
+#[cfg(not(all(feature = "host-parity", debug_assertions)))]
+#[tokio::test]
+async fn authority_contract_route_absent_in_standard_distribution() {
+    let response = app_router()
+        .oneshot(
+            Request::builder()
+                .uri("/api/host-parity/authority-contract/setup")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[cfg(all(feature = "host-parity", debug_assertions))]
+#[tokio::test]
+async fn authority_contract_requires_real_controller_and_current_generation() {
+    let manager = server::SessionManager::default();
+    let app = server::app_router_with_manager(manager);
+    let (session_id, token) = new_session_credentials(app.clone()).await;
+    for (credential, generation, expected) in [
+        (None, "1", StatusCode::UNAUTHORIZED),
+        (Some(token.as_str()), "0", StatusCode::BAD_REQUEST),
+    ] {
+        let mut request = Request::builder()
+            .method("POST")
+            .uri("/api/host-parity/authority-contract/action")
+            .header("content-type", "application/json");
+        if let Some(token) = credential {
+            request = request.header("authorization", format!("Bearer {token}"));
+        }
+        let response=app.clone().oneshot(request.body(axum::body::Body::from(serde_json::to_vec(&json!({"session_id":session_id,"generation":generation,"id":"initial"})).unwrap())).unwrap()).await.unwrap();
+        assert_eq!(response.status(), expected);
+    }
+}

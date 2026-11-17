@@ -114,6 +114,8 @@ export function createEngineControlClient(options: {
   let started = false;
   let ingressPort: EngineBusinessPort | null = null;
   let publisherPort: EngineBusinessPort | null = null;
+  let publisherEpoch = 0;
+  let publisherGeneration = 0;
   let controlSignal: { readonly generation: number; readonly word: Int32Array } | null = null;
   let publisherClosing = false;
   let failureCleanupTimer: TimeoutHandle | undefined;
@@ -233,7 +235,10 @@ export function createEngineControlClient(options: {
         return;
       }
       if (value.type === "publisherObserverFailure") {
-        exact(value, ["type", "instanceId", "generation", "message"], "publisherObserverFailure");
+        exact(value, ["type", "instanceId", "publisherEpoch", "generation", "message"], "publisherObserverFailure");
+        const epoch = positiveSafeInteger(value.publisherEpoch, "publisherObserverFailure epoch");
+        if (epoch < publisherEpoch) return;
+        if (epoch !== publisherEpoch) throw new Error("发布观察者故障物理epoch不匹配");
         const generation = positiveSafeInteger(value.generation, "publisherObserverFailure generation");
         if (typeof value.message !== "string" || !value.message.trim()) throw new Error("发布观察者故障缺少诊断");
         if (!publisherClosing) options.onPublisherObserverFailure?.(generation, new Error(value.message));
@@ -241,16 +246,24 @@ export function createEngineControlClient(options: {
       }
       if (value.type === "publisherBound") {
         const hasPort = Object.hasOwn(value, "port");
-        if (Object.keys(value).sort().join(",") !== (hasPort ? "controlSignal,instanceId,port,requestId,type" : "controlSignal,instanceId,requestId,type")) throw new Error("controlWorker publisherBound 字段无效");
+        if (Object.keys(value).sort().join(",") !== (hasPort ? "controlSignal,instanceId,port,previousPublisherEpoch,publisherEpoch,requestId,type" : "controlSignal,instanceId,publisherEpoch,requestId,type")) throw new Error("controlWorker publisherBound 字段无效");
         const id = positiveSafeInteger(value.requestId, "controlWorker requestId");
         const waiter = publisherWaiters.get(id);
         if (waiter === undefined || hasPort && !(isMessagePort(value.port))) throw new Error("controlWorker publisherBound request/port 无效");
         publisherWaiters.delete(id);
         cancelTimeout(waiter.timer);
+        const epoch = positiveSafeInteger(value.publisherEpoch, "controlWorker publisher物理epoch");
+        if (waiter.generation < publisherGeneration) throw new Error("publisher generation回卷");
         if (hasPort) {
-          if (publisherPort !== null) throw new Error("controlWorker 重复交付 publisher 业务端口");
+          if (epoch !== publisherEpoch + 1 || value.previousPublisherEpoch !== publisherEpoch) throw new Error("publisher新port缺少连续的物理退役身份");
+          // 新端口只能来自owner已经验证旧Worker quiescence并退役后的回执。
+          publisherPort?.close();
           publisherPort = ownMessagePort(value.port as MessagePort); publisherPort.start();
+          publisherEpoch = epoch;
+        } else if (epoch !== publisherEpoch || waiter.generation <= publisherGeneration) {
+          throw new Error("同物理publisher端口只允许generation推进");
         }
+        publisherGeneration = waiter.generation;
         if (publisherPort === null) throw new Error("controlWorker publisherBound 缺少首次业务端口");
         if (publisherClosing) {
           // owner 已分配 Worker；关闭期仍接管新端口用于真实 quiescence，
@@ -259,7 +272,7 @@ export function createEngineControlClient(options: {
           return;
         }
         const word = requireSharedControlWord(value.controlSignal);
-        if (controlSignal !== null && waiter.generation <= controlSignal.generation) throw new Error("controlWorker 共享控制 generation 未推进");
+        if (controlSignal !== null && waiter.generation < controlSignal.generation) throw new Error("controlWorker 共享控制 generation 回卷");
         controlSignal = { generation: waiter.generation, word };
         waiter.resolve(publisherPort);
         return;
@@ -364,6 +377,7 @@ export function createEngineControlClient(options: {
     },
     bindPublisher(generation, token, controlAddress) {
       if (failed || terminal || publisherClosing || controlWorker === null) return Promise.reject(new Error("controlWorker 已关闭，不能 bindPublisher"));
+      if (publisherWaiters.size !== 0) return Promise.reject(new Error("publisher bind已在途"));
       controlSignal = null;
       const id = positiveSafeInteger(++requestId, "controlWorker requestId");
       return new Promise<EngineBusinessPort>((resolve, reject) => {

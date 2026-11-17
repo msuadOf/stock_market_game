@@ -1,7 +1,9 @@
 //! Native 共用的有序归档 I/O：市场不等待校验、序列化或 SQLite 事务。
 
 use crate::{ArchiveWriter, DayEndCandidate, StoreError};
-use engine::session::checkpoint::{CapturedCheckpoint, CheckpointKey, MAX_PENDING_CHECKPOINTS};
+use engine::session::checkpoint::{
+    ArchiveWriteFence, CapturedCheckpoint, CheckpointKey, MAX_PENDING_CHECKPOINTS,
+};
 use libos::native_async::{self, mpsc, oneshot};
 
 type Job = Box<dyn FnOnce() + Send + 'static>;
@@ -11,6 +13,7 @@ pub struct ArchiveLane {
     jobs: mpsc::Sender<Job>,
     completion: std::sync::Arc<Completion>,
     owner: libos::native_async::JoinHandle<()>,
+    fence: std::sync::Arc<std::sync::Mutex<ArchiveWriteFence>>,
 }
 
 impl ArchiveLane {
@@ -27,6 +30,7 @@ impl ArchiveLane {
             jobs,
             completion: std::sync::Arc::new(completion),
             owner,
+            fence: std::sync::Arc::new(std::sync::Mutex::new(ArchiveWriteFence::default())),
         }
     }
 
@@ -36,10 +40,20 @@ impl ArchiveLane {
         checkpoint: CapturedCheckpoint,
     ) -> Result<(), StoreError> {
         let completion = self.completion.clone();
+        let fence = self.fence.clone();
         let job: Job = Box::new(move || {
-            let result = DayEndCandidate::from_captured(checkpoint.slot)
-                .and_then(|candidate| writer.save_day_end(&candidate))
-                .map_err(|error| error.to_string());
+            let result = match fence.lock() {
+                Ok(mut fence) => {
+                    let result = fence.begin(checkpoint.key).and_then(|()| {
+                        DayEndCandidate::from_captured(checkpoint.slot)
+                            .and_then(|candidate| writer.save_day_end(&candidate))
+                            .map_err(|error| error.to_string())
+                    });
+                    fence.finish(checkpoint.key, &result);
+                    result
+                }
+                Err(error) => Err(format!("归档写序列锁损坏：{error}")),
+            };
             completion(checkpoint.key, result);
         });
         self.jobs.try_send(job).map_err(|error| match error {
@@ -93,7 +107,14 @@ impl ArchiveLane {
         drop(self.jobs);
         self.owner
             .await
-            .map_err(|error| StoreError::Invalid(format!("存档任务异常退出：{error}")))
+            .map_err(|error| StoreError::Invalid(format!("存档任务异常退出：{error}")))?;
+        let result = self
+            .fence
+            .lock()
+            .map_err(|error| StoreError::Invalid(format!("归档写序列锁损坏：{error}")))?
+            .ensure_finished()
+            .map_err(StoreError::Invalid);
+        result
     }
 }
 
@@ -153,6 +174,45 @@ mod tests {
             assert_eq!(last.snapshot.seq, second.seq);
             assert_eq!(last.civil_clock.settled_through, Some(second.settled_date));
             lane.finish().await.unwrap();
+        });
+    }
+    #[test]
+    fn 首个写失败后较晚候选不越过漏档且关闭报未耐久() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let day = engine::CivilDate::from_iso("2030-01-05").unwrap();
+            let mut game = ProtocolSession::new(fixture::civil_setup(day), 42).unwrap();
+            let db = NativeDatabase::open_in_memory().unwrap();
+            let stale_writer = ArchiveWriter::activate(db.clone(), "current").unwrap();
+            let current_writer = stale_writer.renew(None).unwrap();
+            let (receipts, mut completed) = mpsc::unbounded_channel();
+            let lane = ArchiveLane::spawn(move |key, result| {
+                let _ = receipts.send((key, result));
+            });
+            let civil = game.end_civil_day_update().unwrap();
+            lane.stage(
+                stale_writer,
+                CapturedCheckpoint::take(&game, &civil, 1, 1).unwrap(),
+            )
+            .unwrap();
+            let civil = game.end_civil_day_update().unwrap();
+            lane.stage(
+                current_writer,
+                CapturedCheckpoint::take(&game, &civil, 1, 1).unwrap(),
+            )
+            .unwrap();
+            assert!(lane.finish().await.is_err());
+            assert!(completed.try_recv().unwrap().1.is_err());
+            assert!(completed
+                .try_recv()
+                .unwrap()
+                .1
+                .unwrap_err()
+                .contains("blocked"));
+            assert!(db.load("current").unwrap().is_none());
         });
     }
 }

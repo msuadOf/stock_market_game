@@ -540,3 +540,8 @@ pub fn seed_observer_orders(
 
 #[cfg(test)]
 mod tests;
+
+/// 三端观察端共用的身份与投递状态。
+pub mod lifecycle;
+#[cfg(test)]
+mod lifecycle_tests;

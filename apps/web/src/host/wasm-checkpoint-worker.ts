@@ -10,6 +10,7 @@ import { parseSaveSlot } from "../save/save-schema.ts";
 
 type Bindings = FacadeSyncInitializer & {
   market_archive_take(): unknown;
+  market_archive_write_result(sequence: bigint, failure?: string): void;
   market_archive_signal(): number;
   market_archive_bind_tombstone(address: number): void;
   market_archive_release(): void;
@@ -75,6 +76,10 @@ async function bootstrap(raw: unknown): Promise<void> {
       }
       const packet = record(data);
       if (packet.kind === "closed") break;
+      if (packet.kind === "skipped" && typeof packet.message === "string") {
+        scope.postMessage({ type: "writeFailed", seq: seq(packet.seq).toString(), message: packet.message });
+        continue;
+      }
       if (packet.kind !== "checkpoint" || seq(packet.generation) !== generation || seq(packet.writerEpoch) !== writerEpoch) {
         throw new Error("归档任务收到不匹配的世代或租约");
       }
@@ -84,12 +89,15 @@ async function bootstrap(raw: unknown): Promise<void> {
         const archive = validateDayEndArchive(parseSaveSlot(normalizeSerdeMaps(packet.slot)));
         if (BigInt(archive.snapshot.seq) !== sequence) throw new Error("归档候选与市场序号不一致");
         applied = await repo.write(sequence, archive);
+        if (!applied) throw new Error("快速槽写入租约已被替换");
       } catch (error) {
-        // 已知身份的单份归档失败只结束当前候选；后续日终仍可保存。
-        scope.postMessage({ type: "writeFailed", seq: sequence.toString(), message: error instanceof Error ? error.message : String(error) });
+        // 先在共享 Rust 写序列中阻断，再异步通知；后续候选不得越过漏档。
+        const message = error instanceof Error ? error.message : String(error);
+        bindings.market_archive_write_result(sequence, message);
+        scope.postMessage({ type: "writeFailed", seq: sequence.toString(), message });
         continue;
       }
-      if (!applied) throw new Error("快速槽写入租约已被替换");
+      bindings.market_archive_write_result(sequence);
       scope.postMessage({ type: "stored", seq: sequence.toString() });
     }
   } finally {

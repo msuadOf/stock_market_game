@@ -1,3 +1,6 @@
+import { remoteRestoreJson, RemoteRestoreFailure, parseRestoreCommit } from "./remote-restore.ts";
+import { ObserverLease } from "./observer-resync.ts";
+import { isRecoverableAuthorityFailure } from "./protocol-failure.ts";
 import { runObserverResync } from "./observer-resync.ts";
 import { cancelInterval, cancelTimeout, isWebSocketOpen, openWebSocket, scheduleInterval, scheduleTimeout, type IntervalHandle, type TimeoutHandle } from "../../../../packages/libos/browser/browser-transport.ts";
 import { parseCredentialToken } from "./remote-auth.ts";
@@ -26,7 +29,6 @@ import { parseRemoteMessage, type RemoteMessage } from "./remote-wire.ts";
 import { ReportQueryContext } from "./report-query-context.ts";
 import { RemoteCommandRegistry } from "./remote-command-registry.ts";
 import { RemotePublisherState } from "./remote-publisher-state.ts";
-import { isReportCorrectionPrepareRejection } from "./protocol-failure.ts";
 import { normalizePublicReportById, normalizePublicReportPage } from "./serde-normalize.ts";
 import { assertValidSpeedMultiplier, parseSpeedMetrics } from "./speed.ts";
 import { normalizePlayerWorkingOrders, type PlayerWorkingOrder } from "./player-working-orders.ts";
@@ -76,12 +78,14 @@ async function connectRemoteHost(baseUrl: string, token: string, sessionId: stri
   });
   if (rawCapabilities === null || typeof rawCapabilities !== "object" || Array.isArray(rawCapabilities)) throw new Error("远程宿主能力响应必须是对象");
   const capabilityRecord = rawCapabilities as Record<string, unknown>;
-  if (Object.keys(capabilityRecord).length !== 1 || typeof capabilityRecord.npcDecisionDiagnostics !== "boolean") throw new Error("远程宿主能力响应不符合契约");
+  if (Object.keys(capabilityRecord).some(key => !["npcDecisionDiagnostics", "restoreOutcome"].includes(key))
+    || (capabilityRecord.restoreOutcome !== undefined && capabilityRecord.restoreOutcome !== "commit-receipt-v1") || typeof capabilityRecord.npcDecisionDiagnostics !== "boolean") throw new Error("远程宿主能力响应不符合契约");
   const socketFactory = options.webSocketFactory ?? openWebSocket;
   const publisher = new RemotePublisherState();
   const reports = new ReportQueryContext();
   const commands = new RemoteCommandRegistry();
   let callback: ((update: HostUpdate) => void | boolean) | null = null;
+  let restoreFloor: string | null = null;
   let pendingRestore: { readonly generation: string | null; readonly notify: () => void; awaitingAuthority: boolean } | null = null;
   let fatalCallback: ((failure: HostFailure) => void) | null = null;
   let disposed = false;
@@ -89,9 +93,13 @@ async function connectRemoteHost(baseUrl: string, token: string, sessionId: stri
   let baselineDelivered = false;
   let companyWriteEpoch = 0;
   const requireCatalogResolver = () => { const baseline = publisher.baselineForRead(); if (baseline === null) throw new Error("远程只读查询需要baseline"); return baseline.catalogResolver; };
-  type ObservationReply = Extract<RemoteMessage, { kind: "observer-cut" | "observer-fenced" }>;
+  type ObservationReply = Extract<RemoteMessage, { kind: "observer-cut" | "observer-fenced" | "observer-released" }>;
   type Cut = Extract<ObservationReply, { kind: "observer-cut" }>;
   let fencingSupported = false;
+  let observerProtocol: 1 | 2 = 1;
+  let transportLease: string | null = null;
+  let acceptedOrdinal = 0n;
+  let authorityTerminal: HostFailure | null = null;
   let lastRemoteCursor: { generation: string; tick: number; seq: number } | null = null;
   let fencingWaiter: { receive(reply: ObservationReply): void; reject(error: Error): void } | null = null;
   let resyncPromise: Promise<void> | null = null;
@@ -144,15 +152,26 @@ async function connectRemoteHost(baseUrl: string, token: string, sessionId: stri
     return false;
   };
 
+  const observeAuthorityFailure = (failure: HostFailure) => {
+    if (authorityTerminal !== null) return;
+    if (failure.recoverable !== true) authorityTerminal = failure;
+    companyWriteEpoch += 1;
+    commands.rejectAll(failure, true);
+    fatalCallback?.(failure);
+  };
+  const requireWritableAuthority = () => {
+    if (pendingRestore !== null || (restoreFloor !== null && publisher.baselineForRead()?.generation !== restoreFloor)) throw new Error("读档尚未取得当前已提交代际的权威基线，拒绝旧代写入");
+    if (authorityTerminal !== null) throw new Error(`${authorityTerminal.code}: ${authorityTerminal.message}`);
+  };
   const fail = (failure: HostFailure) => {
     companyWriteEpoch += 1;
     const baseline = publisher.baselineForRead();
     if (baseline !== null && publisher.isProtocolReady() && isWebSocketOpen(publisher.currentSocket())
-      && isReportCorrectionPrepareRejection(failure, "server", baseline.generation)) {
+      && isRecoverableAuthorityFailure(failure, baseline.generation)) {
       if (pullResponseTimer !== null) cancelTimeout(pullResponseTimer);
       pullResponseTimer = null;
       pullWaiting = false;
-      interrupt("报表更正 prepare 被拒绝，旧提交已失效");
+      interrupt("权威已暂停，旧提交确认需重新核对");
       fatalCallback?.(failure);
       return;
     }
@@ -182,10 +201,13 @@ async function connectRemoteHost(baseUrl: string, token: string, sessionId: stri
     });
   }
 
+  const observerLease = new ObserverLease();
   function requestFencedResync(socket: WebSocket): Promise<void> {
     let cutId: string | null = null;
+    let installedCut: Cut | null = null;
     let lastCapture = 0n;
     return runObserverResync<Cut>({
+      lease: observerLease.replace(publisher.baselineForRead()?.generation ?? "0"),
       assertCurrent() {
         if (disposed || publisher.currentSocket() !== socket || !isWebSocketOpen(socket)) throw new Error("远程基线响应属于已关闭连接");
       },
@@ -206,18 +228,35 @@ async function connectRemoteHost(baseUrl: string, token: string, sessionId: stri
         if (reply.kind !== "observer-fenced" || reply.captureId !== captureId) throw new Error("远程观察栅栏回执不匹配");
         return reply.accepted;
       },
-      install({ value: { captureId, update } }) {
+      install({ value }) {
+        const { captureId, update } = value;
         if (!installRemoteBaseline(update)) throw new Error("应用层拒绝权威基线");
         cutId = captureId;
+        installedCut = value;
+        if (observerProtocol === 2) {
+          if (value.lease === null) throw new Error("V2切面缺少观察租约");
+          transportLease = value.lease; acceptedOrdinal = BigInt(value.ordinal);
+        }
+        if (value.failure !== undefined) observeAuthorityFailure(value.failure);
       },
-      release() {
-        if (cutId === null) throw new Error("远程观察切面尚未安装");
-        socket.send(JSON.stringify({ ReleaseObserver: { capture_id: cutId } }));
+      async release() {
+        if (cutId === null || installedCut === null) throw new Error("远程观察切面尚未安装");
+        if (observerProtocol === 1) {
+          // 旧服务明确没有应用 release 回执，兼容路径不冒充已确认。
+          socket.send(JSON.stringify({ ReleaseObserver: { capture_id: cutId } }));
+          return;
+        }
+        const cut = installedCut;
+        const reply = await waitForObservationReply(socket, { ReleaseObserverV2: { capture_id: cutId,
+          timeline_generation: cut.update.generation, observer_lease: cut.lease, publication_ordinal: cut.ordinal } });
+        if (reply.kind !== "observer-released" || reply.captureId !== cutId || reply.generation !== cut.update.generation
+          || reply.lease !== cut.lease || reply.ordinal !== cut.ordinal || !reply.accepted) throw new Error("远程观察释放未被当前已安装切面接受");
       },
     });
   }
 
   function isCurrentRemoteBaseline(update: Extract<HostUpdate, { type: "baseline" }>): boolean {
+    if (restoreFloor !== null && BigInt(update.generation) < BigInt(restoreFloor)) return false;
     const old = lastRemoteCursor;
     return old === null || BigInt(update.generation) > BigInt(old.generation)
       || (update.generation === old.generation && update.snapshot.tick >= old.tick && update.snapshot.seq >= old.seq);
@@ -225,12 +264,14 @@ async function connectRemoteHost(baseUrl: string, token: string, sessionId: stri
 
   function installRemoteBaseline(update: Extract<HostUpdate, { type: "baseline" }>): boolean {
     if (!isCurrentRemoteBaseline(update)) throw new Error("远程权威基线回卷已安装的 generation/tick/seq");
+    if (publisher.baselineForRead()?.generation !== update.generation) authorityTerminal = null;
     publisher.installBaseline(update, () => reports.invalidate());
+    if (!deliver(update)) return false;
     if (pendingRestore !== null) {
       if (pendingRestore.generation !== null && update.generation !== pendingRestore.generation) pendingRestore.notify();
-      if (pendingRestore.awaitingAuthority) pendingRestore = null;
+      if (pendingRestore.awaitingAuthority && pendingRestore.generation !== update.generation) pendingRestore = null;
     }
-    if (!deliver(update)) return false;
+    if (restoreFloor !== null && BigInt(update.generation) >= BigInt(restoreFloor)) restoreFloor = null;
     lastRemoteCursor = { generation: update.generation, tick: update.snapshot.tick, seq: update.snapshot.seq };
     baselineDelivered = callback !== null;
     publisher.resolveBaselineWaiter();
@@ -294,7 +335,11 @@ async function connectRemoteHost(baseUrl: string, token: string, sessionId: stri
         connectionTimer = null;
         reconnectAttempts = 0;
         fencingSupported = parsed.fencing;
+        observerProtocol = parsed.protocol;
+        transportLease = parsed.lease; acceptedOrdinal = 0n;
+        if (publisher.baselineForRead()?.generation !== parsed.update.generation) authorityTerminal = null;
         if (!installRemoteBaseline(parsed.update)) return;
+        if (parsed.failure !== undefined) observeAuthorityFailure(parsed.failure);
         resyncPromise = null;
         if (delivery === "pull" && pullTimer === null) {
           pullTimer = scheduleInterval(() => {
@@ -312,20 +357,59 @@ async function connectRemoteHost(baseUrl: string, token: string, sessionId: stri
         return;
       case "observer-cut":
       case "observer-fenced":
+      case "observer-released":
         fencingWaiter?.receive(parsed);
+        return;
+      case "publication-accepted":
+        if (parsed.lease === transportLease && parsed.generation === publisher.baselineForRead()?.generation && !parsed.accepted)
+          throw new Error("服务端拒绝当前观察应用确认");
+        return;
+      case "publication-failure":
+        if (observerProtocol !== 2 || parsed.lease !== transportLease || parsed.generation !== publisher.baselineForRead()?.generation) return;
+        if (BigInt(parsed.ordinal) <= acceptedOrdinal) return;
+        if (BigInt(parsed.ordinal) !== acceptedOrdinal + 1n) {
+          void requestResync().catch(error => fail({ code: "REMOTE_RESYNC", where: "remote-host.failure-prefix", message: String(error) }));
+          return;
+        }
+        observeAuthorityFailure(parsed.failure);
+        acceptedOrdinal = BigInt(parsed.ordinal);
+        publisher.currentSocket()!.send(JSON.stringify({ AcceptPublication: {timeline_generation: parsed.generation,
+          observer_lease: parsed.lease, publication_ordinal: parsed.ordinal} }));
+        return;
+      case "terminal":
+        if (observerProtocol !== 2 || parsed.lease !== transportLease || parsed.generation !== publisher.baselineForRead()?.generation) return;
+        observeAuthorityFailure(parsed.missing === null ? parsed.failure : { ...parsed.failure,
+          cause: { primary: parsed.failure.cause, missingPublication: parsed.missing } });
         return;
       case "protocol":
         if (!publisher.isProtocolReady()) return;
+        if (observerProtocol === 2) {
+          if (parsed.lease === null || parsed.ordinal === null) throw new Error("V2发布缺少真实观察身份");
+          if (parsed.lease !== transportLease) return;
+          if (BigInt(parsed.ordinal) <= acceptedOrdinal) return;
+          if (BigInt(parsed.ordinal) !== acceptedOrdinal + 1n) {
+            void requestResync().catch(error => fail({ code: "REMOTE_RESYNC", where: "remote-host.ordinal", message: String(error) }));
+            return;
+          }
+        }
         if (!publisher.isProtocolDeliverable(parsed.update.generation)) {
           void requestResync().catch((error) => {
             if (!disposed && publisher.isCurrentConnection(identity)) fail({ code: "REMOTE_RESYNC", where: "remote-host.generation", message: error instanceof Error ? error.message : String(error) });
           });
           return;
         }
-        if (deliver(parsed.update)) noteDeliveredProtocol(parsed.update);
+        if (deliver(parsed.update)) {
+          noteDeliveredProtocol(parsed.update);
+          if (observerProtocol === 2) {
+            acceptedOrdinal = BigInt(parsed.ordinal!);
+            publisher.currentSocket()!.send(JSON.stringify({ AcceptPublication: { timeline_generation: parsed.update.generation,
+              observer_lease: parsed.lease, publication_ordinal: parsed.ordinal } }));
+          }
+        }
         return;
       case "failure":
-        fail(parsed.failure);
+        if (observerProtocol === 2) observeAuthorityFailure(parsed.failure);
+        else fail(parsed.failure);
         return;
       case "resync":
         void requestResync().catch((error) => {
@@ -413,6 +497,7 @@ async function connectRemoteHost(baseUrl: string, token: string, sessionId: stri
   async function withCompanyWrite<T>(proposal: boolean, execute: (commands: CompanyWriteCommands) => Promise<T>): Promise<T> {
     const hasCurrentConnection = () => publisher.currentSocket()?.readyState === 1;
     if (disposed || !hasCurrentConnection() || !publisher.isProtocolReady()) throw new Error("远程公司写命令需要健康的当前连接与 baseline");
+    requireWritableAuthority();
     const cursor = publisher.captureQueryCursor("远程公司写命令缺少当前 baseline");
     const writeEpoch = companyWriteEpoch;
     const catalog = requireCatalogResolver();
@@ -453,7 +538,10 @@ async function connectRemoteHost(baseUrl: string, token: string, sessionId: stri
 
   const controlGeneration = (): string => {
     const baseline = publisher.baselineForRead();
-    if (baseline !== null && publisher.isProtocolReady()) return baseline.generation;
+    if (baseline !== null) {
+      if (!publisher.isProtocolReady()) throw new Error("远程基线未被应用接受，控制命令未发送");
+      return baseline.generation;
+    }
     // 共享连接必须有当前授权基线；仅旧的直接建会话契约从 generation 1 启动。
     if (market !== null) throw new Error("远程权威 generation 尚未就绪，控制命令未发送");
     return "1";
@@ -472,6 +560,7 @@ async function connectRemoteHost(baseUrl: string, token: string, sessionId: stri
 
   return {
     subscribeRightsOffering: createRightsSubscription(async (eventId, requestedShares) => {
+      requireWritableAuthority();
       const connected = () => !disposed && publisher.currentSocket()?.readyState === 1 && publisher.isProtocolReady();
       if (!connected()) throw new Error("远程配股认购需要健康的当前连接与 baseline");
       const cursor = publisher.captureQueryCursor("远程配股认购缺少当前 baseline");
@@ -535,6 +624,7 @@ async function connectRemoteHost(baseUrl: string, token: string, sessionId: stri
     async start(onUpdate, onFatalError) {
       if (market !== null && publisher.baselineForRead() === null) await connectRestoredBaseline();
       listen(onUpdate, onFatalError);
+      requireWritableAuthority();
       await requestJson(`${baseUrl}/api/running`, remotePost({ session_id: sessionId, generation: controlGeneration(), running: true }, token));
     },
     async stop() {
@@ -568,9 +658,11 @@ async function connectRemoteHost(baseUrl: string, token: string, sessionId: stri
       });
     },
     async setSpeed(multiplier) {
+      requireWritableAuthority();
       await requestJson(`${baseUrl}/api/speed`, remotePost({ session_id: sessionId, generation: controlGeneration(), speed: remoteSpeedValue(multiplier) }, token));
     },
     async setPausePreferences(preferences: PausePreferences) {
+      requireWritableAuthority();
       const currentGeneration = controlGeneration();
       await requestJson(`${baseUrl}/api/pause-preferences`, remotePost(remotePausePreferencePayload(sessionId, currentGeneration, preferences), token));
     },
@@ -591,6 +683,7 @@ async function connectRemoteHost(baseUrl: string, token: string, sessionId: stri
       if (callback !== null) connect();
     },
     async submitIntent(intent: CodedIntent) {
+      requireWritableAuthority();
       const current = publisher.currentSocket();
       if (current === null || !isWebSocketOpen(current) || publisher.isAwaitingBaseline()) throw new Error("远程 Publisher 尚未完成权威基线同步，写请求未入队");
       const baseline = publisher.baselineForRead();
@@ -712,7 +805,17 @@ async function connectRemoteHost(baseUrl: string, token: string, sessionId: stri
       } };
       pendingRestore = restore;
       try {
-        await requestJson(`${baseUrl}/api/load`, remotePost({ session_id: sessionId, slot }, token));
+        const typed = capabilityRecord.restoreOutcome === "commit-receipt-v1";
+        const init = remotePost({ session_id: sessionId, slot }, token);
+        if (typed) init.headers = { ...(init.headers as Record<string, string>), "x-session-restore-outcome": "commit-receipt-v1" };
+        const response = await requestJson(`${baseUrl}/api/load`, init, typed ? remoteRestoreJson : undefined);
+        if (typed) {
+          const committedGeneration = parseRestoreCommit(response, restore.generation);
+          restoreFloor = lastRemoteCursor !== null && BigInt(lastRemoteCursor.generation) >= BigInt(committedGeneration)
+            ? null : committedGeneration;
+          companyWriteEpoch += 1;
+          reports.invalidate();
+        }
         if (disposed) throw new Error("远程会话已销毁，读档响应已失效");
         restore.notify();
         reports.invalidate();
@@ -721,11 +824,12 @@ async function connectRemoteHost(baseUrl: string, token: string, sessionId: stri
           // A pending refresh may have captured just before the restore commits.
           // Wait for it, then request a new cut if it still denotes the old timeline.
           if (resyncPromise !== null) await resyncPromise;
-          if ((publisher.baselineForRead()?.generation ?? null) === restore.generation) await requestResync();
+          if (restoreFloor !== null ? publisher.baselineForRead()?.generation !== restoreFloor
+            : (publisher.baselineForRead()?.generation ?? null) === restore.generation) await requestResync();
         }
       } catch (error) {
-        // HTTP 失败不等于恢复未提交；由随后权威 baseline 确认新/旧 generation。
-        restore.awaitingAuthority = true;
+        // typed拒绝证明旧状态仍有效；其余失败保留未知/已提交围栏，不允许猜测回滚。
+        restore.awaitingAuthority = !(error instanceof RemoteRestoreFailure && error.outcome === "rejected");
         throw error;
       } finally {
         if (pendingRestore === restore && !restore.awaitingAuthority) pendingRestore = null;

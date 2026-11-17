@@ -45,7 +45,7 @@ uuid = { version = "1", features = ["v4"] }
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
 simulation-diagnostics = ["engine/simulation-diagnostics"]
-host-parity = []
+host-parity = ["engine/verification-harness"]
 
 [[example]]
 name = "production_actor_performance"

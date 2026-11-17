@@ -144,6 +144,10 @@ impl Pacing {
         self.stats.clone()
     }
 
+    pub const fn requested_speed(&self) -> RequestedSpeed {
+        self.stats.requested
+    }
+
     pub const fn is_running(&self) -> bool {
         self.cadence.is_running()
     }

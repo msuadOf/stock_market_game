@@ -191,7 +191,7 @@ export async function verifyWebReleaseWasm(directory) {
   await Promise.all(modules.map(async (filename) => {
     const bytes = await readFile(path.join(directory, filename));
     const module = new WebAssembly.Module(bytes);
-    const forbidden = WebAssembly.Module.exports(module).filter(({ name }) => /npc_decision_(trace|diagnostics)|^verification_facade_/.test(name));
+    const forbidden = WebAssembly.Module.exports(module).filter(({ name }) => /npc_decision_(trace|diagnostics)|^verification_facade_|^market_(runner|archive)_contract_/.test(name));
     if (forbidden.length > 0) throw new Error(`release WASM 暴露私有诊断导出 ${forbidden.map(({ name }) => name).join(", ")}: ${filename}`);
   }));
   const gameBytes = new Uint8Array(await readFile(path.join(directory, files[0])));

@@ -6,10 +6,23 @@ export interface WasmSessionBindings {
   readonly create_session: (setup: unknown, seed: bigint) => number;
   readonly restore_json: (slot: string) => number;
   readonly restore_prepared?: () => number;
+  readonly prepare_session_replacement?: (previous: number, candidate: number, generation: bigint) => void;
+  readonly fence_session_replacement?: (previous: number, candidate: number, generation: bigint) => void;
+  readonly commit_session_replacement?: (previous: number, candidate: number, generation: bigint) => bigint;
   readonly snapshot: (handle: number) => unknown;
   readonly shutdown_session?: (handle: number) => unknown;
   readonly drop_session: (handle: number) => void;
   readonly prepare_public_baseline?: (handle: number) => void;
+}
+
+/** prepare 阶段只拥有未激活 candidate；不能同时安装第二个归档 CONSUMER。 */
+export interface PreparedWasmRestore {
+  readonly previous: number;
+  readonly generation: number;
+  readonly candidate: number;
+  readonly snapshot: unknown;
+  consumed: boolean;
+  fenced?: boolean;
 }
 
 export interface WasmRestoreLoopHooks {
@@ -101,19 +114,67 @@ export class WasmSessionSlot<TBindings extends WasmSessionBindings> {
     this.generation = 1;
   }
 
-  restore(parsedSlot: unknown, loopHooks: WasmRestoreLoopHooks): unknown {
+  prepareRestore(parsedSlot: unknown): PreparedWasmRestore {
+    const [previous, wasm] = this.requireHandle();
+    if (typeof wasm.commit_session_replacement !== "function" || typeof wasm.prepare_session_replacement !== "function" || typeof wasm.fence_session_replacement !== "function") throw new Error("WASM 缺少共享 authority 替换接口，请重建 bindings");
+    const candidate = wasm.restore_json(JSON.stringify(parsedSlot));
+    try {
+      const snapshot = wasm.snapshot(candidate);
+      wasm.prepare_session_replacement(previous, candidate, BigInt(this.generation));
+      return { previous, generation: this.generation, candidate, snapshot, consumed: false };
+    } catch (primary) {
+      try { wasm.drop_session(candidate); }
+      catch (cleanup) { throw new AggregateError([primary, cleanup], `恢复准备与候选清理均失败：${describeWasmFailure(primary)}；${describeWasmFailure(cleanup)}`, { cause: primary }); }
+      throw primary;
+    }
+  }
+
+  fencePreparedRestore(prepared: PreparedWasmRestore): void {
+    const [previous, wasm] = this.requireHandle();
+    if (prepared.consumed || prepared.previous !== previous || prepared.generation !== this.generation) throw new Error("恢复候选已过期");
+    if (prepared.fenced) throw new Error("旧会话已经封口");
+    if (typeof wasm.fence_session_replacement !== "function") throw new Error("WASM 缺少真实 ingress 退役 fence");
+    wasm.fence_session_replacement(previous, prepared.candidate, BigInt(this.generation));
+    prepared.fenced = true;
+  }
+
+  discardPreparedRestore(prepared: PreparedWasmRestore): void {
+    if (prepared.consumed) return;
+    prepared.consumed = true;
     const [, wasm] = this.requireHandle();
+    wasm.drop_session(prepared.candidate);
+  }
+
+  restore(parsedSlot: unknown, loopHooks: WasmRestoreLoopHooks, prepared?: PreparedWasmRestore): unknown {
+    const [previous, wasm] = this.requireHandle();
+    const commit = wasm.commit_session_replacement;
+    if (typeof commit !== "function") throw new Error("WASM 缺少共享 authority 替换接口，请重建 bindings");
+    if (prepared !== undefined && (prepared.consumed || prepared.previous !== previous || prepared.generation !== this.generation)) throw new Error("恢复候选属于已过期或已消费计划");
+    if (prepared !== undefined) prepared.consumed = true;
     const restoredSnapshot = restoreWasmSession({
       currentHandle: () => this.handle,
-      replaceHandle: (handle) => { this.handle = handle; this.generation += 1; },
-      restore: () => wasm.restore_json(JSON.stringify(parsedSlot)),
-      snapshot: wasm.snapshot,
+      replaceHandle: (handle) => {
+        if (prepared === undefined) {
+          if (typeof wasm.prepare_session_replacement !== "function") throw new Error("WASM 缺少共享 authority prepare 接口");
+          wasm.prepare_session_replacement(previous, handle, BigInt(this.generation));
+        }
+        const next = commit(previous, handle, BigInt(this.generation));
+        // ABI 成功即表示旧入口已失效；本地立即接纳提交结果，不伪装回滚。
+        this.handle = handle;
+        this.generation = Number(next);
+        if (!Number.isSafeInteger(this.generation) || this.generation <= 0) throw new Error("Rust authority 返回的 generation 超过 Browser 安全整数范围");
+      },
+      restore: () => prepared === undefined ? wasm.restore_json(JSON.stringify(parsedSlot)) : prepared.candidate,
+      snapshot: prepared === undefined ? wasm.snapshot : () => prepared.snapshot,
       drop: wasm.drop_session,
+      afterCommit: () => {
+        if (this.handle === null) throw new Error("WASM restore 没有安装新会话句柄");
+        this.preparePublicBaseline(this.handle, wasm);
+      },
       ...loopHooks,
     });
     // authority 一旦替换就已经推进 generation；旧句柄清理失败也不得继续接旧请求。
     if (this.handle === null) throw new Error("WASM restore 没有安装新会话句柄");
-    this.preparePublicBaseline(this.handle, wasm);
     return restoredSnapshot;
   }
 

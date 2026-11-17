@@ -108,6 +108,9 @@ async function createFixture(
       return { handle: current, result: { runtime: undefined } };
     },
     drop_session: (current: number) => { calls.push(`drop:${current}`); if (failing === "drop" || failing === "snapshot-and-drop") throw new Error("drop failed"); },
+    fence_session_replacement: () => { calls.push("ingress:fenced"); },
+    prepare_session_replacement: (_previous: number, _candidate: number, _generation: bigint) => {},
+    commit_session_replacement: (_previous: number, _candidate: number, generation: bigint) => generation + 1n,
     restore_json: (encoded: string) => { assert.deepEqual(JSON.parse(encoded), saved); calls.push(`restore:${handle}`); return handle; },
     restore_prepared: () => { calls.push(`restore:${handle}`); return handle; },
     host_capabilities: () => ({ npcDecisionDiagnostics: false, indicatorCapabilities: { intradayAverage: false, macd: false, priceKdj: false, candleKdj: false }, personalTradeHistory: false }),
@@ -155,7 +158,7 @@ async function createFixture(
     market_runner_turn: () => ({ running: marketRunning, delayMs: marketRunning ? 1000 : null, committedTicks: 0 }),
     market_runner_step_once: (current: number) => { bindings.step(current); publicationOrdinal += 1; },
     market_runner_end_civil: (current: number) => { calls.push(`stagedCivil:${current}`); marketRunning = false; publicationOrdinal += 1; },
-    market_runner_observer_baseline: (current: number) => ({ snapshot: bindings.snapshot(current), workingOrders: [], publicationOrdinal: String(publicationOrdinal) }),
+    market_runner_observer_baseline: (current: number) => ({ snapshot: bindings.snapshot(current), workingOrders: [], publicationOrdinal: String(publicationOrdinal), stockCatalog: bindings.stock_catalog_view(), companyCatalog: bindings.company_catalog_view(), civilDate: bindings.civil_date(current) }),
     market_runner_control_signal: () => 65008,
     market_runner_command_consumed: () => {},
   });
@@ -165,7 +168,7 @@ async function createFixture(
     ownerTrace.push(`lifecycle:${String(message.state)}`);
   } }, addEventListener: (_type: string, callback: typeof listener) => { listener = callback; } });
   const emptyModule = [0,97,115,109,1,0,0,0];
-  const exportNames = ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "wasm_tombstone_init_primary", "wasm_tombstone_bind_ingress", "start_wasm_reclaimer", "close_wasm_reclaimer"];
+  const exportNames = ["restore_json", "facade_slot_init_for_restore_json", "restore_prepared", "clear_prepared_restore", "commit_session_replacement", "prepare_session_replacement", "fence_session_replacement", "fence_session_replacement", "wasm_tombstone_init_primary", "wasm_tombstone_bind_ingress", "start_wasm_reclaimer", "close_wasm_reclaimer"];
   const exportEntries = exportNames.flatMap((name, index) => [name.length, ...new TextEncoder().encode(name), 0, index]);
   const exportSize = exportEntries.length + 1;
   const countExports = exportNames.length;
@@ -512,7 +515,7 @@ test("真实Worker replace后旧drop失败属于已提交fatal，旧generation�
   });
 });
 
-test("真实Worker refresh目录fatal关闭当前handle以撤销独立intake能力", { timeout: 10000 }, async () => {
+test("真实Worker refresh目录fatal取消唤醒并保留查询与恢复owner", { timeout: 10000 }, async () => {
   await withWorker(async f => {
     f.send({ type: "create", seed: 1n });
     f.send({ type: "start", generation: 1, requestId: 1 });
@@ -520,13 +523,13 @@ test("真实Worker refresh目录fatal关闭当前handle以撤销独立intake能�
     f.send({ type: "refreshBaseline", generation: 1, requestId: 2 });
     await Promise.resolve();
     assert.equal(f.timers.size, 0);
-    assert.ok(f.calls.includes("drop:7"), "drop_session必须关闭真实SessionRegistry token，不能只停止主Worker loop");
+    assert.equal(f.calls.includes("drop:7"), false, "业务fatal必须保留查询/恢复owner；Rust共享authority负责撤销写权限");
     assert.equal(f.posted.some(message => message.type === "refreshed"), false);
-    assert.equal(f.posted[0].type, "failure");
+    assert.equal(f.posted[0].type, "operationError");
     f.fail(null); f.posted.length = 0;
     f.send({ type: "save", generation: 1, requestId: 3 });
-    assert.equal(f.posted[0].type, "operationError");
-    assert.equal(f.calls.includes("save:7"), false);
+    assert.equal(f.posted[0].type, "saved");
+    assert.ok(f.calls.includes("save:7"));
     f.send({ type: "drop" });
   });
 });
@@ -963,4 +966,21 @@ test("LibOS Reclaimer：drop 会话与析构队列均失败时保留会话主错
     f.send({ type: "drop" });
     assert.deepEqual(cleanupCalls(), [1, 1], "失败也不得重复消费 session/close 权");
   }, false, "close-fails");
+});
+
+test("撤销旧归档 sink 后 replace commit 失败显式 fence，不自动恢复旧运行循环", { timeout: 10000 }, async () => {
+  await withWorker(async f => {
+    f.send({ type: "create", seed: 1n });
+    f.send({ type: "start", requestId: 1200, generation: 1 });
+    f.handle(9);
+    const bindings = (globalThis as unknown as Record<symbol, { commit_session_replacement: () => bigint }>)[bindingsKey];
+    bindings.commit_session_replacement = () => { throw new Error("commit-fence-sentinel"); };
+    await f.sendAsync({ type: "restore", generation: 1, requestId: 1201, slot: f.saved }, () => f.posted.some(message => message.type === "failure"));
+    const failure = f.posted.find(message => message.type === "failure");
+    assert.equal(failure?.code, "WASM_RESTORE_RETIREMENT_FAILED");
+    assert.ok(f.calls.includes("ingress:fenced"));
+    assert.equal(failure?.recoverable, false);
+    assert.equal(f.timers.size, 0);
+    assert.equal(f.posted.some(message => message.type === "restored"), false);
+  });
 });

@@ -2,9 +2,11 @@
 //! Player 与 NPC 共享 ingress，控制指令走邮箱；Native 等待由 LibOS 提供。
 //! 对外兼容层只包装已验证的协议批次及带会话元数据的控制响应。
 
+use engine::session::authority::{self, Authority as ServerPacing, AuthorityPort};
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
+#[cfg(test)]
 use std::time::Duration;
 
 use dashmap::DashMap;
@@ -18,10 +20,7 @@ use engine::session::publication::{self, Observer, Producer, Push};
 use engine::session::runner::fixed_tick_duration;
 #[cfg(test)]
 use engine::session::runner::MAX_BATCH_BUDGET;
-use engine::session::runner::{
-    apply_authority_failure, apply_cycle_pacing, run_cycle, validate_speed, CycleError, DrivePort,
-    Pacing as ServerPacing, Permit, WakePlan,
-};
+use engine::session::runner::{validate_speed, DrivePort, Permit, WakePlan};
 pub use engine::session::runner::{
     RequestedSpeed, SpeedMetrics, BASE_TICK_MS, MAX_SPEED_MULTIPLIER,
 };
@@ -30,7 +29,7 @@ use engine::{AccountId, Intent, SaveSlot, SessionError, SessionSetup, Snapshot};
 use libos::native_async::{self, WaitPlan, Wake};
 use libos::native_async::{broadcast, mpsc, oneshot};
 use serde::Serialize;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 /// 三种部署共用的应用层更新单元。远程 WS 只负责把它序列化传输。
 #[derive(Debug, Clone, Serialize)]
@@ -64,7 +63,14 @@ impl ScopedEngineUpdate {
 }
 
 /// 快照和新通道在同一权威循环轮内捕获，通道的初始发布游标为 0。
+#[derive(Debug, Clone)]
+pub struct ObserverTerminal {
+    pub through: u64,
+    pub failure: HostFailure,
+}
+
 pub struct ObservationAttachment {
+    pub terminal: Arc<OnceLock<ObserverTerminal>>,
     pub baseline: PublicBaseline,
     pub observer: Observer<ScopedEngineUpdate>,
     pub initial_orders: Option<Vec<PlayerWorkingOrder>>,
@@ -80,277 +86,15 @@ impl std::fmt::Debug for ObservationAttachment {
 }
 
 struct ScopedObserver {
+    terminal: Arc<OnceLock<ObserverTerminal>>,
     account: Option<AccountId>,
     producer: Producer<ScopedEngineUpdate>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct HostFailure {
-    pub code: &'static str,
-    pub message: String,
-    pub r#where: String,
-    pub cause: Option<Box<FailureCause>>,
-    pub context: FailureContext,
-    pub recoverable: bool,
-    #[serde(rename = "recoveryActions")]
-    pub recovery_actions: Vec<&'static str>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct FailureContext {
-    pub operation: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fault: Option<engine::ValidationFault>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tick: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub seq: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub day: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub generation: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct FailureCause {
-    code: &'static str,
-    message: String,
-    cause: Option<Box<FailureCause>>,
-}
-
-fn failure_description(error: &(dyn std::error::Error + 'static)) -> (&'static str, &'static str) {
-    if let Some(error) = error.downcast_ref::<SessionError>() {
-        return match error {
-            SessionError::ReportCorrectionDayEnd(source) => failure_description(source),
-            SessionError::CivilInformation(_) => (
-                "CIVIL_INFORMATION_FAILED",
-                "自然日信息事务失败（内部详情已脱敏）",
-            ),
-            SessionError::Closing(_) => (
-                "SESSION_CLOSING_FAILED",
-                "自然日日终封账失败（私有详情已脱敏）",
-            ),
-            SessionError::ReportCorrectionRestore(_) => (
-                "SESSION_STATE_INVALID",
-                "更正完成事实与真实会计和公开版本不一致（原始详情已脱敏）",
-            ),
-            SessionError::InvalidSave(fault)
-                if fault.code == engine::error::SAVE_TARGET_DAY_NOT_READY =>
-            {
-                (
-                    "SAVE_TARGET_DAY_NOT_READY",
-                    "目标自然日尚未完成日终，当前日存档不可用（原始详情已脱敏）",
-                )
-            }
-            SessionError::InvalidSave(_) => (
-                "SESSION_STATE_INVALID",
-                "日终存档或协议状态校验失败（原始详情已脱敏）",
-            ),
-            SessionError::Step(_) => (
-                "INVARIANT_VIOLATION",
-                "引擎不变量校验失败（原始详情已脱敏）",
-            ),
-            _ => ("SESSION_OPERATION_FAILED", "会话操作失败（原始详情已脱敏）"),
-        };
-    }
-    if let Some(error) = error.downcast_ref::<engine::session::ReportCorrectionDayEndError>() {
-        return if error.classification() == engine::company::CompanyErrorClass::SystemState {
-            (
-                "REPORT_CORRECTION_FAILED",
-                "报表更正日终准备失败（内部详情已脱敏）",
-            )
-        } else {
-            (
-                "REPORT_CORRECTION_REJECTED",
-                "报表更正未满足提交条件（内部详情已脱敏）",
-            )
-        };
-    }
-    if error.is::<engine::session::CivilInformationError>() {
-        return (
-            "CIVIL_INFORMATION_FAILED",
-            "自然日信息事务失败（内部详情已脱敏）",
-        );
-    }
-    if let Some(error) = error.downcast_ref::<engine::accounting::closing::ClosingError>() {
-        return match error {
-            engine::accounting::closing::ClosingError::Accounting(_) => (
-                "CLOSING_ACCOUNTING_FAILED",
-                "日终封账的会计处理失败（私有详情已脱敏）",
-            ),
-            engine::accounting::closing::ClosingError::Report(_) => (
-                "CLOSING_REPORT_FAILED",
-                "日终封账的报表处理失败（私有详情已脱敏）",
-            ),
-            _ => (
-                "CLOSING_VALIDATION_FAILED",
-                "日终封账校验失败（私有详情已脱敏）",
-            ),
-        };
-    }
-    if let Some(error) = error.downcast_ref::<engine::accounting::AccountingError>() {
-        return match error {
-            engine::accounting::AccountingError::AmountOverflow { .. } => (
-                "ACCOUNTING_AMOUNT_OVERFLOW",
-                "公司会计金额运算溢出（操作数已脱敏）",
-            ),
-            _ => (
-                "ACCOUNTING_VALIDATION_FAILED",
-                "公司会计校验失败（私有详情已脱敏）",
-            ),
-        };
-    }
-    if error.is::<engine::session::StepFatal>() {
-        return (
-            "INVARIANT_VIOLATION",
-            "引擎不变量校验失败（原始详情已脱敏）",
-        );
-    }
-    if error.is::<engine::session::ReportCorrectionRestoreError>() {
-        return (
-            "REPORT_CORRECTION_RESTORE_FAILED",
-            "报表更正存档关联校验失败（原始详情已脱敏）",
-        );
-    }
-    ("ERROR_DETAILS_REDACTED", "原始错误类型未识别，详情未公开")
-}
-
-fn save_error_message(error: SessionError) -> String {
-    if matches!(&error, SessionError::InvalidSave(fault) if fault.code == engine::error::SAVE_TARGET_DAY_NOT_READY)
-    {
-        let (code, message) = failure_description(&error);
-        format!("{code}: {message}")
-    } else {
-        error.to_string()
-    }
-}
-
-fn failure_cause(error: &(dyn std::error::Error + 'static)) -> Option<Box<FailureCause>> {
-    error.source().map(|source| {
-        let (code, message) = failure_description(source);
-        Box::new(FailureCause {
-            code,
-            message: message.to_owned(),
-            cause: failure_cause(source),
-        })
-    })
-}
-
-impl FailureContext {
-    fn new(operation: &'static str) -> Self {
-        Self {
-            operation,
-            fault: None,
-            tick: None,
-            seq: None,
-            day: None,
-            generation: None,
-        }
-    }
-}
-
-impl HostFailure {
-    pub(crate) fn catalog(
-        error: &engine::session::CompanyCatalogViewError,
-        operation: &'static str,
-        location: &'static str,
-    ) -> Self {
-        let mut context = FailureContext::new(operation);
-        context.fault = Some(engine::session::company_catalog_fault(error));
-        Self {
-            code: "CATALOG_BASELINE_FAILED",
-            message: "公开公司身份目录构造失败".to_owned(),
-            r#where: location.to_owned(),
-            cause: None,
-            context,
-            recoverable: false,
-            recovery_actions: vec![
-                "停止当前提交并重新同步权威会话；仍失败则重开有效日终档或新局",
-                "复制错误详情反馈",
-            ],
-        }
-    }
-
-    pub(crate) fn step(error: &engine::session::StepFatal) -> Self {
-        let engine::session::StepFatal::InvariantViolation { location, .. } = error;
-        Self {
-            code: "STEP_FATAL",
-            message: failure_description(error).1.to_owned(),
-            r#where: location.clone(),
-            cause: failure_cause(error),
-            context: FailureContext::new("step"),
-            recoverable: false,
-            recovery_actions: vec![
-                "停止当前会话；重新打开上一份有效日终存档或新局",
-                "复制脱敏错误详情反馈",
-            ],
-        }
-    }
-
-    fn civil(error: &SessionError) -> Self {
-        match error {
-            SessionError::Step(fatal) => Self::step(fatal),
-            other => Self {
-                code: "CIVIL_DAY_SETTLEMENT_FAILED",
-                message: failure_description(other).1.to_owned(),
-                r#where: "server.actor.civil_day".into(),
-                cause: failure_cause(other),
-                context: FailureContext::new("endCivilDay"),
-                recoverable: false,
-                recovery_actions: vec![
-                    "停止当前会话；重新打开上一份有效日终存档或新局",
-                    "复制脱敏错误详情反馈",
-                ],
-            },
-        }
-    }
-
-    fn correction_prepare_rejected(error: &SessionError) -> Self {
-        let mut failure = Self::civil(error);
-        failure.code = "REPORT_CORRECTION_PREPARE_REJECTED";
-        failure.r#where = "server.actor.prepare_civil_updates".into();
-        failure.recoverable = true;
-        failure.recovery_actions = vec![
-            "取消或修正待处理更正后恢复推进并重试日终",
-            "复制脱敏错误详情反馈",
-        ];
-        failure
-    }
-
-    pub(crate) fn is_correction_prepare_rejected(&self, generation: u64) -> bool {
-        self.code == "REPORT_CORRECTION_PREPARE_REJECTED"
-            && self.r#where == "server.actor.prepare_civil_updates"
-            && self.recoverable
-            && self.context.operation == "endCivilDay"
-            && self.context.fault.is_none()
-            && self.context.tick.is_some()
-            && self.context.seq.is_some()
-            && self.context.day.is_some()
-            && self.context.generation.as_deref() == Some(generation.to_string().as_str())
-            && self
-                .cause
-                .as_ref()
-                .is_some_and(|cause| cause.code == "REPORT_CORRECTION_REJECTED")
-    }
-
-    /// B3 远程登录（18725d07 语义）：日终已完成、SQLite 保存失败——上一份
-    /// 有效日终档保留，恢复推进后下一日终重试。**可恢复**失败（交易提交
-    /// 有效），只广播不致命停机。
-    pub(crate) fn archive(error: &str) -> Self {
-        Self {
-            code: "DAY_END_ARCHIVE_FAILED",
-            message: format!("日终已成功完成，但 SQLite 保存失败，上一份有效日终档仍保留：{error}"),
-            r#where: "server.actor.save_day_end".into(),
-            cause: None,
-            context: FailureContext::new("saveDayEnd"),
-            recoverable: true,
-            recovery_actions: vec![
-                "检查 SQLite 文件权限与磁盘空间后恢复推进，在下一日终重试保存",
-                "复制存档错误详情反馈",
-            ],
-        }
-    }
-}
+use engine::session::authority::save_error_message;
+#[cfg(test)]
+use engine::session::authority::{failure_cause, failure_description};
+pub use engine::session::authority::{FailureCause, FailureContext, HostFailure};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PublicBaseline {
@@ -413,6 +157,14 @@ const MAX_SESSIONS: usize = 2;
 /// `reply` 用 `Result<...>` 而非裸值：engine 失败（`SessionError`）显式上抛，绝不静默吞（铁律二）。
 #[derive(Debug)]
 pub enum SessionCommand {
+    #[cfg(all(feature = "host-parity", debug_assertions))]
+    AuthorityContract {
+        generation: u64,
+        id: String,
+        checkpoint: Option<authority_product::ContractCheckpoint>,
+        snapshot_only: bool,
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
     /// 入队玩家意图（当前固定玩家 0）。Ok=已入队，Err=未知玩家（不应发生，账户恒存在）。
     Enqueue {
         player_id: AccountId,
@@ -453,7 +205,7 @@ pub enum SessionCommand {
     },
     Restore {
         slot: Box<SaveSlot>,
-        reply: oneshot::Sender<Result<Snapshot, RestoreSessionError>>,
+        reply: oneshot::Sender<Result<RestoreCommitted, RestoreSessionError>>,
     },
     #[cfg(feature = "host-parity")]
     AdvanceCivilDay {
@@ -493,7 +245,9 @@ pub enum SessionCommand {
         reply: oneshot::Sender<Result<(), SessionError>>,
     },
     /// 永久停止 actor。会话必须先从 manager 移除，避免新请求继续取得句柄。
-    Shutdown { reply: oneshot::Sender<()> },
+    Shutdown {
+        reply: oneshot::Sender<Result<(), String>>,
+    },
     /// B3 远程登录：认证主体（subject）成员请求——鉴权后的成员/控制面
     /// （加入市场、解析成员、市场上下文、重置/停止、控制命令 Subject 化）。
     Member {
@@ -698,9 +452,7 @@ pub struct MarketContext {
 #[path = "../../../packages/engine/tests/publications/session_fixture.rs"]
 mod session_fixture;
 
-use engine::session::checkpoint::{
-    CapturedCheckpoint, CheckpointKey, CheckpointOrder, ReceiptDisposition,
-};
+use engine::session::checkpoint::{ArchiveAuthority, CheckpointKey, ReceiptOutcome};
 use native_store::archive_lane::ArchiveLane;
 
 #[cfg(test)]
@@ -708,6 +460,8 @@ mod fatal_tests;
 
 #[cfg(test)]
 mod correction_recovery_tests;
+#[cfg(test)]
+pub(crate) use correction_recovery_tests::correction_prepare_rejection_fixture;
 
 #[cfg(test)]
 mod interval_tests {
@@ -1351,12 +1105,26 @@ impl SessionHandles {
             .map_err(|error| SendCommandError::Rejected(save_error_message(error)))
     }
 
+    /// 旧 Rust 调用方仍只消费快照；HTTP 新协议使用显式提交回执。
     pub async fn restore(&self, slot: SaveSlot) -> Result<Snapshot, SendCommandError> {
+        self.restore_with_receipt(slot)
+            .await
+            .map(|result| result.snapshot)
+            .map_err(|error| match error {
+                RestoreDispatchError::Rejected(reason) => SendCommandError::Rejected(reason),
+                RestoreDispatchError::Unknown => SendCommandError::ActorGone,
+            })
+    }
+
+    pub async fn restore_with_receipt(
+        &self,
+        slot: SaveSlot,
+    ) -> Result<RestoreCommitted, RestoreDispatchError> {
         if slot.setup.ticks_per_day != self.ticks_per_day
             || slot.setup.auction_ticks != self.auction_ticks
             || slot.setup.closing_auction_ticks != self.closing_auction_ticks
         {
-            return Err(SendCommandError::Rejected(format!(
+            return Err(RestoreDispatchError::Rejected(format!(
                 "存档交易时钟配置与当前会话不一致：当前 ticks_per_day={}, auction_ticks={}, closing_auction_ticks={}；存档 ticks_per_day={}, auction_ticks={}, closing_auction_ticks={}",
                 self.ticks_per_day,
                 self.auction_ticks,
@@ -1372,10 +1140,12 @@ impl SessionHandles {
                 slot: Box::new(slot),
                 reply: tx,
             })
-            .map_err(|_| SendCommandError::ActorGone)?;
+            .map_err(|_| {
+                RestoreDispatchError::Rejected("session actor gone before restore dispatch".into())
+            })?;
         rx.await
-            .map_err(|_| SendCommandError::ActorGone)?
-            .map_err(|error| SendCommandError::Rejected(error.to_string()))
+            .map_err(|_| RestoreDispatchError::Unknown)?
+            .map_err(|error| RestoreDispatchError::Rejected(error.to_string()))
     }
 
     #[cfg(feature = "host-parity")]
@@ -1469,7 +1239,9 @@ impl SessionHandles {
         self.cmd_tx
             .send(SessionCommand::Shutdown { reply: tx })
             .map_err(|_| SendCommandError::ActorGone)?;
-        rx.await.map_err(|_| SendCommandError::ActorGone)
+        rx.await
+            .map_err(|_| SendCommandError::ActorGone)?
+            .map_err(SendCommandError::Rejected)
     }
 
     pub async fn set_running(&self, running: bool) -> Result<(), SendCommandError> {
@@ -1522,6 +1294,21 @@ pub enum SendCommandError {
         "speed must be Fastest (+Infinity) or a supported finite positive multiplier, got {0}"
     )]
     InvalidSpeed(f64),
+}
+
+/// 只有 actor 完成共同 commit 后才构造；后续 catalog 查询独立报告失败。
+#[derive(Debug, serde::Serialize)]
+pub struct RestoreCommitted {
+    pub replacement: engine::session::replacement::CommitReceipt,
+    pub snapshot: Snapshot,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum RestoreDispatchError {
+    #[error("恢复在提交前被拒绝：{0}")]
+    Rejected(String),
+    #[error("恢复请求已交给 actor，但未收到提交回执；提交结果未知")]
+    Unknown,
 }
 
 /// 读档既要校验引擎候选，也要独占 Native 日终写入世代；两类失败均保留原因。
@@ -1789,8 +1576,8 @@ impl SessionManager {
             archive,
             archive_lane: Some(archive_lane),
             archive_epoch: 1,
-            archive_order: CheckpointOrder::new(1, 1),
-            #[cfg(test)]
+            archive_order: ArchiveAuthority::new(1, 1),
+            #[cfg(any(test, all(feature = "host-parity", debug_assertions)))]
             injected_step_failure: None,
             pacing: ServerPacing::new(self.base_ms, game.tick(), native_async::now()),
             game,
@@ -1865,7 +1652,7 @@ fn gate_deferred_drop_report(
     })
 }
 
-#[cfg(test)]
+#[cfg(any(test, all(feature = "host-parity", debug_assertions)))]
 #[derive(Default)]
 struct StepFailureCapture {
     saved: Option<serde_json::Value>,
@@ -1887,8 +1674,8 @@ struct SessionActor {
     archive: Option<native_store::ArchiveWriter>,
     archive_lane: Option<ArchiveLane>,
     archive_epoch: u64,
-    archive_order: CheckpointOrder,
-    #[cfg(test)]
+    archive_order: ArchiveAuthority,
+    #[cfg(any(test, all(feature = "host-parity", debug_assertions)))]
     injected_step_failure: Option<(
         usize,
         engine::session::StepFatal,
@@ -1917,8 +1704,8 @@ impl SessionActor {
             .map(SessionError::Step)
             .or_else(|| {
                 // 1291 仅表示健康 engine 的 Host fatal；engine poison 必须保留原首错。
-                self.fatal_failure
-                    .as_ref()
+                self.pacing
+                    .fatal_failure()
                     .map(|_| SessionError::InvalidSave(engine::error::ValidationFault::bare(1291)))
             })
     }
@@ -1926,7 +1713,7 @@ impl SessionActor {
     fn step_game(
         &mut self,
     ) -> Result<engine::session::protocol::TickFrame, engine::session::StepFatal> {
-        #[cfg(test)]
+        #[cfg(any(test, all(feature = "host-parity", debug_assertions)))]
         let capture = if let Some((remaining, error, capture)) = &mut self.injected_step_failure {
             if *remaining == 0 {
                 let mut observed = capture.lock().unwrap();
@@ -1942,7 +1729,7 @@ impl SessionActor {
             None
         };
         let result = self.game.step_frame();
-        #[cfg(test)]
+        #[cfg(any(test, all(feature = "host-parity", debug_assertions)))]
         if let (Some(capture), Ok(frame)) = (capture, &result) {
             capture.lock().unwrap().frames.push(frame.clone());
         }
@@ -1974,57 +1761,21 @@ impl SessionActor {
                 None => break,
             }
         }
-        if let Some(lane) = self.archive_lane.take() {
-            if let Err(error) = lane.finish().await {
-                tracing::error!(%error, "归档任务退出失败");
+        if self.archive_lane.is_some() {
+            if let Err(error) = self.shutdown_authority().await {
+                self.stop_with_failure(HostFailure::archive(&error));
             }
         }
     }
 
     fn drive_cycle(&mut self, permit: Permit) {
-        if self.fatal_failure.is_some() {
-            return;
-        }
         let preferences = self.pause_preferences;
-        let result = run_cycle(self, permit, preferences);
-        match apply_cycle_pacing(
-            &mut self.pacing,
-            self.game.tick(),
-            native_async::now(),
-            result,
-        ) {
-            Ok(()) => self.report_deferred_drop_degradation(),
-            Err(CycleError::Advance {
-                source,
-                unpublished,
-            }) => {
-                let mut failure = HostFailure::civil(&source);
-                if let Some(range) = unpublished {
-                    range.describe(&mut failure.message);
-                }
-                self.stop_with_failure(failure);
-            }
-            Err(CycleError::Batch {
-                source,
-                unpublished,
-            }) => {
-                let mut failure = HostFailure::step(&source);
-                unpublished.describe(&mut failure.message);
-                self.stop_with_failure(failure);
-            }
-            Err(CycleError::Civil { source, retryable }) => {
-                let error = source.into_error();
-                self.stop_with_failure(if retryable {
-                    HostFailure::correction_prepare_rejected(&error)
-                } else {
-                    HostFailure::civil(&error)
-                });
-            }
-            Err(CycleError::Stage(failure)) => self.stop_with_failure(failure),
+        if let Some(failure) = authority::drive(self, permit, preferences) {
+            self.stop_with_failure(failure);
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, all(feature = "host-parity", debug_assertions)))]
     fn run_protocol_batch(&mut self, limit: usize) {
         self.drive_cycle(Permit::for_explicit_limit(limit));
     }
@@ -2064,19 +1815,14 @@ impl SessionActor {
     }
 
     fn finish_archive_write(&mut self, key: CheckpointKey, result: Result<(), String>) {
-        if self.archive_order.accept_receipt(key) != ReceiptDisposition::Accepted {
-            return;
+        if let ReceiptOutcome::Failed { key, message } = self.archive_order.complete(key, result) {
+            let mut failure = HostFailure::archive(&message);
+            failure.context.tick = Some(key.tick);
+            failure.context.seq = Some(key.seq);
+            failure.context.day = Some(key.day);
+            failure.context.generation = Some(key.generation.to_string());
+            self.stop_with_failure(failure);
         }
-        let Err(error) = result else { return };
-        let mut failure = HostFailure::archive(&error);
-        failure.context.tick = Some(key.tick);
-        failure.context.seq = Some(key.seq);
-        failure.context.day = Some(key.day);
-        failure.context.generation = Some(key.generation.to_string());
-        if self.fatal_failure.is_none() {
-            self.pacing.stop_after_failure(native_async::now());
-        }
-        self.broadcast_failure(failure);
     }
 
     fn stage_day_end(
@@ -2089,40 +1835,27 @@ impl SessionActor {
         };
         self.archive_order
             .install(self.timeline_generation, self.archive_epoch);
-        let storage_error =
-            |error: native_store::StoreError| HostFailure::archive(&error.to_string());
-        let captured = CapturedCheckpoint::take(
-            &self.game,
-            update,
-            self.timeline_generation,
-            self.archive_epoch,
-        )
-        .map_err(native_store::StoreError::from)
-        .map_err(storage_error)?;
-        let key = captured.key;
+        let lane = self.archive_lane.as_ref();
         self.archive_order
-            .can_stage(key)
-            .map_err(|error| HostFailure::archive(&error.to_string()))?;
-        match &self.archive_lane {
-            Some(lane) => {
-                lane.stage(writer, captured).map_err(storage_error)?;
-                self.archive_order
-                    .staged(key)
-                    .map_err(|error| HostFailure::archive(&error.to_string()))?;
-            }
-            // 只为直接调用 actor 的夹具保留同步存储；真实会话始终有独立 lane。
-            #[cfg(test)]
-            None => {
-                let candidate = native_store::DayEndCandidate::from_captured(captured.slot)
-                    .map_err(storage_error)?;
-                writer.save_day_end(&candidate).map_err(storage_error)?;
-                self.archive_order
-                    .staged(key)
-                    .map_err(|error| HostFailure::archive(&error.to_string()))?;
-                self.finish_archive_write(key, Ok(()));
-            }
-            #[cfg(not(test))]
-            None => return Err(HostFailure::archive("会话没有初始化存档任务")),
+            .stage(&self.game, update, |captured| {
+                match lane {
+                    Some(lane) => lane
+                        .stage(writer, captured)
+                        .map_err(|error| error.to_string()),
+                    // 同步夹具没有后台收据；生产路径始终经独立 lane。
+                    #[cfg(test)]
+                    None => native_store::DayEndCandidate::from_captured(captured.slot)
+                        .and_then(|candidate| writer.save_day_end(&candidate))
+                        .map_err(|error| error.to_string()),
+                    #[cfg(not(test))]
+                    None => Err("会话没有初始化存档任务".into()),
+                }
+            })
+            .map_err(|error| HostFailure::archive(&error))?;
+        #[cfg(test)]
+        if self.archive_lane.is_none() {
+            let key = self.archive_order.latest_staged().expect("同步归档已交接");
+            self.finish_archive_write(key, Ok(()));
         }
         Ok(())
     }
@@ -2176,8 +1909,11 @@ impl SessionActor {
                 || SessionError::ResourceLimit(engine::error::ValidationFault::bare(1293));
             let mut ingress = ingress.write().map_err(|_| poisoned())?;
             let mut members = members.write().map_err(|_| poisoned())?;
-            ingress.1.close()?;
-            *ingress = (generation, replacement_ingress);
+            let plan = engine::session::replacement::ReplacementPlan::prepare(ingress.0)?;
+            if plan.generation() != generation {
+                return Err(SessionError::InvalidSave(engine::ValidationFault::bare(1290)).into());
+            }
+            plan.install_ingress(&mut ingress, replacement_ingress)?;
             *members = replacement_members;
             Ok(())
         };
@@ -2206,6 +1942,9 @@ impl SessionActor {
             ));
         }
         self.require_market_control(subject)?;
+        self.pacing
+            .require_control(self.archive_order.blocked_reason())
+            .map_err(|error| SendCommandError::Rejected(error.to_string()))?;
         self.archive
             .as_ref()
             .cloned()
@@ -2265,6 +2004,22 @@ impl SessionActor {
             return Err(SendCommandError::Rejected(
                 "STALE_SESSION_GENERATION".into(),
             ));
+        }
+        if self.archive_order.is_blocked()
+            && matches!(
+                &request,
+                MemberRequest::SubscribeRightsOffering { .. }
+                    | MemberRequest::ProposePlayerCompanyAction { .. }
+                    | MemberRequest::EnqueueReportCorrection { .. }
+                    | MemberRequest::CancelReportCorrection { .. }
+                    | MemberRequest::AdmissionCash { .. }
+                    | MemberRequest::Join { .. }
+                    | MemberRequest::BindCreator
+            )
+        {
+            self.pacing
+                .require_control(self.archive_order.blocked_reason())
+                .map_err(|error| SendCommandError::Rejected(error.to_string()))?;
         }
         match request {
             MemberRequest::SubscribeRightsOffering {
@@ -2409,10 +2164,15 @@ impl SessionActor {
                 // 并 renew 归档 writer 到新时间线（18725d07 replace_timeline 语义；
                 // 此前漏换 ingress 使 reset 后新代次下单全部 STALE、旧单打进已
                 // 脱离的旧 ingress）。
-                let next_generation = self
-                    .timeline_generation
-                    .checked_add(1)
-                    .ok_or(SendCommandError::Rejected("世代计数耗尽".into()))?;
+                let settings = engine::session::replacement::RestoreSettings::capture(
+                    &self.pacing,
+                    self.pause_preferences,
+                );
+                let replacement_plan = engine::session::replacement::ReplacementPlan::prepare(
+                    self.timeline_generation,
+                )
+                .map_err(|error| SendCommandError::Rejected(error.to_string()))?;
+                let next_generation = replacement_plan.generation();
                 self.activate_replacement_timeline(
                     next_generation,
                     replacement.shared_ingress(),
@@ -2420,11 +2180,16 @@ impl SessionActor {
                 )
                 .await
                 .map_err(|error| SendCommandError::Rejected(error.to_string()))?;
-                self.game = replacement;
-                self.timeline_generation = next_generation;
+                let retired = replacement_plan
+                    .commit(&mut self.game, &mut self.timeline_generation, replacement)
+                    .expect("串行 authority 的已围栏计划不能过期");
+                libos::deferred_drop::defer(retired);
+                self.fatal_failure = None;
+                self.archive_order
+                    .install(self.timeline_generation, self.archive_epoch);
                 self.public_revision = self.public_revision.saturating_add(1);
-                self.pacing
-                    .reset_after_restore(self.game.tick(), native_async::now());
+                settings.install(&mut self.pacing, self.game.tick(), native_async::now());
+                self.pause_preferences = settings.pause;
                 self.broadcast_timeline_reset();
                 Ok(MemberResponse::Snapshot(self.game.snapshot()))
             }
@@ -2458,11 +2223,9 @@ impl SessionActor {
                     ));
                 }
                 self.require_market_control(&subject)?;
-                self.game
-                    .shared_ingress()
-                    .close()
-                    .map_err(|error| SendCommandError::Rejected(error.to_string()))?;
-                self.cmd_rx.close();
+                self.shutdown_authority()
+                    .await
+                    .map_err(SendCommandError::Rejected)?;
                 Ok(MemberResponse::Control)
             }
             MemberRequest::BindCreator => {
@@ -2519,7 +2282,13 @@ impl SessionActor {
                     return Err(SendCommandError::Rejected(error.to_string()));
                 }
                 self.pacing
-                    .set_running(running, self.game.tick(), native_async::now());
+                    .control_running(
+                        running,
+                        self.game.tick(),
+                        native_async::now(),
+                        self.archive_order.blocked_reason(),
+                    )
+                    .map_err(|error| SendCommandError::Rejected(error.to_string()))?;
                 Ok(MemberResponse::Control)
             }
             MemberRequest::SetPausePreferences {
@@ -2532,7 +2301,10 @@ impl SessionActor {
                         "STALE_SESSION_GENERATION".into(),
                     ));
                 }
-                self.pause_preferences = preferences;
+                self.pause_preferences = self
+                    .pacing
+                    .control_pause(preferences)
+                    .map_err(|error| SendCommandError::Rejected(error.to_string()))?;
                 Ok(MemberResponse::Control)
             }
             MemberRequest::Resolve => {
@@ -2706,10 +2478,14 @@ impl SessionActor {
         self.observers
             .retain(|entry| !entry.producer.is_observer_closed());
         let (producer, observer) = publication::channel(publication::OBSERVER_PACKET_LIMIT);
-        if baseline.failure.is_none() {
-            self.observers.push(ScopedObserver { account, producer });
-        }
+        let terminal = Arc::new(OnceLock::new());
+        self.observers.push(ScopedObserver {
+            account,
+            producer,
+            terminal: terminal.clone(),
+        });
         Ok(ObservationAttachment {
+            terminal,
             baseline,
             observer,
             initial_orders: Some(initial_orders),
@@ -2736,8 +2512,13 @@ impl SessionActor {
         account: Option<AccountId>,
     ) -> Result<(PublicBaseline, Vec<PlayerWorkingOrder>), engine::session::CompanyCatalogViewError>
     {
-        let company_catalog = match catalog {
-            Ok(catalog) => catalog,
+        let captured = match engine::session::baseline::CapturedBaseline::with_catalog(
+            &self.game,
+            account,
+            self.pacing.latest_failure().cloned(),
+            catalog,
+        ) {
+            Ok(captured) => captured,
             Err(error) => {
                 self.stop_with_failure(HostFailure::catalog(
                     &error,
@@ -2747,56 +2528,39 @@ impl SessionActor {
                 return Err(error);
             }
         };
-        if let Err(fatal) = self.game.require_healthy() {
-            self.stop_with_failure(HostFailure::step(&fatal));
+        if captured.discovered_failure {
+            if let Some(failure) = captured.failure.clone() {
+                self.stop_with_failure(failure);
+            }
         }
-        // 旧委托投影只覆盖 0 号账户；其余成员不读取或借用该账户的订单。
-        let (snapshot, initial_orders) =
-            if account == Some(AccountId(0)) && self.fatal_failure.is_none() {
-                self.game.observer_baseline()
-            } else {
-                (self.game.snapshot(), Vec::new())
-            };
         Ok((
             PublicBaseline {
                 timeline_generation: self.timeline_generation,
-                snapshot: PublicBaselineSnapshot::scoped(snapshot, account),
-                stock_catalog: self.game.stock_catalog_view(),
-                company_catalog,
-                civil_date: self.game.civil_date().to_iso(),
+                snapshot: PublicBaselineSnapshot::scoped(captured.snapshot, account),
+                stock_catalog: captured.stock_catalog,
+                company_catalog: captured.company_catalog,
+                civil_date: captured.civil_date.to_iso(),
                 public_revision: self.public_revision,
-                public_report_ids: self
-                    .game
-                    .publication_ids()
-                    .into_iter()
-                    .map(|id| id.value().to_string())
-                    .collect(),
-                failure: self.fatal_failure.clone(),
+                public_report_ids: captured.public_report_ids,
+                failure: self.pacing.latest_failure().cloned(),
             },
-            initial_orders,
+            captured.working_orders,
         ))
     }
 
-    fn stop_with_failure(&mut self, mut failure: HostFailure) {
-        apply_authority_failure(&self.game, failure.recoverable, &mut failure.message);
-        failure.context.tick = Some(self.game.tick());
-        failure.context.seq = Some(self.game.seq());
-        failure.context.day = Some(self.game.day());
-        failure.context.generation = Some(self.timeline_generation.to_string());
-        self.pacing.stop_after_failure(native_async::now());
-        if failure.recoverable {
-            self.broadcast_failure(failure);
+    fn stop_with_failure(&mut self, failure: HostFailure) {
+        let Some(failure) = self.pacing.fail(
+            &self.game,
+            self.timeline_generation,
+            failure,
+            native_async::now(),
+        ) else {
             return;
+        };
+        if !failure.recoverable {
+            self.fatal_failure = Some(failure.clone());
         }
-        if self.fatal_failure.is_none() {
-            self.broadcast_failure(failure.clone());
-            self.fatal_failure = Some(failure);
-        }
-    }
-
-    #[cfg(feature = "host-parity")]
-    fn broadcast_update(&mut self, protocol: ProtocolUpdate) {
-        self.broadcast_at(protocol, self.game.civil_date().to_iso());
+        self.broadcast_failure(failure);
     }
 
     fn broadcast_at(&mut self, protocol: ProtocolUpdate, civil_date: String) {
@@ -2813,6 +2577,26 @@ impl SessionActor {
     }
 
     fn broadcast_failure(&mut self, failure: HostFailure) {
+        if !failure.recoverable {
+            // 首次 terminal 独立于有界观察邮箱；慢观察者不会丢失权威故障。
+            for entry in &self.observers {
+                let _ = entry.terminal.set(ObserverTerminal {
+                    through: entry.producer.published_ordinal(),
+                    failure: failure.clone(),
+                });
+                entry.producer.signal().notify();
+            }
+            if self.event_tx.receiver_count() != 0 {
+                let _ = self.event_tx.send(EngineUpdate {
+                    timeline_generation: self.timeline_generation,
+                    update: None,
+                    civil_date: self.game.civil_date().to_iso(),
+                    public_revision: self.public_revision,
+                    failure: Some(failure),
+                });
+            }
+            return;
+        }
         self.publish_observation(
             EngineUpdate {
                 timeline_generation: self.timeline_generation,
@@ -2871,8 +2655,41 @@ impl SessionActor {
     }
 
     /// 处理单条命令。
+    async fn shutdown_authority(&mut self) -> Result<(), String> {
+        let ingress = self.pacing.begin_shutdown(&self.game, native_async::now());
+        let drained = if let Some(lane) = self.archive_lane.take() {
+            match native_async::timeout(authority::SHUTDOWN_DRAIN_TIMEOUT, lane.finish()).await {
+                Ok(result) => result.map_err(|error| error.to_string()),
+                Err(_) => Err("归档关闭超时；仍在途的写入结果未知，不能报告已耐久".into()),
+            }
+        } else {
+            Ok(())
+        };
+        self.cmd_rx.close();
+        while let Ok(command) = self.cmd_rx.try_recv() {
+            if let SessionCommand::ArchiveWriteCompleted { key, result } = command {
+                self.finish_archive_write(key, result);
+            }
+        }
+        let receipts = self.archive_order.ensure_drained();
+        authority::finish_shutdown(ingress, drained, receipts)
+    }
+
     async fn handle_command(&mut self, cmd: SessionCommand) {
         match cmd {
+            #[cfg(all(feature = "host-parity", debug_assertions))]
+            SessionCommand::AuthorityContract {
+                generation,
+                id,
+                checkpoint,
+                snapshot_only,
+                reply,
+            } => {
+                let result = self
+                    .contract_action(generation, &id, checkpoint, snapshot_only)
+                    .await;
+                let _ = reply.send(result);
+            }
             SessionCommand::Enqueue {
                 player_id,
                 intent,
@@ -2987,116 +2804,89 @@ impl SessionActor {
                 };
                 let _ = reply.send(result);
             }
-            SessionCommand::Restore { slot, reply } => match self.fatal_rejection().map_or_else(
-                || ProtocolSession::restore_with_topology(&slot, self.runtime_topology),
-                Err,
-            ) {
-                Ok(restored) => {
-                    let next_generation = match self.timeline_generation.checked_add(1) {
-                        Some(generation) => generation,
-                        None => {
-                            // 1292：世代计数耗尽。
-                            let _ = reply.send(Err(SessionError::ResourceLimit(
-                                engine::error::ValidationFault::bare(1292),
+            SessionCommand::Restore { slot, reply } => {
+                match ProtocolSession::restore_with_topology(&slot, self.runtime_topology) {
+                    Ok(restored) => {
+                        let settings = engine::session::replacement::RestoreSettings::capture(
+                            &self.pacing,
+                            self.pause_preferences,
+                        );
+                        let replacement_plan =
+                            match engine::session::replacement::ReplacementPlan::prepare(
+                                self.timeline_generation,
+                            ) {
+                                Ok(plan) => plan,
+                                Err(error) => {
+                                    let _ = reply.send(Err(error.into()));
+                                    return;
+                                }
+                            };
+                        let next_generation = replacement_plan.generation();
+                        let activation = self
+                            .activate_replacement_timeline(
+                                next_generation,
+                                restored.shared_ingress(),
+                                restored.trading_subject_accounts(),
                             )
-                            .into()));
+                            .await;
+                        if let Err(error) = activation {
+                            let error = match error {
+                                native_store::StoreError::Session(error) => error.into(),
+                                error => RestoreSessionError::Archive(error),
+                            };
+                            let _ = reply.send(Err(error));
                             return;
                         }
-                    };
-                    let activation = self
-                        .activate_replacement_timeline(
-                            next_generation,
-                            restored.shared_ingress(),
-                            restored.trading_subject_accounts(),
-                        )
-                        .await;
-                    if let Err(error) = activation {
-                        let error = match error {
-                            native_store::StoreError::Session(error) => error.into(),
-                            error => RestoreSessionError::Archive(error),
-                        };
-                        let _ = reply.send(Err(error));
-                        return;
+                        let retired = replacement_plan
+                            .commit(&mut self.game, &mut self.timeline_generation, restored)
+                            .expect("串行 authority 的已围栏计划不能过期");
+                        libos::deferred_drop::defer(retired);
+                        self.fatal_failure = None;
+                        self.archive_order
+                            .install(self.timeline_generation, self.archive_epoch);
+                        self.public_revision = self.public_revision.saturating_add(1);
+                        settings.install(&mut self.pacing, self.game.tick(), native_async::now());
+                        self.pause_preferences = settings.pause;
+                        self.broadcast_timeline_reset();
+                        let _ = reply.send(Ok(RestoreCommitted {
+                            replacement: replacement_plan.receipt(),
+                            snapshot: self.game.snapshot(),
+                        }));
                     }
-                    self.game = restored;
-                    self.timeline_generation = next_generation;
-                    self.public_revision = self.public_revision.saturating_add(1);
-                    self.pacing
-                        .reset_after_restore(self.game.tick(), native_async::now());
-                    self.broadcast_timeline_reset();
-                    let _ = reply.send(Ok(self.game.snapshot()));
+                    Err(error) => {
+                        let _ = reply.send(Err(error.into()));
+                    }
                 }
-                Err(error) => {
-                    let _ = reply.send(Err(error.into()));
-                }
-            },
+            }
             #[cfg(feature = "host-parity")]
             SessionCommand::AdvanceCivilDay { generation, reply } => {
-                use engine::session::runner::manual::{manual_civil, ManualCivilError};
-
-                let result = if let Some(error) = self.fatal_rejection() {
-                    Err(error)
-                } else if generation != self.timeline_generation {
-                    // 1290：世代过期；ctx[0]=请求世代，ctx[1]=当前世代。
+                let result = if generation != self.timeline_generation {
                     Err(SessionError::InvalidSave(
-                        engine::error::ValidationFault::new(
-                            1290,
-                            vec![generation, self.timeline_generation],
-                        ),
+                        engine::error::ValidationFault::bare(1290),
                     ))
                 } else {
-                    match manual_civil(&mut self.game, self.pause_preferences) {
-                        Ok((update, paused)) => {
-                            // 日界已提交；归档及发包使用与自动推进相同的非阻塞交接。
-                            if paused {
-                                self.pacing
-                                    .pause_at_civil_boundary(self.game.tick(), native_async::now());
-                            }
-                            if let Err(failure) = self.publish_civil_update(update.clone()) {
-                                self.stop_with_failure(failure);
-                            }
-                            Ok(update)
-                        }
-                        Err(ManualCivilError::Rejected(error)) => Err(error),
-                        Err(ManualCivilError::Retryable(error)) => {
-                            self.stop_with_failure(HostFailure::correction_prepare_rejected(
-                                &error,
-                            ));
-                            Err(error)
-                        }
-                        Err(ManualCivilError::Fatal(error)) => {
-                            self.stop_with_failure(HostFailure::civil(&error));
-                            Err(error)
-                        }
+                    let pause = self.pause_preferences;
+                    let outcome = authority::manual_civil(self, pause);
+                    if let Some(failure) = outcome.failure {
+                        self.stop_with_failure(failure);
                     }
+                    outcome.result
                 };
                 let _ = reply.send(result);
             }
             #[cfg(feature = "host-parity")]
             SessionCommand::Step { generation, reply } => {
-                use engine::session::runner::manual::{manual_tick, ManualStepError};
-
-                let result = if let Some(error) = self.fatal_rejection() {
-                    Err(error)
-                } else if generation != self.timeline_generation {
-                    // 1290：世代过期；ctx[0]=请求世代，ctx[1]=当前世代。
+                let result = if generation != self.timeline_generation {
                     Err(SessionError::InvalidSave(
-                        engine::error::ValidationFault::new(
-                            1290,
-                            vec![generation, self.timeline_generation],
-                        ),
+                        engine::error::ValidationFault::bare(1290),
                     ))
                 } else {
-                    manual_tick(&mut self.game, self.pacing.is_running())
-                        .map(|batch| ProtocolUpdate::TickBatch(Box::new(batch)))
-                        .map_err(ManualStepError::into_session_error)
+                    let outcome = authority::manual_tick(self);
+                    if let Some(failure) = outcome.failure {
+                        self.stop_with_failure(failure);
+                    }
+                    outcome.result
                 };
-                if let Ok(update) = &result {
-                    self.broadcast_update(update.clone());
-                }
-                if let Err(SessionError::Step(fatal)) = &result {
-                    self.stop_with_failure(HostFailure::step(fatal));
-                }
                 let _ = reply.send(result);
             }
             SessionCommand::PublicReportPage { query, reply } => {
@@ -3135,9 +2925,12 @@ impl SessionActor {
                 let result = if let Some(error) = self.fatal_rejection() {
                     Err(error)
                 } else {
-                    self.pacing
-                        .set_running(running, self.game.tick(), native_async::now());
-                    Ok(())
+                    self.pacing.control_running(
+                        running,
+                        self.game.tick(),
+                        native_async::now(),
+                        self.archive_order.blocked_reason(),
+                    )
                 };
                 let _ = reply.send(result);
             }
@@ -3149,8 +2942,9 @@ impl SessionActor {
                 let result = if let Some(error) = self.fatal_rejection() {
                     Err(error)
                 } else if generation == self.timeline_generation {
-                    self.pause_preferences = preferences;
-                    Ok(())
+                    self.pacing.control_pause(preferences).map(|preferences| {
+                        self.pause_preferences = preferences;
+                    })
                 } else {
                     Err(SessionError::InvalidSave(
                         engine::error::ValidationFault::bare(1290),
@@ -3159,15 +2953,11 @@ impl SessionActor {
                 let _ = reply.send(result);
             }
             SessionCommand::Shutdown { reply } => {
-                if let Err(error) = self.game.shared_ingress().close() {
-                    self.stop_with_failure(HostFailure::civil(&error));
+                let result = self.shutdown_authority().await;
+                if let Err(error) = &result {
+                    self.stop_with_failure(HostFailure::archive(error));
                 }
-                if let Some(lane) = self.archive_lane.take() {
-                    if let Err(error) = lane.finish().await {
-                        tracing::error!(%error, "归档任务退出失败");
-                    }
-                }
-                let _ = reply.send(());
+                let _ = reply.send(result);
             }
             SessionCommand::Member {
                 subject,
@@ -3182,6 +2972,12 @@ impl SessionActor {
                         | MemberRequest::ProposePlayerCompanyAction { .. }
                         | MemberRequest::EnqueueReportCorrection { .. }
                         | MemberRequest::CancelReportCorrection { .. }
+                        | MemberRequest::Reset { .. }
+                        | MemberRequest::Shutdown { .. }
+                        | MemberRequest::Snapshot
+                        | MemberRequest::Context
+                        | MemberRequest::CompanyRead { .. }
+                        | MemberRequest::HostQuery { .. }
                 );
                 let result = match self.fatal_rejection() {
                     Some(error) if !fatal_probe => {
@@ -3258,22 +3054,12 @@ impl SessionActor {
 
     /// 将既有对外倍速值应用到共享 Cadence，再报告调速。
     fn apply_speed(&mut self, speed: f64) -> Result<(), SessionError> {
-        let old_interval = self.pacing.tick_interval();
-        self.pacing
-            .apply_speed(speed, self.game.tick(), native_async::now())
-            .map_err(|_| {
-                SessionError::InvalidSave(engine::error::ValidationFault::new(
-                    1311,
-                    vec![speed.to_bits()],
-                ))
-            })?;
-        if self.pacing.is_fastest() {
-            debug!(session = %self.session_id, "speed changed to fastest");
-        } else {
-            let new_interval = self.pacing.tick_interval();
-            debug!(session = %self.session_id, ?old_interval, ?new_interval, speed, "speed changed");
-        }
-        Ok(())
+        self.pacing.control_speed(
+            speed,
+            self.game.tick(),
+            native_async::now(),
+            self.archive_order.blocked_reason(),
+        )
     }
 }
 
@@ -3317,7 +3103,7 @@ impl DrivePort for SessionActor {
         self.publish_civil_update(update)
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, all(feature = "host-parity", debug_assertions)))]
     fn enforce_budget(&self) -> bool {
         self.injected_step_failure.is_none()
     }
@@ -3403,3 +3189,18 @@ mod catalog_boundary_tests {
         assert!(!failure.recoverable);
     }
 }
+
+impl AuthorityPort for SessionActor {
+    fn authority(&mut self) -> &mut ServerPacing {
+        &mut self.pacing
+    }
+    fn archive_blocked(&self) -> bool {
+        self.archive_order.is_blocked()
+    }
+}
+
+#[cfg(all(test, feature = "host-parity"))]
+mod authority_trace_tests;
+
+#[cfg(all(feature = "host-parity", debug_assertions))]
+pub(crate) mod authority_product;

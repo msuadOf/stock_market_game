@@ -137,6 +137,20 @@ fn app_router_with_state(state: AppState) -> Router {
             post(routes::api_host_parity_advance_civil_day),
         )
         .route("/api/host-parity/step", post(routes::api_host_parity_step));
+    #[cfg(all(feature = "host-parity", debug_assertions))]
+    let router = router
+        .route(
+            "/api/host-parity/authority-contract/setup",
+            get(routes::api_authority_contract_setup),
+        )
+        .route(
+            "/api/host-parity/authority-contract/action",
+            post(routes::api_authority_contract_action),
+        )
+        .route(
+            "/api/host-parity/authority-contract/snapshot",
+            post(routes::api_authority_contract_snapshot),
+        );
     // B3 远程登录：身份路由（register/login/guest/logout/me）挂共享
     // SessionManager 的原生存储；独立 CORS 层（identity_router 自带
     // 8 KiB body 上限，不走 MAX_LOAD_BODY_BYTES 的存档大包口径）。
@@ -164,6 +178,9 @@ fn cors_layer() -> CorsLayer {
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any)
+        .expose_headers([axum::http::HeaderName::from_static(
+            "x-session-restore-outcome",
+        )])
 }
 
 /// 初始化 tracing：默认 INFO 级别，允许用 `RUST_LOG` 覆盖。

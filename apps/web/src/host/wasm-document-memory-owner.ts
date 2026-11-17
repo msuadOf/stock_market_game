@@ -104,7 +104,7 @@ function restoreCapability(value: VerifiedWasmRestoreCapability): VerifiedWasmRe
   const copy = structuredClone(value);
   if (copy.kind !== "verified-package" || !Array.isArray(copy.exports)
     || !copy.exports.includes("restore_json") || !copy.exports.includes("facade_slot_init_for_restore_json")
-    || !copy.exports.includes("restore_prepared") || !copy.exports.includes("clear_prepared_restore")) {
+    || !copy.exports.includes("restore_prepared") || !copy.exports.includes("clear_prepared_restore") || !copy.exports.includes("commit_session_replacement") || !copy.exports.includes("prepare_session_replacement") || !copy.exports.includes("fence_session_replacement")) {
     throw new WasmDocumentMemoryError("WASM_RESTORE_TOPOLOGY_NOT_READY", "真实发布包尚未证明 String restore 与 topology 导出，未消费存档或分配 Memory");
   }
   for (const field of ["wasmSha256", "glueSha256", "sourceSha256", "buildManifestSha256"] as const) {

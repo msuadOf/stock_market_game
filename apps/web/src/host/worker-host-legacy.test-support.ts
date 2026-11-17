@@ -31,6 +31,7 @@ export function withFixturePublicationFence(value: unknown): unknown {
 }
 let manualLegacyIngress = false;
 export class LegacyWorker extends EventTarget {
+  observerLease = "1";
   configured?: Promise<void>;
   controlPort?: MessagePort;
   dataPort?: MessagePort;
@@ -84,12 +85,15 @@ export class LegacyWorker extends EventTarget {
       if (!manualLegacyIngress) queueMicrotask(() => this.dataPort?.postMessage({ type: "ingressBound", generation: value.generation, requestId: value.requestId }));
     }
     if (value.type === "bindPublisher") queueMicrotask(() => {
-      this.dataPort?.postMessage({ type: "publisherBound", generation: value.generation, requestId: value.requestId });
+      this.dataPort?.postMessage({ type: "publisherBound", observerLease: "1", generation: value.generation, requestId: value.requestId });
       this.dispatchEvent(new MessageEvent("message", { data: { type: "publisherLifecycle", instanceId: this.instanceId, state: "configured", generation: value.generation, token: value.token } }));
     });
-    if (value.type === "pausePublisher" || value.type === "startPublisher") queueMicrotask(() => this.dataPort?.postMessage({
-      type: value.type === "pausePublisher" ? "publisherPaused" : "publisherStarted", generation: value.generation, requestId: value.requestId,
-    }));
+    if (value.type === "pausePublisher" || value.type === "startPublisher") {
+      this.observerLease = value.type === "pausePublisher" ? (BigInt(String(value.observerLease)) + 1n).toString() : String(value.observerLease);
+      queueMicrotask(() => this.dataPort?.postMessage({
+        observerLease: this.observerLease, type: value.type === "pausePublisher" ? "publisherPaused" : "publisherStarted", generation: value.generation, requestId: value.requestId,
+      }));
+    }
     if (value.type === "resumePublisher") queueMicrotask(() => this.dataPort?.postMessage({
       type: "publisherResumed", generation: value.generation, requestId: value.requestId, accepted: true,
     }));
@@ -190,10 +194,10 @@ export function createLegacyHost(setup: Parameters<typeof createWorkerHost>[0], 
         const publisher = this.publisher?.dataPort;
         if (publisher !== undefined) {
           if (input.type === "protocolBatch" && Array.isArray(input.updates)) {
-            for (const update of input.updates) publisher.postMessage({ type: "protocol", generation: input.generation, publicationOrdinal: String(++this.ordinal), update });
+            for (const update of input.updates) publisher.postMessage({ type: "protocol", observerLease: this.publisher!.observerLease, generation: input.generation, publicationOrdinal: String(++this.ordinal), update });
           } else if (input.type === "protocol") {
-            publisher.postMessage({ publicationOrdinal: String(++this.ordinal), ...input });
-          } else publisher.postMessage(value);
+            publisher.postMessage({ observerLease: this.publisher!.observerLease, publicationOrdinal: String(++this.ordinal), ...input });
+          } else publisher.postMessage({ observerLease: this.publisher!.observerLease, ...input });
         }
         return true;
       }

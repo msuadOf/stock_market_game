@@ -623,8 +623,8 @@ test("同代刷新先 ACK 在途事实，拒绝的切面不上屏，只在接纳
     const pause = publisher.sent.findLast((request) => request.type === "pausePublisher")!;
     assert.equal(engine.sent.some((request) => request.type === "refreshBaseline"), false, "停读栅栏前不得捕获新切面");
     const update = { TickBatch: { frames: ["已在途的事实"] } };
-    publisher.emit({ type: "protocol", generation: 1, publicationOrdinal: "1", update });
-    publisher.emit({ type: "publisherPaused", requestId: pause.requestId, generation: 1 });
+    publisher.emit({ type: "protocol", generation: 1, observerLease: "1", publicationOrdinal: "1", update });
+    publisher.emit({ type: "publisherPaused", requestId: pause.requestId, generation: 1, observerLease: "2" });
     await drainW1();
     assert.deepEqual((updates.at(-1) as { update: unknown }).update, update);
     assert.equal(publisher.sent.some((request) => request.type === "ackPublisher" && request.ordinal === "1"), true);
@@ -1257,10 +1257,40 @@ test("Browser 归档失败暂停会话但不销毁权威", { timeout: 10000 }, a
     assert.ok(start);
     engine.emit({ type: "started", requestId: start.requestId, generation: 1 });
     await starting;
-    const failure = { type: "failure", code: "DAY_END_ARCHIVE_FAILED", where: "wasm-worker.checkpoint", recoverable: true };
-    engine.emit({ ...failure, generation: 1, message: "有效旧档保留" });
+    const failure = { code: "DAY_END_ARCHIVE_FAILED", where: "session.authority.save_day_end", recoverable: true,
+      context: { operation: "saveDayEnd", generation: "1", tick: 1, seq: 1, day: 1 }, message: "有效旧档保留" };
+    f.publisherWorker!.emit({ type: "publicationFailure", generation: 1, publicationOrdinal: "1", failure });
     await drainW1();
     assert.deepEqual(notices, ["有效旧档保留"]);
     assert.equal(engine.terminations, 0, "归档故障未破坏冻结的权威状态");
+  } finally { await f.cleanup(); }
+});
+
+test("Browser 有序 terminal 保留查询和 shutdown，拒绝继续写入且不销毁 Memory", { timeout: 10000 }, async () => {
+  const f = fixtureW1();
+  try {
+    f.launch(); await drainW1(); f.ingress(); f.baseline(); await drainW1(); f.ack(f.workers[1]!, 1); await drainW1();
+    const state = f.readOutcome();
+    if (state.status !== "fulfilled") throw new Error("宿主夹具未就绪");
+    const engine = f.workers[0]!;
+    const notices: string[] = [];
+    const starting = state.host.start(() => {}, failure => { notices.push(failure.code); });
+    await drainW1();
+    const start = engine.sent.findLast(item => item.type === "start")!;
+    engine.emit({ type: "started", requestId: start.requestId, generation: 1 }); await starting;
+    const failure = { code: "STEP_FATAL", where: "session.authority.step", message: "首错", recoverable: false,
+      context: { operation: "step", generation: "1", tick: 1, seq: 1, day: 0 } };
+    f.publisherWorker!.emit({ type: "publicationFailure", generation: 1, failure });
+    f.publisherWorker!.emit({ type: "publicationFailure", generation: 1, failure });
+    await drainW1();
+    assert.deepEqual(notices, ["STEP_FATAL"]);
+    assert.equal(engine.terminations, 0);
+    await assert.rejects(state.host.setSpeed(1), /首错/);
+    const querying = state.host.readSpeedMetrics!();
+    await drainW1();
+    const query = engine.sent.findLast(item => item.type === "speedMetrics");
+    assert.ok(query, "terminal 后仍可发送只读查询");
+    engine.emit({ type: "operationError", requestId: query.requestId, generation: 1, message: "明确只读响应" });
+    await assert.rejects(querying, /明确只读响应/);
   } finally { await f.cleanup(); }
 });

@@ -1,3 +1,4 @@
+import { observerOrdinal } from "./observer-resync.ts";
 import { isMessagePort, reportBrowserError, transferMessageChannel } from "../../../../packages/libos/browser/browser-transport.ts";
 import { SharedSubstratePublisher } from "../../../../packages/libos/browser/shared-substrate-publisher.ts";
 import { parseFacadeEngineSubstrate } from "./facade-engine-protocol.ts";
@@ -6,10 +7,14 @@ import { instantiateFacadeModule, type FacadeSyncInitializer } from "./facade-wa
 
 type PublishBindings = FacadeSyncInitializer & {
   readonly market_publisher_signal: (token: number) => number;
-  readonly market_publisher_ack: (token: number, ordinal: bigint) => void;
-  readonly market_publisher_resume: (token: number, ordinal: bigint) => boolean;
-  readonly market_publisher_release: (token: number) => void;
-  readonly market_publisher_take: (token: number) => unknown;
+  readonly market_publisher_bind: (token: number, generation: bigint) => bigint;
+  readonly market_publisher_hold: (token: number, lease: bigint) => bigint;
+  readonly market_publisher_start: (token: number, lease: bigint) => void;
+  readonly market_publisher_flushed: (token: number, lease: bigint, ordinal: bigint) => void;
+  readonly market_publisher_ack: (token: number, lease: bigint, ordinal: bigint) => void;
+  readonly market_publisher_resume: (token: number, lease: bigint, ordinal: bigint) => boolean;
+  readonly market_publisher_release: (token: number, lease: bigint) => void;
+  readonly market_publisher_take: (token: number, lease: bigint) => unknown;
   readonly wasm_tombstone_bind_publisher: (address: number, workerId: number) => void;
 };
 
@@ -42,10 +47,7 @@ function positive(value: unknown, label: string): number {
 }
 
 function readOrdinal(value: unknown): bigint {
-  if (typeof value !== "string" || !/^[0-9]{1,20}$/.test(value)) throw new Error("发布 Worker 游标必须为 u64 十进制字符串");
-  const ordinal = BigInt(value);
-  if (ordinal > 0xffffffffffffffffn) throw new Error("发布 Worker 游标超出 u64");
-  return ordinal;
+  return BigInt(observerOrdinal(value));
 }
 
 function observerInput<T>(read: () => T): T {
@@ -75,7 +77,7 @@ async function bootstrap(raw: unknown): Promise<void> {
   } else bindings = await import("../../wasm-pkg/web_wasm.js") as unknown as PublishBindings;
   if (failed) return;
   const exports = instantiateFacadeModule(bindings, substrate.module, substrate.memory);
-  if (typeof bindings.wasm_tombstone_bind_publisher !== "function" || typeof bindings.market_publisher_signal !== "function" || typeof bindings.market_publisher_take !== "function" || typeof bindings.market_publisher_release !== "function" || typeof bindings.market_publisher_resume !== "function" || typeof bindings.market_publisher_ack !== "function") throw new Error("WASM 缺少发布 Worker ABI");
+  if (typeof bindings.market_publisher_flushed !== "function" || typeof bindings.market_publisher_bind !== "function" || typeof bindings.market_publisher_hold !== "function" || typeof bindings.market_publisher_start !== "function" || typeof bindings.wasm_tombstone_bind_publisher !== "function" || typeof bindings.market_publisher_signal !== "function" || typeof bindings.market_publisher_take !== "function" || typeof bindings.market_publisher_release !== "function" || typeof bindings.market_publisher_resume !== "function" || typeof bindings.market_publisher_ack !== "function") throw new Error("WASM 缺少发布 Worker ABI");
   bindings.wasm_tombstone_bind_publisher(address, primary.workerId);
   installFacadeSlotLayout(substrate.layout);
   getArenaView();
@@ -83,6 +85,7 @@ async function bootstrap(raw: unknown): Promise<void> {
   const eventQueue = transferMessageChannel();
   let observerFault = false;
   let currentGeneration = 0;
+  let currentLease = 0n;
   function observerFailure(error: ObserverTransportError): void {
     if (observerFault) return;
     observerFault = true;
@@ -90,7 +93,7 @@ async function bootstrap(raw: unknown): Promise<void> {
     scope.postMessage({ type: "publisherLifecycle", instanceId, state: "observerFailure", generation: currentGeneration, message: error.message });
   }
   function postObserver(value: unknown): void {
-    try { port.postMessage(value); }
+    try { port.postMessage({ ...(value as object), observerLease: currentLease.toString() }); }
     catch (error) { throw new ObserverTransportError("发布业务端口无法投递消息", { cause: error }); }
   }
   function classify(error: unknown): void {
@@ -102,8 +105,9 @@ async function bootstrap(raw: unknown): Promise<void> {
   const publisher = new SharedSubstratePublisher<unknown>({
     memory: substrate.memory,
     signal: bindings.market_publisher_signal,
-    take: bindings.market_publisher_take,
+    take: (token) => bindings.market_publisher_take(token, currentLease),
     deliver(value, generation) {
+      const flushed = (ordinal: unknown) => { if (currentToken === null) throw new Error("发布 Worker 未绑定"); bindings.market_publisher_flushed(currentToken, currentLease, readOrdinal(ordinal)); };
       if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("发布 ABI envelope 必须是对象");
       const kind = (value as Record<string, unknown>).kind;
       if (kind === "closed") { record(value, "kind", "发布关闭"); return "stop"; }
@@ -121,6 +125,7 @@ async function bootstrap(raw: unknown): Promise<void> {
         if (recoverable !== hasOrdinal) throw new Error("发布权威故障与观察者额度契约不匹配");
         if (hasOrdinal) readOrdinal(publicationOrdinal);
         postObserver({ type: "publicationFailure", generation, failure, ...(hasOrdinal ? { publicationOrdinal } : {}) });
+        if (hasOrdinal) flushed(publicationOrdinal);
         return recoverable ? "continue" : "stop";
       }
       if (kind === "update") {
@@ -128,6 +133,7 @@ async function bootstrap(raw: unknown): Promise<void> {
         readOrdinal(publicationOrdinal);
         if (typeof barrierPaused !== "boolean") throw new Error("发布更新日界状态无效");
         postObserver({ type: "protocol", generation, publicationOrdinal, update });
+        flushed(publicationOrdinal);
         if (barrierPaused) postObserver({ type: "barrierPaused", generation });
         return "continue";
       }
@@ -149,17 +155,19 @@ async function bootstrap(raw: unknown): Promise<void> {
     pending = pending.then(async () => {
       if (failed || closed) return;
       if (event.data === null || typeof event.data !== "object") throw new ObserverTransportError("发布 Worker 请求必须是对象");
-      const type: unknown = (event.data as Record<string, unknown>).type;
+      const input = event.data;
+      const type: unknown = (input as Record<string, unknown>).type;
       if (observerFault && type !== "quiescePublisher") return;
       if (type === "ackPublisher") {
-        const [generation, ordinal] = observerInput(() => {
-          const ack = record(event.data, "generation,ordinal,type", "发布 ACK");
-          return [positive(ack.generation, "发布 ACK generation"), readOrdinal(ack.ordinal)] as const;
+        const [generation, lease, ordinal] = observerInput(() => {
+          const ack = record(event.data, "generation,observerLease,ordinal,type", "发布 ACK");
+          return [positive(ack.generation, "发布 ACK generation"), readOrdinal(ack.observerLease), readOrdinal(ack.ordinal)] as const;
         });
         // 迟到 ACK 只属于已撤下的观察者，禁止影响新 generation 的 credit。
-        if (generation < currentGeneration) return;
+        if (generation < currentGeneration || (generation === currentGeneration && lease < currentLease)) return;
+        if (lease !== currentLease) throw new ObserverTransportError("STALE_OBSERVER_LEASE");
         if (generation !== currentGeneration || currentToken === null) throw new ObserverTransportError("发布 ACK generation 尚未绑定");
-        try { bindings.market_publisher_ack(currentToken, ordinal); }
+        try { bindings.market_publisher_ack(currentToken, currentLease, ordinal); }
         catch (error) {
           if (error === "发布确认序号不是最早未确认项") throw new ObserverTransportError(error);
           throw error;
@@ -167,15 +175,20 @@ async function bootstrap(raw: unknown): Promise<void> {
         return;
       }
       const [request, requestId, generation] = observerInput(() => {
-        const request = record(event.data, type === "bindPublisher" ? "generation,requestId,token,type" : type === "resumePublisher" ? "generation,ordinal,requestId,type" : "generation,requestId,type", "发布 Worker 请求");
+        const request = record(event.data, type === "bindPublisher" ? "generation,requestId,token,type" : type === "resumePublisher" ? "generation,observerLease,ordinal,requestId,type" : type === "quiescePublisher" && Object.hasOwn(input, "retainObserver") ? "generation,observerLease,requestId,retainObserver,type" : "generation,observerLease,requestId,type", "发布 Worker 请求");
         // generation 0 只表示确实尚未绑定的 Worker 边界关闭。
         const generation = type === "quiescePublisher" && request.generation === 0 ? 0 : positive(request.generation, "发布 Worker generation");
         return [request, positive(request.requestId, "发布 Worker requestId"), generation] as const;
       });
+      if (type !== "bindPublisher" && readOrdinal(request.observerLease) !== currentLease) {
+        postObserver({ type: "operationError", requestId, generation, message: "STALE_OBSERVER_LEASE" });
+        return;
+      }
       if (type === "bindPublisher") {
         const token = observerInput(() => positive(request.token, "发布 Worker token"));
         await publisher.bind(generation, token, () => {
-          if (currentToken !== null && currentToken !== token) bindings.market_publisher_release(currentToken);
+          if (currentToken !== null && currentToken !== token) bindings.market_publisher_release(currentToken, currentLease);
+          currentLease = bindings.market_publisher_bind(token, BigInt(generation));
           currentToken = token;
           currentGeneration = generation;
           postObserver({ type: "publisherBound", requestId, generation });
@@ -184,15 +197,19 @@ async function bootstrap(raw: unknown): Promise<void> {
       } else if (type === "pausePublisher") {
         if (generation !== currentGeneration) throw new ObserverTransportError("发布 Worker 暂停 generation 无效");
         await publisher.pause(generation);
+        if (currentToken === null) throw new ObserverTransportError("发布 Worker 未绑定");
+        currentLease = bindings.market_publisher_hold(currentToken, currentLease);
         postObserver({ type: "publisherPaused", requestId, generation });
       } else if (type === "startPublisher") {
         if (generation !== currentGeneration) throw new ObserverTransportError("发布 Worker 启动 generation 无效");
+        if (currentToken === null) throw new ObserverTransportError("发布 Worker 未绑定");
+        bindings.market_publisher_start(currentToken, currentLease);
         publisher.start(generation, () => postObserver({ type: "publisherStarted", requestId, generation }));
       } else if (type === "resumePublisher") {
         if (generation !== currentGeneration) throw new ObserverTransportError("发布 Worker 续接 generation 无效");
         const ordinal = observerInput(() => readOrdinal(request.ordinal));
         await publisher.resume(generation, (token) => {
-          try { return bindings.market_publisher_resume(token, ordinal); }
+          try { return bindings.market_publisher_resume(token, currentLease, ordinal); }
           catch (error) {
             if (error === "发布基线的 ordinal 晚于已交接内容") throw new ObserverTransportError(error);
             throw error;
@@ -202,9 +219,14 @@ async function bootstrap(raw: unknown): Promise<void> {
         }, false);
       } else if (type === "quiescePublisher") {
         if (generation !== currentGeneration) throw new Error("发布 Worker 拒绝过期的关闭请求");
+        const retainObserver = request.retainObserver === true;
+        if (Object.hasOwn(request, "retainObserver") && (!retainObserver || !import.meta.env.DEV || !substrate.diagnostics)) throw new ObserverTransportError("仅验证产物可交接 Outbound 所有权");
         closed = true;
         await publisher.close();
-        if (currentToken !== null) { bindings.market_publisher_release(currentToken); currentToken = null; }
+        if (currentToken !== null) {
+          if (!retainObserver) bindings.market_publisher_release(currentToken, currentLease);
+          currentToken = null;
+        }
         eventQueue.port1.close(); eventQueue.port2.close();
         exports.__wbindgen_thread_destroy(0, 0, 0);
         port.postMessage({ type: "publisherQuiescent", requestId, generation });

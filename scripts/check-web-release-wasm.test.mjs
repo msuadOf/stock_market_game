@@ -315,3 +315,15 @@ test("原子门不把函数名atomic.fence当指令，且不混入同process其�
     await assert.rejects(verifyWebReleaseWasm(bad), /原子|atomic/i);
   }));
 });
+
+// 真实发布产物不能把故障注入 ABI 带给终端用户。
+test("正式WASM拒绝会话authority故障合同导出", async () => {
+  await withAssets(async (assets) => {
+    const bytes = wasmModuleBytes({
+      imports: [importFunc("env", "engine_clock_now", 1)], body: atomicFenceBody,
+      exports: [[...name("market_runner_contract_fail"), 0x00, 0x01]],
+    });
+    await writeFile(path.join(assets, "web_wasm_bg-verify.wasm"), bytes);
+    await assert.rejects(verifyWebReleaseWasm(assets), /market_runner_contract_fail/);
+  });
+});
